@@ -21,6 +21,7 @@ Generate a product mix optimization problem instance.
   - `:market_constraint_prob`: Probability of adding market constraints for each product (default: 0.3)
   - `:correlation_strength`: Strength of correlation between profit and resource usage (default: 0.7)
   - `:industry_type`: Type of industry for more realistic parameters (default: "manufacturing")
+  - `:solution_status`: Desired feasibility status (:feasible, :infeasible, or :all). If :feasible, guarantees feasibility; if :infeasible, guarantees infeasibility. (default: :feasible)
 - `seed`: Random seed for reproducibility (default: 0)
 
 # Returns
@@ -42,6 +43,7 @@ function generate_product_mix_problem(params::Dict=Dict(); seed::Int=0)
     market_constraint_prob = get(params, :market_constraint_prob, 0.3)
     correlation_strength = get(params, :correlation_strength, 0.7)
     industry_type = get(params, :industry_type, "manufacturing")
+    solution_status = get(params, :solution_status, :feasible)
     
     # Save actual parameters used
     actual_params = Dict{Symbol, Any}(
@@ -54,7 +56,8 @@ function generate_product_mix_problem(params::Dict=Dict(); seed::Int=0)
         :resource_usage_max => resource_usage_max,
         :market_constraint_prob => market_constraint_prob,
         :correlation_strength => correlation_strength,
-        :industry_type => industry_type
+        :industry_type => industry_type,
+        :solution_status => solution_status
     )
     
     # Apply industry-specific adjustments for realistic scenarios
@@ -223,6 +226,102 @@ function generate_product_mix_problem(params::Dict=Dict(); seed::Int=0)
     actual_params[:lower_bounds] = lower_bounds
     actual_params[:upper_bounds] = upper_bounds
     actual_params[:max_possible] = max_possible
+
+    # Adjust constraints to meet desired solution status while preserving realism
+    if solution_status == :feasible
+        # Ensure per-product bounds are consistent
+        for j in 1:num_products
+            if isfinite(upper_bounds[j]) && lower_bounds[j] > upper_bounds[j]
+                lower_bounds[j] = max(0.0, 0.98 * upper_bounds[j])
+            end
+        end
+
+        # Scale lower bounds uniformly if their aggregate resource demand exceeds capacity
+        required = [sum(usage_matrix[i, j] * lower_bounds[j] for j in 1:num_products) for i in 1:num_resources]
+        scales = Float64[]
+        for i in 1:num_resources
+            req_i = required[i]
+            if req_i > 0
+                push!(scales, availabilities[i] / req_i)
+            end
+        end
+        if !isempty(scales)
+            lb_scale = min(1.0, minimum(scales))
+            if lb_scale < 1.0
+                # Apply a small safety margin to avoid numerical edge cases
+                lower_bounds .*= lb_scale * 0.98
+            end
+        end
+
+        # Final guard for LB vs UB after scaling
+        for j in 1:num_products
+            if isfinite(upper_bounds[j]) && lower_bounds[j] > upper_bounds[j]
+                lower_bounds[j] = max(0.0, 0.98 * upper_bounds[j])
+            end
+        end
+
+        # Update params with possibly adjusted bounds
+        actual_params[:lower_bounds] = lower_bounds
+        actual_params[:upper_bounds] = upper_bounds
+
+    elseif solution_status == :infeasible
+        # Construct a realistic infeasibility by creating a capacity shortfall relative to minimum commitments
+        # Ensure at least some positive lower bounds exist
+        if all(lower_bounds .== 0.0)
+            # Assign lower bounds to a subset of products with nonzero resource usage on a random critical resource
+            critical_res = argmax([sum(usage_matrix[i, :]) for i in 1:num_resources])
+            candidates = [j for j in 1:num_products if usage_matrix[critical_res, j] > 0.0]
+            if isempty(candidates)
+                candidates = collect(1:num_products)
+            end
+            num_assign = max(1, round(Int, 0.2 * length(candidates)))
+            selected = sample(candidates, min(num_assign, length(candidates)); replace=false)
+            for j in selected
+                # Set LB to a realistic fraction of standalone capacity
+                lb_factor = 0.15 + 0.25 * rand()  # 15%-40%
+                lower_bounds[j] = max(lower_bounds[j], lb_factor * max_possible[j])
+            end
+        end
+
+        # Recompute required usage at lower bounds
+        required = [sum(usage_matrix[i, j] * lower_bounds[j] for j in 1:num_products) for i in 1:num_resources]
+
+        # Pick the most stressed resource (with positive requirement)
+        ratios = [required[i] > 0 ? required[i] / max(availabilities[i], eps()) : 0.0 for i in 1:num_resources]
+        critical_i = argmax(ratios)
+        if required[critical_i] == 0.0
+            # If still zero, pick a resource with highest total usage and enforce
+            critical_i = argmax([sum(usage_matrix[i, :]) for i in 1:num_resources])
+            # If still degenerate, just pick 1
+            if sum(usage_matrix[critical_i, :]) == 0.0
+                critical_i = 1
+            end
+            # Ensure at least one product contributes on the critical resource
+            if all(usage_matrix[critical_i, :] .== 0.0)
+                # Assign a small usage to a random product to avoid degenerate case
+                pj = rand(1:num_products)
+                usage_matrix[critical_i, pj] = max(usage_matrix[critical_i, pj], resource_usage_min)
+                required[critical_i] = usage_matrix[critical_i, pj] * max(lower_bounds[pj], resource_usage_min)
+            end
+        end
+
+        # Reduce availability on the critical resource below the required lower-bound demand
+        shortage_margin = 0.10 + 0.25 * rand()  # 10%-35% shortfall
+        new_avail = max(0.0, required[critical_i] * (1.0 - shortage_margin))
+        availabilities[critical_i] = new_avail
+
+        # Optionally reduce one additional resource to mimic broader supply shock
+        if num_resources >= 2 && rand() < 0.3
+            other_i = critical_i % num_resources + 1
+            req_other = required[other_i]
+            if req_other > 0.0
+                availabilities[other_i] = max(0.0, req_other * (1.0 - (0.05 + 0.15 * rand())))
+            end
+        end
+
+        actual_params[:availabilities] = availabilities
+        actual_params[:lower_bounds] = lower_bounds
+    end
     
     # Create model
     model = Model()

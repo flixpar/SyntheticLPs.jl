@@ -22,6 +22,7 @@ Generate an airline crew pairing problem instance.
   - `:pairing_overhead_mean`: Mean overhead factor for pairings (default: 0.25)
   - `:pairing_overhead_std`: Standard deviation of pairing overhead (default: 0.15)
   - `:max_flights_per_pairing`: Maximum flights per pairing (default: 6)
+  - `:solution_status`: Desired feasibility of generated LP: `:feasible`, `:infeasible`, or `:all` (default: `:feasible`)
 - `seed`: Random seed for reproducibility (default: 0)
 
 # Returns
@@ -43,6 +44,7 @@ function generate_airline_crew_problem(params::Dict=Dict(); seed::Int=0)
     pairing_overhead_mean = get(params, :pairing_overhead_mean, 0.25)
     pairing_overhead_std = get(params, :pairing_overhead_std, 0.15)
     max_flights_per_pairing = get(params, :max_flights_per_pairing, 6)
+    solution_status = get(params, :solution_status, :feasible)
     
     # Save actual parameters used
     actual_params = Dict{Symbol, Any}(
@@ -142,84 +144,147 @@ function generate_airline_crew_problem(params::Dict=Dict(); seed::Int=0)
     
     # Pairing overhead distribution
     overhead_dist = truncated(Normal(pairing_overhead_mean, pairing_overhead_std), 0.05, 0.8)
-    
-    # Generate pairings with realistic flight sequences
-    for _ in 1:num_pairings
-        if actual_num_flights == 0
-            break
+
+    # Helper to compute cost for a pairing
+    compute_pairing_cost = function(pairing_flights::Vector{Int})
+        base_cost = sum(flight_costs[f] for f in pairing_flights)
+        overhead_factor = rand(overhead_dist)
+        length_multiplier = 1.0 + (length(pairing_flights) - 1) * 0.1
+        base_factor = 1.0
+        if flight_origins[pairing_flights[1]] in base_locations
+            base_factor *= 0.9
         end
-        
-        # Realistic number of flights per pairing (weighted toward shorter pairings)
-        pairing_length_weights = [0.4, 0.3, 0.15, 0.1, 0.04, 0.01]  # Favor shorter pairings
-        max_length = min(max_flights_per_pairing, actual_num_flights, length(pairing_length_weights))
-        pairing_length = sample(1:max_length, Weights(pairing_length_weights[1:max_length]))
-        
-        # Try to create connected flight sequences (more realistic)
-        pairing_flights = Int[]
-        available_flights = collect(1:actual_num_flights)
-        
-        if !isempty(available_flights)
-            # Start with a random flight
-            current_flight = sample(available_flights)
-            push!(pairing_flights, current_flight)
-            filter!(f -> f != current_flight, available_flights)
-            
-            # Try to find connecting flights
-            for _ in 2:pairing_length
-                if isempty(available_flights)
+        if flight_destinations[pairing_flights[end]] in base_locations
+            base_factor *= 0.9
+        end
+        return base_cost * (1 + overhead_factor) * length_multiplier * base_factor
+    end
+
+    # Build adjacency for connecting flights
+    flights_from_origin = Dict{Int, Vector{Int}}()
+    for (fid, o) in enumerate(flight_origins)
+        if !haskey(flights_from_origin, o)
+            flights_from_origin[o] = Int[]
+        end
+        push!(flights_from_origin[o], fid)
+    end
+
+    # Generator for a connected random sequence up to a length, optionally avoiding a set of flight ids
+    function generate_connected_sequence(max_length::Int; avoid::Set{Int}=Set{Int}())
+        candidates = [f for f in 1:actual_num_flights if !(f in avoid)]
+        if isempty(candidates)
+            return Int[]
+        end
+        # Prefer to start at a base
+        base_starts = [f for f in candidates if flight_origins[f] in base_locations]
+        current_flight = isempty(base_starts) ? sample(candidates) : sample(base_starts)
+        sequence = Int[current_flight]
+        used = Set([current_flight])
+        for _ in 2:max_length
+            current_dest = flight_destinations[current_flight]
+            next_options = haskey(flights_from_origin, current_dest) ? [f for f in flights_from_origin[current_dest] if !(f in used) && !(f in avoid)] : Int[]
+            if isempty(next_options)
+                break
+            end
+            # 80% chance to choose a connecting flight, otherwise pick any unused
+            if rand() < 0.8
+                current_flight = sample(next_options)
+            else
+                any_unused = [f for f in candidates if !(f in used)]
+                if isempty(any_unused)
                     break
                 end
-                
-                current_dest = flight_destinations[current_flight]
-                
-                # Look for flights that start where the current flight ends
-                connecting_flights = filter(f -> flight_origins[f] == current_dest, available_flights)
-                
-                if !isempty(connecting_flights)
-                    # Prefer connecting flights (80% chance)
-                    if rand() < 0.8 && !isempty(connecting_flights)
-                        current_flight = sample(connecting_flights)
-                    else
-                        current_flight = sample(available_flights)
+                current_flight = sample(any_unused)
+            end
+            push!(sequence, current_flight)
+            push!(used, current_flight)
+        end
+        return sequence
+    end
+
+    if solution_status == :feasible
+        # Phase 1: Build an exact cover (partition) of all flights using connected sequences
+        unassigned = Set(1:actual_num_flights)
+        while !isempty(unassigned)
+            # Limit length per pairing
+            max_length = min(max_flights_per_pairing, length(unassigned))
+            # Bias toward shorter pairings, but ensure at least 1
+            pairing_length_weights = [0.4, 0.3, 0.15, 0.1, 0.04, 0.01]
+            max_weight_len = min(max_length, length(pairing_length_weights))
+            desired_len = sample(1:max_weight_len, Weights(pairing_length_weights[1:max_weight_len]))
+            seq = generate_connected_sequence(desired_len; avoid=Set{Int}())
+            # Ensure at least one unassigned flight in seq; if not, pick an unassigned singleton
+            if isempty(intersect(collect(unassigned), seq))
+                # Start from an unassigned flight and expand greedily
+                start = first(unassigned)
+                seq = [start]
+                current = start
+                while length(seq) < desired_len
+                    current_dest = flight_destinations[current]
+                    options = haskey(flights_from_origin, current_dest) ? [f for f in flights_from_origin[current_dest] if f in unassigned && !(f in seq)] : Int[]
+                    if isempty(options)
+                        break
                     end
-                else
-                    # No connecting flights, pick any available flight
-                    current_flight = sample(available_flights)
+                    nxt = sample(options)
+                    push!(seq, nxt)
+                    current = nxt
                 end
-                
-                push!(pairing_flights, current_flight)
-                filter!(f -> f != current_flight, available_flights)
+            end
+            # Reduce seq to only unassigned flights while preserving connectivity order
+            seq = [f for f in seq if f in unassigned]
+            if isempty(seq)
+                # Fallback: take one arbitrary unassigned flight
+                start = first(unassigned)
+                seq = [start]
+            end
+            # Truncate if exceeding max_flights_per_pairing
+            if length(seq) > max_flights_per_pairing
+                seq = seq[1:max_flights_per_pairing]
+            end
+            push!(flights_in_pairing, seq)
+            push!(pairing_costs, compute_pairing_cost(seq))
+            for f in seq
+                pop!(unassigned, f)
             end
         end
-        
-        # If we couldn't find enough flights, fill with random ones
-        while length(pairing_flights) < pairing_length && !isempty(available_flights)
-            flight = sample(available_flights)
-            push!(pairing_flights, flight)
-            filter!(f -> f != flight, available_flights)
+
+        # Phase 2: Add additional realistic pairings (can reuse flights) up to target count
+        while length(flights_in_pairing) < num_pairings
+            max_length = min(max_flights_per_pairing, actual_num_flights)
+            pairing_length_weights = [0.4, 0.3, 0.15, 0.1, 0.04, 0.01]
+            max_weight_len = min(max_length, length(pairing_length_weights))
+            desired_len = sample(1:max_weight_len, Weights(pairing_length_weights[1:max_weight_len]))
+            seq = generate_connected_sequence(desired_len)
+            if !isempty(seq)
+                push!(flights_in_pairing, seq)
+                push!(pairing_costs, compute_pairing_cost(seq))
+            end
         end
-        
-        if !isempty(pairing_flights)
-            push!(flights_in_pairing, pairing_flights)
-            
-            # Calculate realistic pairing cost
-            base_cost = sum(flight_costs[f] for f in pairing_flights)
-            overhead_factor = rand(overhead_dist)
-            
-            # Longer pairings have higher overhead (crew hotels, meals, etc.)
-            length_multiplier = 1.0 + (length(pairing_flights) - 1) * 0.1
-            
-            # Base location factor (pairings starting/ending at bases are cheaper)
-            base_factor = 1.0
-            if flight_origins[pairing_flights[1]] in base_locations
-                base_factor *= 0.9
+    else
+        # solution_status == :infeasible or :all: generate without guaranteeing exact cover
+        avoid_set = Set{Int}()
+        if solution_status == :infeasible && actual_num_flights > 0
+            # Reserve at least one uncovered flight to force infeasibility
+            push!(avoid_set, rand(1:actual_num_flights))
+        end
+        pairing_length_weights = [0.4, 0.3, 0.15, 0.1, 0.04, 0.01]
+        for _ in 1:num_pairings
+            if actual_num_flights == 0
+                break
             end
-            if flight_destinations[pairing_flights[end]] in base_locations
-                base_factor *= 0.9
+            max_length = min(max_flights_per_pairing, actual_num_flights, length(pairing_length_weights))
+            desired_len = sample(1:max_length, Weights(pairing_length_weights[1:max_length]))
+            seq = generate_connected_sequence(desired_len; avoid=avoid_set)
+            if isempty(seq)
+                # Try to pick any allowed flight if all connectivity attempts fail
+                candidates = [f for f in 1:actual_num_flights if !(f in avoid_set)]
+                if isempty(candidates)
+                    continue
+                end
+                seq = [sample(candidates)]
             end
-            
-            pairing_cost = base_cost * (1 + overhead_factor) * length_multiplier * base_factor
-            push!(pairing_costs, pairing_cost)
+            push!(flights_in_pairing, seq)
+            push!(pairing_costs, compute_pairing_cost(seq))
         end
     end
     
@@ -233,6 +298,7 @@ function generate_airline_crew_problem(params::Dict=Dict(); seed::Int=0)
     actual_params[:pairing_costs] = pairing_costs
     actual_params[:flights_in_pairing] = flights_in_pairing
     actual_params[:actual_num_pairings] = actual_num_pairings
+    actual_params[:solution_status] = solution_status
     
     # Decision variables: which pairings to use
     @variable(model, x[1:actual_num_pairings], Bin)
@@ -241,11 +307,10 @@ function generate_airline_crew_problem(params::Dict=Dict(); seed::Int=0)
     @objective(model, Min, sum(pairing_costs[p] * x[p] for p in 1:actual_num_pairings))
     
     # Constraints: each flight must be covered by exactly one pairing
+    # Always add equality constraints for all flights to make feasibility explicit
     for f in 1:actual_num_flights
         covering_pairings = findall(p -> f in flights_in_pairing[p], 1:actual_num_pairings)
-        if !isempty(covering_pairings)
-            @constraint(model, sum(x[p] for p in covering_pairings) == 1)
-        end
+        @constraint(model, sum(x[p] for p in covering_pairings) == 1)
     end
     
     return model, actual_params
@@ -267,6 +332,7 @@ function sample_airline_crew_parameters(size::Symbol=:medium; seed::Int=0)
     Random.seed!(seed)
     
     params = Dict{Symbol, Any}()
+    params[:solution_status] = :feasible
     
     # Set size-dependent parameters based on realistic airline scales
     if size == :small  # Regional airline (50-250 variables)
@@ -325,6 +391,7 @@ function sample_airline_crew_parameters(target_variables::Int; seed::Int=0)
     Random.seed!(seed)
     
     params = Dict{Symbol, Any}()
+    params[:solution_status] = :feasible
     
     # Determine scale based on target variables
     if target_variables <= 300

@@ -23,6 +23,11 @@ infrastructure constraints, environmental regulations, and economic objectives.
   - `:environmental_constraint_prob`: Probability of environmental constraints (default: 0.3)
   - `:zoning_adjacency_constraints`: Whether to include adjacency constraints (default: true)
   - `:minimum_zoning_requirements`: Whether to require minimum allocations (default: true)
+  - `:solution_status`: Desired feasibility of the generated instance. One of `:feasible`, `:infeasible`, or `:all`.
+    Default: `:feasible`. When `:feasible`, a feasible assignment is constructed and capacities are
+    adjusted minimally to guarantee feasibility. When `:infeasible`, capacities are set below a
+    provable lower bound to guarantee infeasibility. When `:all`, behavior follows the unconstrained
+    random generation (no guarantees).
 - `seed`: Random seed for reproducibility (default: 0)
 
 # Returns
@@ -43,6 +48,13 @@ function generate_land_use_problem(params::Dict=Dict(); seed::Int=0)
     environmental_constraint_prob = get(params, :environmental_constraint_prob, 0.3)
     zoning_adjacency_constraints = get(params, :zoning_adjacency_constraints, true)
     minimum_zoning_requirements = get(params, :minimum_zoning_requirements, true)
+    solution_status = get(params, :solution_status, :feasible)
+    if solution_status isa String
+        solution_status = Symbol(lowercase(solution_status))
+    end
+    if !(solution_status in (:feasible, :infeasible, :all))
+        error("Unknown solution_status=$(solution_status). Use :feasible, :infeasible, or :all")
+    end
     
     # Save actual parameters used
     actual_params = Dict{Symbol, Any}(
@@ -54,7 +66,8 @@ function generate_land_use_problem(params::Dict=Dict(); seed::Int=0)
         :infrastructure_capacity_factor => infrastructure_capacity_factor,
         :environmental_constraint_prob => environmental_constraint_prob,
         :zoning_adjacency_constraints => zoning_adjacency_constraints,
-        :minimum_zoning_requirements => minimum_zoning_requirements
+        :minimum_zoning_requirements => minimum_zoning_requirements,
+        :solution_status => solution_status
     )
     
     # Generate parcel characteristics using realistic distributions
@@ -142,8 +155,10 @@ function generate_land_use_problem(params::Dict=Dict(); seed::Int=0)
     environmental_restrictions = zeros(Bool, n_parcels, n_zoning_types)
     for i in 1:n_parcels
         if rand() < environmental_constraint_prob
-            # Restrict high-impact zoning types
-            restricted_types = sample(1:n_zoning_types, rand(1:min(3, n_zoning_types)), replace=false)
+            # Restrict a subset of zoning types while preserving at least one allowed option initially
+            max_restrict = max(1, min(3, n_zoning_types - 1))
+            num_to_restrict = rand(1:max_restrict)
+            restricted_types = sample(1:n_zoning_types, num_to_restrict, replace=false)
             environmental_restrictions[i, restricted_types] .= true
         end
     end
@@ -160,7 +175,408 @@ function generate_land_use_problem(params::Dict=Dict(); seed::Int=0)
         end
     end
     
-    # Store generated data in params
+    # Helper to compute aggregated consumption per type (used for tie-breaking)
+    type_consumption_score = [sum(resource_consumption[j, k] for k in 1:n_resources) for j in 1:n_zoning_types]
+    
+    # Ensure every parcel has at least one allowed zoning and that minimum requirements (if any) are achievable
+    # Build allowed sets and fix empty-allowed cases by unrestricting the least resource-intensive type
+    allowed_sets = Vector{Vector{Int}}(undef, n_parcels)
+    for i in 1:n_parcels
+        allowed = [j for j in 1:n_zoning_types if !environmental_restrictions[i, j]]
+        if isempty(allowed)
+            # Unrestrict the gentlest type for realism
+            jbest = argmin(type_consumption_score)
+            environmental_restrictions[i, jbest] = false
+            allowed = [jbest]
+        end
+        allowed_sets[i] = allowed
+    end
+    
+    # Compute effective minimum zoning requirement counts per type (for types 1..min(3, n_zoning_types, n_parcels))
+    num_required_types = minimum([3, n_zoning_types, n_parcels])
+    min_counts_by_type = Int[]
+    if minimum_zoning_requirements
+        base_min = max(1, round(Int, n_parcels * 0.1))
+        # Adjust so that sum of minimums does not exceed number of parcels
+        total_base = base_min * num_required_types
+        if total_base <= n_parcels
+            min_counts_by_type = fill(base_min, num_required_types)
+        else
+            # Spread as evenly as possible without exceeding n_parcels
+            per = max(1, fld(n_parcels, num_required_types))
+            min_counts_by_type = fill(per, num_required_types)
+            remaining = n_parcels - per * num_required_types
+            # Distribute the remainder
+            idx = 1
+            while remaining > 0 && idx <= num_required_types
+                min_counts_by_type[idx] += 1
+                remaining -= 1
+                idx += 1
+            end
+        end
+        # Ensure environmental restrictions allow meeting these mins by relaxing where needed
+        for j in 1:num_required_types
+            allowed_count_j = count(i -> !environmental_restrictions[i, j], 1:n_parcels)
+            deficit = max(0, min_counts_by_type[j] - allowed_count_j)
+            if deficit > 0
+                candidates = [i for i in 1:n_parcels if environmental_restrictions[i, j]]
+                # Prefer parcels where type j is comparatively gentle
+                sort!(candidates, by = i -> type_consumption_score[j])
+                for t in 1:min(deficit, length(candidates))
+                    environmental_restrictions[candidates[t], j] = false
+                end
+            end
+        end
+        # Rebuild allowed_sets after potential relaxations
+        for i in 1:n_parcels
+            allowed_sets[i] = [j for j in 1:n_zoning_types if !environmental_restrictions[i, j]]
+            if isempty(allowed_sets[i])
+                jbest = argmin(type_consumption_score)
+                environmental_restrictions[i, jbest] = false
+                allowed_sets[i] = [jbest]
+            end
+        end
+    else
+        min_counts_by_type = Int[]
+    end
+    
+    # If requested, guarantee feasibility/infeasibility while preserving realism and diversity
+    if solution_status != :all
+        # Precompute neighbor lists if adjacency matters
+        neighbors = Vector{Vector{Int}}(undef, n_parcels)
+        if zoning_adjacency_constraints && n_parcels > 1
+            for i in 1:n_parcels
+                neighbors[i] = [i2 for i2 in 1:n_parcels if adjacency_matrix[i, i2]]
+            end
+        else
+            for i in 1:n_parcels
+                neighbors[i] = Int[]
+            end
+        end
+
+        if solution_status == :feasible
+            # Construct a concrete feasible assignment to serve as a witness
+            assignment = fill(0, n_parcels)
+            req_counts = copy(min_counts_by_type)
+
+            # Helper to assign a set S of parcels to type jt respecting adjacency with type 3 vs 1
+            function select_disjoint_set(candidates::Vector{Int}, restricted_neighbors::Vector{Vector{Int}}, quota::Int, forbidden_neighbors::Set{Int})
+                S = Int[]
+                for i in candidates
+                    if length(S) == quota
+                        break
+                    end
+                    # Skip if i is in forbidden neighborhood
+                    if i in forbidden_neighbors
+                        continue
+                    end
+                    push!(S, i)
+                    # Add its neighbors to forbidden set
+                    for nb in restricted_neighbors[i]
+                        push!(forbidden_neighbors, nb)
+                    end
+                end
+                return S, forbidden_neighbors
+            end
+
+            # Build candidate sets for types 1, 2, and 3
+            cand1 = [i for i in 1:n_parcels if 1 <= n_zoning_types && (1 in allowed_sets[i])]
+            cand2 = [i for i in 1:n_parcels if 2 <= n_zoning_types && (2 in allowed_sets[i])]
+            cand3 = [i for i in 1:n_parcels if 3 <= n_zoning_types && (3 in allowed_sets[i])]
+
+            # Prefer parcels that are unique to the target type among required types to reduce contention,
+            # then prefer lower resource consumption
+            function preference_order(i::Int, target_type::Int)
+                allowed_required = Set([t for t in 1:minimum([3, n_zoning_types]) if t in allowed_sets[i]])
+                uniqueness = (length(allowed_required) == 1 && (target_type in allowed_required)) ? 0 : 1
+                return (uniqueness, type_consumption_score[target_type])
+            end
+            sort!(cand1, by = i -> preference_order(i, 1))
+            sort!(cand2, by = i -> preference_order(i, 2))
+            sort!(cand3, by = i -> preference_order(i, 3))
+
+            used = Set{Int}()
+            forbidden_for_3 = Set{Int}()
+
+            # Assign type 1 (Residential) first if required
+            if minimum_zoning_requirements && !isempty(req_counts) && length(req_counts) >= 1 && req_counts[1] > 0
+                # Filter candidates not yet used
+                cand1_free = [i for i in cand1 if !(i in used)]
+                # Select S1 greedily while tracking neighbors to protect type 3 later
+                S1, forbidden_for_3 = select_disjoint_set(cand1_free, neighbors, req_counts[1], forbidden_for_3)
+                # If not enough, try random shuffle retries
+                if length(S1) < req_counts[1]
+                    for _ in 1:5
+                        shuffle!(cand1_free)
+                        S1_try, ff3_try = select_disjoint_set(cand1_free, neighbors, req_counts[1], Set{Int}())
+                        if length(S1_try) >= req_counts[1]
+                            S1 = S1_try
+                            forbidden_for_3 = ff3_try
+                            break
+                        end
+                    end
+                end
+                # If still short, minimally relax adjacency by pruning edges among the remaining candidates
+                if length(S1) < req_counts[1]
+                    need = req_counts[1] - length(S1)
+                    extra = [i for i in cand1_free if !(i in S1)]
+                    for i in extra
+                        if need == 0
+                            break
+                        end
+                        # Remove edges between i and S1 to allow placement
+                        for s in S1
+                            adjacency_matrix[i, s] = false
+                            adjacency_matrix[s, i] = false
+                        end
+                        push!(S1, i)
+                        need -= 1
+                    end
+                    # Rebuild neighbors after pruning
+                    for i in 1:n_parcels
+                        neighbors[i] = [i2 for i2 in 1:n_parcels if adjacency_matrix[i, i2]]
+                    end
+                end
+                for i in S1
+                    assignment[i] = 1
+                    push!(used, i)
+                end
+            end
+
+            # Assign type 3 (Industrial) if required, avoiding adjacency with type 1
+            if minimum_zoning_requirements && !isempty(req_counts) && length(req_counts) >= 3 && req_counts[3] > 0
+                cand3_free = [i for i in cand3 if !(i in used) && !(i in forbidden_for_3)]
+                S3 = Int[]
+                for i in cand3_free
+                    if length(S3) == req_counts[3]
+                        break
+                    end
+                    # Check adjacency to already assigned type-1 nodes
+                    ok = true
+                    for nb in neighbors[i]
+                        if assignment[nb] == 1
+                            ok = false
+                            break
+                        end
+                    end
+                    if ok
+                        push!(S3, i)
+                        push!(used, i)
+                    end
+                end
+                # If still short, prune edges to avoid conflicts with already chosen type 1 parcels
+                if length(S3) < req_counts[3]
+                    need = req_counts[3] - length(S3)
+                    for i in cand3
+                        if length(S3) == req_counts[3]
+                            break
+                        end
+                        if i in used
+                            continue
+                        end
+                        # Remove adjacency to type-1 neighbors if any
+                        for nb in neighbors[i]
+                            if assignment[nb] == 1
+                                adjacency_matrix[i, nb] = false
+                                adjacency_matrix[nb, i] = false
+                            end
+                        end
+                        # Rebuild neighbors after pruning
+                        neighbors[i] = [i2 for i2 in 1:n_parcels if adjacency_matrix[i, i2]]
+                        # Recheck and assign
+                        conflict = any(assignment[nb] == 1 for nb in neighbors[i])
+                        if !conflict
+                            push!(S3, i)
+                            push!(used, i)
+                        end
+                        if length(S3) == req_counts[3]
+                            break
+                        end
+                    end
+                    # Globally refresh neighbor lists
+                    for ii in 1:n_parcels
+                        neighbors[ii] = [i2 for i2 in 1:n_parcels if adjacency_matrix[ii, i2]]
+                    end
+                end
+                for i in S3
+                    assignment[i] = 3
+                end
+            end
+
+            # Assign type 2 (Commercial) next if required
+            if minimum_zoning_requirements && !isempty(req_counts) && length(req_counts) >= 2 && req_counts[2] > 0
+                needed2 = req_counts[2]
+                count2 = 0
+                for i in cand2
+                    if i in used
+                        continue
+                    end
+                    assignment[i] == 0 || continue
+                    assignment[i] = 2
+                    push!(used, i)
+                    count2 += 1
+                    if count2 == needed2
+                        break
+                    end
+                end
+                # If still short, relax by converting some unassigned that allow type 2
+                if count2 < needed2
+                    left = needed2 - count2
+                    # Try to assign any remaining unassigned first
+                    for i in 1:n_parcels
+                        if left == 0
+                            break
+                        end
+                        if (assignment[i] == 0) && (2 in allowed_sets[i])
+                            assignment[i] = 2
+                            push!(used, i)
+                            left -= 1
+                        end
+                    end
+                    # If still short, perform minimal rebalancing: swap from S1 or S3 where possible
+                    if left > 0
+                        # Prefer swapping parcels that have 2 allowed and whose original type has alternative candidates
+                        # Try from type 1
+                        if left > 0 && minimum_zoning_requirements && length(req_counts) >= 1 && req_counts[1] > 0
+                            for i in 1:n_parcels
+                                if left == 0
+                                    break
+                                end
+                                if assignment[i] == 1 && (2 in allowed_sets[i])
+                                    # Find replacement for type 1 that is currently unassigned and allowed for 1
+                                    repl = findfirst(ii -> (assignment[ii] == 0) && (1 in allowed_sets[ii]), cand1)
+                                    if repl !== nothing
+                                        # Check adjacency with type 3 for replacement
+                                        ok = true
+                                        for nb in neighbors[repl]
+                                            if assignment[nb] == 3
+                                                ok = false
+                                                break
+                                            end
+                                        end
+                                        if ok
+                                            assignment[repl] = 1
+                                            push!(used, repl)
+                                            assignment[i] = 2
+                                            left -= 1
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        # Then try from type 3
+                        if left > 0 && minimum_zoning_requirements && length(req_counts) >= 3 && req_counts[3] > 0
+                            for i in 1:n_parcels
+                                if left == 0
+                                    break
+                                end
+                                if assignment[i] == 3 && (2 in allowed_sets[i])
+                                    # Find replacement for type 3 that is currently unassigned and allowed for 3
+                                    repl = findfirst(ii -> (assignment[ii] == 0) && (3 in allowed_sets[ii]), cand3)
+                                    if repl !== nothing
+                                        # Check adjacency with type 1 for replacement
+                                        ok = true
+                                        for nb in neighbors[repl]
+                                            if assignment[nb] == 1
+                                                ok = false
+                                                break
+                                            end
+                                        end
+                                        if ok
+                                            assignment[repl] = 3
+                                            push!(used, repl)
+                                            assignment[i] = 2
+                                            left -= 1
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    # As an ultimate safeguard, if still short, relax environmental restriction for type 2 on a few parcels
+                    # and reassign, prioritizing parcels with low total consumption
+                    if left > 0
+                        candidates = sort([i for i in 1:n_parcels if assignment[i] == 0 && !(2 in allowed_sets[i])], by = i -> sum(resource_consumption[j, k] for j in allowed_sets[i] for k in 1:n_resources))
+                        for i in candidates
+                            if left == 0
+                                break
+                            end
+                            environmental_restrictions[i, 2] = false
+                            push!(allowed_sets[i], 2)
+                            assignment[i] = 2
+                            push!(used, i)
+                            left -= 1
+                        end
+                    end
+                end
+            end
+
+            # Assign remaining parcels to any allowed type that maximizes net benefit while respecting current adjacency
+            for i in 1:n_parcels
+                if assignment[i] == 0
+                    bestj = nothing
+                    bestscore = -Inf
+                    for j in allowed_sets[i]
+                        # Skip type-3 if any neighbor is type-1 due to adjacency
+                        if j == 3 && any(assignment[nb] == 1 for nb in neighbors[i])
+                            continue
+                        end
+                        if j == 1 && any(assignment[nb] == 3 for nb in neighbors[i])
+                            continue
+                        end
+                        score = parcel_sizes[i] * (revenues[i, j] - development_costs[i, j])
+                        if score > bestscore
+                            bestscore = score
+                            bestj = j
+                        end
+                    end
+                    if bestj === nothing
+                        # Fallback to the least resource-intensive allowed type
+                        bestj = argmin([type_consumption_score[j] for j in allowed_sets[i]])
+                        bestj = allowed_sets[i][bestj]
+                    end
+                    assignment[i] = bestj
+                end
+            end
+
+            # Tighten capacities just enough to admit the witness assignment
+            usage = zeros(Float64, n_resources)
+            for k in 1:n_resources
+                usage[k] = sum(parcel_sizes[i] * resource_consumption[assignment[i], k] for i in 1:n_parcels)
+            end
+            for k in 1:n_resources
+                slack_factor = 1.0 + rand(Uniform(0.05, 0.25))
+                resource_capacities[k] = max(resource_capacities[k], usage[k] * slack_factor)
+            end
+            actual_params[:feasible_witness_assignment] = assignment
+        elseif solution_status == :infeasible
+            # Compute a provable lower bound on resource usage ignoring adjacency and min requirements
+            # This bound ensures infeasibility if any capacity is set below it
+            lb = zeros(Float64, n_resources)
+            for i in 1:n_parcels
+                # Per-parcel minima over allowed types
+                mins = fill(Inf, n_resources)
+                for j in allowed_sets[i]
+                    for k in 1:n_resources
+                        mins[k] = min(mins[k], resource_consumption[j, k])
+                    end
+                end
+                for k in 1:n_resources
+                    lb[k] += parcel_sizes[i] * mins[k]
+                end
+            end
+            # Set capacities below the lower bound with a realistic degradation factor
+            for k in 1:n_resources
+                violation = rand(Uniform(0.05, 0.25))
+                target_cap = lb[k] * (1.0 - violation)
+                resource_capacities[k] = min(resource_capacities[k], target_cap)
+                # Ensure strictly positive but below bound
+                resource_capacities[k] = max(resource_capacities[k], 1e-6)
+            end
+        end
+    end
+
+    # Store generated data in params (after potential adjustments)
     actual_params[:parcel_sizes] = parcel_sizes
     actual_params[:development_costs] = development_costs
     actual_params[:revenues] = revenues
@@ -170,6 +586,7 @@ function generate_land_use_problem(params::Dict=Dict(); seed::Int=0)
     actual_params[:adjacency_matrix] = adjacency_matrix
     actual_params[:zoning_names] = zoning_names
     actual_params[:resource_names] = resource_names
+    actual_params[:min_counts_by_type] = copy(min_counts_by_type)
     
     # Create model
     model = Model()
@@ -204,12 +621,10 @@ function generate_land_use_problem(params::Dict=Dict(); seed::Int=0)
     end
     
     # Constraints: minimum zoning requirements (ensure diverse development)
-    if minimum_zoning_requirements
-        for j in 1:n_zoning_types
-            if j <= 3  # Require some residential, commercial, industrial
-                min_parcels = max(1, round(Int, n_parcels * 0.1))
-                @constraint(model, sum(x[i, j] for i in 1:n_parcels) >= min_parcels)
-            end
+    if minimum_zoning_requirements && !isempty(min_counts_by_type)
+        for j in 1:length(min_counts_by_type)
+            required_count = min_counts_by_type[j]
+            @constraint(model, sum(x[i, j] for i in 1:n_parcels) >= required_count)
         end
     end
     

@@ -13,6 +13,7 @@ Generate a transportation problem instance.
   - `:supply_range`: Tuple (min, max) for supply values (default: (50, 100))
   - `:demand_range`: Tuple (min, max) for demand values (default: (30, 80))
   - `:cost_range`: Tuple (min, max) for transportation costs (default: (5, 20))
+  - `:solution_status`: Desired feasibility status (:feasible [default], :infeasible, :all)
 - `seed`: Random seed for reproducibility (default: 0)
 
 # Returns
@@ -29,6 +30,7 @@ function generate_transportation_problem(params::Dict=Dict(); seed::Int=0)
     supply_range = get(params, :supply_range, (50, 100))
     demand_range = get(params, :demand_range, (30, 80))
     cost_range = get(params, :cost_range, (5, 20))
+    solution_status = get(params, :solution_status, :feasible)
     
     # Save actual parameters used
     actual_params = Dict{Symbol, Any}(
@@ -36,7 +38,8 @@ function generate_transportation_problem(params::Dict=Dict(); seed::Int=0)
         :n_destinations => n_destinations,
         :supply_range => supply_range,
         :demand_range => demand_range,
-        :cost_range => cost_range
+        :cost_range => cost_range,
+        :solution_status => solution_status
     )
     
     # Random data generation
@@ -46,13 +49,48 @@ function generate_transportation_problem(params::Dict=Dict(); seed::Int=0)
     min_demand, max_demand = demand_range
     d = rand(min_demand:max_demand, n_destinations)  # Demand at each destination
     
-    # Adjust supply and demand to balance the problem
+    # Robust feasibility control without simplifying the LP structure
     total_supply = sum(s)
     total_demand = sum(d)
-    if total_supply < total_demand
-        s .= round.(Int, s .* (total_demand / total_supply))  # Scale up supplies and round to integers
+
+    # Helper to distribute a given integer amount across entries of a vector in a randomized, spread-out way
+    function distribute_additions!(vec::Vector{Int}, amount::Int)
+        if amount <= 0
+            return
+        end
+        # Base proportional split using random weights
+        w = rand(length(vec))
+        w_sum = sum(w)
+        base = floor.(Int, (w ./ w_sum) .* amount)
+        remainder = amount - sum(base)
+        if remainder > 0
+            for idx in randperm(length(vec))[1:remainder]
+                base[idx] += 1
+            end
+        end
+        vec .+= base
+    end
+
+    if solution_status == :feasible
+        # Guarantee feasibility: ensure total_supply >= total_demand exactly, avoiding rounding pitfalls
+        if total_supply < total_demand
+            shortage = total_demand - total_supply
+            distribute_additions!(s, shortage)
+            total_supply = sum(s)
+        end
+        # No need to inflate demands; keeping slack maintains realism while ensuring feasibility
+    elseif solution_status == :infeasible
+        # Guarantee infeasibility: ensure total_demand >= total_supply + margin
+        # Target a small relative shortage to keep realism (2%–10% of total supply), minimum 1 unit
+        target_margin = max(1, round(Int, (0.02 + 0.08 * rand()) * max(total_supply, 1)))
+        # Compute how much we must increase demands to exceed supply by the margin
+        missing = (total_supply + target_margin) - total_demand
+        if missing > 0
+            distribute_additions!(d, missing)
+        end
+        total_demand = sum(d)
     else
-        d .= round.(Int, d .* (total_supply / total_demand))  # Scale up demands and round to integers
+        # :all -> do not force either direction; keep the natural draws to preserve variety
     end
     
     min_cost, max_cost = cost_range

@@ -5,15 +5,17 @@ using Random
 """
     generate_portfolio_problem(params::Dict=Dict(); seed::Int=0)
 
-Generate an investment portfolio optimization problem instance.
+Generate an investment portfolio optimization problem instance with a realistic
+"cash" (risk-free) asset to ensure feasibility under tight risk budgets.
 
 # Arguments
 - `params`: Dictionary of problem parameters
-  - `:n_options`: Number of investment options (default: 5)
-  - `:total_investment`: Total investment amount (default: 100000)
-  - `:max_risk`: Maximum acceptable risk (default: 5000)
-  - `:return_range`: Tuple (min, max) for expected returns (default: (0.05, 0.15))
-  - `:risk_range`: Tuple (min, max) for investment risks (default: (0.05, 0.15))
+  - `:n_options`: Number of risky investment options (default: 150)
+  - `:total_investment`: Total investment amount (default: 1_000_000)
+  - `:max_risk`: Maximum acceptable absolute risk budget (default: 50_000)
+  - `:return_range`: Tuple (min, max) for expected returns of risky assets (default: (0.05, 0.15))
+  - `:risk_range`: Tuple (min, max) for per-unit linearized risks of risky assets (default: (0.05, 0.15))
+  - `:risk_free_rate`: Expected return of the risk-free asset (default: sampled; see samplers)
 - `seed`: Random seed for reproducibility (default: 0)
 
 # Returns
@@ -30,6 +32,7 @@ function generate_portfolio_problem(params::Dict=Dict(); seed::Int=0)
     max_risk = get(params, :max_risk, 50000)
     return_range = get(params, :return_range, (0.05, 0.15))
     risk_range = get(params, :risk_range, (0.05, 0.15))
+    risk_free_rate = get(params, :risk_free_rate, nothing)
     
     # Save actual parameters used
     actual_params = Dict{Symbol, Any}(
@@ -44,25 +47,36 @@ function generate_portfolio_problem(params::Dict=Dict(); seed::Int=0)
     min_return, max_return = return_range
     r = rand(min_return:0.01:max_return, n_options)  # Expected returns
     
-    min_risk, max_risk = risk_range
-    q = rand(min_risk:0.01:max_risk, n_options)  # Risks
+    min_risk_factor, max_risk_factor = risk_range
+    q = rand(min_risk_factor:0.01:max_risk_factor, n_options)  # Per-dollar risk factors for risky assets
     
     # Store generated data in params
     actual_params[:returns] = r
     actual_params[:risks] = q
     
+    # Risk-free asset (cash or Treasury) to guarantee feasibility under tight risk budgets
+    # If not provided, sample a realistic rate consistent with overall size regime
+    if risk_free_rate === nothing
+        # Coarse sampling: modest positive real rate
+        risk_free_rate = rand(0.005:0.0005:0.03)
+    end
+    actual_params[:risk_free_rate] = risk_free_rate
+    actual_params[:has_risk_free_asset] = true
+    
     # Model
     model = Model()
     
     # Variables
+    # x[1:n_options] are risky assets; x_rf is risk-free
     @variable(model, x[1:n_options] >= 0)
+    @variable(model, x_rf >= 0)
     
     # Objective
-    @objective(model, Max, sum(r[i] * x[i] for i in 1:n_options))
+    @objective(model, Max, sum(r[i] * x[i] for i in 1:n_options) + risk_free_rate * x_rf)
     
     # Constraints
     @constraint(model, sum(q[i] * x[i] for i in 1:n_options) <= max_risk)
-    @constraint(model, sum(x[i] for i in 1:n_options) == total_investment)
+    @constraint(model, sum(x[i] for i in 1:n_options) + x_rf == total_investment)
     
     return model, actual_params
 end
@@ -94,16 +108,19 @@ function sample_portfolio_parameters(target_variables::Int; seed::Int=0)
         params[:total_investment] = rand(10000:5000:100000)
         risk_tolerance = rand(0.05:0.01:0.15)
         params[:max_risk] = round(Int, params[:total_investment] * risk_tolerance)
+        params[:risk_free_rate] = rand(0.01:0.001:0.035)  # retail cash / CDs
     elseif target_variables <= 1000
         # Medium portfolio - institutional level
         params[:total_investment] = rand(100000:50000:10000000)
         risk_tolerance = rand(0.03:0.005:0.12)
         params[:max_risk] = round(Int, params[:total_investment] * risk_tolerance)
+        params[:risk_free_rate] = rand(0.005:0.0005:0.025)  # short-term Treasuries
     else
         # Large portfolio - mega fund level
         params[:total_investment] = rand(1000000:500000:1000000000)
         risk_tolerance = rand(0.02:0.002:0.08)
         params[:max_risk] = round(Int, params[:total_investment] * risk_tolerance)
+        params[:risk_free_rate] = rand(0.0025:0.00025:0.02)  # global risk-free blended
     end
     
     # Make return and risk ranges more diverse and realistic for different market conditions

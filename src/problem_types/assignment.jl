@@ -15,6 +15,8 @@ Generate an assignment problem instance.
   - `:balanced`: Whether the problem is balanced (default: true)
   - `:cost_variation`: How much cost varies - :low, :medium, :high (default: :medium)
   - `:specialization`: Whether some workers are specialized for certain tasks (default: false)
+  - `:solution_status`: Desired feasibility status for the generated problem. One of
+    `:feasible` (default), `:infeasible`, or `:all`.
 - `seed`: Random seed for reproducibility (default: 0)
 
 # Returns
@@ -26,16 +28,67 @@ function generate_assignment_problem(params::Dict=Dict(); seed::Int=0)
     Random.seed!(seed)
     
     # Extract parameters with defaults
-    n_workers = get(params, :n_workers, 5)
-    n_tasks = get(params, :n_tasks, 5)
+    n_workers_in = get(params, :n_workers, 5)
+    n_tasks_in = get(params, :n_tasks, 5)
     cost_range = get(params, :cost_range, (5, 20))
-    balanced = get(params, :balanced, true)
+    balanced_in = get(params, :balanced, true)
     cost_variation = get(params, :cost_variation, :medium)
     specialization = get(params, :specialization, false)
-    
-    # Force balanced problem if requested
+    solution_status = get(params, :solution_status, :feasible)
+
+    # Variety/realism knobs (optional)
+    compat_density_opt = get(params, :compatibility_density, nothing)
+    n_skill_groups_opt = get(params, :n_skill_groups, nothing)
+    infeas_hall_prob = get(params, :infeasible_hall_prob, 0.4)  # P(choose Hall-type for infeasible)
+    cap_gap_rng = get(params, :infeasible_capacity_gap_ratio_range, (0.05, 0.25))  # gap as fraction of workers
+    feas_slack_prob = get(params, :feasible_slack_prob, 0.3)  # P(add slack workers beyond equality)
+    feas_slack_max = get(params, :feasible_slack_max, 3)  # Max extra workers when adding slack
+
+    # Normalize solution_status symbol (accept strings too)
+    if solution_status isa String
+        solution_status = Symbol(lowercase(String(solution_status)))
+    end
+    if !(solution_status in (:feasible, :infeasible, :all))
+        error("assignment: invalid :solution_status=$(solution_status). Use :feasible | :infeasible | :all")
+    end
+
+    # Decide final dimensions based on desired feasibility while preserving realism
+    # Keep original intent (balanced/unbalanced), but enforce feasibility/infeasibility.
+    n_workers = Int(n_workers_in)
+    n_tasks = Int(n_tasks_in)
+    balanced = Bool(balanced_in)
+
+    # If balanced is requested and user did not specify contradictory dims, respect it first.
     if balanced
         n_tasks = n_workers
+    end
+
+    # Adjust counts to guarantee requested solution status
+    if solution_status == :feasible
+        # Ensure enough worker capacity to satisfy all tasks under <=1 per worker and ==1 per task.
+        if n_workers < n_tasks
+            # Add enough workers to meet/exceed tasks; sometimes add slack for variety
+            add = n_tasks - n_workers
+            if rand() < feas_slack_prob
+                add += rand(1:max(1, Int(feas_slack_max)))
+            end
+            n_workers = n_workers + add
+        end
+        # Keep balanced flag as provided by user; feasibility is ensured regardless via extra workers.
+    elseif solution_status == :infeasible
+        # Force unbalanced and ensure fewer workers than tasks.
+        balanced = false
+        if n_workers >= n_tasks
+            # Increase tasks by a randomized gap ratio in the provided range
+            cap_low, cap_high = cap_gap_rng
+            gap_ratio = clamp(rand() * (cap_high - cap_low) + cap_low, 0.01, 0.9)
+            extra = max(1, ceil(Int, gap_ratio * n_workers))
+            n_tasks = n_workers + extra
+        end
+        # If n_workers < n_tasks already, leave as-is.
+    else
+        # :all -> do not intervene beyond balanced preference already applied
+        nothing
     end
     
     # Save actual parameters used
@@ -45,13 +98,120 @@ function generate_assignment_problem(params::Dict=Dict(); seed::Int=0)
         :cost_range => cost_range,
         :balanced => balanced,
         :cost_variation => cost_variation,
-        :specialization => specialization
+        :specialization => specialization,
+        :solution_status => solution_status,
+        :original_n_workers => n_workers_in,
+        :original_n_tasks => n_tasks_in,
+        :original_balanced => balanced_in,
+        :compatibility_density => compat_density_opt,
+        :n_skill_groups => n_skill_groups_opt,
+        :infeasible_hall_prob => infeas_hall_prob,
+        :infeasible_capacity_gap_ratio_range => cap_gap_rng,
+        :feasible_slack_prob => feas_slack_prob,
+        :feasible_slack_max => feas_slack_max
     )
     
     # Generate assignment costs based on variation and specialization
     min_cost, max_cost = cost_range
     costs = zeros(Int, n_workers, n_tasks)
+
+    # Determine how many dummy workers (if any) we added to ensure feasibility
+    n_dummy_workers = 0
+    if solution_status == :feasible && !balanced_in && n_workers > n_workers_in && n_workers == n_tasks
+        # We expanded workers to match tasks
+        n_dummy_workers = n_workers - n_workers_in
+    end
+    actual_params[:dummy_workers] = n_dummy_workers
     
+    # --- Compatibility structure (skills/availability) for realism and variety ---
+    # We'll build an allowed-mask of feasible (i,j) pairs. This enables modeling
+    # of worker-task compatibility and can be used to diversify infeasibility causes.
+    allowed = trues(n_workers, n_tasks)
+
+    # Heuristic densities based on scale for realism (smaller instances are denser),
+    # optionally overridden by :compatibility_density
+    total_vars_est = n_workers * n_tasks
+    base_density = total_vars_est <= 250 ? 0.85 : (total_vars_est <= 1000 ? 0.70 : 0.50)
+    if compat_density_opt !== nothing
+        base_density = clamp(Float64(compat_density_opt), 0.02, 0.98)
+    end
+
+    # Skill-group structure
+    gmax = min(6, max(2, round(Int, sqrt(min(n_workers, n_tasks)))))
+    n_groups = n_skill_groups_opt === nothing ? rand(2:gmax) : clamp(Int(n_skill_groups_opt), 2, gmax)
+    # Assign groups roughly evenly
+    worker_groups = [rand(1:n_groups) for _ in 1:n_workers]
+    task_groups = [rand(1:n_groups) for _ in 1:n_tasks]
+
+    p_in = min(0.98, base_density)
+    p_out = max(0.02, 0.3 * base_density)
+
+    # Introduce compatibility structure for :feasible/:infeasible modes, or when user
+    # explicitly provides compatibility knobs, to preserve historical :all behavior otherwise.
+    apply_compat = (solution_status != :all) || (compat_density_opt !== nothing) || (n_skill_groups_opt !== nothing)
+    if apply_compat
+        for i in 1:n_workers, j in 1:n_tasks
+            pij = task_groups[j] == worker_groups[i] ? p_in : p_out
+            allowed[i, j] = rand() < pij
+        end
+    end
+
+    # --- Infeasibility variety for :infeasible ---
+    if solution_status == :infeasible
+        # With probability, choose capacity shortfall (classic), else Hall-type violation
+        use_capacity_shortfall = rand() >= infeas_hall_prob
+        if use_capacity_shortfall
+            # Already ensured n_tasks > n_workers above
+            # No extra action needed; compatibility sparsity stays as sampled
+        else
+            # Construct a Hall-violation subset: choose K tasks whose neighborhood is a small
+            # set of M workers with M < |K|. This creates infeasibility even if workers >= tasks.
+            k = max(2, min(n_tasks, round(Int, 0.3 * n_tasks)))
+            k = rand( max(2, round(Int, 0.2*n_tasks)) : max(2, min(n_tasks, round(Int, 0.5*n_tasks))) )
+            hall_tasks = sort(randperm(n_tasks)[1:k])
+            m = max(1, min(n_workers-1, rand( max(1, round(Int, 0.2*k)) : max(1, k-1) )))
+            hall_workers = sort(randperm(n_workers)[1:m])
+            # Restrict K tasks to only M workers; forbid all other edges for those tasks
+            for j in hall_tasks
+                for i in 1:n_workers
+                    allowed[i, j] = (i in hall_workers)
+                end
+            end
+        end
+    end
+
+    # --- Feasibility guarantees for :feasible ---
+    if solution_status == :feasible
+        # Ensure at least one injective assignment exists among allowed edges
+        # by planting a matching task->distinct worker, possibly relaxing allowance if needed.
+        if apply_compat
+            used = falses(n_workers)
+            task_order = randperm(n_tasks)
+            for jj in task_order
+                # Prefer within-group compatible workers not yet used
+                cands = [i for i in 1:n_workers if allowed[i, jj] && !used[i]]
+                if isempty(cands)
+                    # Un-forbid a worker (prefer same group, then any) to guarantee feasibility
+                    pref = [i for i in 1:n_workers if worker_groups[i] == task_groups[jj] && !used[i]]
+                    if isempty(pref)
+                        pref = [i for i in 1:n_workers if !used[i]]
+                    end
+                    if isempty(pref)
+                        # Should not happen if n_workers >= n_tasks; as a fallback, allow someone even if used
+                        pref = collect(1:n_workers)
+                    end
+                    chosen = rand(pref)
+                    allowed[chosen, jj] = true
+                    used[chosen] = true
+                else
+                    chosen = rand(cands)
+                    used[chosen] = true
+                end
+            end
+        end
+    end
+
+    # --- Cost generation ---
     if specialization
         # Create worker specializations - some workers are much better at certain tasks
         for i in 1:n_workers
@@ -78,7 +238,10 @@ function generate_assignment_problem(params::Dict=Dict(); seed::Int=0)
             for i in 1:n_workers, j in 1:n_tasks
                 low = max(min_cost, round(Int, mean_cost - range_factor * (max_cost - min_cost)))
                 high = min(max_cost, round(Int, mean_cost + range_factor * (max_cost - min_cost)))
-                costs[i, j] = rand(low:high)
+                # Adjust by group proximity (within-group slightly cheaper)
+                bias = (worker_groups[i] == task_groups[j]) ? -0.1 : 0.1
+                low_adj = clamp(round(Int, low + bias * (high - low)), min_cost, high)
+                costs[i, j] = rand(low_adj:high)
             end
         elseif cost_variation == :high
             # High variation - costs vary widely, some extreme values
@@ -86,19 +249,38 @@ function generate_assignment_problem(params::Dict=Dict(); seed::Int=0)
                 if rand() < 0.1  # 10% chance of extreme costs
                     costs[i, j] = rand() < 0.5 ? min_cost : max_cost
                 else
-                    costs[i, j] = rand(min_cost:max_cost)
+                    # Within-group tends cheaper, cross-group tends higher
+                    if worker_groups[i] == task_groups[j]
+                        costs[i, j] = rand(min_cost:round(Int, min_cost + 0.6 * (max_cost - min_cost)))
+                    else
+                        costs[i, j] = rand(round(Int, min_cost + 0.3 * (max_cost - min_cost)):max_cost)
+                    end
                 end
             end
         else  # :medium
             # Medium variation - standard uniform distribution
             for i in 1:n_workers, j in 1:n_tasks
-                costs[i, j] = rand(min_cost:max_cost)
+                if worker_groups[i] == task_groups[j]
+                    costs[i, j] = rand(min_cost:round(Int, min_cost + 0.7 * (max_cost - min_cost)))
+                else
+                    costs[i, j] = rand(round(Int, min_cost + 0.2 * (max_cost - min_cost)):max_cost)
+                end
             end
         end
     end
     
+    # If we introduced dummy workers to enforce feasibility, overwrite their costs to be high
+    if n_dummy_workers > 0
+        high_base = max(max_cost, round(Int, max_cost + 0.2 * (max_cost - min_cost) + 5))
+        high_top = high_base + max(5, round(Int, 0.3 * (max_cost - min_cost) + 5))
+        for i in (n_workers - n_dummy_workers + 1):n_workers, j in 1:n_tasks
+            costs[i, j] = rand(high_base:high_top)
+        end
+    end
+
     # Store generated data in params
     actual_params[:costs] = costs
+    actual_params[:allowed] = allowed
     
     # Model
     model = Model()
@@ -116,6 +298,15 @@ function generate_assignment_problem(params::Dict=Dict(); seed::Int=0)
         @constraint(model, sum(x[i, j] for j in 1:n_tasks) <= 1)
     end
     
+    # Forbid incompatible assignments via zero upper bounds
+    if apply_compat
+        for i in 1:n_workers, j in 1:n_tasks
+            if !allowed[i, j]
+                @constraint(model, x[i, j] == 0)
+            end
+        end
+    end
+
     # Each task must be assigned to exactly one worker
     for j in 1:n_tasks
         if j <= n_workers || !balanced

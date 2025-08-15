@@ -20,6 +20,10 @@ Generate a facility location problem instance.
   - `:budget_factor`: Total budget as fraction of cost of opening all facilities (default: 0.7)
   - `:grid_width`: Width of the geographic area (default: 1000.0)
   - `:grid_height`: Height of the geographic area (default: 1000.0)
+  - `:solution_status`: Desired feasibility status for the generated instance. One of `:feasible`,
+    `:infeasible`, or `:all`. Default: `:feasible`. When `:feasible`, minimally adjust the budget to
+    guarantee enough capacity can be opened. When `:infeasible`, set the budget strictly below the
+    fractional-knapsack threshold so that even with fractional openings the capacity cannot meet total demand.
 - `seed`: Random seed for reproducibility (default: 0)
 
 # Returns
@@ -44,6 +48,13 @@ function generate_facility_location_problem(params::Dict=Dict(); seed::Int=0)
     grid_width = get(params, :grid_width, 1000.0)
     grid_height = get(params, :grid_height, 1000.0)
     grid_size = (grid_width, grid_height)
+    solution_status = get(params, :solution_status, :feasible)
+    if solution_status isa String
+        solution_status = Symbol(lowercase(solution_status))
+    end
+    if !(solution_status in (:feasible, :infeasible, :all))
+        error("Unknown solution_status=$(solution_status). Use :feasible, :infeasible, or :all")
+    end
     
     # Save actual parameters used
     actual_params = Dict{Symbol, Any}(
@@ -57,7 +68,8 @@ function generate_facility_location_problem(params::Dict=Dict(); seed::Int=0)
         :transport_cost_per_km => transport_cost_per_km,
         :budget_factor => budget_factor,
         :grid_width => grid_width,
-        :grid_height => grid_height
+        :grid_height => grid_height,
+        :solution_status => solution_status
     )
     
     # Generate locations using clustering to create realistic geographic distribution
@@ -123,6 +135,7 @@ function generate_facility_location_problem(params::Dict=Dict(); seed::Int=0)
     
     # Set budget as fraction of cost of opening all facilities
     budget = sum(values(fixed_costs)) * budget_factor
+    original_budget = budget
     
     # Store generated data in params
     actual_params[:facility_locs] = facility_locs
@@ -131,6 +144,91 @@ function generate_facility_location_problem(params::Dict=Dict(); seed::Int=0)
     actual_params[:fixed_costs] = fixed_costs
     actual_params[:capacities] = capacities
     actual_params[:shipping_costs] = shipping_costs
+    
+    # Enforce requested feasibility/infeasibility while preserving realism and diversity.
+    # Feasibility in this model depends on whether sufficient capacity can be opened under the budget.
+    # With relaxed integrality, the limiting factor is a fractional knapsack on (capacity, fixed_cost).
+    caps_vec = [capacities[w] for w in 1:n_facilities]
+    costs_vec = [fixed_costs[w] for w in 1:n_facilities]
+    ratios = [caps_vec[i] / max(costs_vec[i], eps()) for i in 1:n_facilities]
+    order_desc = sortperm(ratios, rev=true)
+    total_capacity = sum(caps_vec)
+    
+    # Helper: minimal budget (under fractional openings) to reach total_demand
+    function fractional_budget_to_reach(cap_target::Float64)
+        cum_cap = 0.0
+        cum_cost = 0.0
+        for idx in order_desc
+            cap_i = caps_vec[idx]
+            cost_i = costs_vec[idx]
+            if cum_cap + cap_i >= cap_target
+                rem = cap_target - cum_cap
+                # fractional part of this facility
+                frac_cost = cost_i * (rem / cap_i)
+                return cum_cost + frac_cost
+            else
+                cum_cap += cap_i
+                cum_cost += cost_i
+            end
+        end
+        # If even all capacity is insufficient, return +Inf to indicate infeasibility regardless of budget
+        return Inf
+    end
+    
+    # Helper: construct a concrete feasible integer subset (greedy by best capacity-per-cost)
+    function greedy_integer_subset_for(cap_target::Float64)
+        selected = Int[]
+        cum_cap = 0.0
+        cum_cost = 0.0
+        for idx in order_desc
+            push!(selected, idx)
+            cum_cap += caps_vec[idx]
+            cum_cost += costs_vec[idx]
+            if cum_cap + 1e-9 >= cap_target
+                return selected, cum_cost
+            end
+        end
+        return selected, cum_cost  # may still be below target if total capacity < target
+    end
+    
+    if solution_status == :feasible
+        # If total capacity < demand, scale capacities minimally to ensure realism and feasibility
+        if total_capacity < total_demand
+            scale = (1.05 * total_demand) / max(total_capacity, eps())
+            for w in 1:n_facilities
+                capacities[w] *= scale
+            end
+            total_capacity = sum(values(capacities))
+            caps_vec = [capacities[w] for w in 1:n_facilities]
+            ratios = [caps_vec[i] / max(costs_vec[i], eps()) for i in 1:n_facilities]
+            order_desc = sortperm(ratios, rev=true)
+        end
+        # Build an explicit feasible subset and ensure budget covers it with a small slack
+        selected_idxs, min_int_budget = greedy_integer_subset_for(total_demand)
+        slack_factor = 1.02 + 0.23 * rand()
+        budget = max(original_budget, min_int_budget * slack_factor)
+        actual_params[:feasible_subset] = selected_idxs
+        actual_params[:feasible_subset_cost] = min_int_budget
+        actual_params[:budget_original] = original_budget
+    elseif solution_status == :infeasible
+        # Compute the fractional-knapsack budget threshold to reach total_demand
+        b_thresh = fractional_budget_to_reach(total_demand)
+        actual_params[:relaxed_budget_threshold] = b_thresh
+        actual_params[:budget_original] = original_budget
+        if isfinite(b_thresh)
+            # Set budget strictly below threshold to guarantee infeasibility under LP relaxation
+            tighten = rand(0.75:0.01:0.95)
+            budget = min(original_budget, b_thresh * tighten)
+        else
+            # Even opening all facilities cannot meet demand; any budget is infeasible.
+            # Keep budget moderate for realism.
+            budget = min(original_budget, sum(values(fixed_costs)) * rand(0.4:0.01:0.8))
+        end
+    else
+        # :all → keep stochastic construction
+        budget = original_budget
+    end
+    
     actual_params[:budget] = budget
     
     # Model

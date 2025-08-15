@@ -25,6 +25,7 @@ Generate a supply chain optimization problem instance.
   - `:infrastructure_density`: Availability of transport modes between locations (default: 0.7)
   - `:transport_modes`: List of transport modes to use (default: ["truck", "rail", "ship"])
   - `:transport_base_costs`: Base cost per unit-distance for each mode (default: Dict with values)
+  - `:solution_status`: Desired feasibility status (:feasible, :infeasible, or :all). Default: :feasible
 - `seed`: Random seed for reproducibility (default: 0)
 
 # Returns
@@ -50,6 +51,7 @@ function generate_supply_chain_problem(params::Dict=Dict(); seed::Int=0)
     clustering_factor = get(params, :clustering_factor, 0.3)
     infrastructure_density = get(params, :infrastructure_density, 0.7)
     all_transport_modes = get(params, :transport_modes, ["truck", "rail", "ship"])
+    solution_status = get(params, :solution_status, :feasible)
     
     default_transport_costs = Dict(
         "truck" => 1.0,
@@ -256,6 +258,90 @@ function generate_supply_chain_problem(params::Dict=Dict(); seed::Int=0)
     
     # Clean up transport costs to only include available routes
     transport_costs = Dict(k => v for (k,v) in transport_costs if infrastructure[k])
+
+    # Enforce requested feasibility by minimally adjusting data while preserving realism
+    if solution_status == :feasible
+        # Select a universal fallback mode and ensure connectivity to K nearest facilities for every customer
+        fallback_mode = ("truck" in transport_modes) ? "truck" : transport_modes[1]
+        K = min(max(3, ceil(Int, n_facilities ÷ 3)), n_facilities)  # connect to roughly top third, at least 3
+        # Track which customers are linked to which facilities via fallback
+        customers_linked_to_facility = [Int[] for _ in 1:n_facilities]
+        for c in 1:n_customers
+            # Compute distances from facilities to customer c
+            dvec = [sqrt((facility_locs[f][1] - customer_locs[c][1])^2 + (facility_locs[f][2] - customer_locs[c][2])^2) for f in 1:n_facilities]
+            # Indices of K nearest facilities
+            nearest_idxs = sortperm(dvec)[1:K]
+            for f in nearest_idxs
+                if !haskey(transport_costs, (f, c, fallback_mode))
+                    distance = dvec[f]
+                    base_cost = get(transport_base_costs, fallback_mode, 1.0)
+                    terrain_factor = rand(LogNormal(log(1.0), 0.15))
+                    volume_factor = 1.0 - 0.25 * (demands[c] / maximum(values(demands)))
+                    efficiency_factor = rand(Beta(3, 2)) * 0.4 + 0.8
+                    infrastructure[(f, c, fallback_mode)] = true
+                    transport_costs[(f, c, fallback_mode)] = base_cost * distance * terrain_factor * volume_factor * efficiency_factor
+                end
+                push!(customers_linked_to_facility[f], c)
+            end
+        end
+        # Smooth facility capacities to cover nearby demand share to avoid local bottlenecks
+        approx_share = zeros(Float64, n_facilities)
+        for f in 1:n_facilities
+            linked_customers = customers_linked_to_facility[f]
+            for c in linked_customers
+                approx_share[f] += demands[c] / length([ff for ff in 1:n_facilities if c in customers_linked_to_facility[ff]])
+            end
+        end
+        for f in 1:n_facilities
+            if capacities[f] < 1.05 * approx_share[f]
+                capacities[f] = 1.05 * approx_share[f]
+            end
+        end
+    end
+
+    # 2) Adjust aggregate capacities to guarantee/deny feasibility while keeping structure
+    total_mode_capacity = sum(mode_capacities[m] for m in transport_modes)
+    total_facility_capacity = sum(values(capacities))
+
+    if solution_status == :feasible
+        # Ensure sufficient mode capacity and facility capacity with a small safety margin
+        # First, ensure fallback mode can alone move all demand
+        fallback_mode = ("truck" in transport_modes) ? "truck" : transport_modes[1]
+        if mode_capacities[fallback_mode] < 1.05 * total_demand
+            mode_capacities[fallback_mode] = 1.05 * total_demand
+        end
+        total_mode_capacity = sum(mode_capacities[m] for m in transport_modes)
+        if total_mode_capacity < total_demand
+            scale = 1.05 * total_demand / max(total_mode_capacity, eps())
+            for m in transport_modes
+                mode_capacities[m] *= scale
+            end
+            total_mode_capacity = sum(mode_capacities[m] for m in transport_modes)
+        end
+        if total_facility_capacity < total_demand
+            scale = 1.05 * total_demand / max(total_facility_capacity, eps())
+            for f in 1:n_facilities
+                capacities[f] *= scale
+            end
+            total_facility_capacity = sum(values(capacities))
+        end
+    elseif solution_status == :infeasible
+        # Induce realistic infeasibility via transport capacity shortfall
+        # Choose a shortage ratio between 70% and 95% of total demand to vary difficulty
+        desired_ratio = rand(Uniform(0.7, 0.95))
+        desired_total_mode_capacity = desired_ratio * total_demand
+        if total_mode_capacity <= desired_total_mode_capacity
+            # If already too small, keep as is; else scale down
+            # If it is already above, scale down proportionally
+        else
+            scale = desired_total_mode_capacity / total_mode_capacity
+            for m in transport_modes
+                mode_capacities[m] *= scale
+            end
+            total_mode_capacity = sum(mode_capacities[m] for m in transport_modes)
+        end
+        # It's okay if some customers also have sparse connectivity; we keep costs/structure
+    end
     
     # Store generated data in params
     actual_params[:facilities] = collect(1:n_facilities)
@@ -270,6 +356,7 @@ function generate_supply_chain_problem(params::Dict=Dict(); seed::Int=0)
     actual_params[:transport_costs] = transport_costs
     actual_params[:mode_capacities] = mode_capacities
     actual_params[:total_demand] = total_demand
+    actual_params[:solution_status] = solution_status
     
     # Create model
     model = Model()
