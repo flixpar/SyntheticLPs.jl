@@ -1,6 +1,6 @@
-# LP Generation
+# SyntheticLPs.jl
 
-A standardized framework for generating synthetic linear programming (LP) problem instances.
+A standardized framework for generating synthetic linear programming (LP) problem instances. The goal is to generate problems that are highly realistic and can be used to test and develop LP solvers.
 
 ## Overview
 
@@ -8,13 +8,13 @@ This package provides:
 
 - A unified interface for generating various types of LP problems
 - Parameter sampling capabilities to generate realistic problem instances
-- **Target variable count generation** - specify approximate number of variables
+- Target variable count generation - specify approximate number of variables
 - Size-based generation (small, medium, large) for backward compatibility
 - Easy extensibility for new problem types
 
 ## Problem Types
 
-The package includes generators for 21 common LP problem types, all fully migrated to the standardized interface:
+The package includes generators for 21 common LP problem types, all unified with a standardized interface:
 
 - Transportation
 - Diet Problem
@@ -66,7 +66,7 @@ optimize!(model)
 solution_summary(model)
 ```
 
-### Target Variable Count Generation (Recommended)
+### Target Variable Count Generation
 
 ```julia
 # Sample parameters targeting approximately 100 variables
@@ -82,16 +82,6 @@ for target_vars in [10, 50, 200, 500]
     model, params = generate_problem(:knapsack, params)
     println("Target: $target_vars, Actual: $(num_variables(model))")
 end
-```
-
-### Legacy Size-based Generation
-
-```julia
-# Sample realistic parameters for a problem type (backward compatibility)
-params = sample_parameters(:transportation, :medium)  # :small, :medium, or :large
-
-# Generate a problem with sampled parameters
-model, params = generate_problem(:transportation, params)
 ```
 
 ### Random Problem Generation
@@ -191,5 +181,4 @@ Pkg.test()
 The test suite validates:
 - All problem generators work correctly
 - Target variable counts are achieved within ±10% tolerance
-- Both new target-based and legacy size-based APIs work
 - Generated problems are valid and can be solved
