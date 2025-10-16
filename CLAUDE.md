@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Context
+
+This package is a standardized framework for generating synthetic linear programming (LP) problem instances. The goal is to generate problems that are highly realistic and can be used to test and develop LP solvers.
+
+## General Instructions
+
+- Make sure to explore the relevant code carefully before making any plans or changes.
+- Update the changelog file after making any significant changes. Organize the changelog with sections per date, and keep track of the commit hash and the current datetime for each set of changes. Include high level summaries of the changes as well as specific details with more granular information than commit messages.
+- This project is under active development and is not yet stable, so never worry about making breaking changes or backwards compatibility.
+- When making major changes, always update the README.md and CLAUDE.md files to reflect the changes.
+- This package is intended for research use only, so it does not need to be extremely robust and handle all edge cases.
+
 ## Commands
 
 ### Testing
@@ -9,16 +21,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Run the comprehensive test suite:
 ```bash
 julia --project=@. test/runtests.jl
-```
-
-Quick verification of all problem generators:
-```bash
-julia --project=@. test_problem_types.jl
-```
-
-Verify problem generator interface compliance:
-```bash
-julia --project=@. verify_interface.jl
 ```
 
 ### Problem Generation
@@ -43,11 +45,6 @@ Generate a random problem with ~200 variables:
 julia --project=@. generate_problem.jl random 200
 ```
 
-Legacy size-based generation (backward compatibility):
-```bash
-julia --project=@. generate_problem.jl transportation medium output.mps
-```
-
 ### Development
 
 Start Julia REPL with project loaded:
@@ -57,7 +54,7 @@ julia --project=@.
 
 ## Architecture
 
-LPGeneration is a standardized framework for generating 21+ types of realistic linear programming problems. All problem generators follow a consistent interface pattern.
+LPGeneration is a standardized framework for generating 20+ types of realistic linear programming problems. All problem generators follow a consistent interface pattern.
 
 ### Core Components
 
@@ -115,12 +112,10 @@ register_problem(:type, generate_fn, sample_fn, "Description")
 
 ### Available Problem Types
 
-The system includes 21 problem types covering major LP problem classes:
+The system includes 20+ problem types covering major LP problem classes:
 - Transportation, Diet, Knapsack, Portfolio, Network Flow
 - Production Planning, Assignment, Blending, Facility Location
 - Energy, Inventory, Scheduling, Supply Chain, and others
-
-Each problem type supports three size categories (small/medium/large) with realistic parameter ranges.
 
 ### Testing Strategy
 
@@ -138,11 +133,3 @@ Each problem type supports three size categories (small/medium/large) with reali
 3. Call `register_problem()` to register with the system
 4. Add include statement to `src/LPGeneration.jl`
 5. Run tests to verify implementation
-
-Use `src/problem_types/template.jl` as a starting point.
-
-## General Instructions
-
-- Make sure to explore the relevant code carefully before making any plans or changes.
-- Update the changelog file after making any significant changes. Organize the changelog with sections per date, and keep track of the commit hash and the current datetime for each set of changes. Include high level summaries of the changes as well as specific details with more granular information than commit messages.
-- This project is under active development and is not yet stable, so never worry about breaking changes or backwards compatibility.
