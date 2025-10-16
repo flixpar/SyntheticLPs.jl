@@ -1,4 +1,4 @@
-name = "LPGeneration"
+name = "SyntheticLPs"
 uuid = "6c18d9e4-3017-4cc6-8f05-9e4aefa327ea"
 authors = ["Felix Parker <flixpar@gmail.com>"]
 version = "0.1.0"

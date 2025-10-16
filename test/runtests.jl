@@ -2,7 +2,7 @@ using Test
 using JuMP
 using Random
 
-using LPGeneration
+using SyntheticLPs
 
 """
     test_problem_generator(problem_type::Symbol)
@@ -73,7 +73,7 @@ function test_problem_generator(problem_type::Symbol)
 end
 
 # Run tests for all registered problem types
-@testset "LPGeneration" begin
+@testset "SyntheticLPs" begin
     # Test core functionality
     @testset "Core Functionality" begin
         # Test listing problem types

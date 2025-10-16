@@ -1,4 +1,4 @@
-module LPGeneration
+module SyntheticLPs
 
 using JuMP
 using Random

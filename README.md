@@ -43,7 +43,7 @@ The package includes generators for 21 common LP problem types, all unified with
 ### Basic Usage
 
 ```julia
-using LPGeneration
+using SyntheticLPs
 using JuMP
 using Clp  # or any other LP solver
 

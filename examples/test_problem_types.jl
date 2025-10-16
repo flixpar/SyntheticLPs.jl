@@ -1,4 +1,4 @@
-using LPGeneration
+using SyntheticLPs
 using JuMP
 
 

@@ -1,9 +1,9 @@
-# Example usage of LPGeneration
+# Example usage of SyntheticLPs
 
 using JuMP
 using Clp
-# include("../LPGeneration.jl")
-using LPGeneration
+
+using SyntheticLPs
 
 # List available problem types
 problem_types = list_problem_types()

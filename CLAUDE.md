@@ -54,11 +54,11 @@ julia --project=@.
 
 ## Architecture
 
-LPGeneration is a standardized framework for generating 20+ types of realistic linear programming problems. All problem generators follow a consistent interface pattern.
+SyntheticLPs is a standardized framework for generating 20+ types of realistic linear programming problems. All problem generators follow a consistent interface pattern.
 
 ### Core Components
 
-**Main Module** (`src/LPGeneration.jl`):
+**Main Module** (`src/SyntheticLPs.jl`):
 - Registration system for problem types using `LP_REGISTRY`
 - Unified interface functions: `generate_problem()`, `sample_parameters()`, `list_problem_types()`
 - Random problem generation with `generate_random_problem()`
@@ -131,5 +131,5 @@ The system includes 20+ problem types covering major LP problem classes:
 1. Create new file in `src/problem_types/your_problem.jl`
 2. Implement generator and parameter sampling functions following the pattern
 3. Call `register_problem()` to register with the system
-4. Add include statement to `src/LPGeneration.jl`
+4. Add include statement to `src/SyntheticLPs.jl`
 5. Run tests to verify implementation

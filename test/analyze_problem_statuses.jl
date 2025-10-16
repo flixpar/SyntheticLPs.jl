@@ -1,4 +1,4 @@
-# Analyze distribution of solver statuses across all LPGeneration problem types.
+# Analyze distribution of solver statuses across all SyntheticLPs problem types.
 #
 # This script generates multiple instances per problem type, solves them with
 # Gurobi, and reports the distribution across {feasible, infeasible, unbounded, unknown}.
@@ -17,7 +17,7 @@
 # - Requires Gurobi.jl and a working Gurobi license.
 # - By default, DualReductions is disabled to reduce INFEASIBLE_OR_UNBOUNDED cases.
 
-using LPGeneration
+using SyntheticLPs
 
 using JuMP
 import MathOptInterface
@@ -108,7 +108,7 @@ function classify_status(model::Model)::Symbol
 end
 
 function print_header()
-    println("Analyzing LPGeneration problem status distribution with Gurobi")
+    println("Analyzing SyntheticLPs problem status distribution with Gurobi")
     println("Started at: $(Dates.format(now(), DateFormat("yyyymmdd-HH:MM:SS")))")
 end
 

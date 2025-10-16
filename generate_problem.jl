@@ -1,11 +1,11 @@
-# Script to generate LP problems using LPGeneration module
+# Script to generate LP problems using SyntheticLPs module
 # Usage: 
 #   julia generate_problem.jl [problem_type] [target_variables] [output_file]
 #
 # Example:
 #   julia --project=@. generate_problem.jl transportation 100 problem.mps
 
-using LPGeneration
+using SyntheticLPs
 
 using JuMP
 using HiGHS
