@@ -19,6 +19,7 @@ Generate an energy generation mix optimization problem instance using sophistica
   - `:renewable_cost_factor`: Cost multiplier for renewable vs conventional sources (default: 1.2)
   - `:capacity_margin`: Required capacity margin over peak demand (default: 1.3)
   - `:emission_limit`: Maximum emissions per MWh (default: 0.5)
+  - `:solution_status`: Solution status (:feasible, :infeasible, or :all) (default: :feasible)
 - `seed`: Random seed for reproducibility (default: 0)
 
 # Returns
@@ -49,6 +50,7 @@ function generate_energy_problem(params::Dict=Dict(); seed::Int=0)
     renewable_cost_factor = get(params, :renewable_cost_factor, 1.2)
     capacity_margin = get(params, :capacity_margin, 1.3)
     emission_limit = get(params, :emission_limit, 0.5)
+    solution_status = get(params, :solution_status, :feasible)
     
     # Save actual parameters used
     actual_params = Dict{Symbol, Any}(
@@ -60,7 +62,8 @@ function generate_energy_problem(params::Dict=Dict(); seed::Int=0)
         :base_generation_cost => base_generation_cost,
         :renewable_cost_factor => renewable_cost_factor,
         :capacity_margin => capacity_margin,
-        :emission_limit => emission_limit
+        :emission_limit => emission_limit,
+        :solution_status => solution_status
     )
     
     # Define source types and their characteristics
@@ -259,6 +262,131 @@ function generate_energy_problem(params::Dict=Dict(); seed::Int=0)
     actual_params[:demands] = demands
     actual_params[:emission_limits] = emission_limits
     
+    # Determine the actual solution status
+    actual_status = solution_status
+    if solution_status == :all
+        # Use realistic distribution: 70% feasible, 30% infeasible
+        actual_status = rand() < 0.7 ? :feasible : :infeasible
+    end
+    
+    # Apply solution status modifications
+    scenario_type = ""
+    if actual_status == :infeasible
+        scenario = rand(1:4)
+        
+        if scenario == 1
+            # Strategy 1: Capacity Crisis (25% chance)
+            # Simulate grid stress during extreme weather events
+            scenario_type = "capacity_crisis"
+            
+            # Reduce total capacity to 60-80% of peak demand - more aggressive
+            reduction_factor = 0.6 + rand() * 0.2
+            target_total_capacity = peak_demand * reduction_factor
+            current_total_capacity = sum(values(capacities))
+            capacity_scale = target_total_capacity / current_total_capacity
+            
+            for source in sources
+                capacities[source] *= capacity_scale
+            end
+            
+        elseif scenario == 2
+            # Strategy 2: Renewable Intermittency Conflict (25% chance)
+            # High renewable targets but limited renewable capacity
+            scenario_type = "renewable_intermittency_conflict"
+            
+            # Set very high renewable fraction requirement (70-90%)
+            renewable_fraction = 0.7 + rand() * 0.2
+            actual_params[:renewable_fraction] = renewable_fraction
+            
+            # Severely limit renewable capacity while keeping conventional capacity normal
+            renewable_sources = [s for s in sources if emission_limits[s] == 0.0]
+            total_renewable_capacity = sum(capacities[s] for s in renewable_sources)
+            
+            # Ensure renewable capacity can't meet the renewable requirement
+            # Set renewable capacity to be able to meet only 40-60% of required renewable generation
+            required_renewable_capacity = peak_demand * renewable_fraction
+            target_renewable_capacity = required_renewable_capacity * (0.4 + rand() * 0.2)
+            
+            if total_renewable_capacity > 0
+                renewable_scale = target_renewable_capacity / total_renewable_capacity
+                for source in renewable_sources
+                    capacities[source] *= renewable_scale
+                end
+            end
+            
+        elseif scenario == 3
+            # Strategy 3: Emission Impossibility (25% chance)
+            # Ultra-strict emission limits requiring 90%+ clean energy
+            scenario_type = "emission_impossibility"
+            
+            # Set extremely strict emission limits (near zero)
+            new_emission_limit = emission_limit * (0.01 + rand() * 0.05)  # 1-6% of original (extremely strict)
+            actual_params[:emission_limit] = new_emission_limit
+            
+            # Update emission limits for all fossil fuels to be extremely low
+            for (name, is_renewable, _, _, _) in selected_sources
+                if !is_renewable && name != "nuclear"
+                    emission_limits[name] = new_emission_limit
+                end
+            end
+            
+            # Ensure renewable+nuclear capacity is insufficient to meet demand
+            clean_sources = [s for s in sources if emission_limits[s] == 0.0]
+            total_clean_capacity = sum(capacities[s] for s in clean_sources)
+            
+            # Set clean capacity to only meet 50-70% of peak demand, making it impossible to satisfy both demand and emission constraints
+            target_clean_capacity = peak_demand * (0.5 + rand() * 0.2)
+            
+            if total_clean_capacity > target_clean_capacity
+                clean_scale = target_clean_capacity / total_clean_capacity
+                for source in clean_sources
+                    capacities[source] *= clean_scale
+                end
+            end
+            
+        else  # scenario == 4
+            # Strategy 4: Demand Surge Overload (25% chance)
+            # Create demand spikes that exceed total capacity
+            scenario_type = "demand_surge_overload"
+            
+            # Calculate current total capacity before surge
+            current_total_capacity = sum(values(capacities))
+            
+            # Increase demands so that peak demand exceeds total capacity
+            # Target: peak demand should be 110-130% of total capacity
+            surge_factor = (current_total_capacity * (1.1 + rand() * 0.2)) / peak_demand
+            
+            for i in 1:length(demands)
+                demands[i] *= surge_factor
+            end
+            
+            # Update peak demand in params
+            peak_demand *= surge_factor
+            actual_params[:peak_demand] = peak_demand
+        end
+    else
+        # For feasible mode, ensure we have sufficient capacity
+        scenario_type = "feasible_baseline"
+        
+        # Ensure total capacity meets demand with proper margin
+        total_capacity = sum(values(capacities))
+        required_capacity = peak_demand * capacity_margin
+        
+        if total_capacity < required_capacity
+            scale_factor = required_capacity / total_capacity
+            for source in sources
+                capacities[source] *= scale_factor
+            end
+        end
+    end
+    
+    # Update stored data with any modifications
+    actual_params[:capacities] = capacities
+    actual_params[:demands] = demands
+    actual_params[:emission_limits] = emission_limits
+    actual_params[:scenario_type] = scenario_type
+    actual_params[:actual_solution_status] = actual_status
+    
     # Build the model
     model = Model()
     
@@ -425,6 +553,9 @@ function sample_energy_parameters(size::Symbol=:medium; seed::Int=0)
         params[:emission_limit] = rand(Beta(4, 6))  # Mean ~0.4, stricter emissions limits
     end
     
+    # Set default solution status
+    params[:solution_status] = :feasible
+    
     return params
 end
 
@@ -530,6 +661,9 @@ function sample_energy_parameters(target_variables::Int; seed::Int=0)
         params[:capacity_margin] = max(1.05, min(1.3, rand(Normal(1.15, 0.04))))  # Lower margins
         params[:emission_limit] = rand(Beta(4, 6))  # Mean ~0.4, stricter emissions limits
     end
+    
+    # Set default solution status
+    params[:solution_status] = :feasible
     
     return params
 end
