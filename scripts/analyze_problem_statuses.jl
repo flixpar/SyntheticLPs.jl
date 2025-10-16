@@ -4,18 +4,23 @@
 # Gurobi, and reports the distribution across {feasible, infeasible, unbounded, unknown}.
 #
 # Usage examples:
-#   julia analyze_problem_statuses.jl                      # defaults
-#   julia analyze_problem_statuses.jl --samples=100 --target=200
-#   julia analyze_problem_statuses.jl --samples 50 --target-min=100 --target-max=400
-#   julia analyze_problem_statuses.jl --samples 50 --size medium
-#   julia analyze_problem_statuses.jl --timeout=5 --csv results.csv
-#   julia analyze_problem_statuses.jl --samples 50 --json results.json
-#   julia analyze_problem_statuses.jl --csv results.csv --json results.json
-#   julia analyze_problem_statuses.jl --types transportation,diet_problem --samples=200
+#   julia scripts/analyze_problem_statuses.jl                      # defaults
+#   julia scripts/analyze_problem_statuses.jl --samples=100 --target=200
+#   julia scripts/analyze_problem_statuses.jl --samples 50 --target-min=100 --target-max=400
+#   julia scripts/analyze_problem_statuses.jl --samples 50 --size medium
+#   julia scripts/analyze_problem_statuses.jl --timeout=5 --csv results.csv
+#   julia scripts/analyze_problem_statuses.jl --samples 50 --json results.json
+#   julia scripts/analyze_problem_statuses.jl --csv results.csv --json results.json
+#   julia scripts/analyze_problem_statuses.jl --types transportation,diet_problem --samples=200
 #
 # Notes:
 # - Requires Gurobi.jl and a working Gurobi license.
 # - By default, DualReductions is disabled to reduce INFEASIBLE_OR_UNBOUNDED cases.
+
+using Pkg
+Pkg.activate(@__DIR__)
+Pkg.develop(path = dirname(@__DIR__))
+Pkg.instantiate()
 
 using SyntheticLPs
 
