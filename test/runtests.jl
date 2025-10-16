@@ -2,10 +2,6 @@ using Test
 using JuMP
 using Random
 
-# Add the project directory to the load path
-push!(LOAD_PATH, joinpath(dirname(@__DIR__), "src"))
-
-# Import the module
 using LPGeneration
 
 """

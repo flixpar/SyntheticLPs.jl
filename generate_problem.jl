@@ -1,18 +1,12 @@
-#!/usr/bin/env julia
-
 # Script to generate LP problems using LPGeneration module
 # Usage: 
 #   julia generate_problem.jl [problem_type] [target_variables] [output_file]
-#   julia generate_problem.jl [problem_type] [size] [output_file]  # Legacy support
 #
-# Examples:
-#   julia generate_problem.jl transportation 100 problem.mps
-#   julia generate_problem.jl transportation medium problem.mps  # Legacy
-
-using Pkg
-Pkg.activate(@__DIR__)
+# Example:
+#   julia --project=@. generate_problem.jl transportation 100 problem.mps
 
 using LPGeneration
+
 using JuMP
 using HiGHS
 
