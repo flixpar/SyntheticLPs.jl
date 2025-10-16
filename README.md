@@ -182,3 +182,15 @@ The test suite validates:
 - All problem generators work correctly
 - Target variable counts are achieved within ±10% tolerance
 - Generated problems are valid and can be solved
+
+
+## License
+
+SyntheticLPs.jl  
+Copyright (C) 2025  Felix Parker
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Affero General Public License for more details.
+
+The full text of the license is available in the [LICENSE](LICENSE) file.
