@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added - Multi-Commodity Flow Problem Generator
 
-**Commit Hash:** TBD (pending commit)
+**Commit Hash:** e391e7c
 **Date/Time:** 2025-11-05
 
 #### High-Level Summary
