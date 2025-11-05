@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added - Telecommunication Network Design Problem Generator
 
-**Commit**: TBD
+**Commit**: d8921a490f594b01e2fd14c72047186071193b7d
 **Date**: 2025-11-05
 
 #### High-Level Summary
