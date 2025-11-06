@@ -14,13 +14,14 @@ This package provides:
 
 ## Problem Types
 
-The package includes generators for 21 common LP problem types, all unified with a standardized interface:
+The package includes generators for many common LP problem types, all unified with a standardized interface:
 
 - Transportation
 - Diet Problem
 - Knapsack
 - Portfolio Optimization
 - Network Flow
+- Multi-Commodity Flow
 - Production Planning
 - Assignment
 - Blending
@@ -37,6 +38,7 @@ The package includes generators for 21 common LP problem types, all unified with
 - Resource Allocation
 - Scheduling
 - Supply Chain
+- Crop Planning
 
 ## Usage
 
