@@ -18,9 +18,17 @@ This package is a standardized framework for generating synthetic linear program
 
 ### Testing
 
-Run the comprehensive test suite:
+Run the standard test suite (quick smoke tests):
 ```bash
 julia --project=@. test/runtests.jl
+```
+
+Run comprehensive tests with feasibility verification (~50 instances per problem type):
+```bash
+julia --project=@. test_instances.jl                    # All problem types
+julia --project=@. test_instances.jl transportation     # Specific type
+julia --project=@. test_instances.jl --verbose          # Verbose output
+COMPREHENSIVE_TESTS=true julia --project=@. test/runtests.jl  # Alternative
 ```
 
 ### Problem Generation
@@ -119,12 +127,27 @@ The system includes 20+ problem types covering major LP problem classes:
 
 ### Testing Strategy
 
-- `test/runtests.jl`: Comprehensive test suite verifying all problem generators
+**Standard Tests** (`test/runtests.jl`):
+- Quick smoke tests for all problem generators
 - Tests parameter sampling, model generation, and reproducibility
 - Verifies models have proper structure (variables, constraints, objective)
 - Tests both target variable count and legacy size-based parameter sampling
-- Validates variable count accuracy (within ±10% tolerance for target-based generation)
+- Validates variable count accuracy (within ±15% tolerance)
 - Each generator tested with multiple target variable counts and fixed seeds
+
+**Comprehensive Tests** (`test/test_problem_instances.jl`, accessed via `test_instances.jl`):
+- ~50 problem instances per problem type across varied target sizes
+- Phase 1: Basic generation tests (~40 instances without feasibility checks)
+  - Successful generation (no errors)
+  - Variable count within 15% of target
+  - Tests with target sizes: 50, 100, 250, 500, 1000 variables
+- Phase 2: Feasibility tests (~20 instances with HiGHS solver verification)
+  - Tests `solution_status` parameter when supported by problem type
+  - Verifies `:feasible` problems are actually feasible
+  - Verifies `:infeasible` problems are actually infeasible
+  - Uses HiGHS solver to check feasibility status
+- Supports testing specific problem types via command line
+- Detailed statistics and error reporting
 
 ## Adding New Problem Types
 

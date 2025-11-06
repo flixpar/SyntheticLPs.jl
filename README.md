@@ -171,17 +171,47 @@ julia generate_problem.jl list
 
 ## Testing
 
-Run the test suite to verify all problem generators:
+### Quick Tests (Standard)
 
-```julia
-using Pkg; Pkg.activate(".")
-Pkg.test()
+Run the standard test suite for quick smoke tests:
+
+```bash
+julia --project=@. test/runtests.jl
 ```
 
-The test suite validates:
+The standard test suite validates:
 - All problem generators work correctly
-- Target variable counts are achieved within ±10% tolerance
-- Generated problems are valid and can be solved
+- Target variable counts are achieved within ±15% tolerance
+- Generated problems have valid structure (variables, constraints, objective)
+- Reproducibility with fixed seeds
+
+### Comprehensive Tests
+
+For thorough testing including feasibility verification (~50 instances per problem type):
+
+```bash
+# Test all problem types
+julia --project=@. test_instances.jl
+
+# Test specific problem type(s)
+julia --project=@. test_instances.jl transportation
+julia --project=@. test_instances.jl transportation knapsack portfolio
+
+# Verbose output
+julia --project=@. test_instances.jl --verbose
+julia --project=@. test_instances.jl -v transportation
+
+# Alternative: Use environment variable
+COMPREHENSIVE_TESTS=true julia --project=@. test/runtests.jl
+```
+
+The comprehensive test suite validates:
+- Problem generation succeeds without errors (~40 instances)
+- Variable count is within 15% of target
+- `solution_status` parameter is obeyed when specified (~20 instances)
+  - `:feasible` problems are verified as feasible by HiGHS solver
+  - `:infeasible` problems are verified as infeasible by HiGHS solver
+- Tests run with varied target sizes (50, 100, 250, 500, 1000 variables)
 
 
 ## License

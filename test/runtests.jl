@@ -4,6 +4,31 @@ using Random
 
 using SyntheticLPs
 
+# Check if comprehensive tests should be run
+# Set COMPREHENSIVE_TESTS=true to run the comprehensive test suite
+const USE_COMPREHENSIVE = get(ENV, "COMPREHENSIVE_TESTS", "false") == "true"
+
+if USE_COMPREHENSIVE
+    println("""
+    ═══════════════════════════════════════════════════════════════════════════
+    Running COMPREHENSIVE test suite (~50 instances per problem type)
+    This will take longer but provides thorough testing including feasibility.
+    ═══════════════════════════════════════════════════════════════════════════
+    """)
+    include("test_problem_instances.jl")
+    exit(0)  # Exit after running comprehensive tests
+end
+
+println("""
+═══════════════════════════════════════════════════════════════════════════
+Running STANDARD test suite (quick smoke tests)
+For comprehensive testing with feasibility checks, run:
+    COMPREHENSIVE_TESTS=true julia --project=@. test/runtests.jl
+Or use the wrapper script:
+    julia --project=@. test_instances.jl [problem_type]
+═══════════════════════════════════════════════════════════════════════════
+""")
+
 """
     test_problem_generator(problem_type::Symbol)
 
