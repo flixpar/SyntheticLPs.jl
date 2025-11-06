@@ -276,6 +276,20 @@ function generate_crop_planning_problem(params::Dict=Dict(); seed::Int=0)
         end
     end
 
+    # Ensure minimum area requirements do not violate market demand limits
+    for i in 1:n_crops
+        if min_area_per_crop[i] > market_demand_limits[i]
+            min_area_per_crop[i] = market_demand_limits[i]
+        end
+    end
+
+    # Scale minimum areas if their total exceeds available land
+    min_total_area = sum(min_area_per_crop)
+    if min_total_area > total_land && min_total_area > 0
+        scaling_factor = total_land / min_total_area
+        min_area_per_crop .*= scaling_factor
+    end
+
     # Calculate resource requirements for a feasible baseline allocation
     # Use profit-weighted allocation as baseline
     baseline_allocation = zeros(n_crops)
@@ -304,12 +318,10 @@ function generate_crop_planning_problem(params::Dict=Dict(); seed::Int=0)
         end
     end
 
-    # Renormalize to exactly total_land
+    # No renormalization: baseline must respect market limits; ensure nonzero fallback
     current_total = sum(baseline_allocation)
-    if current_total > 0
-        baseline_allocation .*= (total_land / current_total)
-    else
-        baseline_allocation .= total_land / n_crops
+    if current_total == 0.0
+        baseline_allocation .= min.(total_land / n_crops, market_demand_limits)
     end
 
     # Calculate resource usage for baseline allocation
