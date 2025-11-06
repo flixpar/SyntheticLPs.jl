@@ -236,6 +236,7 @@ end
 include("problem_types/airline_crew.jl")
 include("problem_types/assignment.jl")
 include("problem_types/blending.jl")
+include("problem_types/crop_planning.jl")
 include("problem_types/cutting_stock.jl")
 include("problem_types/diet_problem.jl")
 include("problem_types/energy.jl")
