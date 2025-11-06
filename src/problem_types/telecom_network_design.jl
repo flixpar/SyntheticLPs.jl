@@ -33,17 +33,17 @@ capacity constraints. It is a multicommodity network design problem with discret
 
 # Model Details
 Variables:
-  - y[arc]: Binary variable, 1 if link is installed on arc
-  - f[k,arc]: Continuous flow variable for commodity k on arc
+    - y[arc]: Binary variable, 1 if link is installed on arc
+    - f[k,(i,j)]: Continuous flow variable for commodity k on directed arc (i → j)
 
 Objective:
-  - Minimize: installation costs + routing costs
+    - Minimize: installation costs + routing costs
 
 Constraints:
-  - Flow conservation: at each node, inflow = outflow (except source/sink)
-  - Capacity: total flow on link ≤ installed capacity * y[arc]
-  - Demand satisfaction: each commodity routed from source to destination
-  - Budget: total installation cost ≤ budget
+    - Flow conservation: at each node, inflow = outflow (except source/sink)
+    - Capacity: total flow in both directions on a link ≤ installed capacity * y[arc]
+    - Demand satisfaction: each commodity routed from source to destination
+    - Budget: total installation cost ≤ budget
 """
 function generate_telecom_network_design_problem(params::Dict=Dict(); seed::Int=0)
     # Set random seed
@@ -70,6 +70,8 @@ function generate_telecom_network_design_problem(params::Dict=Dict(); seed::Int=
         error("Unknown solution_status=$(solution_status). Use :feasible, :infeasible, or :all")
     end
 
+    @assert length(capacity_modules) > 1 "At least two capacity modules are required."
+
     # Save actual parameters used
     actual_params = Dict{Symbol, Any}(
         :n_nodes => n_nodes,
@@ -92,14 +94,25 @@ function generate_telecom_network_design_problem(params::Dict=Dict(); seed::Int=
 
     # Generate network topology (arcs) based on proximity and connectivity
     arcs = generate_telecom_topology(n_nodes, n_arcs, node_locations)
+    unique!(arcs)
     actual_params[:arcs] = arcs
 
-    # Calculate distances for each arc
+    # Construct directed arcs to represent both orientations of each physical link
+    directed_arcs = Vector{Tuple{Int,Int}}()
+    for (i, j) in arcs
+        push!(directed_arcs, (i, j))
+        push!(directed_arcs, (j, i))
+    end
+    actual_params[:directed_arcs] = directed_arcs
+
+    # Calculate distances for each physical arc
     distances = Dict{Tuple{Int,Int}, Float64}()
     for arc in arcs
         i, j = arc
         loc_i, loc_j = node_locations[i], node_locations[j]
-        distances[arc] = sqrt((loc_i[1] - loc_j[1])^2 + (loc_i[2] - loc_j[2])^2)
+        dist = sqrt((loc_i[1] - loc_j[1])^2 + (loc_i[2] - loc_j[2])^2)
+        distances[(i, j)] = dist
+        distances[(j, i)] = dist
     end
     actual_params[:distances] = distances
 
@@ -127,12 +140,27 @@ function generate_telecom_network_design_problem(params::Dict=Dict(); seed::Int=
     actual_params[:installation_costs] = installation_costs
     actual_params[:link_capacities] = link_capacities
 
-    # Generate flow costs (proportional to distance)
+    # Generate flow costs (proportional to distance) for both directions
     flow_costs = Dict{Tuple{Int,Int}, Float64}()
     for arc in arcs
-        flow_costs[arc] = distances[arc] * flow_cost_per_unit * (0.9 + 0.2 * rand())
+        i, j = arc
+        base_cost = distances[arc] * flow_cost_per_unit * (0.9 + 0.2 * rand())
+        flow_costs[(i, j)] = base_cost
+        flow_costs[(j, i)] = base_cost
     end
     actual_params[:flow_costs] = flow_costs
+
+    # Build adjacency lists for flow conservation
+    outgoing_arcs = Dict{Int, Vector{Tuple{Int,Int}}}()
+    incoming_arcs = Dict{Int, Vector{Tuple{Int,Int}}}()
+    for node in 1:n_nodes
+        outgoing_arcs[node] = Tuple{Int,Int}[]
+        incoming_arcs[node] = Tuple{Int,Int}[]
+    end
+    for arc in directed_arcs
+        push!(outgoing_arcs[arc[1]], arc)
+        push!(incoming_arcs[arc[2]], arc)
+    end
 
     # Generate commodities (traffic demands) with realistic patterns
     commodities = generate_traffic_commodities(n_nodes, n_commodities, demand_range)
@@ -177,6 +205,7 @@ function generate_telecom_network_design_problem(params::Dict=Dict(); seed::Int=
         remaining_nodes = Set(2:n_nodes)
 
         while !isempty(remaining_nodes) && !isempty(arc_ratios)
+            found_arc = false
             for (idx, (arc, _)) in enumerate(arc_ratios)
                 i, j = arc
                 if (i in nodes_connected && j in remaining_nodes) || (j in nodes_connected && i in remaining_nodes)
@@ -187,8 +216,12 @@ function generate_telecom_network_design_problem(params::Dict=Dict(); seed::Int=
                     delete!(remaining_nodes, i)
                     delete!(remaining_nodes, j)
                     deleteat!(arc_ratios, idx)
+                    found_arc = true
                     break
                 end
+            end
+            if !found_arc
+                break  # No connecting arc found, exit to avoid infinite loop
             end
         end
 
@@ -244,12 +277,12 @@ function generate_telecom_network_design_problem(params::Dict=Dict(); seed::Int=
 
     # Decision variables
     @variable(model, y[arc in arcs], Bin)  # 1 if link is installed
-    @variable(model, f[k=1:n_commodities, arc in arcs] >= 0)  # flow of commodity k on arc
+    @variable(model, f[k=1:n_commodities, arc in directed_arcs] >= 0)  # flow of commodity k on directed arc
 
     # Objective: Minimize total cost (installation + routing)
     @objective(model, Min,
         sum(installation_costs[arc] * y[arc] for arc in arcs) +
-        sum(flow_costs[arc] * sum(f[k, arc] for k in 1:n_commodities) for arc in arcs)
+        sum(flow_costs[arc] * sum(f[k, arc] for k in 1:n_commodities) for arc in directed_arcs)
     )
 
     # Flow conservation constraints for each commodity at each node
@@ -260,10 +293,9 @@ function generate_telecom_network_design_problem(params::Dict=Dict(); seed::Int=
         demand = commodity[:demand]
 
         for node in 1:n_nodes
-            # Arcs leaving the node
-            out_arcs = [arc for arc in arcs if arc[1] == node]
-            # Arcs entering the node
-            in_arcs = [arc for arc in arcs if arc[2] == node]
+            # Arcs leaving and entering the node (directed)
+            out_arcs = outgoing_arcs[node]
+            in_arcs = incoming_arcs[node]
 
             # Flow balance
             out_flow = isempty(out_arcs) ? 0.0 : sum(f[k, arc] for arc in out_arcs)
@@ -279,10 +311,12 @@ function generate_telecom_network_design_problem(params::Dict=Dict(); seed::Int=
         end
     end
 
-    # Capacity constraints: total flow on each arc ≤ capacity if installed
+    # Capacity constraints: total flow on each physical link (both directions) ≤ capacity if installed
     for arc in arcs
+        forward_arc = arc
+        reverse_arc = (arc[2], arc[1])
         @constraint(model,
-            sum(f[k, arc] for k in 1:n_commodities) <= link_capacities[arc] * y[arc]
+            sum(f[k, forward_arc] + f[k, reverse_arc] for k in 1:n_commodities) <= link_capacities[arc] * y[arc]
         )
     end
 
@@ -356,9 +390,11 @@ function generate_telecom_topology(n_nodes::Int, n_arcs::Int, locations::Vector{
         end
 
         if best_arc !== nothing
-            push!(arcs, best_arc)
-            push!(nodes_connected, best_arc[2])
-            delete!(remaining_nodes, best_arc[2])
+            i, j = best_arc
+            canonical_arc = i < j ? (i, j) : (j, i)
+            push!(arcs, canonical_arc)
+            push!(nodes_connected, i, j)
+            delete!(remaining_nodes, j)
         else
             break
         end
@@ -455,7 +491,7 @@ approximately the specified number of variables.
 - Dictionary of sampled parameters
 
 # Details
-For telecom network design: target_variables = n_arcs × (n_commodities + 1)
+For telecom network design: target_variables = n_arcs × (2 × n_commodities + 1)
 We optimize for realistic n_arcs and n_commodities values that yield the target.
 """
 function sample_telecom_network_design_parameters(target_variables::Int; seed::Int=0)
@@ -463,7 +499,7 @@ function sample_telecom_network_design_parameters(target_variables::Int; seed::I
 
     params = Dict{Symbol, Any}()
 
-    # Target: n_arcs × (n_commodities + 1) = target_variables
+    # Target: n_arcs × (2 × n_commodities + 1) = target_variables
     # We need to find realistic values of n_arcs and n_commodities
 
     # Set realistic ranges based on problem scale
@@ -501,16 +537,16 @@ function sample_telecom_network_design_parameters(target_variables::Int; seed::I
     # Search for optimal n_arcs and n_commodities
     for n_arcs in min_arcs:max_arcs
         # Given n_arcs, solve for n_commodities
-        # target_variables = n_arcs × (n_commodities + 1)
-        # n_commodities = (target_variables / n_arcs) - 1
-        n_commodities_exact = (target_variables / n_arcs) - 1
+        # target_variables = n_arcs × (2 × n_commodities + 1)
+        # n_commodities = ((target_variables / n_arcs) - 1) / 2
+        n_commodities_exact = ((target_variables / n_arcs) - 1) / 2
 
         # Check if this gives reasonable n_commodities
         if n_commodities_exact >= min_commodities && n_commodities_exact <= max_commodities
-            n_commodities = round(Int, n_commodities_exact)
+            n_commodities = clamp(round(Int, n_commodities_exact), min_commodities, max_commodities)
 
             # Calculate actual variables with this combination
-            actual_vars = n_arcs * (n_commodities + 1)
+            actual_vars = n_arcs * (2 * n_commodities + 1)
             error = abs(actual_vars - target_variables) / target_variables
 
             if error < best_error
@@ -525,12 +561,13 @@ function sample_telecom_network_design_parameters(target_variables::Int; seed::I
     if best_error > 0.1
         # Use square root heuristic as fallback
         # Assume n_commodities ≈ n_arcs / 2 (typical ratio)
-        # target_variables ≈ n_arcs × (n_arcs / 2 + 1) ≈ n_arcs² / 2
-        n_arcs_approx = max(min_arcs, min(max_arcs, round(Int, sqrt(2 * target_variables))))
-        n_commodities_approx = max(min_commodities, min(max_commodities, round(Int, (target_variables / n_arcs_approx) - 1)))
+        # target_variables ≈ n_arcs × (n_arcs + 1) ≈ n_arcs²
+        n_arcs_approx = max(min_arcs, min(max_arcs, round(Int, sqrt(target_variables))))
+        n_commodities_approx = clamp(round(Int, ((target_variables / n_arcs_approx) - 1) / 2), min_commodities, max_commodities)
 
         best_n_arcs = n_arcs_approx
         best_n_commodities = n_commodities_approx
+        best_error = abs(best_n_arcs * (2 * best_n_commodities + 1) - target_variables) / target_variables
     end
 
     # Determine n_nodes based on n_arcs (realistic topology)
@@ -599,18 +636,19 @@ telecommunication network design problem using size categories.
 - Dictionary of sampled parameters
 """
 function sample_telecom_network_design_parameters(size::Symbol; seed::Int=0)
-    # Map size categories to target variable count ranges
-    target_map = Dict(
-        :small => rand(50:250),
-        :medium => rand(250:1000),
-        :large => rand(1000:10000)
-    )
+    Random.seed!(seed)
 
-    if !haskey(target_map, size)
+    target_variables = if size == :small
+        rand(50:250)
+    elseif size == :medium
+        rand(250:1000)
+    elseif size == :large
+        rand(1000:10000)
+    else
         error("Unknown size: $size. Must be :small, :medium, or :large")
     end
 
-    return sample_telecom_network_design_parameters(target_map[size]; seed=seed)
+    return sample_telecom_network_design_parameters(target_variables; seed=seed)
 end
 
 """
@@ -631,10 +669,10 @@ function calculate_telecom_network_design_variable_count(params::Dict)
 
     # Variables:
     # - Binary variables y[arc] for each arc: n_arcs variables
-    # - Continuous variables f[k, arc] for each commodity on each arc: n_arcs × n_commodities variables
-    # Total: n_arcs + (n_arcs × n_commodities) = n_arcs × (n_commodities + 1)
+    # - Continuous variables f[k, (i,j)] for each commodity on each directed arc: 2 × n_arcs × n_commodities variables
+    # Total: n_arcs + (2 × n_arcs × n_commodities) = n_arcs × (2 × n_commodities + 1)
 
-    return n_arcs * (n_commodities + 1)
+    return n_arcs * (2 * n_commodities + 1)
 end
 
 # Register the problem type

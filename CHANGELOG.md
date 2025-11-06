@@ -38,17 +38,17 @@ Added a new problem generator for telecommunication network design problems. Thi
 **Mathematical Formulation**:
 - Variables:
   - Binary variables `y[arc]`: 1 if link is installed (n_arcs variables)
-  - Continuous variables `f[k,arc]`: Flow of commodity k on arc (n_arcs × n_commodities variables)
-  - Total: n_arcs × (n_commodities + 1) variables
+  - Continuous variables `f[k,(i,j)]`: Flow of commodity k on directed arc (2 × n_arcs × n_commodities variables)
+  - Total: n_arcs × (2 × n_commodities + 1) variables
 - Objective: Minimize installation costs + routing costs
 - Constraints:
   - Flow conservation at each node for each commodity
-  - Capacity constraints: total flow ≤ installed capacity
+  - Capacity constraints: total bidirectional flow ≤ installed capacity
   - Budget constraint on total installation cost
 
 **Variable Count Calculation**:
 ```
-total_variables = n_arcs × (n_commodities + 1)
+total_variables = n_arcs × (2 × n_commodities + 1)
 ```
 
 **Realistic Parameters** (scale with problem size):
