@@ -255,6 +255,7 @@ include("problem_types/project_selection.jl")
 include("problem_types/resource_allocation.jl")
 include("problem_types/scheduling.jl")
 include("problem_types/supply_chain.jl")
+include("problem_types/telecom_network_design.jl")
 include("problem_types/transportation.jl")
 
 end # module
