@@ -237,8 +237,8 @@ function generate_connected_mcf_network(n_nodes::Int, n_arcs::Int)
     end
 
     # Add some reverse arcs for bidirectional flow
-    n_reverse = min(n_nodes ÷ 2, n_arcs - n_nodes)
-    reverse_candidates = [(i % n_nodes) + 1, i] for i in 1:n_nodes
+    n_reverse = min(n_nodes ÷ 2, max(0, n_arcs - n_nodes))
+    reverse_candidates = [((i % n_nodes) + 1, i) for i in 1:n_nodes]
     shuffle!(reverse_candidates)
 
     for i in 1:min(n_reverse, length(reverse_candidates))
