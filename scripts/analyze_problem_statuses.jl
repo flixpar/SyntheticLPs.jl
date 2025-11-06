@@ -1,7 +1,7 @@
 # Analyze distribution of solver statuses across all SyntheticLPs problem types.
 #
 # This script generates multiple instances per problem type, solves them with
-# Gurobi, and reports the distribution across {feasible, infeasible, unbounded, unknown}.
+# HiGHS, and reports the distribution across {feasible, infeasible, unbounded, unknown}.
 #
 # Usage examples:
 #   julia scripts/analyze_problem_statuses.jl                      # defaults
@@ -12,10 +12,6 @@
 #   julia scripts/analyze_problem_statuses.jl --samples 50 --json results.json
 #   julia scripts/analyze_problem_statuses.jl --csv results.csv --json results.json
 #   julia scripts/analyze_problem_statuses.jl --types transportation,diet_problem --samples=200
-#
-# Notes:
-# - Requires Gurobi.jl and a working Gurobi license.
-# - By default, DualReductions is disabled to reduce INFEASIBLE_OR_UNBOUNDED cases.
 
 using Pkg
 Pkg.activate(@__DIR__)
@@ -28,7 +24,7 @@ using JuMP
 import MathOptInterface
 const MOI = MathOptInterface
 
-using Gurobi
+using HiGHS
 
 using ArgParse
 using Dates
@@ -113,7 +109,7 @@ function classify_status(model::Model)::Symbol
 end
 
 function print_header()
-    println("Analyzing SyntheticLPs problem status distribution with Gurobi")
+    println("Analyzing SyntheticLPs problem status distribution")
     println("Started at: $(Dates.format(now(), DateFormat("yyyymmdd-HH:MM:SS")))")
 end
 
@@ -280,13 +276,10 @@ function main()
             # Generate model (relax integrality by default)
             model, _ = generate_problem(ptype, params; seed=seed_i)
 
-            # Configure Gurobi
-            set_optimizer(model, Gurobi.Optimizer)
-            set_optimizer_attribute(model, "OutputFlag", 0)
-            set_optimizer_attribute(model, "TimeLimit", timeout_sec)
-            set_optimizer_attribute(model, "Threads", 1)
-            # Helps distinguish infeasible vs unbounded in some cases
-            set_optimizer_attribute(model, "DualReductions", 0)
+            # Configure HiGHS
+            set_optimizer(model, HiGHS.Optimizer)
+            set_silent(model)
+            set_time_limit_sec(model, timeout_sec)
 
             # Optimize and classify
             status_sym = :unknown
