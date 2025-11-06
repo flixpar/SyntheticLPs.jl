@@ -2,6 +2,160 @@ using JuMP
 using Random
 using Distributions
 
+const CAPACITY_EPS = 1e-6
+
+@inline function canonical_arc(i::Int, j::Int)::Tuple{Int,Int}
+    return i < j ? (i, j) : (j, i)
+end
+
+function build_adjacency(arcs_subset::AbstractVector{Tuple{Int,Int}}, n_nodes::Int)
+    adjacency = [Int[] for _ in 1:n_nodes]
+    for (i, j) in arcs_subset
+        push!(adjacency[i], j)
+        push!(adjacency[j], i)
+    end
+    return adjacency
+end
+
+function shortest_path_with_capacity(
+    source::Int,
+    sink::Int,
+    adjacency::Vector{Vector{Int}},
+    remaining_capacity::Dict{Tuple{Int,Int},Float64},
+    flow_costs::Dict{Tuple{Int,Int},Float64}
+)
+    n_nodes = length(adjacency)
+    dist = fill(Inf, n_nodes)
+    prev = fill(0, n_nodes)
+    visited = falses(n_nodes)
+
+    dist[source] = 0.0
+
+    while true
+        u = 0
+        best = Inf
+        for node in 1:n_nodes
+            if !visited[node] && dist[node] < best
+                best = dist[node]
+                u = node
+            end
+        end
+
+        if u == 0 || best == Inf
+            return nothing
+        end
+
+        if u == sink
+            break
+        end
+
+        visited[u] = true
+
+        for v in adjacency[u]
+            arc = canonical_arc(u, v)
+            cap = get(remaining_capacity, arc, 0.0)
+            if cap <= CAPACITY_EPS
+                continue
+            end
+
+            cost = flow_costs[(u, v)]
+            alt = dist[u] + cost
+            if alt < dist[v]
+                dist[v] = alt
+                prev[v] = u
+            end
+        end
+    end
+
+    if dist[sink] == Inf
+        return nothing
+    end
+
+    path_nodes = Int[]
+    node = sink
+    while node != 0
+        push!(path_nodes, node)
+        if node == source
+            break
+        end
+        node = prev[node]
+    end
+
+    if isempty(path_nodes) || last(path_nodes) != source
+        return nothing
+    end
+
+    reverse!(path_nodes)
+
+    path_arcs = Tuple{Int,Int}[]
+    for idx in 1:(length(path_nodes) - 1)
+        push!(path_arcs, canonical_arc(path_nodes[idx], path_nodes[idx + 1]))
+    end
+
+    return path_arcs
+end
+
+function can_route_demands(
+    arcs_subset,
+    link_capacities::Dict{Tuple{Int,Int},Float64},
+    commodities::Vector{Dict{Symbol,Any}},
+    n_nodes::Int,
+    flow_costs::Dict{Tuple{Int,Int},Float64}
+)
+    arc_list = collect(arcs_subset)
+    if isempty(arc_list)
+        return false
+    end
+
+    remaining_capacity = Dict{Tuple{Int,Int}, Float64}()
+    for arc in arc_list
+        remaining_capacity[arc] = get(link_capacities, arc, 0.0)
+    end
+
+    adjacency = build_adjacency(arc_list, n_nodes)
+
+    # If any node lacks incident arcs, routing is impossible
+    if any(isempty(adjacency[node]) for node in 1:n_nodes)
+        return false
+    end
+
+    commodity_indices = sortperm(1:length(commodities), by=i -> commodities[i][:demand], rev=true)
+
+    for idx in commodity_indices
+        commodity = commodities[idx]
+        source = commodity[:source]
+        sink = commodity[:sink]
+        remaining_demand = commodity[:demand]
+
+        attempts = 0
+        while remaining_demand > CAPACITY_EPS
+            path = shortest_path_with_capacity(source, sink, adjacency, remaining_capacity, flow_costs)
+            if path === nothing
+                return false
+            end
+
+            min_cap = minimum(get(remaining_capacity, arc, 0.0) for arc in path)
+            flow = min(remaining_demand, min_cap)
+
+            if flow <= CAPACITY_EPS
+                return false
+            end
+
+            for arc in path
+                remaining_capacity[arc] -= flow
+            end
+
+            remaining_demand -= flow
+            attempts += 1
+            if attempts > length(arc_list) * 5
+                return false
+            end
+        end
+    end
+
+    return true
+end
+
 """
     generate_telecom_network_design_problem(params::Dict=Dict(); seed::Int=0)
 
@@ -165,6 +319,17 @@ function generate_telecom_network_design_problem(params::Dict=Dict(); seed::Int=
     # Generate commodities (traffic demands) with realistic patterns
     commodities = generate_traffic_commodities(n_nodes, n_commodities, demand_range)
     actual_params[:commodities] = commodities
+    total_demand = sum(c[:demand] for c in commodities)
+    actual_params[:total_demand] = total_demand
+
+    node_out_demands = zeros(Float64, n_nodes)
+    node_in_demands = zeros(Float64, n_nodes)
+    for commodity in commodities
+        node_out_demands[commodity[:source]] += commodity[:demand]
+        node_in_demands[commodity[:sink]] += commodity[:demand]
+    end
+    actual_params[:node_out_demands] = node_out_demands
+    actual_params[:node_in_demands] = node_in_demands
 
     # Calculate total potential installation cost
     total_installation_cost = sum(values(installation_costs))
@@ -174,80 +339,110 @@ function generate_telecom_network_design_problem(params::Dict=Dict(); seed::Int=
 
     # Enforce feasibility/infeasibility based on solution_status
     if solution_status == :feasible
-        # Ensure the problem is feasible by:
-        # 1. Making sure there's enough capacity in the network
-        # 2. Ensuring budget allows installing a feasible subset of links
 
-        # Check if network can support all demands
-        total_demand = sum(c[:demand] for c in commodities)
-        total_capacity = sum(values(link_capacities))
+        # Scale capacities until the full network can explicitly route all traffic
+        capacity_scale_factor = 1.0
+        max_scale_factor = 50.0
+        capacity_feasible = can_route_demands(arcs, link_capacities, commodities, n_nodes, flow_costs)
 
-        # If total capacity insufficient, scale up capacities
-        if total_capacity < total_demand * 1.1
-            scale_factor = (total_demand * 1.2) / total_capacity
+        while !capacity_feasible && capacity_scale_factor < max_scale_factor
+            scale_step = min(1.5, max_scale_factor / capacity_scale_factor)
+            capacity_scale_factor *= scale_step
             for arc in arcs
-                link_capacities[arc] *= scale_factor
+                link_capacities[arc] *= scale_step
             end
-            total_capacity = sum(values(link_capacities))
+            capacity_feasible = can_route_demands(arcs, link_capacities, commodities, n_nodes, flow_costs)
         end
 
-        # Find a feasible subset of links that can route all demands (greedy by capacity/cost ratio)
-        arc_ratios = [(arc, link_capacities[arc] / installation_costs[arc]) for arc in arcs]
-        sort!(arc_ratios, by=x->x[2], rev=true)
+        if !capacity_feasible
+            for arc in arcs
+                link_capacities[arc] *= 2.0
+            end
+            capacity_feasible = can_route_demands(arcs, link_capacities, commodities, n_nodes, flow_costs)
+        end
 
-        # Select links until we have connectivity and sufficient capacity
+        actual_params[:capacity_scale_factor] = capacity_scale_factor
+        actual_params[:capacity_feasible_with_all_links] = capacity_feasible
+
+        # Greedily select a subset of links that still supports all traffic
+        arc_ratios = [(arc, link_capacities[arc] / installation_costs[arc]) for arc in arcs]
+        sort!(arc_ratios, by=x -> x[2], rev=true)
+        arc_order = [entry[1] for entry in arc_ratios]
+
         selected_arcs = Set{Tuple{Int,Int}}()
-        selected_capacity = 0.0
         selected_cost = 0.0
 
-        # First, ensure basic connectivity with a spanning tree
+        # Build a spanning tree to ensure basic connectivity
         nodes_connected = Set([1])
         remaining_nodes = Set(2:n_nodes)
+        arc_ratios_copy = copy(arc_ratios)
 
-        while !isempty(remaining_nodes) && !isempty(arc_ratios)
+        while !isempty(remaining_nodes) && !isempty(arc_ratios_copy)
             found_arc = false
-            for (idx, (arc, _)) in enumerate(arc_ratios)
+            for (idx, (arc, _)) in enumerate(arc_ratios_copy)
                 i, j = arc
                 if (i in nodes_connected && j in remaining_nodes) || (j in nodes_connected && i in remaining_nodes)
                     push!(selected_arcs, arc)
                     selected_cost += installation_costs[arc]
-                    selected_capacity += link_capacities[arc]
                     push!(nodes_connected, i, j)
                     delete!(remaining_nodes, i)
                     delete!(remaining_nodes, j)
-                    deleteat!(arc_ratios, idx)
+                    deleteat!(arc_ratios_copy, idx)
                     found_arc = true
                     break
                 end
             end
             if !found_arc
-                break  # No connecting arc found, exit to avoid infinite loop
+                break
             end
         end
 
-        # Add more links if needed for capacity
-        for (arc, _) in arc_ratios
-            if selected_capacity >= total_demand * 1.5
-                break
-            end
-            if arc ∉ selected_arcs
-                push!(selected_arcs, arc)
-                selected_cost += installation_costs[arc]
-                selected_capacity += link_capacities[arc]
+        # Ensure we have at least a spanning tree
+        if length(selected_arcs) < n_nodes - 1
+            for (arc, _) in arc_ratios_copy
+                if arc ∉ selected_arcs
+                    push!(selected_arcs, arc)
+                    selected_cost += installation_costs[arc]
+                end
+                if length(selected_arcs) >= n_nodes - 1
+                    break
+                end
             end
         end
+
+        routing_feasible = can_route_demands(selected_arcs, link_capacities, commodities, n_nodes, flow_costs)
+        idx = 1
+        while !routing_feasible && idx <= length(arc_order)
+            arc_to_add = arc_order[idx]
+            idx += 1
+            if arc_to_add ∈ selected_arcs
+                continue
+            end
+            push!(selected_arcs, arc_to_add)
+            selected_cost += installation_costs[arc_to_add]
+            routing_feasible = can_route_demands(selected_arcs, link_capacities, commodities, n_nodes, flow_costs)
+        end
+
+        if !routing_feasible
+            selected_arcs = Set(arcs)
+            selected_cost = sum(installation_costs[arc] for arc in arcs)
+            routing_feasible = true
+        end
+
+        selected_capacity = sum(link_capacities[arc] for arc in selected_arcs)
 
         # Set budget to allow this feasible solution with some slack
         budget = max(original_budget, selected_cost * (1.05 + 0.15 * rand()))
         actual_params[:feasible_arcs] = collect(selected_arcs)
         actual_params[:feasible_cost] = selected_cost
+        actual_params[:feasible_capacity] = selected_capacity
+        actual_params[:routing_feasible] = routing_feasible
 
     elseif solution_status == :infeasible
-        # Make problem infeasible by setting budget too low
-        # Find minimum cost to achieve connectivity
-        arc_costs = sort([(arc, installation_costs[arc]) for arc in arcs], by=x->x[2])
+        # Make problem infeasible by tightening both budget and link capacities around high-demand nodes
 
-        # Minimum spanning tree cost (greedy approximation)
+        # Estimate minimum connectivity cost via a greedy spanning tree approximation
+        arc_costs = sort([(arc, installation_costs[arc]) for arc in arcs], by=x -> x[2])
         nodes_connected = Set([1])
         remaining_nodes = Set(2:n_nodes)
         mst_cost = 0.0
@@ -265,9 +460,148 @@ function generate_telecom_network_design_problem(params::Dict=Dict(); seed::Int=
             end
         end
 
-        # Set budget below minimum spanning tree cost to guarantee infeasibility
-        budget = min(original_budget, mst_cost * rand(0.5:0.01:0.85))
+    budget_multiplier = rand(0.45:0.05:0.75)
+    cost_reference = mst_cost > CAPACITY_EPS ? mst_cost : total_installation_cost
+    budget = min(original_budget, cost_reference * budget_multiplier)
         actual_params[:mst_cost] = mst_cost
+        actual_params[:budget_reduction_factor] = budget / max(original_budget, 1.0)
+
+        # Create targeted capacity bottlenecks around the busiest sources and sinks
+        original_capacities = copy(link_capacities)
+
+        n_sources_positive = count(d -> d > CAPACITY_EPS, node_out_demands)
+        max_sources_to_target = max(1, min(2, n_sources_positive))
+        source_order = sortperm(node_out_demands; rev=true)
+        targeted_sources = Int[]
+        for node in source_order
+            if node_out_demands[node] > CAPACITY_EPS
+                push!(targeted_sources, node)
+            end
+            if length(targeted_sources) >= max_sources_to_target
+                break
+            end
+        end
+        if isempty(targeted_sources) && !isempty(commodities)
+            push!(targeted_sources, commodities[1][:source])
+        end
+
+        n_sinks_positive = count(d -> d > CAPACITY_EPS, node_in_demands)
+        max_sinks_to_target = max(1, min(2, n_sinks_positive))
+        sink_order = sortperm(node_in_demands; rev=true)
+        targeted_sinks = Int[]
+        for node in sink_order
+            if node_in_demands[node] > CAPACITY_EPS
+                push!(targeted_sinks, node)
+            end
+            if length(targeted_sinks) >= max_sinks_to_target
+                break
+            end
+        end
+        if isempty(targeted_sinks) && !isempty(commodities)
+            push!(targeted_sinks, commodities[1][:sink])
+        end
+
+        source_capacity_totals = Dict{Int, Float64}()
+        for node in targeted_sources
+            incident_arcs = [arc for arc in arcs if arc[1] == node || arc[2] == node]
+            if isempty(incident_arcs)
+                continue
+            end
+            demand_total = node_out_demands[node]
+            if demand_total <= CAPACITY_EPS
+                continue
+            end
+
+            desired_total = demand_total * rand(0.25:0.05:0.6)
+            desired_total = max(desired_total, CAPACITY_EPS * length(incident_arcs))
+
+            weights = rand(length(incident_arcs))
+            weight_sum = sum(weights)
+            if weight_sum <= CAPACITY_EPS
+                weights .= 1.0
+                weight_sum = length(weights)
+            end
+            weights ./= weight_sum
+
+            updated_total = 0.0
+            for (idx, arc) in enumerate(incident_arcs)
+                cap_target = max(CAPACITY_EPS, desired_total * weights[idx])
+                link_capacities[arc] = min(link_capacities[arc], cap_target)
+                updated_total += link_capacities[arc]
+            end
+            source_capacity_totals[node] = updated_total
+        end
+
+        sink_capacity_totals = Dict{Int, Float64}()
+        for node in targeted_sinks
+            incident_arcs = [arc for arc in arcs if arc[1] == node || arc[2] == node]
+            if isempty(incident_arcs)
+                continue
+            end
+            demand_total = node_in_demands[node]
+            if demand_total <= CAPACITY_EPS
+                continue
+            end
+
+            desired_total = demand_total * rand(0.25:0.05:0.6)
+            desired_total = max(desired_total, CAPACITY_EPS * length(incident_arcs))
+
+            weights = rand(length(incident_arcs))
+            weight_sum = sum(weights)
+            if weight_sum <= CAPACITY_EPS
+                weights .= 1.0
+                weight_sum = length(weights)
+            end
+            weights ./= weight_sum
+
+            updated_total = 0.0
+            for (idx, arc) in enumerate(incident_arcs)
+                cap_target = max(CAPACITY_EPS, desired_total * weights[idx])
+                link_capacities[arc] = min(link_capacities[arc], cap_target)
+                updated_total += link_capacities[arc]
+            end
+            sink_capacity_totals[node] = updated_total
+        end
+
+        routing_possible_after_reduction = can_route_demands(arcs, link_capacities, commodities, n_nodes, flow_costs)
+
+        fallback_scaling_applied = false
+        if routing_possible_after_reduction
+            # Apply a global capacity contraction and re-test
+            for _ in 1:3
+                if !routing_possible_after_reduction
+                    break
+                end
+                for arc in arcs
+                    link_capacities[arc] = max(CAPACITY_EPS, link_capacities[arc] * 0.5)
+                end
+                routing_possible_after_reduction = can_route_demands(arcs, link_capacities, commodities, n_nodes, flow_costs)
+            end
+
+            if routing_possible_after_reduction
+                # Directly cap capacity around the busiest source to force infeasibility
+                critical_node = isempty(targeted_sources) ? commodities[1][:source] : targeted_sources[1]
+                incident_arcs = [arc for arc in arcs if arc[1] == critical_node || arc[2] == critical_node]
+                if !isempty(incident_arcs)
+                    desired_total = node_out_demands[critical_node] * 0.1
+                    desired_total = max(desired_total, CAPACITY_EPS * length(incident_arcs))
+                    per_arc_cap = desired_total / length(incident_arcs)
+                    for arc in incident_arcs
+                        cap_target = max(CAPACITY_EPS, per_arc_cap)
+                        link_capacities[arc] = min(link_capacities[arc], cap_target)
+                    end
+                end
+                routing_possible_after_reduction = can_route_demands(arcs, link_capacities, commodities, n_nodes, flow_costs)
+                fallback_scaling_applied = true
+            end
+        end
+
+        actual_params[:infeasible_source_nodes] = targeted_sources
+        actual_params[:infeasible_sink_nodes] = targeted_sinks
+        actual_params[:source_capacity_totals] = source_capacity_totals
+        actual_params[:sink_capacity_totals] = sink_capacity_totals
+        actual_params[:routing_feasible_after_infeasible_adjustment] = routing_possible_after_reduction
+        actual_params[:infeasible_fallback_scaling_applied] = fallback_scaling_applied
     end
 
     actual_params[:budget] = budget
