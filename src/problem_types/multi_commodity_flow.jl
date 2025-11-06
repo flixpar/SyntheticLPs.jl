@@ -162,6 +162,9 @@ function generate_multi_commodity_flow_problem(params::Dict=Dict(); seed::Int=0)
                 demands[k] = round(demands[k] * scale_factor, digits=2)
             end
         end
+
+        # Add targeted disruptions so at least one commodity cannot be satisfied
+        enforce_infeasibility!(commodities, arcs, capacities, demands)
     end
     # else :all - keep natural randomness
 
@@ -381,6 +384,183 @@ function create_path(source::Int, sink::Int, existing_arcs::Vector{Tuple{Int,Int
             return [(source, intermediate), (intermediate, sink)]
         else
             return [(source, sink)]
+        end
+    end
+end
+
+"""
+    enforce_infeasibility!(commodities, arcs, capacities, demands)
+
+Introduce bottlenecks so that at least one commodity cannot satisfy its demand.
+Keeps randomness by selecting different commodities and disruption styles while
+guaranteeing an infeasible configuration.
+"""
+function enforce_infeasibility!(
+    commodities::Vector{Tuple{Int, Int}},
+    arcs::Vector{Tuple{Int, Int}},
+    capacities::Dict{Tuple{Int, Int}, Float64},
+    demands::Dict{Int, Float64}
+)
+    if isempty(commodities)
+        return
+    end
+
+    commodity_indices = shuffle(collect(eachindex(commodities)))
+    max_targets = max(1, min(length(commodity_indices), 3))
+    n_targets = rand(1:max_targets)
+    selected = commodity_indices[1:n_targets]
+
+    success = false
+
+    for idx in selected
+        choice = rand()
+        if choice < 0.45
+            success |= enforce_source_bottleneck!(idx, commodities, arcs, capacities, demands)
+        elseif choice < 0.9
+            success |= enforce_sink_bottleneck!(idx, commodities, arcs, capacities, demands)
+        else
+            source_hit = enforce_source_bottleneck!(idx, commodities, arcs, capacities, demands)
+            sink_hit = enforce_sink_bottleneck!(idx, commodities, arcs, capacities, demands)
+            success |= (source_hit || sink_hit)
+        end
+
+        if success && rand() < 0.6
+            break
+        end
+    end
+
+    if !success
+        # Deterministic fallback: cripple the first commodity
+        idx = commodity_indices[1]
+        source_hit = enforce_source_bottleneck!(idx, commodities, arcs, capacities, demands)
+        sink_hit = enforce_sink_bottleneck!(idx, commodities, arcs, capacities, demands)
+        success = source_hit || sink_hit
+
+        if !success
+            # As a last resort, inflate demand beyond total network capacity
+            total_capacity = sum(values(capacities))
+            boost = total_capacity <= 0 ? 50.0 : total_capacity * rand(Uniform(1.2, 1.6))
+            demands[idx] = round(max(demands[idx], boost), digits=2)
+        end
+    end
+end
+
+function enforce_source_bottleneck!(
+    commodity_index::Int,
+    commodities::Vector{Tuple{Int, Int}},
+    arcs::Vector{Tuple{Int, Int}},
+    capacities::Dict{Tuple{Int, Int}, Float64},
+    demands::Dict{Int, Float64}
+)
+    source = commodities[commodity_index][1]
+    outgoing = [arc for arc in arcs if arc[1] == source]
+
+    if isempty(outgoing)
+        return false
+    end
+
+    current_total = sum(capacities[arc] for arc in outgoing)
+    if current_total <= 1e-6
+        return true
+    end
+
+    target_total = min(
+        demands[commodity_index] * rand(Uniform(0.1, 0.6)),
+        current_total * rand(Uniform(0.15, 0.5))
+    )
+
+    redistribute_capacity!(outgoing, capacities, target_total)
+
+    new_total = sum(capacities[arc] for arc in outgoing)
+    if new_total <= 1e-6
+        return true
+    end
+
+    if new_total >= demands[commodity_index]
+        scale = min(0.95, (demands[commodity_index] * rand(Uniform(0.2, 0.6))) / new_total)
+        for arc in outgoing
+            capacities[arc] = round(capacities[arc] * scale, digits=2)
+        end
+        new_total = sum(capacities[arc] for arc in outgoing)
+    end
+
+    return new_total + 1e-6 < demands[commodity_index]
+end
+
+function enforce_sink_bottleneck!(
+    commodity_index::Int,
+    commodities::Vector{Tuple{Int, Int}},
+    arcs::Vector{Tuple{Int, Int}},
+    capacities::Dict{Tuple{Int, Int}, Float64},
+    demands::Dict{Int, Float64}
+)
+    sink = commodities[commodity_index][2]
+    incoming = [arc for arc in arcs if arc[2] == sink]
+
+    if isempty(incoming)
+        return false
+    end
+
+    current_total = sum(capacities[arc] for arc in incoming)
+    if current_total <= 1e-6
+        return true
+    end
+
+    target_total = min(
+        demands[commodity_index] * rand(Uniform(0.1, 0.6)),
+        current_total * rand(Uniform(0.15, 0.5))
+    )
+
+    redistribute_capacity!(incoming, capacities, target_total)
+
+    new_total = sum(capacities[arc] for arc in incoming)
+    if new_total <= 1e-6
+        return true
+    end
+
+    if new_total >= demands[commodity_index]
+        scale = min(0.95, (demands[commodity_index] * rand(Uniform(0.2, 0.6))) / new_total)
+        for arc in incoming
+            capacities[arc] = round(capacities[arc] * scale, digits=2)
+        end
+        new_total = sum(capacities[arc] for arc in incoming)
+    end
+
+    return new_total + 1e-6 < demands[commodity_index]
+end
+
+function redistribute_capacity!(
+    arc_subset::Vector{Tuple{Int, Int}},
+    capacities::Dict{Tuple{Int, Int}, Float64},
+    target_total::Float64
+)
+    if isempty(arc_subset)
+        return
+    end
+
+    if target_total <= 1e-6
+        for arc in arc_subset
+            capacities[arc] = 0.0
+        end
+        return
+    end
+
+    if length(arc_subset) == 1
+        arc = arc_subset[1]
+        capacities[arc] = round(min(capacities[arc], target_total), digits=2)
+        return
+    end
+
+    weights = rand(Dirichlet(fill(1.5, length(arc_subset))))
+    for (arc, weight) in zip(arc_subset, weights)
+        capacities[arc] = round(min(capacities[arc], target_total * weight), digits=2)
+    end
+
+    total = sum(capacities[arc] for arc in arc_subset)
+    if total > target_total
+        scale = target_total / total
+        for arc in arc_subset
+            capacities[arc] = round(capacities[arc] * scale, digits=2)
         end
     end
 end
