@@ -1,9 +1,11 @@
 # Script to generate LP problems using SyntheticLPs module
-# Usage: 
+# Usage:
 #   julia --project=@. scripts/generate_problem.jl [problem_type] [target_variables] [output_file]
 #
 # Example:
 #   julia --project=@. scripts/generate_problem.jl transportation 100 problem.mps
+#   julia --project=@. scripts/generate_problem.jl knapsack 50 --feasible --solve
+#   julia --project=@. scripts/generate_problem.jl diet_problem 100 --infeasible
 
 using Pkg
 Pkg.activate(@__DIR__)
@@ -17,63 +19,54 @@ using HiGHS
 
 # Parse command line arguments
 problem_type = length(ARGS) >= 1 ? Symbol(ARGS[1]) : :random
-param_arg = length(ARGS) >= 2 ? ARGS[2] : "50"
-output_file = length(ARGS) >= 3 ? ARGS[3] : nothing
+target_variables = length(ARGS) >= 2 ? parse(Int, ARGS[2]) : 50
+output_file = nothing
+feasibility_status = unknown
+seed = 0
 
-# Parse the parameter - could be either integer target variables or legacy size
-function parse_parameter(param_str::String)
-    # Try to parse as integer first
-    try
-        target_vars = parse(Int, param_str)
-        return target_vars, :target_variables
-    catch
-        # If parsing as integer fails, treat as legacy size symbol
-        size_sym = Symbol(param_str)
-        if size_sym in [:small, :medium, :large]
-            return size_sym, :size
-        else
-            error("Invalid parameter '$param_str'. Must be an integer (target variables) or :small, :medium, :large")
-        end
+# Parse optional arguments
+for arg in ARGS[3:end]
+    if arg == "--solve"
+        # Handled later
+    elseif arg == "--feasible"
+        feasibility_status = feasible
+    elseif arg == "--infeasible"
+        feasibility_status = infeasible
+    elseif arg == "--unknown"
+        feasibility_status = unknown
+    elseif startswith(arg, "--seed=")
+        seed = parse(Int, split(arg, "=")[2])
+    elseif !startswith(arg, "--")
+        output_file = arg
     end
 end
-
-param_value, param_type = parse_parameter(param_arg)
 
 # Get the list of available problem types
 available_types = list_problem_types()
 
 if problem_type == :list
     println("Available problem types:")
-    for (i, type) in enumerate(available_types)
+    for (i, type) in enumerate(sort(available_types))
         info = problem_info(type)
         println("  $i. $type - $(info[:description])")
     end
     exit(0)
 elseif problem_type == :random
-    if param_type == :target_variables
-        println("Generating a random problem targeting ~$param_value variables")
-        model, selected_type, params = generate_random_problem(param_value)
-    else
-        println("Generating a random problem of size: $param_value")
-        model, selected_type, params = generate_random_problem(param_value)
-    end
+    println("Generating a random problem targeting ~$target_variables variables")
+    println("Feasibility status: $feasibility_status")
+    model, selected_type, problem = generate_random_problem(target_variables; feasibility_status=feasibility_status, seed=seed)
     println("Problem type selected: $selected_type")
 else
     if !(problem_type in available_types)
         println("Error: Unknown problem type '$problem_type'")
-        println("Available types: $available_types")
+        println("Available types: $(sort(available_types))")
         println("Use 'list' to see details of all problem types")
         exit(1)
     end
-    
-    if param_type == :target_variables
-        println("Generating $problem_type problem targeting ~$param_value variables")
-        params = sample_parameters(problem_type, param_value)
-    else
-        println("Generating $problem_type problem of size: $param_value")
-        params = sample_parameters(problem_type, param_value)
-    end
-    model, params = generate_problem(problem_type, params)
+
+    println("Generating $problem_type problem targeting ~$target_variables variables")
+    println("Feasibility status: $feasibility_status")
+    model, problem = generate_problem(problem_type, target_variables, feasibility_status, seed)
 end
 
 # Print summary

@@ -27,22 +27,27 @@ julia --project=@. test/runtests.jl
 
 Generate a specific problem type targeting ~100 variables:
 ```bash
-julia --project=@. generate_problem.jl transportation 100 output.mps
+julia --project=@. scripts/generate_problem.jl transportation 100 output.mps
 ```
 
 List all available problem types:
 ```bash
-julia --project=@. generate_problem.jl list
+julia --project=@. scripts/generate_problem.jl list
 ```
 
-Generate and solve a problem with ~50 variables:
+Generate and solve a feasible problem with ~50 variables:
 ```bash
-julia --project=@. generate_problem.jl knapsack 50 --solve
+julia --project=@. scripts/generate_problem.jl knapsack 50 --feasible --solve
+```
+
+Generate an infeasible problem with ~100 variables:
+```bash
+julia --project=@. scripts/generate_problem.jl diet_problem 100 --infeasible
 ```
 
 Generate a random problem with ~200 variables:
 ```bash
-julia --project=@. generate_problem.jl random 200
+julia --project=@. scripts/generate_problem.jl random 200
 ```
 
 ### Development
@@ -54,82 +59,103 @@ julia --project=@.
 
 ## Architecture
 
-SyntheticLPs is a standardized framework for generating 20+ types of realistic linear programming problems. All problem generators follow a consistent interface pattern.
+SyntheticLPs uses a type-based dispatch system for generating 21 types of realistic linear programming problems. All problem generators follow a consistent pattern using Julia's multiple dispatch.
 
 ### Core Components
 
 **Main Module** (`src/SyntheticLPs.jl`):
+- `ProblemGenerator`: Abstract base type for all problem generators
+- `FeasibilityStatus`: Enum with values `feasible`, `infeasible`, `unknown`
 - Registration system for problem types using `LP_REGISTRY`
-- Unified interface functions: `generate_problem()`, `sample_parameters()`, `list_problem_types()`
+- Unified interface functions: `generate_problem()`, `list_problem_types()`, `problem_info()`
 - Random problem generation with `generate_random_problem()`
-- Support for both target variable count and legacy size-based generation
+- Base function `build_model(problem::ProblemGenerator)` that each generator implements
 
 **Problem Generators** (`src/problem_types/`):
-- Each problem type has three required functions:
-  - `generate_[type]_problem(params; seed)`: Creates JuMP model from parameters
-  - `sample_[type]_parameters(target_variables; seed)`: Samples parameters for target variable count
-  - `sample_[type]_parameters(size; seed)`: Legacy size-based parameter sampling
-- Additional helper function: `calculate_[type]_variable_count(params)`: Calculates variable count from parameters
-- All generators call `register_problem()` to register with the system
-- Template provided in `src/problem_types/template.jl`
+- Each problem type has:
+  - A struct inheriting from `ProblemGenerator` containing all generated data
+  - A constructor `ProblemType(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)`
+  - An implementation of `build_model(prob::ProblemType)` that deterministically builds the JuMP model
+- All generators call `register_problem(:symbol, ProblemType, "description")` to register
+- Structs store ALL data needed to build the model (costs, capacities, demands, etc.)
+- Constructors contain ALL randomness; `build_model` is completely deterministic
 
 **Utility Scripts**:
-- `generate_problem.jl`: Command-line interface for problem generation
-- `test_problem_types.jl`: Quick verification of all generators
-- `verify_interface.jl`: Checks interface compliance across all problem files
+- `scripts/generate_problem.jl`: Command-line interface for problem generation
+- `scripts/analyze_problem_statuses.jl`: Analysis of problem feasibility
 
 ### Problem Generator Pattern
 
 Each problem generator follows this structure:
 
 ```julia
-function generate_[type]_problem(params::Dict=Dict(); seed::Int=0)
+struct ProblemType <: ProblemGenerator
+    # Store all generated data needed to build the model
+    field1::Type1
+    field2::Type2
+    # ...
+end
+
+function ProblemType(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     Random.seed!(seed)
-    # Extract parameters with defaults
-    # Generate JuMP model with variables, constraints, objective
-    return model, actual_params
+
+    # Sample parameters based on target_variables
+    # Generate all deterministic data (costs, capacities, etc.)
+    # Handle feasibility status (feasible, infeasible, unknown)
+
+    return ProblemType(field1_value, field2_value, ...)
 end
 
-function calculate_[type]_variable_count(params::Dict)
-    # Calculate and return the number of variables based on parameters
-    return variable_count
+function build_model(prob::ProblemType)
+    model = Model()
+
+    # Build JuMP model using only prob's fields
+    # This must be completely deterministic (no RNG calls)
+
+    return model
 end
 
-function sample_[type]_parameters(target_variables::Int; seed::Int=0)
-    # Sample parameters to target approximately target_variables variables
-    # Use calculate_[type]_variable_count to achieve target within ±10%
-    return params
-end
-
-function sample_[type]_parameters(size::Symbol=:medium; seed::Int=0)
-    # Legacy size-based parameter sampling (backward compatibility)
-    target_map = Dict(:small => 150, :medium => 500, :large => 2000)
-    return sample_[type]_parameters(target_map[size]; seed=seed)
-end
-
-register_problem(:type, generate_fn, sample_fn, "Description")
+register_problem(:type, ProblemType, "Description")
 ```
+
+### Key Design Principles
+
+1. **Separation of Concerns**: Randomness (constructor) vs. determinism (build_model)
+2. **Reproducibility**: Same seed → identical problem instance → identical model
+3. **Feasibility Control**: Generators can produce guaranteed feasible/infeasible problems
+4. **Type Safety**: Each problem is a distinct type with its own data structure
+5. **Dispatch**: Use Julia's multiple dispatch for clean, extensible interface
 
 ### Available Problem Types
 
-The system includes 20+ problem types covering major LP problem classes:
-- Transportation, Diet, Knapsack, Portfolio, Network Flow
+The system includes 21 problem types covering major LP problem classes:
+- Transportation, Diet Problem, Knapsack, Portfolio, Network Flow
 - Production Planning, Assignment, Blending, Facility Location
-- Energy, Inventory, Scheduling, Supply Chain, and others
+- Airline Crew, Cutting Stock, Energy, Feed Blending, Inventory
+- Land Use, Load Balancing, Product Mix, Project Selection
+- Resource Allocation, Scheduling, Supply Chain
 
 ### Testing Strategy
 
 - `test/runtests.jl`: Comprehensive test suite verifying all problem generators
-- Tests parameter sampling, model generation, and reproducibility
+- Tests problem generation with different target variable counts
+- Tests all three feasibility statuses (feasible, infeasible, unknown)
 - Verifies models have proper structure (variables, constraints, objective)
-- Tests both target variable count and legacy size-based parameter sampling
-- Validates variable count accuracy (within ±10% tolerance for target-based generation)
-- Each generator tested with multiple target variable counts and fixed seeds
+- Validates reproducibility with fixed seeds
+- Each generator tested with multiple configurations
 
 ## Adding New Problem Types
 
 1. Create new file in `src/problem_types/your_problem.jl`
-2. Implement generator and parameter sampling functions following the pattern
-3. Call `register_problem()` to register with the system
-4. Add include statement to `src/SyntheticLPs.jl`
-5. Run tests to verify implementation
+2. Define a struct inheriting from `ProblemGenerator` with all necessary data fields
+3. Implement constructor `YourProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)`
+4. Implement `build_model(prob::YourProblem)` function (must be deterministic)
+5. Call `register_problem(:your_problem, YourProblem, "Description")`
+6. Add include statement to `src/SyntheticLPs.jl`
+7. Run tests to verify implementation
+
+Key principles:
+- Struct stores ALL generated data needed to build the model
+- Constructor contains ALL randomness and parameter sampling
+- `build_model` must be completely deterministic (no RNG calls)
+- Handle all three feasibility statuses appropriately
