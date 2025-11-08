@@ -19,6 +19,7 @@ Pkg.develop(path = dirname(@__DIR__))
 Pkg.instantiate()
 
 using SyntheticLPs
+import SyntheticLPs: FeasibilityStatus, feasible, infeasible, unknown
 
 using JuMP
 import MathOptInterface
@@ -37,6 +38,13 @@ const DEFAULT_NUM_SAMPLES = 50
 const DEFAULT_TARGET_VARS = 200
 const DEFAULT_TIMEOUT_SEC = 2.0
 const DEFAULT_SEED = 0
+
+# Map size buckets to target variable ranges
+const SIZE_BUCKETS = Dict(
+    :small => (50, 100),
+    :medium => (150, 300),
+    :large => (400, 800),
+)
 
 function parse_commandline()
     s = ArgParseSettings(; autofix_names=true)
@@ -251,30 +259,38 @@ function main()
         println("==> $ptype")
         for i in 1:num_samples
             seed_i = base_seed + i
-            # Sample parameters
+            # Determine target variables
             if size_choice === nothing
                 target_vars_i = target_vars
                 if use_target_range
                     rng = Random.MersenneTwister(seed_i)
                     target_vars_i = rand(rng, target_min:target_max)
                 end
-                params = sample_parameters(ptype, target_vars_i; seed=seed_i)
             else
-                params = sample_parameters(ptype, size_choice; seed=seed_i)
+                # Use size bucket to get target variable range
+                min_vars, max_vars = SIZE_BUCKETS[size_choice]
+                rng = Random.MersenneTwister(seed_i)
+                target_vars_i = rand(rng, min_vars:max_vars)
             end
 
-            # Pass desired solution status if requested
+            # Determine feasibility status
+            feasibility_status = unknown
             if solution_status_opt !== nothing
                 ss_str = String(solution_status_opt)
                 ss_sym = Symbol(lowercase(ss_str))
-                if !(ss_sym in [:feasible, :infeasible, :all])
+                if ss_sym == :feasible
+                    feasibility_status = feasible
+                elseif ss_sym == :infeasible
+                    feasibility_status = infeasible
+                elseif ss_sym == :all
+                    feasibility_status = unknown
+                else
                     error("Invalid --solution-status: $(ss_str). Use feasible | infeasible | all")
                 end
-                params[:solution_status] = ss_sym
             end
 
             # Generate model (relax integrality by default)
-            model, _ = generate_problem(ptype, params; seed=seed_i)
+            model, _ = generate_problem(ptype, target_vars_i, feasibility_status, seed_i)
 
             # Configure HiGHS
             set_optimizer(model, HiGHS.Optimizer)
