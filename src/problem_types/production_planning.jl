@@ -10,14 +10,14 @@ Generator for production planning problems.
 - `n_products::Int`: Number of products
 - `n_resources::Int`: Number of resources
 - `profits::Vector{Int}`: Profit per unit of each product
-- `usage::Matrix{Int}`: Resource usage per unit of each product
+- `usage::Matrix{Float64}`: Resource usage per unit of each product
 - `resources::Vector{Float64}`: Available resources
 """
 struct ProductionPlanningProblem <: ProblemGenerator
     n_products::Int
     n_resources::Int
     profits::Vector{Int}
-    usage::Matrix{Int}
+    usage::Matrix{Float64}
     resources::Vector{Float64}
 end
 

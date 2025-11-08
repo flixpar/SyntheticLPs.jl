@@ -2,6 +2,7 @@ using JuMP
 using Random
 using Distributions
 using Statistics
+using StatsBase
 
 """
     FeedBlendingProblem <: ProblemGenerator

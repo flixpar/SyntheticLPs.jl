@@ -2,11 +2,11 @@
 
 All notable changes to SyntheticLPs.jl will be documented in this file.
 
-## [Unreleased] - 2025-01-07
+## 2025-01-07
 
 ### Major Refactoring: Type-Based Dispatch Architecture
 
-**Previous Commit**: `6c1270f` (add tagbot)
+**Previous Commit**: `6c1270f`
 
 **Summary**: Complete refactoring of the problem generator system from function-based to type-based dispatch architecture. This is a **breaking change** that improves code organization, type safety, and extensibility.
 
@@ -173,9 +173,3 @@ println(problem.n_sources, problem.n_destinations)
 - **Utility scripts**: `scripts/generate_problem.jl`
 - **Tests**: `test/runtests.jl`
 - **Documentation**: `README.md`, `CLAUDE.md`
-
----
-
-## Previous Releases
-
-See git history for changes prior to this refactoring.
