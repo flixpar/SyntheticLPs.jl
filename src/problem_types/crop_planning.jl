@@ -4,73 +4,99 @@ using Distributions
 using Statistics
 
 """
-    generate_crop_planning_problem(params::Dict=Dict(); seed::Int=0)
+    CropPlanningProblem <: ProblemGenerator
 
-Generate a crop planning optimization problem instance.
+Generator for crop planning optimization problems.
 
-This models realistic agricultural crop planning where farmers must decide how much area
+Models realistic agricultural crop planning where farmers must decide how much area
 to allocate to different crops while maximizing profit and satisfying resource constraints
 (land, water, labor), crop diversity requirements, and market demand limitations.
 
-# Arguments
-- `params`: Dictionary of problem parameters
-  - `:n_crops`: Number of different crops to consider (default: 10)
-  - `:n_seasons`: Number of growing seasons in the planning period (default: 1)
-  - `:total_land`: Total available land in hectares (default: 1000.0)
-  - `:water_availability_factor`: Factor controlling irrigation water capacity (default: 0.7)
-  - `:labor_availability_factor`: Factor controlling available labor hours (default: 0.8)
-  - `:market_demand_factor`: Factor controlling market demand limits (default: 1.2)
-  - `:diversity_constraint_prob`: Probability of adding crop diversity constraints (default: 0.7)
-  - `:min_area_requirements`: Whether to enforce minimum area for essential crops (default: true)
-  - `:solution_status`: Desired feasibility of the generated instance. One of `:feasible`, `:infeasible`, or `:all`.
-    Default: `:feasible`. When `:feasible`, a feasible allocation is constructed and capacities are
-    adjusted to guarantee feasibility. When `:infeasible`, capacities are set below a
-    provable lower bound to guarantee infeasibility. When `:all`, behavior follows the unconstrained
-    random generation (no guarantees).
-- `seed`: Random seed for reproducibility (default: 0)
-
-# Returns
-- `model`: The JuMP model
-- `params`: Dictionary of all parameters used (including defaults)
+# Fields
+- `n_crops::Int`: Number of different crops
+- `total_land::Float64`: Total available land in hectares
+- `crop_types::Vector{Symbol}`: Type of each crop (:cereal, :vegetable, :legume, :industrial, :oilseed)
+- `crop_names::Vector{String}`: Name of each crop
+- `yields::Vector{Float64}`: Yield in tons/hectare for each crop
+- `prices::Vector{Float64}`: Price in dollars/ton for each crop
+- `production_costs::Vector{Float64}`: Production cost in dollars/hectare for each crop
+- `water_requirements::Vector{Float64}`: Water requirement in mm/season for each crop
+- `labor_requirements::Vector{Float64}`: Labor requirement in hours/hectare for each crop
+- `net_profit_per_ha::Vector{Float64}`: Net profit per hectare for each crop
+- `market_demand_limits::Vector{Float64}`: Market demand limit in hectares for each crop
+- `min_area_per_crop::Vector{Float64}`: Minimum area requirement in hectares for each crop
+- `water_capacity::Float64`: Available water capacity
+- `labor_capacity::Float64`: Available labor capacity
+- `diversity_constraints::Vector{Tuple{Symbol, Float64, Vector{Int}}}`: Diversity constraints (crop_type, min_area, crop_indices)
 """
-function generate_crop_planning_problem(params::Dict=Dict(); seed::Int=0)
-    # Set random seed
+struct CropPlanningProblem <: ProblemGenerator
+    n_crops::Int
+    total_land::Float64
+    crop_types::Vector{Symbol}
+    crop_names::Vector{String}
+    yields::Vector{Float64}
+    prices::Vector{Float64}
+    production_costs::Vector{Float64}
+    water_requirements::Vector{Float64}
+    labor_requirements::Vector{Float64}
+    net_profit_per_ha::Vector{Float64}
+    market_demand_limits::Vector{Float64}
+    min_area_per_crop::Vector{Float64}
+    water_capacity::Float64
+    labor_capacity::Float64
+    diversity_constraints::Vector{Tuple{Symbol, Float64, Vector{Int}}}
+end
+
+"""
+    CropPlanningProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+
+Construct a crop planning problem instance.
+
+# Arguments
+- `target_variables`: Target number of variables (crops)
+- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+- `seed`: Random seed for reproducibility
+"""
+function CropPlanningProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     Random.seed!(seed)
 
-    # Extract parameters with defaults
-    n_crops = get(params, :n_crops, 10)
-    n_seasons = get(params, :n_seasons, 1)
-    total_land = get(params, :total_land, 1000.0)
-    water_availability_factor = get(params, :water_availability_factor, 0.7)
-    labor_availability_factor = get(params, :labor_availability_factor, 0.8)
-    market_demand_factor = get(params, :market_demand_factor, 1.2)
-    diversity_constraint_prob = get(params, :diversity_constraint_prob, 0.7)
-    min_area_requirements = get(params, :min_area_requirements, true)
-    solution_status = get(params, :solution_status, :feasible)
+    # For crop planning, target_variables = n_crops
+    n_crops = max(2, target_variables)
 
-    if solution_status isa String
-        solution_status = Symbol(lowercase(solution_status))
-    end
-    if !(solution_status in (:feasible, :infeasible, :all))
-        error("Unknown solution_status=$(solution_status). Use :feasible, :infeasible, or :all")
+    # Determine problem scale based on target variables
+    if target_variables <= 250
+        # Small scale: Family farm or small agricultural operation
+        total_land = rand(Uniform(50.0, 500.0))
+        water_availability_factor = rand(Uniform(0.6, 0.8))
+        labor_availability_factor = rand(Uniform(0.7, 0.9))
+        market_demand_factor = rand(Uniform(1.0, 1.3))
+        diversity_constraint_prob = rand(Uniform(0.5, 0.8))
+    elseif target_variables <= 1000
+        # Medium scale: Commercial farm or agricultural cooperative
+        total_land = rand(Uniform(500.0, 5000.0))
+        water_availability_factor = rand(Uniform(0.65, 0.85))
+        labor_availability_factor = rand(Uniform(0.75, 0.95))
+        market_demand_factor = rand(Uniform(1.1, 1.5))
+        diversity_constraint_prob = rand(Uniform(0.6, 0.9))
+    else
+        # Large scale: Industrial agriculture or regional planning
+        total_land = rand(Uniform(5000.0, 50000.0))
+        water_availability_factor = rand(Uniform(0.7, 0.9))
+        labor_availability_factor = rand(Uniform(0.8, 1.0))
+        market_demand_factor = rand(Uniform(1.2, 2.0))
+        diversity_constraint_prob = rand(Uniform(0.7, 0.95))
     end
 
-    # Save actual parameters used
-    actual_params = Dict{Symbol, Any}(
-        :n_crops => n_crops,
-        :n_seasons => n_seasons,
-        :total_land => total_land,
-        :water_availability_factor => water_availability_factor,
-        :labor_availability_factor => labor_availability_factor,
-        :market_demand_factor => market_demand_factor,
-        :diversity_constraint_prob => diversity_constraint_prob,
-        :min_area_requirements => min_area_requirements,
-        :solution_status => solution_status
-    )
+    # Minimum area requirements are common in agricultural planning
+    min_area_requirements = rand() < 0.85
+
+    # Convert feasibility status
+    solution_status = feasibility_status == feasible ? :feasible :
+                     feasibility_status == infeasible ? :infeasible : :all
 
     # Define crop types for realistic modeling
-    crop_types = [:cereal, :vegetable, :legume, :industrial, :oilseed]
-    crop_names = [
+    crop_type_list = [:cereal, :vegetable, :legume, :industrial, :oilseed]
+    crop_name_list = [
         "Wheat", "Corn", "Rice", "Barley", "Oats",
         "Tomatoes", "Peppers", "Lettuce", "Carrots", "Onions",
         "Soybeans", "Peas", "Lentils", "Beans", "Chickpeas",
@@ -83,9 +109,9 @@ function generate_crop_planning_problem(params::Dict=Dict(); seed::Int=0)
     assigned_crop_names = Vector{String}(undef, n_crops)
 
     for i in 1:n_crops
-        if i <= length(crop_names)
-            assigned_crop_names[i] = crop_names[i]
-            # Assign type based on position in crop_names
+        if i <= length(crop_name_list)
+            assigned_crop_names[i] = crop_name_list[i]
+            # Assign type based on position in crop_name_list
             if i <= 5
                 assigned_crop_types[i] = :cereal
             elseif i <= 10
@@ -99,7 +125,7 @@ function generate_crop_planning_problem(params::Dict=Dict(); seed::Int=0)
             end
         else
             assigned_crop_names[i] = "Crop_$(i)"
-            assigned_crop_types[i] = rand(crop_types)
+            assigned_crop_types[i] = rand(crop_type_list)
         end
     end
 
@@ -342,10 +368,6 @@ function generate_crop_planning_problem(params::Dict=Dict(); seed::Int=0)
         water_capacity = max(water_capacity, sum(water_requirements .* min_area_per_crop) * 1.2)
         labor_capacity = max(labor_capacity, sum(labor_requirements .* min_area_per_crop) * 1.2)
 
-        actual_params[:baseline_allocation] = baseline_allocation
-        actual_params[:baseline_water_usage] = baseline_water_usage
-        actual_params[:baseline_labor_usage] = baseline_labor_usage
-
     elseif solution_status == :infeasible
         # Calculate provable lower bounds on resource usage
         # Lower bound: minimum water/labor needed when using minimum-requirement crops only
@@ -383,9 +405,6 @@ function generate_crop_planning_problem(params::Dict=Dict(); seed::Int=0)
             labor_capacity = min_labor_bound * violation_factor
         end
 
-        actual_params[:min_water_bound] = min_water_bound
-        actual_params[:min_labor_bound] = min_labor_bound
-
     else  # :all
         # Random capacities without guarantees
         estimated_water = total_land * mean(water_requirements) * water_availability_factor
@@ -395,54 +414,8 @@ function generate_crop_planning_problem(params::Dict=Dict(); seed::Int=0)
         labor_capacity = estimated_labor * rand(Uniform(0.6, 1.4))
     end
 
-    # Store generated data in params
-    actual_params[:crop_types] = assigned_crop_types
-    actual_params[:crop_names] = assigned_crop_names
-    actual_params[:yields] = yields
-    actual_params[:prices] = prices
-    actual_params[:production_costs] = production_costs
-    actual_params[:water_requirements] = water_requirements
-    actual_params[:labor_requirements] = labor_requirements
-    actual_params[:net_profit_per_ha] = net_profit_per_ha
-    actual_params[:market_demand_limits] = market_demand_limits
-    actual_params[:min_area_per_crop] = min_area_per_crop
-    actual_params[:water_capacity] = water_capacity
-    actual_params[:labor_capacity] = labor_capacity
-
-    # Create JuMP model
-    model = Model()
-
-    # Decision variables: area allocated to each crop (hectares)
-    @variable(model, x[1:n_crops] >= 0)
-
-    # Objective: maximize total net profit
-    @objective(model, Max,
-        sum((prices[i] * yields[i] - production_costs[i]) * x[i] for i in 1:n_crops))
-
-    # Constraint: total land area
-    @constraint(model, sum(x[i] for i in 1:n_crops) <= total_land)
-
-    # Constraint: water availability
-    @constraint(model,
-        sum(water_requirements[i] * x[i] for i in 1:n_crops) <= water_capacity)
-
-    # Constraint: labor availability
-    @constraint(model,
-        sum(labor_requirements[i] * x[i] for i in 1:n_crops) <= labor_capacity)
-
-    # Constraints: market demand limits
-    for i in 1:n_crops
-        @constraint(model, x[i] <= market_demand_limits[i])
-    end
-
-    # Constraints: minimum area requirements for essential crops
-    for i in 1:n_crops
-        if min_area_per_crop[i] > 0
-            @constraint(model, x[i] >= min_area_per_crop[i])
-        end
-    end
-
     # Optional: crop diversity constraints
+    diversity_constraints = Tuple{Symbol, Float64, Vector{Int}}[]
     if rand() < diversity_constraint_prob
         # Ensure at least some diversity across crop types
         crop_type_groups = Dict{Symbol, Vector{Int}}()
@@ -455,7 +428,6 @@ function generate_crop_planning_problem(params::Dict=Dict(); seed::Int=0)
         end
 
         # For each crop type with multiple crops, ensure minimum total area
-        diversity_constraints = []
         for (ctype, crop_indices) in crop_type_groups
             if length(crop_indices) >= 2
                 min_type_area = total_land * rand(Uniform(0.05, 0.15))
@@ -465,145 +437,90 @@ function generate_crop_planning_problem(params::Dict=Dict(); seed::Int=0)
                     # Check if baseline allocation satisfies this
                     current_type_area = sum(baseline_allocation[crop_indices])
                     if current_type_area >= min_type_area * 0.95
-                        @constraint(model, sum(x[i] for i in crop_indices) >= min_type_area)
                         push!(diversity_constraints, (ctype, min_type_area, crop_indices))
                     end
                 elseif solution_status == :all
-                    @constraint(model, sum(x[i] for i in crop_indices) >= min_type_area)
                     push!(diversity_constraints, (ctype, min_type_area, crop_indices))
                 end
                 # For infeasible, don't add diversity constraints that might interfere
             end
         end
-        actual_params[:diversity_constraints] = diversity_constraints
     end
 
-    return model, actual_params
-end
-
-"""
-    sample_crop_planning_parameters(target_variables::Int; seed::Int=0)
-
-Sample realistic parameters for a crop planning problem targeting approximately the specified number of variables.
-
-Variables = n_crops (one continuous variable per crop for area allocation)
-
-# Arguments
-- `target_variables`: Target number of variables in the LP formulation (approximately within ±10%)
-- `seed`: Random seed for reproducibility (default: 0)
-
-# Returns
-- Dictionary of sampled parameters
-"""
-function sample_crop_planning_parameters(target_variables::Int; seed::Int=0)
-    Random.seed!(seed)
-
-    params = Dict{Symbol, Any}()
-
-    # For crop planning, target_variables = n_crops
-    params[:n_crops] = max(2, target_variables)
-
-    # Determine problem scale based on target variables
-    if target_variables <= 250
-        # Small scale: Family farm or small agricultural operation
-        scale = :small
-        params[:total_land] = rand(Uniform(50.0, 500.0))  # 50-500 hectares
-        params[:water_availability_factor] = rand(Uniform(0.6, 0.8))
-        params[:labor_availability_factor] = rand(Uniform(0.7, 0.9))
-        params[:market_demand_factor] = rand(Uniform(1.0, 1.3))
-        params[:diversity_constraint_prob] = rand(Uniform(0.5, 0.8))
-    elseif target_variables <= 1000
-        # Medium scale: Commercial farm or agricultural cooperative
-        scale = :medium
-        params[:total_land] = rand(Uniform(500.0, 5000.0))  # 500-5000 hectares
-        params[:water_availability_factor] = rand(Uniform(0.65, 0.85))
-        params[:labor_availability_factor] = rand(Uniform(0.75, 0.95))
-        params[:market_demand_factor] = rand(Uniform(1.1, 1.5))
-        params[:diversity_constraint_prob] = rand(Uniform(0.6, 0.9))
-    else
-        # Large scale: Industrial agriculture or regional planning
-        scale = :large
-        params[:total_land] = rand(Uniform(5000.0, 50000.0))  # 5000-50000 hectares
-        params[:water_availability_factor] = rand(Uniform(0.7, 0.9))
-        params[:labor_availability_factor] = rand(Uniform(0.8, 1.0))
-        params[:market_demand_factor] = rand(Uniform(1.2, 2.0))
-        params[:diversity_constraint_prob] = rand(Uniform(0.7, 0.95))
-    end
-
-    # Single season planning (multi-season could be future extension)
-    params[:n_seasons] = 1
-
-    # Minimum area requirements are common in agricultural planning
-    params[:min_area_requirements] = rand() < 0.85
-
-    # Iteratively adjust to get within 10% tolerance
-    for iteration in 1:10
-        current_vars = calculate_crop_planning_variable_count(params)
-
-        if abs(current_vars - target_variables) / target_variables < 0.1
-            break  # Within 10% tolerance
-        end
-
-        # Adjust n_crops
-        if current_vars < target_variables
-            params[:n_crops] += 1
-        elseif current_vars > target_variables
-            params[:n_crops] = max(2, params[:n_crops] - 1)
-        end
-    end
-
-    return params
-end
-
-"""
-    sample_crop_planning_parameters(size::Symbol=:medium; seed::Int=0)
-
-Sample realistic parameters for a crop planning problem using size categories.
-
-# Arguments
-- `size`: Symbol specifying the problem size (:small, :medium, :large)
-- `seed`: Random seed for reproducibility (default: 0)
-
-# Returns
-- Dictionary of sampled parameters
-"""
-function sample_crop_planning_parameters(size::Symbol=:medium; seed::Int=0)
-    Random.seed!(seed)
-
-    # Map size categories to realistic target variable ranges
-    target_map = Dict(
-        :small => rand(50:250),     # Small farm: 50-250 crops
-        :medium => rand(250:1000),  # Commercial farm: 250-1000 crops
-        :large => rand(1000:10000)  # Industrial/regional: 1000-10000 crops
+    return CropPlanningProblem(
+        n_crops,
+        total_land,
+        assigned_crop_types,
+        assigned_crop_names,
+        yields,
+        prices,
+        production_costs,
+        water_requirements,
+        labor_requirements,
+        net_profit_per_ha,
+        market_demand_limits,
+        min_area_per_crop,
+        water_capacity,
+        labor_capacity,
+        diversity_constraints
     )
-
-    if !haskey(target_map, size)
-        error("Unknown size: $size. Must be :small, :medium, or :large")
-    end
-
-    return sample_crop_planning_parameters(target_map[size]; seed=seed)
 end
 
 """
-    calculate_crop_planning_variable_count(params::Dict)
+    build_model(prob::CropPlanningProblem)
 
-Calculate the number of variables in a crop planning problem.
+Build a JuMP model for the crop planning problem.
 
 # Arguments
-- `params`: Dictionary of problem parameters containing :n_crops
+- `prob`: CropPlanningProblem instance
 
 # Returns
-- Number of variables (n_crops continuous variables for area allocation)
+- `model`: The JuMP model
 """
-function calculate_crop_planning_variable_count(params::Dict)
-    n_crops = get(params, :n_crops, 10)
-    return n_crops
+function build_model(prob::CropPlanningProblem)
+    model = Model()
+
+    # Decision variables: area allocated to each crop (hectares)
+    @variable(model, x[1:prob.n_crops] >= 0)
+
+    # Objective: maximize total net profit
+    @objective(model, Max,
+        sum((prob.prices[i] * prob.yields[i] - prob.production_costs[i]) * x[i] for i in 1:prob.n_crops))
+
+    # Constraint: total land area
+    @constraint(model, sum(x[i] for i in 1:prob.n_crops) <= prob.total_land)
+
+    # Constraint: water availability
+    @constraint(model,
+        sum(prob.water_requirements[i] * x[i] for i in 1:prob.n_crops) <= prob.water_capacity)
+
+    # Constraint: labor availability
+    @constraint(model,
+        sum(prob.labor_requirements[i] * x[i] for i in 1:prob.n_crops) <= prob.labor_capacity)
+
+    # Constraints: market demand limits
+    for i in 1:prob.n_crops
+        @constraint(model, x[i] <= prob.market_demand_limits[i])
+    end
+
+    # Constraints: minimum area requirements for essential crops
+    for i in 1:prob.n_crops
+        if prob.min_area_per_crop[i] > 0
+            @constraint(model, x[i] >= prob.min_area_per_crop[i])
+        end
+    end
+
+    # Optional: crop diversity constraints
+    for (ctype, min_type_area, crop_indices) in prob.diversity_constraints
+        @constraint(model, sum(x[i] for i in crop_indices) >= min_type_area)
+    end
+
+    return model
 end
 
 # Register the problem type
 register_problem(
     :crop_planning,
-    generate_crop_planning_problem,
-    sample_crop_planning_parameters,
+    CropPlanningProblem,
     "Crop planning optimization problem that maximizes agricultural profit by allocating land to different crops while satisfying resource constraints (water, labor), crop diversity requirements, and market demand limitations"
 )
