@@ -6,10 +6,11 @@ A standardized framework for generating synthetic linear programming (LP) proble
 
 This package provides:
 
-- A unified interface for generating various types of LP problems
-- Parameter sampling capabilities to generate realistic problem instances
+- A unified interface for generating various types of LP problems using multiple dispatch
+- Problem generators implemented as concrete types inheriting from `ProblemGenerator`
+- Controllable problem feasibility (feasible, infeasible, or unknown)
 - Target variable count generation - specify approximate number of variables
-- Size-based generation (small, medium, large) for backward compatibility
+- Deterministic problem generation with reproducible seeds
 - Easy extensibility for new problem types
 
 ## Problem Types
@@ -56,12 +57,12 @@ problem_types = list_problem_types()
 # Get information about a problem type
 info = problem_info(:transportation)
 
-# Generate a problem with default parameters
-model, params = generate_problem(:transportation)
+# Generate a problem with target variable count
+model, problem = generate_problem(:transportation, 100, unknown, 0)
 
-# Generate a problem with specific parameters
-params = Dict(:n_sources => 10, :n_destinations => 15)
-model, params = generate_problem(:transportation, params)
+# The problem instance contains all the generated data
+println("Number of sources: ", problem.n_sources)
+println("Number of destinations: ", problem.n_destinations)
 
 # Solve the model
 set_optimizer(model, Clp.Optimizer)
@@ -69,36 +70,44 @@ optimize!(model)
 solution_summary(model)
 ```
 
-### Target Variable Count Generation
+### Feasibility Control
 
 ```julia
-# Sample parameters targeting approximately 100 variables
-params = sample_parameters(:transportation, 100)  # Target ~100 variables
-model, params = generate_problem(:transportation, params)
+# Generate a guaranteed feasible problem
+model, problem = generate_problem(:transportation, 100, feasible, 0)
 
-# Check actual variable count
-println("Target: 100, Actual: $(num_variables(model))")
+# Generate a guaranteed infeasible problem
+model, problem = generate_problem(:diet_problem, 100, infeasible, 0)
 
-# Generate problems with different variable counts
-for target_vars in [10, 50, 200, 500]
-    params = sample_parameters(:knapsack, target_vars)
-    model, params = generate_problem(:knapsack, params)
-    println("Target: $target_vars, Actual: $(num_variables(model))")
-end
+# Generate a problem with unknown feasibility (randomized)
+model, problem = generate_problem(:portfolio, 100, unknown, 0)
+```
+
+### Reproducible Generation with Seeds
+
+```julia
+# Generate the same problem twice with the same seed
+seed = 12345
+model1, problem1 = generate_problem(:knapsack, 50, unknown, seed)
+model2, problem2 = generate_problem(:knapsack, 50, unknown, seed)
+
+# These will be identical
+@assert num_variables(model1) == num_variables(model2)
+@assert problem1.n_items == problem2.n_items
 ```
 
 ### Random Problem Generation
 
 ```julia
 # Generate a random problem of any type targeting ~100 variables
-model, problem_type, params = generate_random_problem(100)
+model, problem_type, problem = generate_random_problem(100)
 
 # Check what problem type was selected and its variable count
 println("Problem type: $problem_type")
 println("Variables: $(num_variables(model))")
 
-# Legacy: Generate a random problem by size
-model, problem_type, params = generate_random_problem(:medium)  # :small, :medium, or :large
+# Generate with feasibility control
+model, problem_type, problem = generate_random_problem(200; feasibility_status=feasible)
 
 # Solve the model
 set_optimizer(model, Clp.Optimizer)
@@ -111,8 +120,9 @@ solution_summary(model)
 To add a new problem type:
 
 1. Create a new file in `src/problem_types/your_problem.jl`
-2. Implement the generator and parameter sampling functions
-3. Register the problem type with the system
+2. Define a struct inheriting from `ProblemGenerator`
+3. Implement the constructor and `build_model` function
+4. Register the problem type
 
 Example template:
 
@@ -120,36 +130,70 @@ Example template:
 using JuMP
 using Random
 
-function generate_your_problem(params::Dict=Dict(); seed::Int=0)
-    # Implementation...
-    return model, params
+"""
+    YourProblem <: ProblemGenerator
+
+Generator for your custom problem type.
+
+# Fields
+- `field1::Type1`: Description
+- `field2::Type2`: Description
+"""
+struct YourProblem <: ProblemGenerator
+    field1::Type1
+    field2::Type2
+    # ... store all generated data needed to build the model
 end
 
-function calculate_your_problem_variable_count(params::Dict)
-    # Calculate and return the number of variables this problem will have
-    # based on the parameters
-    return variable_count
+"""
+    YourProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+
+Construct a problem instance.
+
+# Arguments
+- `target_variables`: Target number of variables
+- `feasibility_status`: Desired feasibility (feasible, infeasible, or unknown)
+- `seed`: Random seed for reproducibility
+"""
+function YourProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+    Random.seed!(seed)
+
+    # Sample all parameters based on target_variables
+    # Generate all deterministic data
+    # Handle feasibility status
+    # ...
+
+    return YourProblem(field1_value, field2_value, ...)
 end
 
-function sample_your_problem_parameters(target_variables::Int; seed::Int=0)
-    # Sample parameters to target approximately target_variables variables
-    return params
-end
+"""
+    build_model(prob::YourProblem)
 
-function sample_your_problem_parameters(size::Symbol=:medium; seed::Int=0)
-    # Legacy size-based parameter sampling (backward compatibility)
-    target_map = Dict(:small => 150, :medium => 500, :large => 2000)
-    return sample_your_problem_parameters(target_map[size]; seed=seed)
+Build a JuMP model from the problem instance. This function must be deterministic.
+"""
+function build_model(prob::YourProblem)
+    model = Model()
+
+    # Define variables
+    # Define constraints
+    # Define objective
+
+    return model
 end
 
 # Register the problem type
 register_problem(
     :your_problem,
-    generate_your_problem,
-    sample_your_problem_parameters,
+    YourProblem,
     "Description of your problem"
 )
 ```
+
+Key principles:
+- The struct stores ALL data needed to deterministically build the model
+- ALL randomness goes in the constructor
+- `build_model` must be completely deterministic (no RNG calls)
+- Handle `feasible`, `infeasible`, and `unknown` feasibility statuses
 
 ## Command Line Interface
 
@@ -157,19 +201,22 @@ The package includes a command-line script for generating problems:
 
 ```bash
 # Generate a transportation problem with ~100 variables
-julia generate_problem.jl transportation 100 problem.mps
+julia --project=@. scripts/generate_problem.jl transportation 100 problem.mps
 
-# Generate a knapsack problem with ~50 variables and solve it
-julia generate_problem.jl knapsack 50 --solve
+# Generate a feasible knapsack problem with ~50 variables and solve it
+julia --project=@. scripts/generate_problem.jl knapsack 50 --feasible --solve
+
+# Generate an infeasible diet problem with ~100 variables
+julia --project=@. scripts/generate_problem.jl diet_problem 100 --infeasible output.mps
 
 # Generate a random problem with ~200 variables
-julia generate_problem.jl random 200
+julia --project=@. scripts/generate_problem.jl random 200
 
-# Legacy: Generate using size categories
-julia generate_problem.jl transportation medium problem.mps
+# Use a specific seed for reproducibility
+julia --project=@. scripts/generate_problem.jl portfolio 150 --seed=12345
 
 # List all available problem types
-julia generate_problem.jl list
+julia --project=@. scripts/generate_problem.jl list
 ```
 
 ## Testing
