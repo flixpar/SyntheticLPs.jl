@@ -2,6 +2,8 @@
 
 All notable changes to SyntheticLPs.jl will be documented in this file.
 
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
 ## 2025-01-07
 
 ### Major Refactoring: Type-Based Dispatch Architecture
