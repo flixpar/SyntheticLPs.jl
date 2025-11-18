@@ -17,7 +17,7 @@ This package provides:
 
 The package includes generators for many common LP problem types, all unified with a standardized interface:
 
-- Transportation
+### General Problems
 - Diet Problem
 - Knapsack
 - Portfolio Optimization
@@ -41,6 +41,16 @@ The package includes generators for many common LP problem types, all unified wi
 - Supply Chain
 - Crop Planning
 - Telecom Network Design
+
+### Transportation & Logistics
+- **Basic Transportation** - Classic source-to-destination shipping optimization
+- **Vehicle Routing** - Capacitated vehicle routing with delivery optimization
+- **Warehouse Location & Sizing** - Combined location and capacity decisions with multi-echelon flows
+- **Hub Location** - Hub-and-spoke network design with economies of scale
+- **Transshipment** - Intermediate storage and routing optimization
+- **Last Mile Delivery** - Urban delivery with time windows and congestion
+- **Cross-Docking** - Transfer optimization with minimal storage time
+- **Cargo Loading** - Container/truck loading with weight and volume constraints
 
 ## Usage
 

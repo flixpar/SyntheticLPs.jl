@@ -59,7 +59,7 @@ julia --project=@.
 
 ## Architecture
 
-SyntheticLPs uses a type-based dispatch system for generating 21 types of realistic linear programming problems. All problem generators follow a consistent pattern using Julia's multiple dispatch.
+SyntheticLPs uses a type-based dispatch system for generating 30+ types of realistic linear programming problems. All problem generators follow a consistent pattern using Julia's multiple dispatch.
 
 ### Core Components
 
@@ -128,12 +128,25 @@ register_problem(:type, ProblemType, "Description")
 
 ### Available Problem Types
 
-The system includes 21 problem types covering major LP problem classes:
-- Transportation, Diet Problem, Knapsack, Portfolio, Network Flow
+The system includes 30+ problem types covering major LP problem classes:
+
+**General Problems:**
+- Diet Problem, Knapsack, Portfolio, Network Flow, Multi-Commodity Flow
 - Production Planning, Assignment, Blending, Facility Location
 - Airline Crew, Cutting Stock, Energy, Feed Blending, Inventory
 - Land Use, Load Balancing, Product Mix, Project Selection
-- Resource Allocation, Scheduling, Supply Chain
+- Resource Allocation, Scheduling, Supply Chain, Crop Planning
+- Telecom Network Design
+
+**Transportation & Logistics** (in `src/problem_types/transportation/`):
+- Basic Transportation - Classic source-to-destination shipping
+- Vehicle Routing - Capacitated VRP with delivery routes
+- Warehouse Location & Sizing - Multi-echelon location and capacity decisions
+- Hub Location - Hub-and-spoke network with economies of scale
+- Transshipment - Intermediate storage and routing
+- Last Mile Delivery - Urban delivery with time windows
+- Cross-Docking - Transfer optimization with minimal storage
+- Cargo Loading - Container/truck loading with weight/volume constraints
 
 ### Testing Strategy
 

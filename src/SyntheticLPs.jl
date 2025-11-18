@@ -203,6 +203,15 @@ include("problem_types/resource_allocation.jl")
 include("problem_types/scheduling.jl")
 include("problem_types/supply_chain.jl")
 include("problem_types/telecom_network_design.jl")
-include("problem_types/transportation.jl")
+
+# Transportation problem types
+include("problem_types/transportation/basic_transportation.jl")
+include("problem_types/transportation/vehicle_routing.jl")
+include("problem_types/transportation/warehouse_location.jl")
+include("problem_types/transportation/hub_location.jl")
+include("problem_types/transportation/transshipment.jl")
+include("problem_types/transportation/last_mile_delivery.jl")
+include("problem_types/transportation/cross_docking.jl")
+include("problem_types/transportation/cargo_loading.jl")
 
 end # module

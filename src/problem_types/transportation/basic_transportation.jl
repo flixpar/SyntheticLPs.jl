@@ -2,9 +2,9 @@ using JuMP
 using Random
 
 """
-    TransportationProblem <: ProblemGenerator
+    BasicTransportation <: ProblemGenerator
 
-Generator for transportation problems that optimize shipping goods from sources to destinations at minimum cost.
+Generator for basic transportation problems that optimize shipping goods from sources to destinations at minimum cost.
 
 # Fields
 - `n_sources::Int`: Number of supply sources
@@ -13,7 +13,7 @@ Generator for transportation problems that optimize shipping goods from sources 
 - `demands::Vector{Int}`: Demand at each destination
 - `costs::Matrix{Int}`: Transportation cost from each source to each destination
 """
-struct TransportationProblem <: ProblemGenerator
+struct BasicTransportation <: ProblemGenerator
     n_sources::Int
     n_destinations::Int
     supplies::Vector{Int}
@@ -22,16 +22,16 @@ struct TransportationProblem <: ProblemGenerator
 end
 
 """
-    TransportationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+    BasicTransportation(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
-Construct a transportation problem instance.
+Construct a basic transportation problem instance.
 
 # Arguments
 - `target_variables`: Target number of variables (n_sources × n_destinations)
 - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
 - `seed`: Random seed for reproducibility
 """
-function TransportationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function BasicTransportation(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     Random.seed!(seed)
 
     # Calculate dimensions to achieve target number of variables
@@ -120,21 +120,21 @@ function TransportationProblem(target_variables::Int, feasibility_status::Feasib
     end
     # For unknown, leave as-is
 
-    return TransportationProblem(n_sources, n_destinations, supplies, demands, costs)
+    return BasicTransportation(n_sources, n_destinations, supplies, demands, costs)
 end
 
 """
-    build_model(prob::TransportationProblem)
+    build_model(prob::BasicTransportation)
 
-Build a JuMP model for the transportation problem.
+Build a JuMP model for the basic transportation problem.
 
 # Arguments
-- `prob`: TransportationProblem instance
+- `prob`: BasicTransportation instance
 
 # Returns
 - `model`: The JuMP model
 """
-function build_model(prob::TransportationProblem)
+function build_model(prob::BasicTransportation)
     model = Model()
 
     # Variables
@@ -156,7 +156,7 @@ end
 
 # Register the problem type
 register_problem(
-    :transportation,
-    TransportationProblem,
-    "Transportation problem that optimizes shipping goods from sources to destinations at minimum cost"
+    :basic_transportation,
+    BasicTransportation,
+    "Basic transportation problem that optimizes shipping goods from sources to destinations at minimum cost"
 )
