@@ -4,6 +4,86 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2025-11-18
+
+### Added Vehicle Routing Problem Generator
+
+**Base Commit**: `b679ada`
+**Datetime**: 2025-11-18 13:11:27 UTC
+
+**Summary**: Implemented a new problem generator for Capacitated Vehicle Routing Problems (CVRP) with LP relaxation. The generator creates realistic vehicle routing scenarios for testing LP solvers.
+
+### Added
+
+- **`VehicleRoutingProblem` struct**: New problem generator for vehicle routing problems
+  - Fields: `n_customers`, `n_vehicles`, `depot_location`, `customer_locations`, `demands`, `vehicle_capacities`, `distances`
+  - Implements the standard `ProblemGenerator` interface
+
+- **Realistic problem characteristics**:
+  - Geographic clustering of customers (simulates urban delivery patterns)
+  - Log-normal distribution for customer demands (realistic mix of large and small orders)
+  - Heterogeneous vehicle fleet with varying capacities
+  - Euclidean distance-based costs with minor random variation
+  - Central or edge depot location
+
+- **LP relaxation formulation**:
+  - Flow variables `x[i,j,k]`: continuous [0,1] flow from location i to j using vehicle k
+  - Service variables `y[j,k]`: continuous [0,1] indicating if vehicle k serves customer j
+  - Constraints: customer service, flow conservation, vehicle capacity, depot flow
+  - Objective: minimize total routing cost
+
+- **Feasibility control**:
+  - **Feasible**: Ensures total vehicle capacity ≥ 1.15-1.35× total demand
+  - **Infeasible**: Reduces total capacity to 0.65-0.92× total demand, or increases demands
+  - **Unknown**: Natural randomness without adjustment
+
+- **Accurate variable count targeting**:
+  - Formula: `target_variables = m × ((n+1)² + n)` where n=customers, m=vehicles
+  - Optimizes (n_customers, n_vehicles) combination to achieve target within ±10%
+  - Scales appropriately for small (≤100), medium (≤500), large (≤2000), and very large (>2000) problems
+
+### Implementation Details
+
+- **Constructor** (`VehicleRoutingProblem`):
+  - Samples all parameters based on target_variables
+  - Generates geographic locations with clustering
+  - Creates heterogeneous vehicle fleet
+  - Handles all three feasibility statuses
+  - All randomness confined to constructor for reproducibility
+
+- **Model builder** (`build_model`):
+  - Completely deterministic (no RNG calls)
+  - Creates flow-based LP formulation
+  - Implements all standard VRP constraints
+
+- **Helper functions**:
+  - `sample_vrp_parameters`: Determines optimal problem dimensions
+  - `generate_clustered_customers`: Creates realistic geographic customer distribution
+  - `generate_lognormal_demands`: Samples realistic demand patterns
+  - `generate_vehicle_fleet`: Creates heterogeneous fleet with varying capacities
+  - `calculate_distances`: Computes Euclidean distances with variation
+
+### Files Added/Modified
+
+- **New file**: `src/problem_types/vehicle_routing.jl` (469 lines)
+- **Modified**: `src/SyntheticLPs.jl` - added include statement for vehicle_routing.jl
+- **Modified**: `README.md` - added Vehicle Routing to problem types list
+- **Modified**: `CHANGELOG.md` - this entry
+
+### Problem Scaling
+
+The generator adapts to different problem sizes:
+
+- **Small (target ≤ 100 vars)**: 3-10 customers, 2-4 vehicles, local delivery scenarios
+- **Medium (target ≤ 500 vars)**: 8-25 customers, 3-8 vehicles, regional distribution
+- **Large (target ≤ 2000 vars)**: 20-50 customers, 5-15 vehicles, city-wide delivery
+- **Very large (target > 2000 vars)**: 40-100 customers, 8-25 vehicles, multi-city logistics
+
+### Registration
+
+Problem type registered as `:vehicle_routing` with description:
+"Capacitated vehicle routing problem (CVRP) with LP relaxation that routes vehicles from a depot to serve customers while minimizing travel cost"
+
 ## 2025-01-07
 
 ### Major Refactoring: Type-Based Dispatch Architecture

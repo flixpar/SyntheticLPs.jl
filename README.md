@@ -41,6 +41,7 @@ The package includes generators for many common LP problem types, all unified wi
 - Supply Chain
 - Crop Planning
 - Telecom Network Design
+- Vehicle Routing
 
 ## Usage
 
