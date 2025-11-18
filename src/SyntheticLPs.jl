@@ -182,6 +182,7 @@ end
 # The problem type files will use the register_problem function from this module
 include("problem_types/airline_crew.jl")
 include("problem_types/assignment.jl")
+include("problem_types/bin_packing.jl")
 include("problem_types/blending.jl")
 include("problem_types/crop_planning.jl")
 include("problem_types/cutting_stock.jl")

@@ -4,6 +4,83 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2025-11-18
+
+### Added - Bin Packing Problem Generator
+
+**Previous Commit**: `b679ada`
+**Current Date/Time**: 2025-11-18
+
+**Summary**: Implemented a new problem generator for bin packing problems with realistic item size distributions and optional incompatibility constraints.
+
+#### New Problem Type: Bin Packing
+
+- **`BinPackingProblem` struct**: New problem generator for bin packing optimization
+  - Fields: `n_items`, `n_bins`, `item_sizes`, `bin_capacity`, `item_categories`, `incompatible_pairs`
+  - Registered as `:bin_packing` in the problem registry
+
+#### Key Features
+
+- **Realistic Item Size Distributions**:
+  - Uses Beta(2, 5-7) distribution for skewed item sizes (favoring smaller items)
+  - Includes common standardized sizes (representing standard boxes/packages)
+  - Item sizes typically range from 5% to 90% of bin capacity
+  - Distribution parameters vary by problem scale
+
+- **Problem Scaling**:
+  - Small problems (≤100 vars): 5-20 items, 3-10 bins
+  - Medium problems (≤1000 vars): 20-100 items, 10-40 bins
+  - Large problems (>1000 vars): 100-500 items, 40-200 bins
+  - Achieves target variable count within 10% tolerance
+  - Variables: n_items × n_bins + n_bins (for X and Y variables)
+
+- **Feasibility Control**:
+  - **Feasible**: Guarantees sufficient total bin capacity (1.1-1.2× total item volume)
+    - Uses first-fit decreasing heuristic to verify feasibility
+    - Adds buffer bins if needed
+  - **Infeasible**: Two methods for guaranteed infeasibility
+    - Method 1: Limit total bin capacity below required (50-90% of minimum needed)
+    - Method 2: Add oversized mutually-incompatible items that cannot fit together
+  - **Unknown**: Random capacity ratio (0.9-1.2× minimum needed)
+
+- **Incompatibility Constraints** (optional):
+  - Items grouped into 2-5 categories
+  - Probability-based incompatibility (20-40% chance depending on problem size)
+  - Incompatible item categories cannot share the same bin
+  - Used to create realistic scenarios (e.g., hazardous materials, temperature requirements)
+
+- **Standard Bin Packing Formulation**:
+  - Binary variables: X[i,j] (item i in bin j), Y[j] (bin j used)
+  - Objective: Minimize total bins used
+  - Constraints: Assignment, capacity, linking, incompatibility
+
+#### Files Added
+
+- `src/problem_types/bin_packing.jl`: Complete implementation
+- `test/test_bin_packing.jl`: Comprehensive test suite for manual verification
+
+#### Files Modified
+
+- `src/SyntheticLPs.jl`: Added include for bin_packing.jl
+- `README.md`: Added Bin Packing to problem types list
+- `CHANGELOG.md`: This entry
+
+#### Implementation Details
+
+The bin packing generator follows the established architecture pattern:
+- Constructor contains ALL randomness (item sizes, capacities, categories)
+- `build_model` is completely deterministic
+- Implements `simulate_first_fit_decreasing` helper for feasibility verification
+- Handles all three feasibility statuses with mathematical guarantees
+
+#### Real-World Applications Modeled
+
+- E-commerce order fulfillment and packaging
+- Container loading for shipping logistics
+- Truck loading with weight/volume limits
+- Warehouse pallet organization
+- Manufacturing parts distribution
+
 ## 2025-01-07
 
 ### Major Refactoring: Type-Based Dispatch Architecture

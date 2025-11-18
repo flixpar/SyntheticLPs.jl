@@ -25,6 +25,7 @@ The package includes generators for many common LP problem types, all unified wi
 - Multi-Commodity Flow
 - Production Planning
 - Assignment
+- Bin Packing
 - Blending
 - Airline Crew
 - Cutting Stock
