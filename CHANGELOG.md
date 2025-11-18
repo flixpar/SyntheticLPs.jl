@@ -4,6 +4,182 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2025-11-18
+
+### New Feature: Problem Variant System
+
+**Previous Commit**: `b679ada`
+**Current Date/Time**: 2025-11-18
+
+**Summary**: Implemented a comprehensive variant system for organizing related problem types into families while maintaining clean file organization and code separation. This allows multiple specialized versions of base problem types (e.g., nurse scheduling, OR scheduling) without cluttering individual files.
+
+### Added
+
+- **Variant System Architecture**:
+  - Folder-based organization: variants stored in subdirectories (e.g., `src/problem_types/scheduling/`)
+  - Naming convention: `:{base}_{variant}` (e.g., `:scheduling_nurse`, `:blending_beverage`)
+  - Automatic discovery and grouping of related variants
+
+- **Helper Functions**:
+  - `is_variant(problem_sym::Symbol)` - Check if a symbol represents a variant
+  - `get_base_type(problem_sym::Symbol)` - Extract base type from variant symbol
+  - `list_problem_variants(base_type::Symbol)` - List all variants of a base type
+  - Enhanced `list_problem_types(; group_variants::Bool=false)` - Optionally group variants by base type
+
+- **Scheduling Variants** (2 new problem types):
+  - `:scheduling_nurse` (`NurseScheduling`) - Hospital nurse scheduling with:
+    - 12-hour shifts (day/night)
+    - Nurse skill levels (RN, LPN, CNA)
+    - Patient acuity-based staffing requirements
+    - Mandatory rest periods and weekend rotation
+    - Skill-level matching for shifts
+  - `:scheduling_or` (`ORScheduling`) - Operating room scheduling with:
+    - Multiple operating rooms with different capabilities
+    - Surgery types with estimated durations
+    - Surgeon and surgical team availability
+    - Equipment and room type requirements
+    - Block scheduling and turnover time constraints
+    - Overtime costs
+
+- **Blending Variants** (2 new problem types):
+  - `:blending_beverage` (`BeverageBlending`) - Beverage formulation with:
+    - Flavor profile requirements (sweetness, acidity, bitterness, fruitiness)
+    - Nutritional constraints (calories, sugar)
+    - pH and Brix (sugar content) specifications
+    - Ingredient types (juices, sweeteners, acids, flavors, water, additives)
+    - Batch size optimization
+  - `:blending_pharmaceutical` (`PharmaceuticalBlending`) - Drug formulation with:
+    - Active Pharmaceutical Ingredients (APIs) with strict potency requirements
+    - Excipients (fillers, binders, disintegrants, lubricants, coating agents)
+    - Purity and contamination limits (pharmaceutical grade)
+    - Dissolution and bioavailability requirements
+    - Very tight tolerances (±2-5%)
+    - Ingredient compatibility matrix
+
+### Changed
+
+- **File Organization**:
+  - Created `src/problem_types/scheduling/` subdirectory
+  - Created `src/problem_types/blending/` subdirectory
+  - Added variant include statements in `src/SyntheticLPs.jl`
+
+- **Module Exports**:
+  - Exported new variant helper functions
+
+- **Test Suite** (`test/runtests.jl`):
+  - Added comprehensive tests for variant system
+  - Tests for variant helper functions
+  - Tests for grouped listing functionality
+
+- **Documentation**:
+  - Updated `CLAUDE.md` with comprehensive variant system documentation:
+    - Overview and rationale
+    - File organization structure
+    - Naming conventions
+    - Helper function usage examples
+    - Current variants listing
+    - Guidelines for when to use variants
+    - Instructions for adding new variants
+  - Updated problem type count (24+ types including variants)
+
+### Technical Details
+
+#### Design Decisions
+
+**Why folder-based organization?**
+- Keeps related variants together
+- Prevents `src/problem_types/` from becoming cluttered
+- Makes it clear which problems are related
+- Scales well as more variants are added
+
+**Why underscore naming convention?**
+- Simple and consistent (`:base_variant`)
+- Works seamlessly with existing symbol-based registration
+- Easy to parse and extract base type
+- Backward compatible (doesn't affect existing problem types)
+
+**Why not use Julia parametric types?**
+- Parametric types (e.g., `Scheduling{NurseVariant}`) would be over-engineered
+- Current approach is simpler and more flexible
+- Easier for users to understand and extend
+- Maintains consistency with existing architecture
+
+#### Variant Pattern
+
+Each variant follows the same pattern as base types:
+1. Struct inheriting from `ProblemGenerator`
+2. Constructor with `(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)`
+3. Deterministic `build_model(prob)` function
+4. Registration with `register_problem(:base_variant, Type, "description")`
+
+#### File Structure
+
+```
+src/problem_types/
+├── scheduling.jl                 # Base type
+├── scheduling/                   # Variants subfolder
+│   ├── nurse.jl
+│   └── or.jl
+├── blending.jl                  # Base type
+└── blending/                    # Variants subfolder
+    ├── beverage.jl
+    └── pharmaceutical.jl
+```
+
+### Examples
+
+```julia
+# List all scheduling variants
+list_problem_variants(:scheduling)
+# [:scheduling, :scheduling_nurse, :scheduling_or]
+
+# Check if a type is a variant
+is_variant(:scheduling_nurse)  # true
+
+# Get base type
+get_base_type(:scheduling_nurse)  # :scheduling
+
+# Group all types by base
+grouped = list_problem_types(group_variants=true)
+# Dict(:scheduling => [:scheduling, :scheduling_nurse, :scheduling_or],
+#      :blending => [:blending, :blending_beverage, :blending_pharmaceutical], ...)
+
+# Generate a variant problem
+model, problem = generate_problem(:scheduling_nurse, 200, feasible, 42)
+```
+
+### Future Extensions
+
+Potential future variants to add:
+- **Scheduling**: classroom, course, shift, appointment, crew
+- **Blending**: fuel, concrete, fertilizer, cosmetics
+- **Network flow**: supply chain, transportation grid, communication network, electricity grid
+- **Location**: warehouse, retail, emergency service, base station
+
+### Files Modified
+
+- **Core module**: `src/SyntheticLPs.jl`
+  - Added variant helper functions
+  - Updated exports
+  - Added variant includes
+
+- **New variant files**:
+  - `src/problem_types/scheduling/nurse.jl`
+  - `src/problem_types/scheduling/or.jl`
+  - `src/problem_types/blending/beverage.jl`
+  - `src/problem_types/blending/pharmaceutical.jl`
+
+- **Tests**: `test/runtests.jl`
+  - Added variant system tests
+
+- **Documentation**:
+  - `CLAUDE.md` - Comprehensive variant system documentation
+  - This `CHANGELOG.md`
+
+### Backward Compatibility
+
+✅ **Fully backward compatible**: All existing problem types continue to work exactly as before. The variant system is purely additive.
+
 ## 2025-01-07
 
 ### Major Refactoring: Type-Based Dispatch Architecture

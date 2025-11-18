@@ -21,6 +21,9 @@ export list_problem_types
 export problem_info
 export generate_random_problem
 export register_problem
+export list_problem_variants
+export get_base_type
+export is_variant
 
 # Registration system
 # Dictionary to store problem type metadata
@@ -115,15 +118,54 @@ function generate_problem(problem_sym::Symbol, target_variables::Int, feasibilit
 end
 
 """
-    list_problem_types()
+    list_problem_types(; group_variants::Bool=false)
 
 List all available problem types.
 
+# Arguments
+- `group_variants`: If true, returns a Dict grouping variants by base type. If false (default), returns flat list.
+
 # Returns
-- Vector of symbols representing available problem types
+- If `group_variants=false`: Vector of symbols representing available problem types
+- If `group_variants=true`: Dict mapping base types to vectors of their variants (and base type itself)
+
+# Examples
+```julia
+# Flat list
+list_problem_types()  # [:scheduling, :scheduling_nurse, :scheduling_or, :blending, ...]
+
+# Grouped by base type
+list_problem_types(group_variants=true)
+# Dict(:scheduling => [:scheduling, :scheduling_nurse, :scheduling_or],
+#      :blending => [:blending, :blending_beverage, :blending_pharmaceutical], ...)
+```
 """
-function list_problem_types()
-    return collect(keys(LP_REGISTRY))
+function list_problem_types(; group_variants::Bool=false)
+    all_types = collect(keys(LP_REGISTRY))
+
+    if !group_variants
+        return all_types
+    end
+
+    # Group variants by base type
+    grouped = Dict{Symbol, Vector{Symbol}}()
+
+    for prob_sym in all_types
+        base = get_base_type(prob_sym)
+
+        if !haskey(grouped, base)
+            grouped[base] = Symbol[]
+        end
+
+        push!(grouped[base], prob_sym)
+    end
+
+    # Sort each group
+    for (base, variants) in grouped
+        sort!(variants)
+    end
+
+    return grouped
 end
 
 """
@@ -178,6 +220,108 @@ function generate_random_problem(target_variables::Int; feasibility_status::Feas
     return model, problem_sym, problem
 end
 
+"""
+    is_variant(problem_sym::Symbol)
+
+Check if a problem type symbol represents a variant (as opposed to a base type).
+
+Variants follow the naming convention `:{base}_{variant}` (e.g., `:scheduling_nurse`).
+
+# Arguments
+- `problem_sym`: Symbol representing the problem type
+
+# Returns
+- `true` if the symbol represents a variant, `false` if it's a base type
+
+# Examples
+```julia
+is_variant(:scheduling)              # false (base type)
+is_variant(:scheduling_nurse)        # true (variant)
+is_variant(:blending_beverage)       # true (variant)
+```
+"""
+function is_variant(problem_sym::Symbol)
+    sym_str = String(problem_sym)
+    return occursin("_", sym_str)
+end
+
+"""
+    get_base_type(problem_sym::Symbol)
+
+Extract the base type from a problem type symbol.
+
+For base types, returns the symbol itself. For variants, extracts the base type
+from the naming convention `:{base}_{variant}`.
+
+# Arguments
+- `problem_sym`: Symbol representing the problem type
+
+# Returns
+- Base type symbol
+
+# Examples
+```julia
+get_base_type(:scheduling)              # :scheduling
+get_base_type(:scheduling_nurse)        # :scheduling
+get_base_type(:blending_beverage)       # :blending
+```
+"""
+function get_base_type(problem_sym::Symbol)
+    sym_str = String(problem_sym)
+
+    # Check if this is a variant (contains underscore)
+    if !occursin("_", sym_str)
+        return problem_sym  # Already a base type
+    end
+
+    # Extract base type (everything before first underscore)
+    parts = split(sym_str, "_", limit=2)
+    return Symbol(parts[1])
+end
+
+"""
+    list_problem_variants(base_type::Symbol)
+
+List all variants of a specific base problem type.
+
+# Arguments
+- `base_type`: Symbol representing the base problem type
+
+# Returns
+- Vector of symbols representing all variants of the base type (including base type if registered)
+
+# Examples
+```julia
+list_problem_variants(:scheduling)
+# [:scheduling, :scheduling_nurse, :scheduling_or]
+
+list_problem_variants(:blending)
+# [:blending, :blending_beverage, :blending_pharmaceutical]
+```
+"""
+function list_problem_variants(base_type::Symbol)
+    all_types = collect(keys(LP_REGISTRY))
+
+    # Find all types that match this base
+    base_str = String(base_type)
+    variants = Symbol[]
+
+    for prob_sym in all_types
+        prob_str = String(prob_sym)
+
+        # Exact match (base type itself)
+        if prob_sym == base_type
+            push!(variants, prob_sym)
+        # Variant match (starts with "base_")
+        elseif startswith(prob_str, base_str * "_")
+            push!(variants, prob_sym)
+        end
+    end
+
+    sort!(variants)
+    return variants
+end
+
 # Include all problem generators
 # The problem type files will use the register_problem function from this module
 include("problem_types/airline_crew.jl")
@@ -204,5 +348,12 @@ include("problem_types/scheduling.jl")
 include("problem_types/supply_chain.jl")
 include("problem_types/telecom_network_design.jl")
 include("problem_types/transportation.jl")
+
+# Include problem variants
+# Variants are organized in subdirectories and follow the naming convention: {base}_{variant}
+include("problem_types/scheduling/nurse.jl")
+include("problem_types/scheduling/or.jl")
+include("problem_types/blending/beverage.jl")
+include("problem_types/blending/pharmaceutical.jl")
 
 end # module

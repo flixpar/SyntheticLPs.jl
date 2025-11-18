@@ -128,12 +128,82 @@ register_problem(:type, ProblemType, "Description")
 
 ### Available Problem Types
 
-The system includes 21 problem types covering major LP problem classes:
+The system includes 24+ problem types covering major LP problem classes:
 - Transportation, Diet Problem, Knapsack, Portfolio, Network Flow
 - Production Planning, Assignment, Blending, Facility Location
 - Airline Crew, Cutting Stock, Energy, Feed Blending, Inventory
 - Land Use, Load Balancing, Product Mix, Project Selection
 - Resource Allocation, Scheduling, Supply Chain
+- Plus multiple variants of scheduling and blending problems (see Variant System below)
+
+### Variant System
+
+**Overview:**
+The variant system allows organizing related problem types into families while maintaining clean file organization and code separation. Variants are specialized versions of base problem types that share core structure but differ in domain-specific constraints and characteristics.
+
+**File Organization:**
+```
+src/problem_types/
+├── scheduling.jl                 # Base/generic scheduling
+├── scheduling/                   # Variants subfolder
+│   ├── nurse.jl                 # Nurse scheduling variant
+│   ├── or.jl                    # Operating room scheduling variant
+│   └── workforce.jl             # Workforce scheduling variant (future)
+├── blending.jl                  # Base/generic blending
+└── blending/                    # Variants subfolder
+    ├── beverage.jl              # Beverage formulation variant
+    └── pharmaceutical.jl        # Pharmaceutical blending variant
+```
+
+**Naming Convention:**
+- Base types: `:scheduling`, `:blending`
+- Variants: `:scheduling_nurse`, `:scheduling_or`, `:blending_beverage`
+- Pattern: `:{base}_{variant}` (underscore separator)
+
+**Helper Functions:**
+
+```julia
+# Check if a problem type is a variant
+is_variant(:scheduling)              # false (base type)
+is_variant(:scheduling_nurse)        # true (variant)
+
+# Get base type from any problem symbol
+get_base_type(:scheduling_nurse)     # :scheduling
+get_base_type(:blending_beverage)    # :blending
+
+# List all variants of a base type
+list_problem_variants(:scheduling)
+# [:scheduling, :scheduling_nurse, :scheduling_or]
+
+# List all problem types grouped by base type
+list_problem_types(group_variants=true)
+# Dict(:scheduling => [:scheduling, :scheduling_nurse, :scheduling_or],
+#      :blending => [:blending, :blending_beverage, :blending_pharmaceutical], ...)
+```
+
+**Current Variants:**
+
+1. **Scheduling Variants:**
+   - `:scheduling` - Generic workforce scheduling (base)
+   - `:scheduling_nurse` - Hospital nurse scheduling with 12-hour shifts, skill levels (RN/LPN/CNA), and patient acuity
+   - `:scheduling_or` - Operating room scheduling with surgery types, room capabilities, and block scheduling
+
+2. **Blending Variants:**
+   - `:blending` - Generic blending problem (base)
+   - `:blending_beverage` - Beverage formulation with flavor profiles, nutritional content, pH, and Brix
+   - `:blending_pharmaceutical` - Drug formulation with APIs, excipients, purity requirements, and tight tolerances
+
+**When to Use Variants:**
+
+Use variants when:
+- Multiple problem instances share core structure but have domain-specific constraints
+- Different applications have different terminology, constraints, or typical scales
+- Keeping variants separate improves code clarity and maintainability
+
+Examples of good variant candidates:
+- Scheduling: nurse, OR, classroom, course, shift, appointment
+- Blending: beverage, pharmaceutical, fuel, concrete, fertilizer
+- Network flow: supply chain, transportation, communication, electricity grid
 
 ### Testing Strategy
 
@@ -145,6 +215,8 @@ The system includes 21 problem types covering major LP problem classes:
 - Each generator tested with multiple configurations
 
 ## Adding New Problem Types
+
+### Adding a Base Problem Type
 
 1. Create new file in `src/problem_types/your_problem.jl`
 2. Define a struct inheriting from `ProblemGenerator` with all necessary data fields
@@ -159,3 +231,38 @@ Key principles:
 - Constructor contains ALL randomness and parameter sampling
 - `build_model` must be completely deterministic (no RNG calls)
 - Handle all three feasibility statuses appropriately
+
+### Adding a Problem Variant
+
+1. Create subdirectory if needed: `src/problem_types/base_type/`
+2. Create variant file: `src/problem_types/base_type/variant_name.jl`
+3. Define struct: `struct VariantName <: ProblemGenerator`
+4. Implement constructor and `build_model` following the same pattern as base types
+5. Register with naming convention: `register_problem(:base_type_variant, VariantName, "Description")`
+   - Example: `register_problem(:scheduling_nurse, NurseScheduling, "Description")`
+6. Add include statement to `src/SyntheticLPs.jl` in the variants section
+7. The variant will automatically be:
+   - Included in `list_problem_types()`
+   - Grouped with `list_problem_variants(:base_type)`
+   - Identified by `is_variant(:base_type_variant)`
+
+Example variant structure:
+```julia
+# File: src/problem_types/scheduling/nurse.jl
+struct NurseScheduling <: ProblemGenerator
+    # Domain-specific fields for nurse scheduling
+    n_nurses::Int
+    skill_levels::Vector{Symbol}
+    # ...
+end
+
+function NurseScheduling(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+    # Implementation with domain-specific logic
+end
+
+function build_model(prob::NurseScheduling)
+    # Build JuMP model
+end
+
+register_problem(:scheduling_nurse, NurseScheduling, "Nurse scheduling with skill levels and patient acuity")
+```
