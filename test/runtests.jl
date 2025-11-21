@@ -98,6 +98,38 @@ end
         @test unknown isa FeasibilityStatus
     end
 
+    # Test variant system
+    @testset "Variant System" begin
+        # Test variant helper functions
+        @test is_variant(:scheduling) == false
+        @test is_variant(:scheduling_nurse) == true
+        @test is_variant(:blending_beverage) == true
+
+        @test get_base_type(:scheduling) == :scheduling
+        @test get_base_type(:scheduling_nurse) == :scheduling
+        @test get_base_type(:scheduling_or) == :scheduling
+        @test get_base_type(:blending_beverage) == :blending
+
+        # Test listing variants
+        scheduling_variants = list_problem_variants(:scheduling)
+        @test :scheduling in scheduling_variants
+        @test :scheduling_nurse in scheduling_variants
+        @test :scheduling_or in scheduling_variants
+
+        blending_variants = list_problem_variants(:blending)
+        @test :blending in blending_variants
+        @test :blending_beverage in blending_variants
+        @test :blending_pharmaceutical in blending_variants
+
+        # Test grouped listing
+        grouped = list_problem_types(group_variants=true)
+        @test grouped isa Dict{Symbol, Vector{Symbol}}
+        @test haskey(grouped, :scheduling)
+        @test haskey(grouped, :blending)
+        @test length(grouped[:scheduling]) >= 3  # base + at least 2 variants
+        @test length(grouped[:blending]) >= 3    # base + at least 2 variants
+    end
+
     # Test individual problem generators
     for problem_type in list_problem_types()
         test_problem_generator(problem_type)
