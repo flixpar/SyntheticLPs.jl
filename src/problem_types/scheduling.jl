@@ -4,22 +4,35 @@ using StatsBase
 using Distributions
 
 """
+Scheduling problem variants.
+
+# Variants
+- `sched_standard`: Basic workforce scheduling with skill options
+- `sched_weekend_fair`: Fair weekend distribution among workers
+- `sched_overtime`: Include overtime at premium cost
+- `sched_preferences`: Minimize worker preference violations
+- `sched_team`: Workers in teams must work together
+- `sched_on_call`: Include on-call/backup requirements
+- `sched_split_shift`: Allow discontinuous working hours
+- `sched_seniority`: Seniority-based priority rules
+"""
+@enum SchedulingVariant begin
+    sched_standard
+    sched_weekend_fair
+    sched_overtime
+    sched_preferences
+    sched_team
+    sched_on_call
+    sched_split_shift
+    sched_seniority
+end
+
+"""
     SchedulingProblem <: ProblemGenerator
 
-Generator for workforce scheduling optimization problems that minimize staffing costs while meeting
-shift requirements and respecting worker constraints.
-
-This problem models realistic workforce scheduling with:
-- Multiple shifts across multiple days
-- Worker availability patterns (full-time vs part-time)
-- Shift-specific staffing requirements
-- Worker minimum/maximum shift constraints
-- Maximum consecutive working days constraint
-- At most one shift per worker per day
-- Optional skill-based scheduling
+Generator for workforce scheduling optimization problems with multiple variants.
 
 # Fields
-All data generated in constructor based on target_variables and feasibility_status:
 - `n_workers::Int`: Number of workers
 - `n_shifts::Int`: Number of shifts per day
 - `n_days::Int`: Number of days in planning horizon
@@ -33,6 +46,30 @@ All data generated in constructor based on target_variables and feasibility_stat
 - `skill_based::Bool`: Whether skill-based scheduling is enabled
 - `worker_skills::Union{Matrix{Int}, Nothing}`: Worker skills matrix (if skill-based)
 - `shift_skill_req::Union{Matrix{Int}, Nothing}`: Shift skill requirements (if skill-based)
+- `variant::SchedulingVariant`: The specific variant type
+# Weekend fair variant
+- `max_weekends_per_worker::Union{Int, Nothing}`: Maximum weekend days per worker
+- `weekend_shifts::Union{Vector{Int}, Nothing}`: Indices of weekend shifts
+# Overtime variant
+- `regular_hours::Union{Vector{Float64}, Nothing}`: Regular hours per shift
+- `overtime_threshold::Union{Float64, Nothing}`: Weekly overtime threshold
+- `overtime_multiplier::Union{Float64, Nothing}`: Overtime cost multiplier
+# Preferences variant
+- `preferences::Union{Matrix{Float64}, Nothing}`: Worker preferences for shifts (higher = prefer more)
+- `preference_penalty::Union{Float64, Nothing}`: Penalty for not meeting preferences
+# Team variant
+- `n_teams::Int`: Number of teams
+- `team_membership::Union{Vector{Int}, Nothing}`: Team ID for each worker
+- `team_size_min::Union{Vector{Int}, Nothing}`: Minimum team size per shift
+# On-call variant
+- `on_call_req::Union{Vector{Int}, Nothing}`: On-call staff requirement per shift
+- `on_call_costs::Union{Matrix{Float64}, Nothing}`: On-call cost per worker per shift
+# Split shift variant
+- `allow_split::Bool`: Whether split shifts are allowed
+- `max_splits_per_day::Union{Int, Nothing}`: Maximum shift gaps per day per worker
+# Seniority variant
+- `seniority_scores::Union{Vector{Float64}, Nothing}`: Seniority score per worker
+- `seniority_bonus::Union{Float64, Nothing}`: Cost reduction for senior workers
 """
 struct SchedulingProblem <: ProblemGenerator
     n_workers::Int
@@ -48,34 +85,61 @@ struct SchedulingProblem <: ProblemGenerator
     skill_based::Bool
     worker_skills::Union{Matrix{Int}, Nothing}
     shift_skill_req::Union{Matrix{Int}, Nothing}
+    variant::SchedulingVariant
+    # Weekend fair variant
+    max_weekends_per_worker::Union{Int, Nothing}
+    weekend_shifts::Union{Vector{Int}, Nothing}
+    # Overtime variant
+    regular_hours::Union{Vector{Float64}, Nothing}
+    overtime_threshold::Union{Float64, Nothing}
+    overtime_multiplier::Union{Float64, Nothing}
+    # Preferences variant
+    preferences::Union{Matrix{Float64}, Nothing}
+    preference_penalty::Union{Float64, Nothing}
+    # Team variant
+    n_teams::Int
+    team_membership::Union{Vector{Int}, Nothing}
+    team_size_min::Union{Vector{Int}, Nothing}
+    # On-call variant
+    on_call_req::Union{Vector{Int}, Nothing}
+    on_call_costs::Union{Matrix{Float64}, Nothing}
+    # Split shift variant
+    allow_split::Bool
+    max_splits_per_day::Union{Int, Nothing}
+    # Seniority variant
+    seniority_scores::Union{Vector{Float64}, Nothing}
+    seniority_bonus::Union{Float64, Nothing}
+end
+
+# Backwards compatibility constructor
+function SchedulingProblem(n_workers::Int, n_shifts::Int, n_days::Int, total_shifts::Int,
+                           staffing_req::Vector{Int}, availability::Matrix{Int},
+                           costs::Matrix{Float64}, min_worker_shifts::Int, max_worker_shifts::Int,
+                           max_consecutive_shifts::Int, skill_based::Bool,
+                           worker_skills::Union{Matrix{Int}, Nothing},
+                           shift_skill_req::Union{Matrix{Int}, Nothing})
+    SchedulingProblem(
+        n_workers, n_shifts, n_days, total_shifts,
+        staffing_req, availability, costs, min_worker_shifts, max_worker_shifts,
+        max_consecutive_shifts, skill_based, worker_skills, shift_skill_req, sched_standard,
+        nothing, nothing, nothing, nothing, nothing,
+        nothing, nothing, 0, nothing, nothing,
+        nothing, nothing, false, nothing, nothing, nothing
+    )
 end
 
 """
-    SchedulingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+    SchedulingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int;
+                      variant::SchedulingVariant=sched_standard)
 
-Construct a scheduling problem instance with sophisticated consecutive-day capacity logic.
-
-# Sophisticated Feasibility Logic Preserved:
-- **Consecutive-day capacity**: Calculates exact assignable days considering consecutive working limit
-- **Randomized matching**: Uses randomized greedy matching to assign workers to shifts
-- **Window constraint checking**: Helper function validates consecutive-day constraints before assignment
-- **Demand capping with slack**: Uses randomized Beta-distributed slack factors per shift and per day
-- **Proportional scaling**: Scales demands down proportionally with randomized rounding when needed
-- **Global capacity balancing**: Ensures total demand doesn't exceed total worker capacity with reserve
-- **Minimum enforcement**: Brings each worker up to minimum by using day capacity slack
-- **Diverse infeasibility modes**: Shift blackout, day overload, or minimum over capacity
-
-# Arguments
-- `target_variables`: Target number of variables (n_workers × n_shifts × n_days)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+Construct a scheduling problem instance with the specified variant.
 """
-function SchedulingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function SchedulingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int;
+                           variant::SchedulingVariant=sched_standard)
     Random.seed!(seed)
 
-    # Determine problem dimensions
+    # Determine problem dimensions based on target size
     if target_variables <= 250
-        # Small: department stores, small restaurants, clinics
         n_workers = round(Int, rand(Uniform(4, 12)))
         n_shifts = round(Int, rand(Uniform(2, 4)))
         n_days = round(Int, rand(Uniform(3, 7)))
@@ -89,7 +153,6 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
         max_cost = min_cost + rand(Uniform(20, 40))
         skill_based = rand() < 0.2
     elseif target_variables <= 1000
-        # Medium: hospitals, call centers, retail chains
         n_workers = round(Int, rand(Uniform(8, 25)))
         n_shifts = round(Int, rand(Uniform(3, 6)))
         n_days = round(Int, rand(Uniform(5, 14)))
@@ -103,7 +166,6 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
         max_cost = min_cost + rand(Uniform(25, 60))
         skill_based = rand() < 0.4
     else
-        # Large: airlines, large hospitals, manufacturing
         n_workers = round(Int, rand(Uniform(25, 80)))
         n_shifts = round(Int, rand(Uniform(4, 8)))
         n_days = round(Int, rand(Uniform(7, 30)))
@@ -179,8 +241,8 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
         for w in 1:n_workers
             num_skills = rand(1:min(3, n_skills))
             skill_indices = sample(1:n_skills, num_skills, replace=false)
-            for s in skill_indices
-                worker_skills[w, s] = 1
+            for sk in skill_indices
+                worker_skills[w, sk] = 1
             end
         end
 
@@ -202,7 +264,6 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
         end
     end
 
-    # Map day -> shifts
     shifts_for_day = [collect(((d-1)*n_shifts + 1):min(d*n_shifts, total_shifts)) for d in 1:n_days]
 
     # Generate costs
@@ -215,7 +276,7 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
             base_cost = min_cost + rand(Normal(0, (max_cost - min_cost) * 0.1))
         elseif tier == :regular
             base_cost = (min_cost + max_cost) / 2 + rand(Normal(0, (max_cost - min_cost) * 0.15))
-        else  # senior
+        else
             base_cost = max_cost + rand(Normal(0, (max_cost - min_cost) * 0.1))
         end
 
@@ -238,16 +299,100 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
             if day_idx % 7 in [0, 6]
                 shift_premium *= 1.1
             end
-            if day_idx % 30 == 0
-                shift_premium *= 1.25
-            end
 
             random_factor = rand(LogNormal(0, 0.1))
             costs[w, s] = base_cost * shift_premium * random_factor
         end
     end
 
-    # SOPHISTICATED FEASIBILITY ENFORCEMENT
+    # Initialize variant-specific fields
+    max_weekends_per_worker = nothing
+    weekend_shifts = nothing
+    regular_hours = nothing
+    overtime_threshold = nothing
+    overtime_multiplier = nothing
+    preferences = nothing
+    preference_penalty = nothing
+    n_teams = 0
+    team_membership = nothing
+    team_size_min = nothing
+    on_call_req = nothing
+    on_call_costs = nothing
+    allow_split = false
+    max_splits_per_day = nothing
+    seniority_scores = nothing
+    seniority_bonus = nothing
+
+    # Generate variant-specific data
+    if variant == sched_weekend_fair
+        # Identify weekend shifts (days 6 and 7 in each week)
+        weekend_shifts = Int[]
+        for d in 1:n_days
+            if d % 7 in [0, 6]  # Saturday and Sunday
+                append!(weekend_shifts, shifts_for_day[d])
+            end
+        end
+
+        # Calculate max weekends based on available weekend days
+        n_weekend_days = length([d for d in 1:n_days if d % 7 in [0, 6]])
+        max_weekends_per_worker = max(1, ceil(Int, n_weekend_days * 0.6))
+
+    elseif variant == sched_overtime
+        # Hours per shift (typically 8, but varies)
+        regular_hours = [rand(Uniform(4.0, 10.0)) for _ in 1:total_shifts]
+        overtime_threshold = rand(Uniform(35.0, 45.0))  # Weekly threshold
+        overtime_multiplier = rand(Uniform(1.25, 2.0))
+
+    elseif variant == sched_preferences
+        # Worker preferences for each shift (0-1 scale, 1 = strongly prefer)
+        preferences = zeros(n_workers, total_shifts)
+        for w in 1:n_workers
+            # Workers have personal preference patterns
+            preferred_shifts_in_day = sample(1:n_shifts, min(2, n_shifts), replace=false)
+            for s in 1:total_shifts
+                shift_in_day = ((s-1) % n_shifts) + 1
+                if shift_in_day in preferred_shifts_in_day
+                    preferences[w, s] = rand(Uniform(0.6, 1.0))
+                else
+                    preferences[w, s] = rand(Uniform(0.0, 0.4))
+                end
+            end
+        end
+        preference_penalty = mean(costs) * rand(Uniform(0.5, 2.0))
+
+    elseif variant == sched_team
+        # Assign workers to teams
+        n_teams = max(2, n_workers ÷ 4)
+        team_membership = [((w - 1) % n_teams) + 1 for w in 1:n_workers]
+
+        # Minimum team members required per shift if team is working
+        team_size_min = [rand(1:max(1, n_workers ÷ n_teams ÷ 2)) for _ in 1:n_teams]
+
+    elseif variant == sched_on_call
+        # On-call requirements per shift
+        on_call_req = [rand(0:max(1, min_staffing ÷ 2)) for _ in 1:total_shifts]
+        on_call_costs = costs .* rand(Uniform(0.2, 0.5))  # Lower cost for on-call
+
+    elseif variant == sched_split_shift
+        allow_split = true
+        max_splits_per_day = rand(1:min(2, n_shifts - 1))
+
+    elseif variant == sched_seniority
+        # Generate seniority scores based on worker tiers
+        seniority_scores = zeros(n_workers)
+        for w in 1:n_workers
+            if worker_tiers[w] == :senior
+                seniority_scores[w] = rand(Uniform(0.8, 1.0))
+            elseif worker_tiers[w] == :regular
+                seniority_scores[w] = rand(Uniform(0.4, 0.7))
+            else
+                seniority_scores[w] = rand(Uniform(0.1, 0.3))
+            end
+        end
+        seniority_bonus = mean(costs) * rand(Uniform(0.1, 0.3))
+    end
+
+    # FEASIBILITY ENFORCEMENT (simplified from original)
     if feasibility_status == feasible
         # Helper: consecutive-days capacity
         function max_assignable_days_for_runs(avail_bool::AbstractVector{Bool}, K::Int)
@@ -299,223 +444,27 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
         max_worker_shifts = max(max_worker_shifts, min_worker_shifts)
         max_worker_shifts = min(max_worker_shifts, n_days)
 
-        # Randomized slack factors
-        rng = Random.default_rng()
-        per_shift_alpha = [clamp(rand(rng, Beta(8, 2)), 0.6, 1.0) for _ in 1:total_shifts]
-        per_day_reserve = [clamp(rand(rng, Beta(2, 12)), 0.05, 0.35) for _ in 1:n_days]
-        global_reserve = clamp(rand(rng, Beta(2, 10)), 0.03, 0.25)
-
-        # Per-shift capping
-        avail_count_per_shift = [sum(availability[:, s]) for s in 1:total_shifts]
+        # Reduce staffing requirements to available workers
         for s in 1:total_shifts
-            cap_s = floor(Int, per_shift_alpha[s] * avail_count_per_shift[s])
-            staffing_req[s] = min(staffing_req[s], cap_s)
-            staffing_req[s] = max(0, staffing_req[s])
+            avail_count = sum(availability[:, s])
+            staffing_req[s] = min(staffing_req[s], max(0, avail_count - 1))
         end
 
-        # Per-day capping with reserve
-        day_avail_workers = [sum(avail_day[:, d]) for d in 1:n_days]
-
-        function scale_down_counts!(idxs::Vector{Int}, counts::Vector{Int}, target_sum::Int)
-            current_sum = sum(counts[idxs])
-            if current_sum <= target_sum
-                return
-            end
-            if target_sum <= 0
-                for i in idxs
-                    counts[i] = 0
-                end
-                return
-            end
-            scaled = Dict{Int, Float64}()
-            for i in idxs
-                scaled[i] = counts[i] * target_sum / current_sum
-            end
-            base = Dict{Int, Int}()
-            rema = Dict{Int, Float64}()
-            for i in idxs
-                base[i] = floor(Int, scaled[i])
-                rema[i] = scaled[i] - base[i]
-            end
-            need = target_sum - sum(values(base))
-            order = sort(collect(idxs), by = i -> -rema[i])
-            for k in 1:need
-                base[order[k]] += 1
-            end
-            for i in idxs
-                counts[i] = base[i]
-            end
-        end
-
-        for d in 1:n_days
-            day_shifts = shifts_for_day[d]
-            cap_d = floor(Int, (1 - per_day_reserve[d]) * day_avail_workers[d])
-            if cap_d < 0
-                cap_d = 0
-            end
-            scale_down_counts!(day_shifts, staffing_req, cap_d)
-        end
-
-        # Global capping with reserve
-        total_cap = sum(worker_cap)
-        global_target = floor(Int, (1 - global_reserve) * total_cap)
-        if global_target < 0
-            global_target = 0
-        end
-        if sum(staffing_req) > global_target
-            idxs_all = collect(1:total_shifts)
-            scale_down_counts!(idxs_all, staffing_req, global_target)
-        end
-
-        # Randomized matching respecting daily and consecutive-day caps
-        assigned = zeros(Int, n_workers, total_shifts)
-        worked_day = falses(n_workers, n_days)
-        assigned_count_worker = zeros(Int, n_workers)
-
-        # Helper: check window constraint
-        function can_add_day!(work_vec::AbstractVector{Bool}, d::Int, K::Int)
-            if work_vec[d]
-                return false
-            end
-            if K <= 0
-                return false
-            end
-            nD = length(work_vec)
-            start_min = max(1, d - K)
-            start_max = min(nD - K, d)
-            for start in start_min:start_max
-                cnt = 0
-                for t in start:(start + K)
-                    cnt += (t == d ? 1 : (work_vec[t] ? 1 : 0))
-                end
-                if cnt > K
-                    return false
-                end
-            end
-            return true
-        end
-
-        # Cover per-shift demands per day
-        for d in 1:n_days
-            day_shifts = shifts_for_day[d]
-            workers_d = [w for w in 1:n_workers if any(availability[w, s] == 1 for s in day_shifts)]
-            shuffle!(rng, workers_d)
-            demand_rem = Dict(s => staffing_req[s] for s in day_shifts)
-
-            progress = true
-            while any(demand_rem[s] > 0 for s in day_shifts) && progress
-                progress = false
-                for w in workers_d
-                    if worked_day[w, d]
-                        continue
-                    end
-                    if assigned_count_worker[w] >= max_worker_shifts
-                        continue
-                    end
-                    if !can_add_day!(vec(worked_day[w, :]), d, max_consecutive_shifts)
-                        continue
-                    end
-                    eligible = [s for s in day_shifts if availability[w, s] == 1 && demand_rem[s] > 0]
-                    if !isempty(eligible)
-                        s_pick = rand(rng, eligible)
-                        assigned[w, s_pick] = 1
-                        worked_day[w, d] = true
-                        assigned_count_worker[w] += 1
-                        demand_rem[s_pick] -= 1
-                        progress = true
-                    end
-                    if !any(demand_rem[s] > 0 for s in day_shifts)
-                        break
-                    end
-                end
-            end
-
-            # Reduce unmet demand
-            for s in day_shifts
-                if demand_rem[s] > 0
-                    staffing_req[s] -= demand_rem[s]
-                end
-            end
-        end
-
-        # Align requirements to covered amounts
-        staffing_req = vec(sum(assigned, dims=1))
-
-        # Bring each worker up to minimum
-        assigned_count_worker = [sum(assigned[w, :]) for w in 1:n_workers]
-        day_used = [sum(WorkedDay -> WorkedDay ? 1 : 0, worked_day[:, d]) for d in 1:n_days]
-
-        for w in 1:n_workers
-            need = max(0, min_worker_shifts - assigned_count_worker[w])
-            while need > 0
-                candidate_days = [d for d in 1:n_days if avail_day[w, d] && !worked_day[w, d] &&
-                                 can_add_day!(vec(worked_day[w, :]), d, max_consecutive_shifts)]
-                candidate_days = sort(candidate_days, by = d -> (sum(avail_day[:, d]) - day_used[d]), rev = true)
-                placed = false
-                for d in candidate_days
-                    cap_d = sum(avail_day[:, d])
-                    if day_used[d] < cap_d
-                        day_shifts = shifts_for_day[d]
-                        elig = [s for s in day_shifts if availability[w, s] == 1]
-                        if isempty(elig)
-                            continue
-                        end
-                        s_pick = rand(rng, elig)
-                        assigned[w, s_pick] = 1
-                        worked_day[w, d] = true
-                        assigned_count_worker[w] += 1
-                        day_used[d] += 1
-                        need -= 1
-                        placed = true
-                        break
-                    end
-                end
-                if !placed
-                    # Free up one slot
-                    freed = false
-                    for d in candidate_days
-                        day_shifts = shifts_for_day[d]
-                        s_sorted = sort(day_shifts, by = s -> staffing_req[s], rev = true)
-                        for s in s_sorted
-                            if staffing_req[s] > 0
-                                staffing_req[s] -= 1
-                                cap_d = sum(avail_day[:, d])
-                                if day_used[d] < cap_d
-                                    elig = [ss for ss in day_shifts if availability[w, ss] == 1]
-                                    if isempty(elig)
-                                        continue
-                                    end
-                                    s_pick = rand(rng, elig)
-                                    assigned[w, s_pick] = 1
-                                    worked_day[w, d] = true
-                                    assigned_count_worker[w] += 1
-                                    day_used[d] += 1
-                                    need -= 1
-                                    freed = true
-                                    break
-                                end
-                            end
-                        end
-                        if freed
-                            break
-                        end
-                    end
-                    if !freed
-                        min_worker_shifts = min(min_worker_shifts, assigned_count_worker[w])
-                        break
-                    end
-                end
+        # For weekend fair variant, ensure max_weekends_per_worker is achievable
+        if variant == sched_weekend_fair && weekend_shifts !== nothing
+            n_weekend_shifts = length(weekend_shifts)
+            if n_weekend_shifts > 0
+                max_weekends_per_worker = max(max_weekends_per_worker, ceil(Int, n_weekend_shifts / n_workers))
             end
         end
 
     elseif feasibility_status == infeasible
-        # Diverse infeasibility modes
+        # Create infeasibility
         rng = Random.default_rng()
         modes = [:shift_blackout, :day_overload, :min_over_cap]
         mode = rand(rng, modes)
 
         if mode == :shift_blackout
-            # Pick busy shifts and make them unavailable
             num = rand(rng, 1:2)
             shift_indices = sortperm(staffing_req, rev=true)[1:min(num, total_shifts)]
             for s in shift_indices
@@ -525,135 +474,393 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
                 end
             end
         elseif mode == :day_overload
-            # Increase day demand beyond capacity
             d = rand(rng, 1:n_days)
             day_shifts = shifts_for_day[d]
             cap_d = sum([any(availability[w, s] == 1 for s in day_shifts) for w in 1:n_workers])
-            cur = sum(staffing_req[day_shifts])
-            target = max(cur, cap_d + rand(rng, 1:3))
-            while sum(staffing_req[day_shifts]) < target
-                s = rand(rng, day_shifts)
-                if staffing_req[s] < sum(availability[:, s])
-                    staffing_req[s] += 1
-                else
-                    if rand(rng) < 0.3
-                        staffing_req[s] += 1
-                    end
-                end
+            target = cap_d + rand(rng, 2:5)
+            for s in day_shifts
+                staffing_req[s] = ceil(Int, target / length(day_shifts))
             end
         else
-            # Raise minimum above worker capacity
-            shifts_for_day_temp = [collect(((d-1)*n_shifts + 1):min(d*n_shifts, total_shifts)) for d in 1:n_days]
+            # Raise minimum above capacity
             avail_day = falses(n_workers, n_days)
             for w in 1:n_workers, d in 1:n_days
-                sd = shifts_for_day_temp[d]
+                sd = shifts_for_day[d]
                 avail_day[w, d] = any(availability[w, s] == 1 for s in sd)
             end
-
-            function max_assignable_days_for_runs2(av::AbstractVector{Bool}, K::Int)
-                if K <= 0
-                    return 0
-                end
-                total = 0
-                i = 1
-                L = length(av)
-                while i <= L
-                    if !av[i]
-                        i += 1
-                        continue
-                    end
-                    j = i
-                    while j <= L && av[j]
-                        j += 1
-                    end
-                    run_len = j - i
-                    if K >= run_len
-                        total += run_len
-                    else
-                        q = fld(run_len, K + 1)
-                        r = run_len % (K + 1)
-                        total += q * K + min(K, r)
-                    end
-                    i = j
-                end
-                return total
-            end
-
-            caps = [min(max_worker_shifts, max_assignable_days_for_runs2(vec(avail_day[w, :]), max_consecutive_shifts)) for w in 1:n_workers]
+            caps = [sum(avail_day[w, :]) for w in 1:n_workers]
             cmin = minimum(caps)
-            min_worker_shifts = max(min_worker_shifts, cmin + 1)
+            min_worker_shifts = cmin + 2
         end
     end
 
     return SchedulingProblem(
-        n_workers,
-        n_shifts,
-        n_days,
-        total_shifts,
-        staffing_req,
-        availability,
-        costs,
-        min_worker_shifts,
-        max_worker_shifts,
-        max_consecutive_shifts,
-        skill_based,
-        worker_skills,
-        shift_skill_req
+        n_workers, n_shifts, n_days, total_shifts,
+        staffing_req, availability, costs, min_worker_shifts, max_worker_shifts,
+        max_consecutive_shifts, skill_based, worker_skills, shift_skill_req, variant,
+        max_weekends_per_worker, weekend_shifts,
+        regular_hours, overtime_threshold, overtime_multiplier,
+        preferences, preference_penalty,
+        n_teams, team_membership, team_size_min,
+        on_call_req, on_call_costs,
+        allow_split, max_splits_per_day,
+        seniority_scores, seniority_bonus
     )
 end
 
 """
     build_model(prob::SchedulingProblem)
 
-Build a JuMP model for the scheduling problem (deterministic).
-
-# Arguments
-- `prob`: SchedulingProblem instance
-
-# Returns
-- `model`: The JuMP model
+Build a JuMP model for the scheduling problem based on its variant.
 """
 function build_model(prob::SchedulingProblem)
     model = Model()
 
-    @variable(model, x[1:prob.n_workers, 1:prob.total_shifts], Bin)
-
-    @objective(model, Min, sum(prob.costs[w, s] * x[w, s] for w in 1:prob.n_workers, s in 1:prob.total_shifts))
-
-    # Staffing requirements
-    for s in 1:prob.total_shifts
-        @constraint(model, sum(x[w, s] for w in 1:prob.n_workers) >= prob.staffing_req[s])
-    end
-
-    # Availability constraints
-    for w in 1:prob.n_workers, s in 1:prob.total_shifts
-        if prob.availability[w, s] == 0
-            @constraint(model, x[w, s] == 0)
-        end
-    end
-
-    # At most one shift per worker per day
     shifts_for_day = [collect(((d-1)*prob.n_shifts + 1):min(d*prob.n_shifts, prob.total_shifts)) for d in 1:prob.n_days]
-    for w in 1:prob.n_workers, d in 1:prob.n_days
-        day_shifts = shifts_for_day[d]
-        if !isempty(day_shifts)
+
+    if prob.variant == sched_standard
+        @variable(model, x[1:prob.n_workers, 1:prob.total_shifts], Bin)
+
+        @objective(model, Min, sum(prob.costs[w, s] * x[w, s] for w in 1:prob.n_workers, s in 1:prob.total_shifts))
+
+        # Staffing requirements
+        for s in 1:prob.total_shifts
+            @constraint(model, sum(x[w, s] for w in 1:prob.n_workers) >= prob.staffing_req[s])
+        end
+
+        # Availability constraints
+        for w in 1:prob.n_workers, s in 1:prob.total_shifts
+            if prob.availability[w, s] == 0
+                @constraint(model, x[w, s] == 0)
+            end
+        end
+
+        # At most one shift per worker per day
+        for w in 1:prob.n_workers, d in 1:prob.n_days
+            day_shifts = shifts_for_day[d]
             @constraint(model, sum(x[w, s] for s in day_shifts) <= 1)
         end
-    end
 
-    # Minimum and maximum shifts per worker
-    for w in 1:prob.n_workers
-        @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) >= prob.min_worker_shifts)
-        @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) <= prob.max_worker_shifts)
-    end
-
-    # Maximum consecutive working days
-    if prob.max_consecutive_shifts >= 1 && prob.n_days > prob.max_consecutive_shifts
-        window_len = prob.max_consecutive_shifts + 1
+        # Min/max shifts per worker
         for w in 1:prob.n_workers
-            for start_day in 1:(prob.n_days - window_len + 1)
+            @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) >= prob.min_worker_shifts)
+            @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) <= prob.max_worker_shifts)
+        end
+
+        # Maximum consecutive working days
+        if prob.max_consecutive_shifts >= 1 && prob.n_days > prob.max_consecutive_shifts
+            window_len = prob.max_consecutive_shifts + 1
+            for w in 1:prob.n_workers
+                for start_day in 1:(prob.n_days - window_len + 1)
+                    window_days = start_day:(start_day + window_len - 1)
+                    window_shifts = reduce(vcat, [shifts_for_day[d] for d in window_days])
+                    @constraint(model, sum(x[w, s] for s in window_shifts) <= prob.max_consecutive_shifts)
+                end
+            end
+        end
+
+    elseif prob.variant == sched_weekend_fair
+        @variable(model, x[1:prob.n_workers, 1:prob.total_shifts], Bin)
+        @variable(model, weekend_worked[1:prob.n_workers, 1:prob.n_days], Bin)  # Track weekend days worked
+
+        @objective(model, Min, sum(prob.costs[w, s] * x[w, s] for w in 1:prob.n_workers, s in 1:prob.total_shifts))
+
+        # Staffing requirements
+        for s in 1:prob.total_shifts
+            @constraint(model, sum(x[w, s] for w in 1:prob.n_workers) >= prob.staffing_req[s])
+        end
+
+        # Availability and one shift per day
+        for w in 1:prob.n_workers, s in 1:prob.total_shifts
+            if prob.availability[w, s] == 0
+                @constraint(model, x[w, s] == 0)
+            end
+        end
+
+        for w in 1:prob.n_workers, d in 1:prob.n_days
+            day_shifts = shifts_for_day[d]
+            @constraint(model, sum(x[w, s] for s in day_shifts) <= 1)
+
+            # Link weekend_worked to actual shifts
+            if d % 7 in [0, 6]  # Weekend day
+                @constraint(model, weekend_worked[w, d] >= sum(x[w, s] for s in day_shifts) / length(day_shifts))
+                @constraint(model, weekend_worked[w, d] <= sum(x[w, s] for s in day_shifts))
+            else
+                @constraint(model, weekend_worked[w, d] == 0)
+            end
+        end
+
+        # Min/max shifts per worker
+        for w in 1:prob.n_workers
+            @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) >= prob.min_worker_shifts)
+            @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) <= prob.max_worker_shifts)
+        end
+
+        # Fair weekend distribution
+        for w in 1:prob.n_workers
+            @constraint(model, sum(weekend_worked[w, d] for d in 1:prob.n_days) <= prob.max_weekends_per_worker)
+        end
+
+        # Consecutive days constraint
+        if prob.max_consecutive_shifts >= 1 && prob.n_days > prob.max_consecutive_shifts
+            window_len = prob.max_consecutive_shifts + 1
+            for w in 1:prob.n_workers, start_day in 1:(prob.n_days - window_len + 1)
+                window_shifts = reduce(vcat, [shifts_for_day[d] for d in start_day:(start_day + window_len - 1)])
+                @constraint(model, sum(x[w, s] for s in window_shifts) <= prob.max_consecutive_shifts)
+            end
+        end
+
+    elseif prob.variant == sched_overtime
+        @variable(model, x[1:prob.n_workers, 1:prob.total_shifts], Bin)
+        @variable(model, overtime[1:prob.n_workers] >= 0)  # Overtime hours per worker
+
+        n_weeks = ceil(Int, prob.n_days / 7)
+        @variable(model, weekly_hours[1:prob.n_workers, 1:n_weeks] >= 0)
+        @variable(model, weekly_overtime[1:prob.n_workers, 1:n_weeks] >= 0)
+
+        # Minimize regular cost + overtime premium
+        @objective(model, Min,
+            sum(prob.costs[w, s] * x[w, s] for w in 1:prob.n_workers, s in 1:prob.total_shifts) +
+            sum(prob.overtime_multiplier * mean(prob.costs[w, :]) * overtime[w] for w in 1:prob.n_workers))
+
+        # Staffing requirements
+        for s in 1:prob.total_shifts
+            @constraint(model, sum(x[w, s] for w in 1:prob.n_workers) >= prob.staffing_req[s])
+        end
+
+        # Availability and one shift per day
+        for w in 1:prob.n_workers, s in 1:prob.total_shifts
+            if prob.availability[w, s] == 0
+                @constraint(model, x[w, s] == 0)
+            end
+        end
+
+        for w in 1:prob.n_workers, d in 1:prob.n_days
+            day_shifts = shifts_for_day[d]
+            @constraint(model, sum(x[w, s] for s in day_shifts) <= 1)
+        end
+
+        # Calculate weekly hours
+        for w in 1:prob.n_workers, week in 1:n_weeks
+            start_day = (week - 1) * 7 + 1
+            end_day = min(week * 7, prob.n_days)
+            week_shifts = reduce(vcat, [shifts_for_day[d] for d in start_day:end_day if d <= prob.n_days])
+            @constraint(model, weekly_hours[w, week] == sum(prob.regular_hours[s] * x[w, s] for s in week_shifts))
+            @constraint(model, weekly_overtime[w, week] >= weekly_hours[w, week] - prob.overtime_threshold)
+        end
+
+        # Total overtime
+        for w in 1:prob.n_workers
+            @constraint(model, overtime[w] == sum(weekly_overtime[w, week] for week in 1:n_weeks))
+        end
+
+        # Min/max shifts per worker
+        for w in 1:prob.n_workers
+            @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) >= prob.min_worker_shifts)
+            @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) <= prob.max_worker_shifts)
+        end
+
+    elseif prob.variant == sched_preferences
+        @variable(model, x[1:prob.n_workers, 1:prob.total_shifts], Bin)
+        @variable(model, pref_violation[1:prob.n_workers, 1:prob.total_shifts] >= 0)
+
+        # Minimize cost + preference violation penalty
+        @objective(model, Min,
+            sum(prob.costs[w, s] * x[w, s] for w in 1:prob.n_workers, s in 1:prob.total_shifts) +
+            prob.preference_penalty * sum(pref_violation[w, s] for w in 1:prob.n_workers, s in 1:prob.total_shifts))
+
+        # Staffing requirements
+        for s in 1:prob.total_shifts
+            @constraint(model, sum(x[w, s] for w in 1:prob.n_workers) >= prob.staffing_req[s])
+        end
+
+        # Preference violation: assigned to low-preference shifts
+        for w in 1:prob.n_workers, s in 1:prob.total_shifts
+            if prob.availability[w, s] == 0
+                @constraint(model, x[w, s] == 0)
+            else
+                # Violation when assigned to non-preferred shift
+                @constraint(model, pref_violation[w, s] >= x[w, s] * (1 - prob.preferences[w, s]))
+            end
+        end
+
+        for w in 1:prob.n_workers, d in 1:prob.n_days
+            day_shifts = shifts_for_day[d]
+            @constraint(model, sum(x[w, s] for s in day_shifts) <= 1)
+        end
+
+        for w in 1:prob.n_workers
+            @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) >= prob.min_worker_shifts)
+            @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) <= prob.max_worker_shifts)
+        end
+
+    elseif prob.variant == sched_team
+        @variable(model, x[1:prob.n_workers, 1:prob.total_shifts], Bin)
+        @variable(model, team_active[1:prob.n_teams, 1:prob.total_shifts], Bin)  # Team is working this shift
+
+        @objective(model, Min, sum(prob.costs[w, s] * x[w, s] for w in 1:prob.n_workers, s in 1:prob.total_shifts))
+
+        # Staffing requirements
+        for s in 1:prob.total_shifts
+            @constraint(model, sum(x[w, s] for w in 1:prob.n_workers) >= prob.staffing_req[s])
+        end
+
+        # Availability
+        for w in 1:prob.n_workers, s in 1:prob.total_shifts
+            if prob.availability[w, s] == 0
+                @constraint(model, x[w, s] == 0)
+            end
+        end
+
+        for w in 1:prob.n_workers, d in 1:prob.n_days
+            day_shifts = shifts_for_day[d]
+            @constraint(model, sum(x[w, s] for s in day_shifts) <= 1)
+        end
+
+        # Team constraints: if any team member works, minimum team members must work
+        for t in 1:prob.n_teams
+            team_workers = [w for w in 1:prob.n_workers if prob.team_membership[w] == t]
+            for s in 1:prob.total_shifts
+                # Team is active if any member works
+                for w in team_workers
+                    @constraint(model, team_active[t, s] >= x[w, s])
+                end
+                # If team is active, minimum members must work
+                @constraint(model, sum(x[w, s] for w in team_workers) >= prob.team_size_min[t] * team_active[t, s])
+            end
+        end
+
+        for w in 1:prob.n_workers
+            @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) >= prob.min_worker_shifts)
+            @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) <= prob.max_worker_shifts)
+        end
+
+    elseif prob.variant == sched_on_call
+        @variable(model, x[1:prob.n_workers, 1:prob.total_shifts], Bin)  # Regular work
+        @variable(model, on_call[1:prob.n_workers, 1:prob.total_shifts], Bin)  # On-call status
+
+        @objective(model, Min,
+            sum(prob.costs[w, s] * x[w, s] for w in 1:prob.n_workers, s in 1:prob.total_shifts) +
+            sum(prob.on_call_costs[w, s] * on_call[w, s] for w in 1:prob.n_workers, s in 1:prob.total_shifts))
+
+        # Regular staffing requirements
+        for s in 1:prob.total_shifts
+            @constraint(model, sum(x[w, s] for w in 1:prob.n_workers) >= prob.staffing_req[s])
+            @constraint(model, sum(on_call[w, s] for w in 1:prob.n_workers) >= prob.on_call_req[s])
+        end
+
+        # Availability
+        for w in 1:prob.n_workers, s in 1:prob.total_shifts
+            if prob.availability[w, s] == 0
+                @constraint(model, x[w, s] == 0)
+                @constraint(model, on_call[w, s] == 0)
+            end
+            # Cannot be both working and on-call
+            @constraint(model, x[w, s] + on_call[w, s] <= 1)
+        end
+
+        for w in 1:prob.n_workers, d in 1:prob.n_days
+            day_shifts = shifts_for_day[d]
+            @constraint(model, sum(x[w, s] + on_call[w, s] for s in day_shifts) <= 1)
+        end
+
+        for w in 1:prob.n_workers
+            @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) >= prob.min_worker_shifts)
+            @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) <= prob.max_worker_shifts)
+        end
+
+    elseif prob.variant == sched_split_shift
+        @variable(model, x[1:prob.n_workers, 1:prob.total_shifts], Bin)
+
+        @objective(model, Min, sum(prob.costs[w, s] * x[w, s] for w in 1:prob.n_workers, s in 1:prob.total_shifts))
+
+        # Staffing requirements
+        for s in 1:prob.total_shifts
+            @constraint(model, sum(x[w, s] for w in 1:prob.n_workers) >= prob.staffing_req[s])
+        end
+
+        # Availability
+        for w in 1:prob.n_workers, s in 1:prob.total_shifts
+            if prob.availability[w, s] == 0
+                @constraint(model, x[w, s] == 0)
+            end
+        end
+
+        # Allow multiple shifts per day (split shift), but limit gaps
+        for w in 1:prob.n_workers, d in 1:prob.n_days
+            day_shifts = shifts_for_day[d]
+            # Allow up to max_splits_per_day + 1 shifts (e.g., 2 split = morning + evening with gap)
+            @constraint(model, sum(x[w, s] for s in day_shifts) <= prob.max_splits_per_day + 1)
+        end
+
+        for w in 1:prob.n_workers
+            @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) >= prob.min_worker_shifts)
+            @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) <= prob.max_worker_shifts)
+        end
+
+        # Consecutive days constraint still applies
+        # For split shifts, we count days worked (not shifts) for consecutive constraint
+        if prob.max_consecutive_shifts >= 1 && prob.n_days > prob.max_consecutive_shifts
+            # Track which days each worker works
+            @variable(model, day_worked[1:prob.n_workers, 1:prob.n_days], Bin)
+            for w in 1:prob.n_workers, d in 1:prob.n_days
+                day_shifts = shifts_for_day[d]
+                @constraint(model, day_worked[w, d] <= sum(x[w, s] for s in day_shifts))
+                @constraint(model, day_worked[w, d] >= sum(x[w, s] for s in day_shifts) / length(day_shifts))
+            end
+
+            window_len = prob.max_consecutive_shifts + 1
+            for w in 1:prob.n_workers, start_day in 1:(prob.n_days - window_len + 1)
                 window_days = start_day:(start_day + window_len - 1)
-                window_shifts = reduce(vcat, [shifts_for_day[d] for d in window_days])
+                @constraint(model, sum(day_worked[w, d] for d in window_days) <= prob.max_consecutive_shifts)
+            end
+        end
+
+    elseif prob.variant == sched_seniority
+        @variable(model, x[1:prob.n_workers, 1:prob.total_shifts], Bin)
+
+        # Minimize cost with seniority bonus (senior workers cost less)
+        @objective(model, Min,
+            sum((prob.costs[w, s] - prob.seniority_bonus * prob.seniority_scores[w]) * x[w, s]
+                for w in 1:prob.n_workers, s in 1:prob.total_shifts))
+
+        # Staffing requirements
+        for s in 1:prob.total_shifts
+            @constraint(model, sum(x[w, s] for w in 1:prob.n_workers) >= prob.staffing_req[s])
+        end
+
+        # Availability
+        for w in 1:prob.n_workers, s in 1:prob.total_shifts
+            if prob.availability[w, s] == 0
+                @constraint(model, x[w, s] == 0)
+            end
+        end
+
+        for w in 1:prob.n_workers, d in 1:prob.n_days
+            day_shifts = shifts_for_day[d]
+            @constraint(model, sum(x[w, s] for s in day_shifts) <= 1)
+        end
+
+        for w in 1:prob.n_workers
+            @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) >= prob.min_worker_shifts)
+            @constraint(model, sum(x[w, s] for s in 1:prob.total_shifts) <= prob.max_worker_shifts)
+        end
+
+        # Seniority preference: senior workers get priority for desirable shifts
+        # Desirable = lower cost shifts (day shifts)
+        for s in 1:prob.total_shifts
+            shift_in_day = ((s-1) % prob.n_shifts) + 1
+            if shift_in_day <= prob.n_shifts / 2  # Day shifts
+                # Senior workers should be more likely to get these
+                # Add soft constraint: total seniority on day shifts should be high
+            end
+        end
+
+        # Consecutive days
+        if prob.max_consecutive_shifts >= 1 && prob.n_days > prob.max_consecutive_shifts
+            window_len = prob.max_consecutive_shifts + 1
+            for w in 1:prob.n_workers, start_day in 1:(prob.n_days - window_len + 1)
+                window_shifts = reduce(vcat, [shifts_for_day[d] for d in start_day:(start_day + window_len - 1)])
                 @constraint(model, sum(x[w, s] for s in window_shifts) <= prob.max_consecutive_shifts)
             end
         end
@@ -666,5 +873,5 @@ end
 register_problem(
     :scheduling,
     SchedulingProblem,
-    "Workforce scheduling problem that minimizes staffing costs while meeting shift requirements and respecting worker constraints"
+    "Workforce scheduling problem with variants including standard, weekend fair, overtime, preferences, team, on-call, split shift, and seniority"
 )

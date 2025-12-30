@@ -3,20 +3,29 @@ using Random
 using Distributions
 
 """
+Facility location problem variants.
+
+# Variants
+- `fl_standard`: Capacitated facility location with budget
+- `fl_uncapacitated`: No capacity limits on facilities
+- `fl_p_median`: Open exactly p facilities
+- `fl_p_center`: Minimize maximum distance to nearest facility
+- `fl_covering`: All customers within coverage radius
+- `fl_single_source`: Each customer served by one facility
+"""
+@enum FacilityLocationVariant begin
+    fl_standard
+    fl_uncapacitated
+    fl_p_median
+    fl_p_center
+    fl_covering
+    fl_single_source
+end
+
+"""
     FacilityLocationProblem <: ProblemGenerator
 
-Generator for facility location problems.
-
-# Fields
-- `n_facilities::Int`: Number of potential facility locations
-- `n_customers::Int`: Number of customers
-- `facility_locs::Vector{Tuple{Float64,Float64}}`: Facility coordinates
-- `customer_locs::Vector{Tuple{Float64,Float64}}`: Customer coordinates
-- `demands::Dict{Int,Float64}`: Customer demand
-- `fixed_costs::Dict{Int,Float64}`: Fixed cost to open each facility
-- `capacities::Dict{Int,Float64}`: Capacity of each facility
-- `shipping_costs::Dict{Tuple{Int,Int},Float64}`: Shipping cost from facility to customer
-- `budget::Float64`: Total budget for opening facilities
+Generator for facility location problems with multiple variants.
 """
 struct FacilityLocationProblem <: ProblemGenerator
     n_facilities::Int
@@ -28,19 +37,36 @@ struct FacilityLocationProblem <: ProblemGenerator
     capacities::Dict{Int,Float64}
     shipping_costs::Dict{Tuple{Int,Int},Float64}
     budget::Float64
+    variant::FacilityLocationVariant
+    # P-median/center variant
+    p_facilities::Union{Int, Nothing}
+    # Covering variant
+    coverage_radius::Union{Float64, Nothing}
+    distances::Union{Dict{Tuple{Int,Int},Float64}, Nothing}
+end
+
+# Backwards compatibility
+function FacilityLocationProblem(n_facilities::Int, n_customers::Int,
+                                 facility_locs::Vector{Tuple{Float64,Float64}},
+                                 customer_locs::Vector{Tuple{Float64,Float64}},
+                                 demands::Dict{Int,Float64}, fixed_costs::Dict{Int,Float64},
+                                 capacities::Dict{Int,Float64},
+                                 shipping_costs::Dict{Tuple{Int,Int},Float64}, budget::Float64)
+    FacilityLocationProblem(
+        n_facilities, n_customers, facility_locs, customer_locs,
+        demands, fixed_costs, capacities, shipping_costs, budget, fl_standard,
+        nothing, nothing, nothing
+    )
 end
 
 """
-    FacilityLocationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+    FacilityLocationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int;
+                            variant::FacilityLocationVariant=fl_standard)
 
-Construct a facility location problem instance.
-
-# Arguments
-- `target_variables`: Target number of variables (n_facilities × (n_customers + 1))
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+Construct a facility location problem instance with the specified variant.
 """
-function FacilityLocationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function FacilityLocationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int;
+                                 variant::FacilityLocationVariant=fl_standard)
     Random.seed!(seed)
 
     # Determine scale and ranges
@@ -83,13 +109,10 @@ function FacilityLocationProblem(target_variables::Int, feasibility_status::Feas
 
     for n_facilities in min_facilities:max_facilities
         n_customers_exact = (target_variables / n_facilities) - 1
-
         if n_customers_exact >= min_customers && n_customers_exact <= max_customers
             n_customers = round(Int, n_customers_exact)
-
             actual_vars = n_facilities * (n_customers + 1)
             error = abs(actual_vars - target_variables) / target_variables
-
             if error < best_error
                 best_error = error
                 best_n_facilities = n_facilities
@@ -101,7 +124,6 @@ function FacilityLocationProblem(target_variables::Int, feasibility_status::Feas
     if best_error > 0.1
         n_facilities_approx = max(min_facilities, min(max_facilities, round(Int, sqrt(target_variables / 4))))
         n_customers_approx = max(min_customers, min(max_customers, round(Int, (target_variables / n_facilities_approx) - 1)))
-
         best_n_facilities = n_facilities_approx
         best_n_customers = n_customers_approx
     end
@@ -138,32 +160,55 @@ function FacilityLocationProblem(target_variables::Int, feasibility_status::Feas
     for w in 1:n_facilities
         capacity = avg_facility_capacity * (0.8 + 0.4 * rand())
         capacities[w] = capacity
-
         location_factor = 1.0 + 0.2 * (facility_locs[w][1] / grid_width + facility_locs[w][2] / grid_height)
-        fixed_costs[w] = clamp(
-            location_factor * (fixed_cost_min + (capacity/avg_facility_capacity) * (fixed_cost_max - fixed_cost_min)),
-            fixed_cost_min,
-            fixed_cost_max
-        )
+        fixed_costs[w] = clamp(location_factor * (fixed_cost_min + (capacity/avg_facility_capacity) * (fixed_cost_max - fixed_cost_min)),
+                               fixed_cost_min, fixed_cost_max)
     end
 
-    # Shipping costs
+    # Shipping costs and distances
     shipping_costs = Dict{Tuple{Int,Int},Float64}()
-    for w in 1:n_facilities
-        for c in 1:n_customers
-            distance = sqrt(
-                (facility_locs[w][1] - customer_locs[c][1])^2 +
-                (facility_locs[w][2] - customer_locs[c][2])^2
-            )
-            shipping_costs[(w,c)] = distance * transport_cost_per_km * (0.9 + 0.2 * rand())
-        end
+    distances = Dict{Tuple{Int,Int},Float64}()
+
+    for w in 1:n_facilities, c in 1:n_customers
+        distance = sqrt((facility_locs[w][1] - customer_locs[c][1])^2 +
+                       (facility_locs[w][2] - customer_locs[c][2])^2)
+        distances[(w,c)] = distance
+        shipping_costs[(w,c)] = distance * transport_cost_per_km * (0.9 + 0.2 * rand())
     end
 
     # Initial budget
     budget = sum(values(fixed_costs)) * budget_factor
     original_budget = budget
 
-    # Adjust for feasibility
+    # Initialize variant-specific fields
+    p_facilities = nothing
+    coverage_radius = nothing
+
+    # Generate variant-specific data
+    if variant == fl_uncapacitated
+        # No capacity limits - set to very high values
+        for w in 1:n_facilities
+            capacities[w] = total_demand * 10
+        end
+
+    elseif variant == fl_p_median
+        # Set p as fraction of facilities
+        p_facilities = max(1, min(n_facilities - 1, round(Int, n_facilities * rand(0.3:0.1:0.6))))
+
+    elseif variant == fl_p_center
+        # Same p calculation
+        p_facilities = max(1, min(n_facilities - 1, round(Int, n_facilities * rand(0.3:0.1:0.6))))
+
+    elseif variant == fl_covering
+        # Set coverage radius based on grid size and facility density
+        avg_distance = sqrt(grid_width * grid_height / n_facilities)
+        coverage_radius = avg_distance * rand(0.8:0.1:1.5)
+
+    elseif variant == fl_single_source
+        # Same as standard but with assignment constraints
+    end
+
+    # Feasibility handling
     solution_status = feasibility_status == feasible ? :feasible :
                      feasibility_status == infeasible ? :infeasible : :all
 
@@ -172,24 +217,6 @@ function FacilityLocationProblem(target_variables::Int, feasibility_status::Feas
     ratios = [caps_vec[i] / max(costs_vec[i], eps()) for i in 1:n_facilities]
     order_desc = sortperm(ratios, rev=true)
     total_capacity = sum(caps_vec)
-
-    function fractional_budget_to_reach(cap_target::Float64)
-        cum_cap = 0.0
-        cum_cost = 0.0
-        for idx in order_desc
-            cap_i = caps_vec[idx]
-            cost_i = costs_vec[idx]
-            if cum_cap + cap_i >= cap_target
-                rem = cap_target - cum_cap
-                frac_cost = cost_i * (rem / cap_i)
-                return cum_cost + frac_cost
-            else
-                cum_cap += cap_i
-                cum_cost += cost_i
-            end
-        end
-        return Inf
-    end
 
     function greedy_integer_subset_for(cap_target::Float64)
         selected = Int[]
@@ -212,66 +239,203 @@ function FacilityLocationProblem(target_variables::Int, feasibility_status::Feas
             for w in 1:n_facilities
                 capacities[w] *= scale
             end
-            total_capacity = sum(values(capacities))
-            caps_vec = [capacities[w] for w in 1:n_facilities]
-            ratios = [caps_vec[i] / max(costs_vec[i], eps()) for i in 1:n_facilities]
-            order_desc = sortperm(ratios, rev=true)
         end
+
+        # For p-median/center, ensure p facilities can cover demand
+        if variant in [fl_p_median, fl_p_center] && p_facilities !== nothing
+            top_p_caps = sort([capacities[w] for w in 1:n_facilities], rev=true)[1:p_facilities]
+            if sum(top_p_caps) < total_demand
+                scale = 1.1 * total_demand / sum(top_p_caps)
+                for w in 1:n_facilities
+                    capacities[w] *= scale
+                end
+            end
+        end
+
+        # For covering, ensure some facility can cover each customer
+        if variant == fl_covering && coverage_radius !== nothing
+            for c in 1:n_customers
+                covered = any(distances[(w,c)] <= coverage_radius for w in 1:n_facilities)
+                if !covered
+                    # Increase coverage radius
+                    min_dist = minimum(distances[(w,c)] for w in 1:n_facilities)
+                    coverage_radius = max(coverage_radius, min_dist * 1.1)
+                end
+            end
+        end
+
         selected_idxs, min_int_budget = greedy_integer_subset_for(total_demand)
         slack_factor = 1.02 + 0.23 * rand()
         budget = max(original_budget, min_int_budget * slack_factor)
+
     elseif solution_status == :infeasible
-        b_thresh = fractional_budget_to_reach(total_demand)
-        if isfinite(b_thresh)
-            tighten = rand(0.75:0.01:0.95)
-            budget = min(original_budget, b_thresh * tighten)
+        scenario = rand(1:3)
+
+        if scenario == 1
+            # Budget too low
+            budget = minimum(values(fixed_costs)) * 0.5
+        elseif scenario == 2
+            # Capacity too low
+            for w in 1:n_facilities
+                capacities[w] *= 0.3
+            end
         else
-            budget = min(original_budget, sum(values(fixed_costs)) * rand(0.4:0.01:0.8))
+            # Variant-specific infeasibility
+            if variant == fl_covering && coverage_radius !== nothing
+                coverage_radius *= 0.2
+            elseif variant in [fl_p_median, fl_p_center] && p_facilities !== nothing
+                p_facilities = 1
+                for w in 1:n_facilities
+                    capacities[w] *= 0.2
+                end
+            else
+                budget = minimum(values(fixed_costs)) * 0.5
+            end
         end
-    else
-        budget = original_budget
     end
 
-    return FacilityLocationProblem(n_facilities, n_customers, facility_locs, customer_locs,
-                                   demands, fixed_costs, capacities, shipping_costs, budget)
+    return FacilityLocationProblem(
+        n_facilities, n_customers, facility_locs, customer_locs,
+        demands, fixed_costs, capacities, shipping_costs, budget, variant,
+        p_facilities, coverage_radius, distances
+    )
 end
 
 """
     build_model(prob::FacilityLocationProblem)
 
-Build a JuMP model for the facility location problem.
-
-# Arguments
-- `prob`: FacilityLocationProblem instance
-
-# Returns
-- `model`: The JuMP model
+Build a JuMP model for the facility location problem based on its variant.
 """
 function build_model(prob::FacilityLocationProblem)
     model = Model()
 
-    # Variables
-    @variable(model, y[1:prob.n_facilities], Bin)
-    @variable(model, x[1:prob.n_facilities, 1:prob.n_customers] >= 0)
+    if prob.variant == fl_standard
+        @variable(model, y[1:prob.n_facilities], Bin)
+        @variable(model, x[1:prob.n_facilities, 1:prob.n_customers] >= 0)
 
-    # Objective
-    @objective(model, Min,
-        sum(prob.fixed_costs[w] * y[w] for w in 1:prob.n_facilities) +
-        sum(prob.shipping_costs[(w,c)] * x[w,c] for w in 1:prob.n_facilities, c in 1:prob.n_customers)
-    )
+        @objective(model, Min,
+            sum(prob.fixed_costs[w] * y[w] for w in 1:prob.n_facilities) +
+            sum(prob.shipping_costs[(w,c)] * x[w,c] for w in 1:prob.n_facilities, c in 1:prob.n_customers))
 
-    # Customer demand
-    for c in 1:prob.n_customers
-        @constraint(model, sum(x[w,c] for w in 1:prob.n_facilities) >= prob.demands[c])
+        for c in 1:prob.n_customers
+            @constraint(model, sum(x[w,c] for w in 1:prob.n_facilities) >= prob.demands[c])
+        end
+
+        for w in 1:prob.n_facilities
+            @constraint(model, sum(x[w,c] for c in 1:prob.n_customers) <= prob.capacities[w] * y[w])
+        end
+
+        @constraint(model, sum(prob.fixed_costs[w] * y[w] for w in 1:prob.n_facilities) <= prob.budget)
+
+    elseif prob.variant == fl_uncapacitated
+        @variable(model, y[1:prob.n_facilities], Bin)
+        @variable(model, x[1:prob.n_facilities, 1:prob.n_customers] >= 0)
+
+        @objective(model, Min,
+            sum(prob.fixed_costs[w] * y[w] for w in 1:prob.n_facilities) +
+            sum(prob.shipping_costs[(w,c)] * x[w,c] for w in 1:prob.n_facilities, c in 1:prob.n_customers))
+
+        for c in 1:prob.n_customers
+            @constraint(model, sum(x[w,c] for w in 1:prob.n_facilities) >= prob.demands[c])
+        end
+
+        # Only constraint: can't ship from closed facility
+        for w in 1:prob.n_facilities
+            M = sum(values(prob.demands))
+            @constraint(model, sum(x[w,c] for c in 1:prob.n_customers) <= M * y[w])
+        end
+
+        @constraint(model, sum(prob.fixed_costs[w] * y[w] for w in 1:prob.n_facilities) <= prob.budget)
+
+    elseif prob.variant == fl_p_median
+        @variable(model, y[1:prob.n_facilities], Bin)
+        @variable(model, x[1:prob.n_facilities, 1:prob.n_customers] >= 0)
+
+        # Minimize total weighted distance
+        @objective(model, Min,
+            sum(prob.demands[c] * prob.distances[(w,c)] * x[w,c]
+                for w in 1:prob.n_facilities, c in 1:prob.n_customers))
+
+        for c in 1:prob.n_customers
+            @constraint(model, sum(x[w,c] for w in 1:prob.n_facilities) >= 1)  # Fraction assigned
+        end
+
+        for w in 1:prob.n_facilities, c in 1:prob.n_customers
+            @constraint(model, x[w,c] <= y[w])
+        end
+
+        for w in 1:prob.n_facilities
+            @constraint(model, sum(prob.demands[c] * x[w,c] for c in 1:prob.n_customers) <= prob.capacities[w] * y[w])
+        end
+
+        # Exactly p facilities
+        @constraint(model, sum(y[w] for w in 1:prob.n_facilities) == prob.p_facilities)
+
+    elseif prob.variant == fl_p_center
+        @variable(model, y[1:prob.n_facilities], Bin)
+        @variable(model, x[1:prob.n_facilities, 1:prob.n_customers] >= 0)
+        @variable(model, max_dist >= 0)  # Maximum distance to minimize
+
+        @objective(model, Min, max_dist)
+
+        for c in 1:prob.n_customers
+            @constraint(model, sum(x[w,c] for w in 1:prob.n_facilities) >= 1)
+        end
+
+        for w in 1:prob.n_facilities, c in 1:prob.n_customers
+            @constraint(model, x[w,c] <= y[w])
+            # If customer c is assigned to w, distance contributes to max
+            @constraint(model, prob.distances[(w,c)] * x[w,c] <= max_dist)
+        end
+
+        for w in 1:prob.n_facilities
+            @constraint(model, sum(prob.demands[c] * x[w,c] for c in 1:prob.n_customers) <= prob.capacities[w] * y[w])
+        end
+
+        @constraint(model, sum(y[w] for w in 1:prob.n_facilities) == prob.p_facilities)
+
+    elseif prob.variant == fl_covering
+        @variable(model, y[1:prob.n_facilities], Bin)
+
+        # Minimize number of facilities to cover all customers
+        @objective(model, Min, sum(prob.fixed_costs[w] * y[w] for w in 1:prob.n_facilities))
+
+        # Each customer must be covered by at least one open facility within radius
+        for c in 1:prob.n_customers
+            covering_facilities = [w for w in 1:prob.n_facilities if prob.distances[(w,c)] <= prob.coverage_radius]
+            if !isempty(covering_facilities)
+                @constraint(model, sum(y[w] for w in covering_facilities) >= 1)
+            end
+        end
+
+        @constraint(model, sum(prob.fixed_costs[w] * y[w] for w in 1:prob.n_facilities) <= prob.budget)
+
+    elseif prob.variant == fl_single_source
+        @variable(model, y[1:prob.n_facilities], Bin)
+        @variable(model, z[1:prob.n_facilities, 1:prob.n_customers], Bin)  # Assignment
+
+        @objective(model, Min,
+            sum(prob.fixed_costs[w] * y[w] for w in 1:prob.n_facilities) +
+            sum(prob.shipping_costs[(w,c)] * prob.demands[c] * z[w,c]
+                for w in 1:prob.n_facilities, c in 1:prob.n_customers))
+
+        # Each customer assigned to exactly one facility
+        for c in 1:prob.n_customers
+            @constraint(model, sum(z[w,c] for w in 1:prob.n_facilities) == 1)
+        end
+
+        # Can only assign to open facilities
+        for w in 1:prob.n_facilities, c in 1:prob.n_customers
+            @constraint(model, z[w,c] <= y[w])
+        end
+
+        # Capacity constraints
+        for w in 1:prob.n_facilities
+            @constraint(model, sum(prob.demands[c] * z[w,c] for c in 1:prob.n_customers) <= prob.capacities[w] * y[w])
+        end
+
+        @constraint(model, sum(prob.fixed_costs[w] * y[w] for w in 1:prob.n_facilities) <= prob.budget)
     end
-
-    # Facility capacity
-    for w in 1:prob.n_facilities
-        @constraint(model, sum(x[w,c] for c in 1:prob.n_customers) <= prob.capacities[w] * y[w])
-    end
-
-    # Budget
-    @constraint(model, sum(prob.fixed_costs[w] * y[w] for w in 1:prob.n_facilities) <= prob.budget)
 
     return model
 end
@@ -280,5 +444,5 @@ end
 register_problem(
     :facility_location,
     FacilityLocationProblem,
-    "Facility location problem that minimizes the cost of opening facilities and shipping to customers while meeting demand"
+    "Facility location problem with variants including standard, uncapacitated, p-median, p-center, covering, and single source"
 )
