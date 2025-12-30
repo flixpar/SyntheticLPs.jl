@@ -1,5 +1,30 @@
 using JuMP
 using Random
+using Distributions
+
+"""
+Diet problem variants.
+
+# Variants
+- `diet_standard`: Basic diet - minimize cost meeting nutrient requirements
+- `diet_nutrient_bounds`: Both minimum and maximum nutrient limits (sodium, fat caps)
+- `diet_food_groups`: Minimum servings from each food group required
+- `diet_variety`: Minimum number of different foods must be used
+- `diet_macro_ratios`: Specific protein/carb/fat ratio requirements
+- `diet_calorie_range`: Both minimum and maximum calorie constraints
+- `diet_allergen_free`: Certain foods completely excluded
+- `diet_meal_plan`: Structured breakfast/lunch/dinner composition
+"""
+@enum DietVariant begin
+    diet_standard
+    diet_nutrient_bounds
+    diet_food_groups
+    diet_variety
+    diet_macro_ratios
+    diet_calorie_range
+    diet_allergen_free
+    diet_meal_plan
+end
 
 """
     DietProblem <: ProblemGenerator
@@ -35,10 +60,60 @@ struct DietProblem <: ProblemGenerator
     cost_budget::Float64
     min_food_amounts::Dict{Int, Float64}
     max_food_amounts::Dict{Int, Float64}
+    variant::DietVariant
+    # Nutrient bounds variant
+    nutrient_upper_bounds::Union{Vector{Float64}, Nothing}
+    # Food groups variant
+    n_food_groups::Int
+    food_group_assignments::Union{Vector{Int}, Nothing}
+    min_servings_per_group::Union{Vector{Float64}, Nothing}
+    # Variety variant
+    min_foods_used::Int
+    use_threshold::Float64
+    # Macro ratios variant
+    protein_idx::Int
+    carb_idx::Int
+    fat_idx::Int
+    min_protein_ratio::Float64
+    max_protein_ratio::Float64
+    min_carb_ratio::Float64
+    max_carb_ratio::Float64
+    min_fat_ratio::Float64
+    max_fat_ratio::Float64
+    # Calorie range variant
+    calorie_idx::Int
+    min_calories::Float64
+    max_calories::Float64
+    # Allergen free variant
+    excluded_foods::Union{Set{Int}, Nothing}
+    # Meal plan variant
+    n_meals::Int
+    food_meal_compat::Union{Matrix{Bool}, Nothing}
+    meal_calorie_targets::Union{Vector{Float64}, Nothing}
+    meal_calorie_tolerance::Float64
+end
+
+# Backwards compatibility constructor
+function DietProblem(n_foods::Int, n_nutrients::Int, costs::Vector{Float64},
+                     nutrient_content::Matrix{Float64}, requirements::Vector{Float64},
+                     food_supply_limits::Vector{Float64}, cost_budget::Float64,
+                     min_food_amounts::Dict{Int, Float64}, max_food_amounts::Dict{Int, Float64})
+    DietProblem(
+        n_foods, n_nutrients, costs, nutrient_content, requirements,
+        food_supply_limits, cost_budget, min_food_amounts, max_food_amounts,
+        diet_standard,
+        nothing, 0, nothing, nothing,
+        0, 0.0,
+        0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        0, 0.0, 0.0,
+        nothing,
+        0, nothing, nothing, 0.0
+    )
 end
 
 """
-    DietProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+    DietProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int;
+                variant::DietVariant=diet_standard)
 
 Construct a diet problem instance with sophisticated verified impossibility scenarios.
 
@@ -63,8 +138,10 @@ requirement to 200-300% of maximum with large margin to avoid numerical issues.
 - `target_variables`: Target number of variables (n_foods)
 - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
 - `seed`: Random seed for reproducibility
+- `variant`: Diet problem variant (default: diet_standard)
 """
-function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int;
+                     variant::DietVariant=diet_standard)
     Random.seed!(seed)
 
     n_foods = target_variables
@@ -485,6 +562,173 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
         end
     end
 
+    # Initialize variant-specific fields
+    nutrient_upper_bounds = nothing
+    n_food_groups = 0
+    food_group_assignments = nothing
+    min_servings_per_group = nothing
+    min_foods_used = 0
+    use_threshold = 0.0
+    protein_idx = 0
+    carb_idx = 0
+    fat_idx = 0
+    min_protein_ratio = 0.0
+    max_protein_ratio = 0.0
+    min_carb_ratio = 0.0
+    max_carb_ratio = 0.0
+    min_fat_ratio = 0.0
+    max_fat_ratio = 0.0
+    calorie_idx = 0
+    min_calories = 0.0
+    max_calories = 0.0
+    excluded_foods = nothing
+    n_meals = 0
+    food_meal_compat = nothing
+    meal_calorie_targets = nothing
+    meal_calorie_tolerance = 0.0
+
+    # Generate variant-specific data
+    if variant == diet_nutrient_bounds
+        # Both min and max nutrient constraints (like sodium and saturated fat limits)
+        nutrient_upper_bounds = zeros(n_nutrients)
+        for j in 1:n_nutrients
+            # Upper bound is 1.5-3x the minimum requirement
+            nutrient_upper_bounds[j] = b[j] * rand(Uniform(1.5, 3.0))
+        end
+        if feasibility_status == infeasible
+            # Make some upper bounds below minimum requirements
+            violated_nutrient = rand(1:n_nutrients)
+            nutrient_upper_bounds[violated_nutrient] = b[violated_nutrient] * 0.8
+        end
+
+    elseif variant == diet_food_groups
+        # Foods assigned to groups, minimum servings from each group
+        n_food_groups = rand(4:min(8, max(4, n_foods ÷ 5)))
+        food_group_assignments = rand(1:n_food_groups, n_foods)
+
+        # Calculate how much is available per group
+        group_availability = zeros(n_food_groups)
+        for i in 1:n_foods
+            g = food_group_assignments[i]
+            group_availability[g] += food_supply_limits[i]
+        end
+
+        min_servings_per_group = zeros(n_food_groups)
+        for g in 1:n_food_groups
+            if group_availability[g] > 0
+                min_servings_per_group[g] = group_availability[g] * rand(Uniform(0.1, 0.3))
+            end
+        end
+
+        if feasibility_status == infeasible
+            # Make one group requirement impossible
+            target_group = rand(1:n_food_groups)
+            min_servings_per_group[target_group] = group_availability[target_group] * 1.5
+        end
+
+    elseif variant == diet_variety
+        # Minimum number of different foods that must be used
+        min_foods_used = max(3, min(n_foods - 2, rand(n_foods ÷ 3:n_foods ÷ 2)))
+        use_threshold = 0.01  # Food counts as "used" if x[i] >= threshold
+
+        if feasibility_status == infeasible
+            # Require more foods than available considering supply limits
+            available_count = count(food_supply_limits .>= use_threshold)
+            min_foods_used = available_count + rand(1:3)
+        end
+
+    elseif variant == diet_macro_ratios
+        # Assign first 3 nutrients as protein, carbs, fat for ratio constraints
+        protein_idx = min(1, n_nutrients)
+        carb_idx = min(2, n_nutrients)
+        fat_idx = min(3, n_nutrients)
+
+        # Typical macro ratios (percentages of total macros)
+        # Protein: 10-35%, Carbs: 45-65%, Fat: 20-35%
+        min_protein_ratio = rand(Uniform(0.10, 0.15))
+        max_protein_ratio = rand(Uniform(0.30, 0.35))
+        min_carb_ratio = rand(Uniform(0.45, 0.50))
+        max_carb_ratio = rand(Uniform(0.60, 0.65))
+        min_fat_ratio = rand(Uniform(0.20, 0.25))
+        max_fat_ratio = rand(Uniform(0.30, 0.35))
+
+        if feasibility_status == infeasible
+            # Make ratios impossible (they don't sum to 1)
+            min_protein_ratio = 0.40
+            min_carb_ratio = 0.50
+            min_fat_ratio = 0.30
+        end
+
+    elseif variant == diet_calorie_range
+        # First nutrient is calories with both min and max
+        calorie_idx = 1
+        # Typical daily calorie ranges
+        target_calories = rand(Uniform(1800, 2500))
+        min_calories = target_calories * rand(Uniform(0.90, 0.95))
+        max_calories = target_calories * rand(Uniform(1.05, 1.10))
+
+        if feasibility_status == infeasible
+            # Make max less than min
+            min_calories = target_calories
+            max_calories = target_calories * 0.8
+        end
+
+    elseif variant == diet_allergen_free
+        # Some foods are excluded (allergens)
+        n_excluded = max(1, rand(n_foods ÷ 10:n_foods ÷ 5))
+        excluded_foods = Set(randperm(n_foods)[1:n_excluded])
+
+        # Increase supply limits for non-excluded foods to maintain feasibility
+        if feasibility_status == feasible
+            for i in 1:n_foods
+                if !(i in excluded_foods)
+                    food_supply_limits[i] *= rand(Uniform(1.2, 1.5))
+                end
+            end
+        elseif feasibility_status == infeasible
+            # Exclude all foods that are good sources of a critical nutrient
+            critical_nutrient = argmax(b)
+            contributions = [(a[i, critical_nutrient], i) for i in 1:n_foods]
+            sort!(contributions, rev=true)
+            # Exclude top contributors
+            for k in 1:min(n_foods ÷ 2, length(contributions))
+                push!(excluded_foods, contributions[k][2])
+            end
+        end
+
+    elseif variant == diet_meal_plan
+        # Foods assigned to meals (breakfast/lunch/dinner)
+        n_meals = 3
+        food_meal_compat = zeros(Bool, n_foods, n_meals)
+
+        # Each food is compatible with 1-2 meals
+        for i in 1:n_foods
+            n_compat = rand(1:2)
+            compat_meals = randperm(n_meals)[1:n_compat]
+            for m in compat_meals
+                food_meal_compat[i, m] = true
+            end
+        end
+
+        # Calorie targets per meal
+        total_daily_calories = rand(Uniform(1800, 2500))
+        meal_calorie_targets = zeros(n_meals)
+        meal_calorie_targets[1] = total_daily_calories * rand(Uniform(0.20, 0.30))  # Breakfast
+        meal_calorie_targets[2] = total_daily_calories * rand(Uniform(0.35, 0.45))  # Lunch
+        meal_calorie_targets[3] = total_daily_calories - meal_calorie_targets[1] - meal_calorie_targets[2]  # Dinner
+        meal_calorie_tolerance = rand(Uniform(0.10, 0.20))
+
+        if feasibility_status == infeasible
+            # Make one meal impossible by limiting compatible foods
+            target_meal = rand(1:n_meals)
+            for i in 1:n_foods
+                if food_meal_compat[i, target_meal]
+                    food_supply_limits[i] *= 0.1
+                end
+            end
+        end
+    end
+
     return DietProblem(
         n_foods,
         n_nutrients,
@@ -494,14 +738,38 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
         food_supply_limits,
         cost_budget,
         min_food_amounts,
-        max_food_amounts
+        max_food_amounts,
+        variant,
+        nutrient_upper_bounds,
+        n_food_groups,
+        food_group_assignments,
+        min_servings_per_group,
+        min_foods_used,
+        use_threshold,
+        protein_idx,
+        carb_idx,
+        fat_idx,
+        min_protein_ratio,
+        max_protein_ratio,
+        min_carb_ratio,
+        max_carb_ratio,
+        min_fat_ratio,
+        max_fat_ratio,
+        calorie_idx,
+        min_calories,
+        max_calories,
+        excluded_foods,
+        n_meals,
+        food_meal_compat,
+        meal_calorie_targets,
+        meal_calorie_tolerance
     )
 end
 
 """
     build_model(prob::DietProblem)
 
-Build a JuMP model for the diet problem (deterministic).
+Build a JuMP model for the diet problem based on its variant.
 
 # Arguments
 - `prob`: DietProblem instance
@@ -512,35 +780,146 @@ Build a JuMP model for the diet problem (deterministic).
 function build_model(prob::DietProblem)
     model = Model()
 
-    @variable(model, x[1:prob.n_foods] >= 0)
+    if prob.variant == diet_standard || prob.variant == diet_nutrient_bounds ||
+       prob.variant == diet_food_groups || prob.variant == diet_variety ||
+       prob.variant == diet_macro_ratios || prob.variant == diet_calorie_range ||
+       prob.variant == diet_allergen_free
+        # Standard food consumption variables
+        @variable(model, x[1:prob.n_foods] >= 0)
 
-    @objective(model, Min, sum(prob.costs[i] * x[i] for i in 1:prob.n_foods))
+        @objective(model, Min, sum(prob.costs[i] * x[i] for i in 1:prob.n_foods))
 
-    # Nutrient requirements
-    for j in 1:prob.n_nutrients
-        @constraint(model, sum(prob.nutrient_content[i, j] * x[i] for i in 1:prob.n_foods) >= prob.requirements[j])
-    end
-
-    # Food supply limits
-    for i in 1:prob.n_foods
-        if prob.food_supply_limits[i] < Inf
-            @constraint(model, x[i] <= prob.food_supply_limits[i])
+        # Nutrient requirements
+        for j in 1:prob.n_nutrients
+            @constraint(model, sum(prob.nutrient_content[i, j] * x[i] for i in 1:prob.n_foods) >= prob.requirements[j])
         end
-    end
 
-    # Cost budget constraint
-    if prob.cost_budget < Inf
-        @constraint(model, sum(prob.costs[i] * x[i] for i in 1:prob.n_foods) <= prob.cost_budget)
-    end
+        # Food supply limits
+        for i in 1:prob.n_foods
+            if prob.food_supply_limits[i] < Inf
+                @constraint(model, x[i] <= prob.food_supply_limits[i])
+            end
+        end
 
-    # Minimum consumption requirements
-    for (i, min_amount) in prob.min_food_amounts
-        @constraint(model, x[i] >= min_amount)
-    end
+        # Cost budget constraint
+        if prob.cost_budget < Inf
+            @constraint(model, sum(prob.costs[i] * x[i] for i in 1:prob.n_foods) <= prob.cost_budget)
+        end
 
-    # Maximum consumption limits
-    for (i, max_amount) in prob.max_food_amounts
-        @constraint(model, x[i] <= max_amount)
+        # Minimum consumption requirements
+        for (i, min_amount) in prob.min_food_amounts
+            @constraint(model, x[i] >= min_amount)
+        end
+
+        # Maximum consumption limits
+        for (i, max_amount) in prob.max_food_amounts
+            @constraint(model, x[i] <= max_amount)
+        end
+
+        # Variant-specific constraints
+        if prob.variant == diet_nutrient_bounds && prob.nutrient_upper_bounds !== nothing
+            # Upper bounds on nutrients (sodium, saturated fat limits)
+            for j in 1:prob.n_nutrients
+                @constraint(model, sum(prob.nutrient_content[i, j] * x[i] for i in 1:prob.n_foods) <= prob.nutrient_upper_bounds[j])
+            end
+
+        elseif prob.variant == diet_food_groups && prob.food_group_assignments !== nothing
+            # Minimum servings from each food group
+            for g in 1:prob.n_food_groups
+                foods_in_group = [i for i in 1:prob.n_foods if prob.food_group_assignments[i] == g]
+                if !isempty(foods_in_group)
+                    @constraint(model, sum(x[i] for i in foods_in_group) >= prob.min_servings_per_group[g])
+                end
+            end
+
+        elseif prob.variant == diet_variety && prob.min_foods_used > 0
+            # Minimum number of different foods used (linearized with binary variables)
+            @variable(model, y[1:prob.n_foods], Bin)  # 1 if food is used
+            M = maximum(prob.food_supply_limits[isfinite.(prob.food_supply_limits)])
+
+            for i in 1:prob.n_foods
+                # x[i] >= threshold => y[i] = 1 (approximated)
+                @constraint(model, x[i] <= M * y[i])
+                @constraint(model, x[i] >= prob.use_threshold * y[i] - prob.use_threshold * (1 - y[i]))
+            end
+            @constraint(model, sum(y) >= prob.min_foods_used)
+
+        elseif prob.variant == diet_macro_ratios && prob.protein_idx > 0
+            # Macronutrient ratio constraints
+            total_macro = @expression(model,
+                sum(prob.nutrient_content[i, prob.protein_idx] * x[i] for i in 1:prob.n_foods) +
+                sum(prob.nutrient_content[i, prob.carb_idx] * x[i] for i in 1:prob.n_foods) +
+                sum(prob.nutrient_content[i, prob.fat_idx] * x[i] for i in 1:prob.n_foods))
+
+            protein_intake = @expression(model, sum(prob.nutrient_content[i, prob.protein_idx] * x[i] for i in 1:prob.n_foods))
+            carb_intake = @expression(model, sum(prob.nutrient_content[i, prob.carb_idx] * x[i] for i in 1:prob.n_foods))
+            fat_intake = @expression(model, sum(prob.nutrient_content[i, prob.fat_idx] * x[i] for i in 1:prob.n_foods))
+
+            # protein >= min_protein_ratio * total
+            @constraint(model, protein_intake >= prob.min_protein_ratio * total_macro)
+            @constraint(model, protein_intake <= prob.max_protein_ratio * total_macro)
+            @constraint(model, carb_intake >= prob.min_carb_ratio * total_macro)
+            @constraint(model, carb_intake <= prob.max_carb_ratio * total_macro)
+            @constraint(model, fat_intake >= prob.min_fat_ratio * total_macro)
+            @constraint(model, fat_intake <= prob.max_fat_ratio * total_macro)
+
+        elseif prob.variant == diet_calorie_range && prob.calorie_idx > 0
+            # Calorie range constraints
+            total_calories = @expression(model, sum(prob.nutrient_content[i, prob.calorie_idx] * x[i] for i in 1:prob.n_foods))
+            @constraint(model, total_calories >= prob.min_calories)
+            @constraint(model, total_calories <= prob.max_calories)
+
+        elseif prob.variant == diet_allergen_free && prob.excluded_foods !== nothing
+            # Excluded foods cannot be used
+            for i in prob.excluded_foods
+                @constraint(model, x[i] == 0)
+            end
+        end
+
+    elseif prob.variant == diet_meal_plan
+        # Food consumption per meal
+        @variable(model, x[1:prob.n_foods, 1:prob.n_meals] >= 0)
+
+        @objective(model, Min, sum(prob.costs[i] * x[i, m] for i in 1:prob.n_foods, m in 1:prob.n_meals))
+
+        # Total nutrient requirements across all meals
+        for j in 1:prob.n_nutrients
+            @constraint(model, sum(prob.nutrient_content[i, j] * x[i, m]
+                for i in 1:prob.n_foods, m in 1:prob.n_meals) >= prob.requirements[j])
+        end
+
+        # Food supply limits (total across meals)
+        for i in 1:prob.n_foods
+            if prob.food_supply_limits[i] < Inf
+                @constraint(model, sum(x[i, m] for m in 1:prob.n_meals) <= prob.food_supply_limits[i])
+            end
+        end
+
+        # Cost budget
+        if prob.cost_budget < Inf
+            @constraint(model, sum(prob.costs[i] * x[i, m] for i in 1:prob.n_foods, m in 1:prob.n_meals) <= prob.cost_budget)
+        end
+
+        # Food-meal compatibility (only compatible foods can be used in each meal)
+        if prob.food_meal_compat !== nothing
+            for i in 1:prob.n_foods, m in 1:prob.n_meals
+                if !prob.food_meal_compat[i, m]
+                    @constraint(model, x[i, m] == 0)
+                end
+            end
+        end
+
+        # Calorie targets per meal (with tolerance)
+        if prob.meal_calorie_targets !== nothing && prob.n_nutrients >= 1
+            calorie_idx = 1
+            for m in 1:prob.n_meals
+                meal_calories = @expression(model, sum(prob.nutrient_content[i, calorie_idx] * x[i, m] for i in 1:prob.n_foods))
+                target = prob.meal_calorie_targets[m]
+                tolerance = prob.meal_calorie_tolerance
+                @constraint(model, meal_calories >= target * (1 - tolerance))
+                @constraint(model, meal_calories <= target * (1 + tolerance))
+            end
+        end
     end
 
     return model
@@ -550,5 +929,5 @@ end
 register_problem(
     :diet_problem,
     DietProblem,
-    "Diet problem that minimizes the cost of food while meeting nutritional requirements"
+    "Diet problem with variants including standard, nutrient bounds, food groups, variety, macro ratios, calorie range, allergen free, and meal planning"
 )

@@ -1,291 +1,510 @@
 using JuMP
 using Random
+using Distributions
+
+"""
+Assignment problem variants.
+
+# Variants
+- `assign_standard`: Basic assignment - minimize cost with one task per worker
+- `assign_multi_assign`: Workers can handle multiple tasks (with capacity)
+- `assign_skill_match`: Tasks require minimum skill levels from workers
+- `assign_workload_balance`: Minimize maximum workload across workers
+- `assign_preference`: Workers have preferences (some assignments vetoed)
+- `assign_team`: Assign teams of workers to projects
+- `assign_shift`: Multi-shift assignment with coverage requirements
+- `assign_geographic`: Assignment with travel time/distance constraints
+"""
+@enum AssignmentVariant begin
+    assign_standard
+    assign_multi_assign
+    assign_skill_match
+    assign_workload_balance
+    assign_preference
+    assign_team
+    assign_shift
+    assign_geographic
+end
 
 """
     AssignmentProblem <: ProblemGenerator
 
-Generator for assignment problems that assign workers to tasks at minimum cost.
-
-# Fields
-- `n_workers::Int`: Number of workers
-- `n_tasks::Int`: Number of tasks
-- `costs::Matrix{Int}`: Cost matrix (n_workers × n_tasks)
-- `allowed::Matrix{Bool}`: Compatibility matrix indicating valid assignments
+Generator for assignment problems with multiple variants.
 """
 struct AssignmentProblem <: ProblemGenerator
     n_workers::Int
     n_tasks::Int
     costs::Matrix{Int}
     allowed::Matrix{Bool}
+    variant::AssignmentVariant
+    # Multi-assign variant
+    worker_capacities::Union{Vector{Int}, Nothing}
+    task_requirements::Union{Vector{Int}, Nothing}
+    # Skill match variant
+    n_skills::Int
+    worker_skills::Union{Matrix{Float64}, Nothing}
+    task_skill_reqs::Union{Matrix{Float64}, Nothing}
+    # Workload balance variant
+    task_workloads::Union{Vector{Float64}, Nothing}
+    # Preference variant
+    worker_preferences::Union{Matrix{Int}, Nothing}  # 1=preferred, 0=neutral, -1=vetoed
+    preference_bonus::Float64
+    # Team variant
+    n_teams::Int
+    team_members::Union{Vector{Vector{Int}}, Nothing}
+    project_team_reqs::Union{Vector{Int}, Nothing}
+    # Shift variant
+    n_shifts::Int
+    shift_tasks::Union{Vector{Vector{Int}}, Nothing}
+    shift_requirements::Union{Vector{Int}, Nothing}
+    worker_shift_avail::Union{Matrix{Bool}, Nothing}
+    # Geographic variant
+    worker_locs::Union{Vector{Tuple{Float64,Float64}}, Nothing}
+    task_locs::Union{Vector{Tuple{Float64,Float64}}, Nothing}
+    max_travel_distance::Float64
+end
+
+# Backwards compatibility
+function AssignmentProblem(n_workers::Int, n_tasks::Int, costs::Matrix{Int}, allowed::Matrix{Bool})
+    AssignmentProblem(
+        n_workers, n_tasks, costs, allowed, assign_standard,
+        nothing, nothing,
+        0, nothing, nothing,
+        nothing,
+        nothing, 0.0,
+        0, nothing, nothing,
+        0, nothing, nothing, nothing,
+        nothing, nothing, 0.0
+    )
 end
 
 """
-    AssignmentProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+    AssignmentProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int;
+                      variant::AssignmentVariant=assign_standard)
 
-Construct an assignment problem instance.
-
-# Arguments
-- `target_variables`: Target number of variables (n_workers × n_tasks)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+Construct an assignment problem instance with the specified variant.
 """
-function AssignmentProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function AssignmentProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int;
+                           variant::AssignmentVariant=assign_standard)
     Random.seed!(seed)
 
-    # Determine problem characteristics based on size
-    if target_variables <= 250
-        balanced_prob = 0.8
-        cost_base = (5, 30)
-        specialization_prob = 0.2
-        cost_variation_weights = [0.6, 0.3, 0.1]
-    elseif target_variables <= 1000
-        balanced_prob = 0.6
-        cost_base = (10, 100)
-        specialization_prob = 0.4
-        cost_variation_weights = [0.3, 0.5, 0.2]
-    else
-        balanced_prob = 0.4
-        cost_base = (50, 500)
-        specialization_prob = 0.6
-        cost_variation_weights = [0.2, 0.3, 0.5]
-    end
-
-    # Determine if balanced
-    balanced = rand() < balanced_prob
-
     # Calculate dimensions
-    if balanced
-        n_workers = max(5, round(Int, sqrt(target_variables)))
-        actual_vars = n_workers * n_workers
-        if actual_vars < target_variables * 0.9
-            n_workers = max(5, round(Int, sqrt(target_variables * 1.1)))
-        elseif actual_vars > target_variables * 1.1
-            n_workers = max(5, round(Int, sqrt(target_variables * 0.9)))
-        end
-        n_tasks = n_workers
-    else
-        sqrt_target = sqrt(target_variables)
-        ratio = 0.5 + rand() * 1.5
-
-        n_workers = max(5, round(Int, sqrt_target * sqrt(ratio)))
-        n_tasks = max(5, round(Int, target_variables / n_workers))
-
-        for _ in 1:3
-            current_vars = n_workers * n_tasks
-            if current_vars < target_variables * 0.9
-                if abs(n_workers - sqrt_target) > abs(n_tasks - sqrt_target)
-                    n_workers = max(5, round(Int, n_workers * 1.1))
-                else
-                    n_tasks = max(5, round(Int, n_tasks * 1.1))
-                end
-            elseif current_vars > target_variables * 1.1
-                if abs(n_workers - sqrt_target) > abs(n_tasks - sqrt_target)
-                    n_workers = max(5, round(Int, n_workers * 0.9))
-                else
-                    n_tasks = max(5, round(Int, n_tasks * 0.9))
-                end
-            else
-                break
-            end
-        end
-    end
-
-    # Adjust for feasibility
-    solution_status = feasibility_status == feasible ? :feasible :
-                     feasibility_status == infeasible ? :infeasible : :all
-    feas_slack_prob = 0.3
-    feas_slack_max = 3
-    cap_gap_rng = (0.05, 0.25)
-
-    if solution_status == :feasible
-        if n_workers < n_tasks
-            add = n_tasks - n_workers
-            if rand() < feas_slack_prob
-                add += rand(1:max(1, Int(feas_slack_max)))
-            end
-            n_workers = n_workers + add
-        end
-    elseif solution_status == :infeasible
-        balanced = false
-        if n_workers >= n_tasks
-            cap_low, cap_high = cap_gap_rng
-            gap_ratio = clamp(rand() * (cap_high - cap_low) + cap_low, 0.01, 0.9)
-            extra = max(1, ceil(Int, gap_ratio * n_workers))
-            n_tasks = n_workers + extra
-        end
-    end
+    n = max(5, round(Int, sqrt(target_variables)))
+    n_workers = n + rand(-2:2)
+    n_tasks = n + rand(-2:2)
+    n_workers = max(5, n_workers)
+    n_tasks = max(5, n_tasks)
 
     # Generate costs
-    min_cost, max_cost = cost_base
-    range_multiplier = 0.8 + rand() * 0.4
-    adjusted_max = max(min_cost + 5, round(Int, max_cost * range_multiplier))
+    costs = rand(5:50, n_workers, n_tasks)
 
-    costs = zeros(Int, n_workers, n_tasks)
-
-    # Compatibility structure
-    total_vars_est = n_workers * n_tasks
-    base_density = total_vars_est <= 250 ? 0.85 : (total_vars_est <= 1000 ? 0.70 : 0.50)
-
+    # Compatibility matrix
     allowed = trues(n_workers, n_tasks)
+    for i in 1:n_workers, j in 1:n_tasks
+        if rand() < 0.1
+            allowed[i, j] = false
+        end
+    end
 
-    # Skill groups
-    gmax = min(6, max(2, round(Int, sqrt(min(n_workers, n_tasks)))))
-    n_groups = rand(2:gmax)
-    worker_groups = [rand(1:n_groups) for _ in 1:n_workers]
-    task_groups = [rand(1:n_groups) for _ in 1:n_tasks]
+    # Ensure feasibility for feasible instances (each task can be covered)
+    if feasibility_status == feasible
+        for j in 1:n_tasks
+            if !any(allowed[:, j])
+                allowed[rand(1:n_workers), j] = true
+            end
+        end
+    elseif feasibility_status == infeasible
+        # Make some tasks uncoverable
+        for j in rand(1:n_tasks, max(1, n_tasks ÷ 4))
+            allowed[:, j] .= false
+        end
+    end
 
-    p_in = min(0.98, base_density)
-    p_out = max(0.02, 0.3 * base_density)
+    # Initialize variant fields
+    worker_capacities = nothing
+    task_requirements = nothing
+    n_skills = 0
+    worker_skills = nothing
+    task_skill_reqs = nothing
+    task_workloads = nothing
+    worker_preferences = nothing
+    preference_bonus = 0.0
+    n_teams = 0
+    team_members = nothing
+    project_team_reqs = nothing
+    n_shifts = 0
+    shift_tasks = nothing
+    shift_requirements = nothing
+    worker_shift_avail = nothing
+    worker_locs = nothing
+    task_locs = nothing
+    max_travel_distance = 0.0
 
-    apply_compat = solution_status != :all
-    if apply_compat
+    if variant == assign_multi_assign
+        # Workers can handle multiple tasks
+        worker_capacities = [rand(2:5) for _ in 1:n_workers]
+        task_requirements = ones(Int, n_tasks)  # Each task needs 1 worker
+
+        if feasibility_status == infeasible
+            # More tasks than total capacity
+            total_cap = sum(worker_capacities)
+            task_requirements = [rand(1:2) for _ in 1:n_tasks]
+            while sum(task_requirements) <= total_cap
+                task_requirements[rand(1:n_tasks)] += 1
+            end
+        end
+
+    elseif variant == assign_skill_match
+        # Tasks require minimum skill levels
+        n_skills = rand(2:min(5, max(2, n_workers ÷ 3)))
+        worker_skills = rand(Uniform(0.0, 1.0), n_workers, n_skills)
+        task_skill_reqs = rand(Uniform(0.2, 0.6), n_tasks, n_skills)
+
+        # Update compatibility based on skills
         for i in 1:n_workers, j in 1:n_tasks
-            pij = task_groups[j] == worker_groups[i] ? p_in : p_out
-            allowed[i, j] = rand() < pij
-        end
-    end
-
-    # Infeasibility logic
-    infeas_hall_prob = 0.4
-    if solution_status == :infeasible
-        use_capacity_shortfall = rand() >= infeas_hall_prob
-        if !use_capacity_shortfall
-            # Hall violation
-            k = max(2, min(n_tasks, round(Int, 0.3 * n_tasks)))
-            k = rand(max(2, round(Int, 0.2*n_tasks)) : max(2, min(n_tasks, round(Int, 0.5*n_tasks))))
-            hall_tasks = sort(randperm(n_tasks)[1:k])
-            m = max(1, min(n_workers-1, rand(max(1, round(Int, 0.2*k)) : max(1, k-1))))
-            hall_workers = sort(randperm(n_workers)[1:m])
-            for j in hall_tasks
-                for i in 1:n_workers
-                    allowed[i, j] = (i in hall_workers)
-                end
+            if all(worker_skills[i, :] .>= task_skill_reqs[j, :])
+                allowed[i, j] = true
+            else
+                allowed[i, j] = false
             end
         end
-    end
 
-    # Feasibility guarantees
-    if solution_status == :feasible
-        if apply_compat
-            used = falses(n_workers)
-            task_order = randperm(n_tasks)
-            for jj in task_order
-                cands = [i for i in 1:n_workers if allowed[i, jj] && !used[i]]
-                if isempty(cands)
-                    pref = [i for i in 1:n_workers if worker_groups[i] == task_groups[jj] && !used[i]]
-                    if isempty(pref)
-                        pref = [i for i in 1:n_workers if !used[i]]
-                    end
-                    if isempty(pref)
-                        pref = collect(1:n_workers)
-                    end
-                    chosen = rand(pref)
-                    allowed[chosen, jj] = true
-                    used[chosen] = true
-                else
-                    chosen = rand(cands)
-                    used[chosen] = true
-                end
-            end
-        end
-    end
-
-    # Cost generation
-    specialization = rand() < specialization_prob
-    variation_choice = rand()
-    cost_variation = if variation_choice < cost_variation_weights[1]
-        :low
-    elseif variation_choice < cost_variation_weights[1] + cost_variation_weights[2]
-        :medium
-    else
-        :high
-    end
-
-    if specialization
-        for i in 1:n_workers
-            n_specializations = rand(1:min(3, n_tasks))
-            specialized_tasks = randperm(n_tasks)[1:n_specializations]
-
+        if feasibility_status == feasible
+            # Ensure each task has at least one capable worker
             for j in 1:n_tasks
-                if j in specialized_tasks
-                    costs[i, j] = rand(min_cost:round(Int, min_cost + 0.3 * (adjusted_max - min_cost)))
-                else
-                    costs[i, j] = rand(round(Int, min_cost + 0.5 * (adjusted_max - min_cost)):adjusted_max)
+                if !any(allowed[:, j])
+                    best_worker = argmax([sum(worker_skills[i, :]) for i in 1:n_workers])
+                    task_skill_reqs[j, :] = worker_skills[best_worker, :] .* 0.9
+                    allowed[best_worker, j] = true
+                end
+            end
+        elseif feasibility_status == infeasible
+            # Make some tasks require impossible skill combinations
+            for j in rand(1:n_tasks, max(1, n_tasks ÷ 4))
+                task_skill_reqs[j, :] .= 1.1  # Impossible to meet
+                allowed[:, j] .= false
+            end
+        end
+
+    elseif variant == assign_workload_balance
+        # Minimize maximum workload
+        task_workloads = rand(Uniform(1.0, 10.0), n_tasks)
+
+        # Standard compatibility
+        if feasibility_status == infeasible
+            # Make workload impossible to balance
+            allowed[:, 1] .= false
+            allowed[1, 1] = true
+            task_workloads[1] = 1000.0  # Extreme workload on one task
+        end
+
+    elseif variant == assign_preference
+        # Worker preferences
+        worker_preferences = zeros(Int, n_workers, n_tasks)
+        for i in 1:n_workers
+            for j in 1:n_tasks
+                r = rand()
+                if r < 0.2
+                    worker_preferences[i, j] = 1  # Preferred
+                elseif r < 0.3
+                    worker_preferences[i, j] = -1  # Vetoed
+                    allowed[i, j] = false
                 end
             end
         end
-    else
-        if cost_variation == :low
-            mean_cost = (min_cost + adjusted_max) / 2
-            range_factor = 0.3
-            for i in 1:n_workers, j in 1:n_tasks
-                low = max(min_cost, round(Int, mean_cost - range_factor * (adjusted_max - min_cost)))
-                high = min(adjusted_max, round(Int, mean_cost + range_factor * (adjusted_max - min_cost)))
-                bias = (worker_groups[i] == task_groups[j]) ? -0.1 : 0.1
-                low_adj = clamp(round(Int, low + bias * (high - low)), min_cost, high)
-                costs[i, j] = rand(low_adj:high)
-            end
-        elseif cost_variation == :high
-            for i in 1:n_workers, j in 1:n_tasks
-                if rand() < 0.1
-                    costs[i, j] = rand() < 0.5 ? min_cost : adjusted_max
-                else
-                    if worker_groups[i] == task_groups[j]
-                        costs[i, j] = rand(min_cost:round(Int, min_cost + 0.6 * (adjusted_max - min_cost)))
-                    else
-                        costs[i, j] = rand(round(Int, min_cost + 0.3 * (adjusted_max - min_cost)):adjusted_max)
-                    end
+        preference_bonus = rand(Uniform(5.0, 15.0))
+
+        if feasibility_status == feasible
+            for j in 1:n_tasks
+                if !any(allowed[:, j])
+                    i = rand(1:n_workers)
+                    allowed[i, j] = true
+                    worker_preferences[i, j] = 0
                 end
             end
-        else  # :medium
-            for i in 1:n_workers, j in 1:n_tasks
-                if worker_groups[i] == task_groups[j]
-                    costs[i, j] = rand(min_cost:round(Int, min_cost + 0.7 * (adjusted_max - min_cost)))
-                else
-                    costs[i, j] = rand(round(Int, min_cost + 0.2 * (adjusted_max - min_cost)):adjusted_max)
+        end
+
+    elseif variant == assign_team
+        # Assign teams to projects
+        n_teams = rand(2:min(5, n_workers ÷ 2))
+        team_members = Vector{Vector{Int}}()
+
+        remaining = collect(1:n_workers)
+        for t in 1:n_teams
+            team_size = rand(2:min(4, length(remaining)))
+            team = remaining[1:team_size]
+            remaining = remaining[team_size+1:end]
+            push!(team_members, team)
+        end
+        # Add remaining workers to existing teams
+        for w in remaining
+            push!(team_members[rand(1:n_teams)], w)
+        end
+
+        project_team_reqs = [rand(1:max(1, n_teams ÷ 2)) for _ in 1:n_tasks]
+
+        if feasibility_status == infeasible
+            # Require more teams than exist
+            project_team_reqs = [n_teams + 1 for _ in 1:n_tasks]
+        end
+
+    elseif variant == assign_shift
+        # Multi-shift scheduling
+        n_shifts = rand(2:4)
+        shift_tasks = [Int[] for _ in 1:n_shifts]
+        for j in 1:n_tasks
+            s = rand(1:n_shifts)
+            push!(shift_tasks[s], j)
+        end
+
+        shift_requirements = [length(shift_tasks[s]) for s in 1:n_shifts]
+
+        # Worker availability per shift
+        worker_shift_avail = rand(Bool, n_workers, n_shifts)
+        # Ensure some availability
+        for i in 1:n_workers
+            if !any(worker_shift_avail[i, :])
+                worker_shift_avail[i, rand(1:n_shifts)] = true
+            end
+        end
+
+        if feasibility_status == feasible
+            for s in 1:n_shifts
+                avail_workers = count(worker_shift_avail[:, s])
+                shift_requirements[s] = min(shift_requirements[s], avail_workers)
+            end
+        elseif feasibility_status == infeasible
+            # No available workers for some shift
+            target_shift = rand(1:n_shifts)
+            worker_shift_avail[:, target_shift] .= false
+            shift_requirements[target_shift] = length(shift_tasks[target_shift])
+        end
+
+    elseif variant == assign_geographic
+        # Geographic constraints
+        worker_locs = [(rand(Uniform(0, 100)), rand(Uniform(0, 100))) for _ in 1:n_workers]
+        task_locs = [(rand(Uniform(0, 100)), rand(Uniform(0, 100))) for _ in 1:n_tasks]
+
+        # Maximum travel distance
+        max_travel_distance = rand(Uniform(30, 70))
+
+        # Update compatibility based on distance
+        for i in 1:n_workers, j in 1:n_tasks
+            dist = sqrt((worker_locs[i][1] - task_locs[j][1])^2 +
+                       (worker_locs[i][2] - task_locs[j][2])^2)
+            if dist > max_travel_distance
+                allowed[i, j] = false
+            end
+        end
+
+        if feasibility_status == feasible
+            # Ensure coverage
+            for j in 1:n_tasks
+                if !any(allowed[:, j])
+                    # Move a random worker closer
+                    i = rand(1:n_workers)
+                    worker_locs[i] = task_locs[j]
+                    allowed[i, j] = true
                 end
+            end
+        elseif feasibility_status == infeasible
+            # Make some tasks unreachable
+            for j in rand(1:n_tasks, max(1, n_tasks ÷ 4))
+                task_locs[j] = (200.0, 200.0)  # Far away
+                allowed[:, j] .= false
             end
         end
     end
 
-    return AssignmentProblem(n_workers, n_tasks, costs, allowed)
+    return AssignmentProblem(
+        n_workers, n_tasks, costs, allowed, variant,
+        worker_capacities, task_requirements,
+        n_skills, worker_skills, task_skill_reqs,
+        task_workloads,
+        worker_preferences, preference_bonus,
+        n_teams, team_members, project_team_reqs,
+        n_shifts, shift_tasks, shift_requirements, worker_shift_avail,
+        worker_locs, task_locs, max_travel_distance
+    )
 end
 
 """
     build_model(prob::AssignmentProblem)
 
-Build a JuMP model for the assignment problem.
-
-# Arguments
-- `prob`: AssignmentProblem instance
-
-# Returns
-- `model`: The JuMP model
+Build a JuMP model for the assignment problem based on its variant.
 """
 function build_model(prob::AssignmentProblem)
     model = Model()
 
-    # Variables
-    @variable(model, x[1:prob.n_workers, 1:prob.n_tasks], Bin)
+    if prob.variant == assign_standard
+        @variable(model, x[1:prob.n_workers, 1:prob.n_tasks], Bin)
+        @objective(model, Min, sum(prob.costs[i, j] * x[i, j] for i in 1:prob.n_workers, j in 1:prob.n_tasks))
 
-    # Objective
-    @objective(model, Min, sum(prob.costs[i, j] * x[i, j] for i in 1:prob.n_workers, j in 1:prob.n_tasks))
-
-    # Each worker assigned to at most one task
-    for i in 1:prob.n_workers
-        @constraint(model, sum(x[i, j] for j in 1:prob.n_tasks) <= 1)
-    end
-
-    # Forbid incompatible assignments
-    for i in 1:prob.n_workers, j in 1:prob.n_tasks
-        if !prob.allowed[i, j]
-            @constraint(model, x[i, j] == 0)
+        for i in 1:prob.n_workers
+            @constraint(model, sum(x[i, j] for j in 1:prob.n_tasks) <= 1)
         end
-    end
 
-    # Each task assigned to exactly one worker
-    for j in 1:prob.n_tasks
-        @constraint(model, sum(x[i, j] for i in 1:prob.n_workers) == 1)
+        for i in 1:prob.n_workers, j in 1:prob.n_tasks
+            if !prob.allowed[i, j]
+                @constraint(model, x[i, j] == 0)
+            end
+        end
+
+        for j in 1:prob.n_tasks
+            @constraint(model, sum(x[i, j] for i in 1:prob.n_workers) == 1)
+        end
+
+    elseif prob.variant == assign_multi_assign
+        @variable(model, x[1:prob.n_workers, 1:prob.n_tasks], Bin)
+        @objective(model, Min, sum(prob.costs[i, j] * x[i, j] for i in 1:prob.n_workers, j in 1:prob.n_tasks))
+
+        # Worker capacity limits
+        for i in 1:prob.n_workers
+            @constraint(model, sum(x[i, j] for j in 1:prob.n_tasks) <= prob.worker_capacities[i])
+        end
+
+        # Task requirements
+        for j in 1:prob.n_tasks
+            @constraint(model, sum(x[i, j] for i in 1:prob.n_workers) >= prob.task_requirements[j])
+        end
+
+        # Compatibility
+        for i in 1:prob.n_workers, j in 1:prob.n_tasks
+            if !prob.allowed[i, j]
+                @constraint(model, x[i, j] == 0)
+            end
+        end
+
+    elseif prob.variant == assign_skill_match
+        @variable(model, x[1:prob.n_workers, 1:prob.n_tasks], Bin)
+        @objective(model, Min, sum(prob.costs[i, j] * x[i, j] for i in 1:prob.n_workers, j in 1:prob.n_tasks))
+
+        for i in 1:prob.n_workers
+            @constraint(model, sum(x[i, j] for j in 1:prob.n_tasks) <= 1)
+        end
+
+        for j in 1:prob.n_tasks
+            @constraint(model, sum(x[i, j] for i in 1:prob.n_workers) == 1)
+        end
+
+        # Skill-based compatibility (already encoded in allowed matrix)
+        for i in 1:prob.n_workers, j in 1:prob.n_tasks
+            if !prob.allowed[i, j]
+                @constraint(model, x[i, j] == 0)
+            end
+        end
+
+    elseif prob.variant == assign_workload_balance
+        @variable(model, x[1:prob.n_workers, 1:prob.n_tasks], Bin)
+        @variable(model, max_workload >= 0)
+
+        # Minimize maximum workload (minimax objective)
+        @objective(model, Min, max_workload)
+
+        for i in 1:prob.n_workers
+            @constraint(model, sum(prob.task_workloads[j] * x[i, j] for j in 1:prob.n_tasks) <= max_workload)
+        end
+
+        for j in 1:prob.n_tasks
+            @constraint(model, sum(x[i, j] for i in 1:prob.n_workers) == 1)
+        end
+
+        for i in 1:prob.n_workers, j in 1:prob.n_tasks
+            if !prob.allowed[i, j]
+                @constraint(model, x[i, j] == 0)
+            end
+        end
+
+    elseif prob.variant == assign_preference
+        @variable(model, x[1:prob.n_workers, 1:prob.n_tasks], Bin)
+
+        # Minimize cost minus preference bonus
+        @objective(model, Min,
+            sum(prob.costs[i, j] * x[i, j] for i in 1:prob.n_workers, j in 1:prob.n_tasks) -
+            prob.preference_bonus * sum(prob.worker_preferences[i, j] * x[i, j]
+                for i in 1:prob.n_workers, j in 1:prob.n_tasks if prob.worker_preferences[i, j] > 0))
+
+        for i in 1:prob.n_workers
+            @constraint(model, sum(x[i, j] for j in 1:prob.n_tasks) <= 1)
+        end
+
+        for j in 1:prob.n_tasks
+            @constraint(model, sum(x[i, j] for i in 1:prob.n_workers) == 1)
+        end
+
+        for i in 1:prob.n_workers, j in 1:prob.n_tasks
+            if !prob.allowed[i, j]
+                @constraint(model, x[i, j] == 0)
+            end
+        end
+
+    elseif prob.variant == assign_team
+        # Team assignment to projects
+        @variable(model, y[1:prob.n_teams, 1:prob.n_tasks], Bin)  # Team-task assignment
+
+        @objective(model, Min, sum(
+            sum(prob.costs[w, j] for w in prob.team_members[t]) * y[t, j]
+            for t in 1:prob.n_teams, j in 1:prob.n_tasks))
+
+        # Each team at most one task
+        for t in 1:prob.n_teams
+            @constraint(model, sum(y[t, j] for j in 1:prob.n_tasks) <= 1)
+        end
+
+        # Task requirements (number of teams needed)
+        for j in 1:prob.n_tasks
+            @constraint(model, sum(y[t, j] for t in 1:prob.n_teams) >= prob.project_team_reqs[j])
+        end
+
+    elseif prob.variant == assign_shift
+        # Multi-shift assignment
+        @variable(model, x[1:prob.n_workers, 1:prob.n_tasks], Bin)
+        @objective(model, Min, sum(prob.costs[i, j] * x[i, j] for i in 1:prob.n_workers, j in 1:prob.n_tasks))
+
+        # Each task covered
+        for j in 1:prob.n_tasks
+            @constraint(model, sum(x[i, j] for i in 1:prob.n_workers) == 1)
+        end
+
+        # Worker can only work in shifts they're available
+        for i in 1:prob.n_workers
+            for s in 1:prob.n_shifts
+                if !prob.worker_shift_avail[i, s]
+                    for j in prob.shift_tasks[s]
+                        @constraint(model, x[i, j] == 0)
+                    end
+                end
+            end
+        end
+
+        # Shift requirements (workers per shift)
+        for s in 1:prob.n_shifts
+            if !isempty(prob.shift_tasks[s])
+                available_workers = [i for i in 1:prob.n_workers if prob.worker_shift_avail[i, s]]
+                if !isempty(available_workers)
+                    @constraint(model, sum(sum(x[i, j] for j in prob.shift_tasks[s]) for i in available_workers) >= prob.shift_requirements[s])
+                end
+            end
+        end
+
+    elseif prob.variant == assign_geographic
+        @variable(model, x[1:prob.n_workers, 1:prob.n_tasks], Bin)
+        @objective(model, Min, sum(prob.costs[i, j] * x[i, j] for i in 1:prob.n_workers, j in 1:prob.n_tasks))
+
+        for i in 1:prob.n_workers
+            @constraint(model, sum(x[i, j] for j in 1:prob.n_tasks) <= 1)
+        end
+
+        for j in 1:prob.n_tasks
+            @constraint(model, sum(x[i, j] for i in 1:prob.n_workers) == 1)
+        end
+
+        # Distance-based compatibility (already in allowed matrix)
+        for i in 1:prob.n_workers, j in 1:prob.n_tasks
+            if !prob.allowed[i, j]
+                @constraint(model, x[i, j] == 0)
+            end
+        end
     end
 
     return model
@@ -295,5 +514,5 @@ end
 register_problem(
     :assignment,
     AssignmentProblem,
-    "Assignment problem that assigns workers to tasks at minimum cost with realistic scaling and cost structures"
+    "Assignment problem with variants including standard, multi-assign, skill matching, workload balance, preferences, teams, shifts, and geographic constraints"
 )
