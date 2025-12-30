@@ -4,6 +4,26 @@ using Distributions
 using StatsBase
 
 """
+Cutting stock problem variants.
+
+# Variants
+- `cut_standard`: Basic cutting stock - minimize number of stock pieces used
+- `cut_multi_stock`: Multiple stock sizes available
+- `cut_setup_cost`: Include fixed setup cost per pattern used
+- `cut_trim_limit`: Maximum acceptable trim loss percentage
+- `cut_due_dates`: Time-phased demand with due dates
+- `cut_min_runs`: Minimum production runs per pattern
+"""
+@enum CuttingStockVariant begin
+    cut_standard
+    cut_multi_stock
+    cut_setup_cost
+    cut_trim_limit
+    cut_due_dates
+    cut_min_runs
+end
+
+"""
     CuttingStockProblem <: ProblemGenerator
 
 Generator for cutting stock optimization problems with mathematically guaranteed feasibility control.
@@ -21,10 +41,40 @@ struct CuttingStockProblem <: ProblemGenerator
     patterns::Vector{Vector{Int}}
     stock_length::Float64
     stock_limit::Int
+    variant::CuttingStockVariant
+    # Multi-stock variant
+    n_stock_types::Int
+    stock_lengths::Union{Vector{Float64}, Nothing}
+    stock_costs::Union{Vector{Float64}, Nothing}
+    patterns_by_stock::Union{Vector{Vector{Vector{Int}}}, Nothing}
+    # Setup cost variant
+    setup_costs::Union{Vector{Float64}, Nothing}
+    # Trim limit variant
+    max_trim_fraction::Float64
+    # Due dates variant
+    n_periods::Int
+    period_demands::Union{Matrix{Int}, Nothing}
+    # Min runs variant
+    min_runs::Int
+end
+
+# Backwards compatibility
+function CuttingStockProblem(piece_lengths::Vector{Float64}, demands::Vector{Int},
+                             patterns::Vector{Vector{Int}}, stock_length::Float64, stock_limit::Int)
+    CuttingStockProblem(
+        piece_lengths, demands, patterns, stock_length, stock_limit,
+        cut_standard,
+        0, nothing, nothing, nothing,
+        nothing,
+        0.0,
+        0, nothing,
+        0
+    )
 end
 
 """
-    CuttingStockProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+    CuttingStockProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int;
+                        variant::CuttingStockVariant=cut_standard)
 
 Construct a cutting stock problem instance with guaranteed feasibility properties.
 
@@ -32,8 +82,10 @@ Construct a cutting stock problem instance with guaranteed feasibility propertie
 - `target_variables`: Target number of variables (cutting patterns)
 - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
 - `seed`: Random seed for reproducibility
+- `variant`: Cutting stock problem variant (default: cut_standard)
 """
-function CuttingStockProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function CuttingStockProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int;
+                             variant::CuttingStockVariant=cut_standard)
     Random.seed!(seed)
 
     max_patterns = target_variables
@@ -126,7 +178,79 @@ function CuttingStockProblem(target_variables::Int, feasibility_status::Feasibil
         target_feasible, waste_factor, max_patterns
     )
 
-    return CuttingStockProblem(piece_lengths, demands, patterns, stock_length, stock_limit)
+    # Initialize variant-specific fields
+    n_stock_types = 0
+    stock_lengths_arr = nothing
+    stock_costs = nothing
+    patterns_by_stock = nothing
+    setup_costs = nothing
+    max_trim_fraction = 0.0
+    n_periods = 0
+    period_demands = nothing
+    min_runs = 0
+
+    n_piece_types = length(piece_lengths)
+
+    if variant == cut_multi_stock
+        # Multiple stock sizes available
+        n_stock_types = rand(2:4)
+        stock_lengths_arr = [stock_length * (0.5 + 0.5 * i / n_stock_types) for i in 1:n_stock_types]
+        stock_costs = [l * rand(Uniform(0.8, 1.2)) for l in stock_lengths_arr]
+
+        # Generate patterns for each stock type
+        patterns_by_stock = Vector{Vector{Vector{Int}}}()
+        for s in 1:n_stock_types
+            s_patterns = generate_cutting_patterns(stock_lengths_arr[s], piece_lengths, max_patterns ÷ n_stock_types, waste_factor)
+            push!(patterns_by_stock, s_patterns)
+        end
+
+    elseif variant == cut_setup_cost
+        # Fixed setup cost per pattern used
+        setup_costs = [rand(Uniform(50.0, 200.0)) for _ in 1:length(patterns)]
+
+    elseif variant == cut_trim_limit
+        # Maximum trim loss
+        max_trim_fraction = rand(Uniform(0.05, 0.15))
+
+        if feasibility_status == infeasible
+            max_trim_fraction = 0.001  # Impossibly tight
+        end
+
+    elseif variant == cut_due_dates
+        # Multi-period with due dates
+        n_periods = rand(3:6)
+        period_demands = zeros(Int, n_piece_types, n_periods)
+
+        for i in 1:n_piece_types
+            remaining = demands[i]
+            for t in 1:n_periods
+                if t == n_periods
+                    period_demands[i, t] = remaining
+                else
+                    period_demands[i, t] = rand(0:max(0, remaining ÷ (n_periods - t + 1)))
+                    remaining -= period_demands[i, t]
+                end
+            end
+        end
+
+    elseif variant == cut_min_runs
+        # Minimum production runs per pattern
+        min_runs = rand(5:20)
+
+        if feasibility_status == infeasible
+            min_runs = sum(demands) + 100  # Impossibly high
+        end
+    end
+
+    return CuttingStockProblem(
+        piece_lengths, demands, patterns, stock_length, stock_limit,
+        variant,
+        n_stock_types, stock_lengths_arr, stock_costs, patterns_by_stock,
+        setup_costs,
+        max_trim_fraction,
+        n_periods, period_demands,
+        min_runs
+    )
 end
 
 """
@@ -333,13 +457,7 @@ end
 """
     build_model(prob::CuttingStockProblem)
 
-Build a JuMP model for the cutting stock problem.
-
-# Arguments
-- `prob`: CuttingStockProblem instance
-
-# Returns
-- `model`: The JuMP model
+Build a JuMP model for the cutting stock problem based on its variant.
 """
 function build_model(prob::CuttingStockProblem)
     model = Model()
@@ -347,18 +465,122 @@ function build_model(prob::CuttingStockProblem)
     n_patterns = length(prob.patterns)
     n_pieces = length(prob.piece_lengths)
 
-    @variable(model, x[1:n_patterns] >= 0)
+    if prob.variant == cut_standard || prob.variant == cut_trim_limit || prob.variant == cut_min_runs
+        @variable(model, x[1:n_patterns] >= 0)
 
-    @objective(model, Min, sum(x))
+        @objective(model, Min, sum(x))
 
-    # Meet demand for each piece size
-    for i in 1:n_pieces
-        @constraint(model, sum(prob.patterns[j][i] * x[j] for j in 1:n_patterns) >= prob.demands[i])
-    end
+        # Meet demand for each piece size
+        for i in 1:n_pieces
+            @constraint(model, sum(prob.patterns[j][i] * x[j] for j in 1:n_patterns) >= prob.demands[i])
+        end
 
-    # Stock limit constraint if specified
-    if prob.stock_limit > 0
-        @constraint(model, sum(x) <= prob.stock_limit)
+        # Stock limit constraint if specified
+        if prob.stock_limit > 0
+            @constraint(model, sum(x) <= prob.stock_limit)
+        end
+
+        # Variant-specific constraints
+        if prob.variant == cut_trim_limit && prob.max_trim_fraction > 0
+            # Total stock used
+            total_stock_used = @expression(model, sum(prob.stock_length * x[j] for j in 1:n_patterns))
+
+            # Total material in pieces
+            total_pieces_length = @expression(model,
+                sum(prob.patterns[j][i] * prob.piece_lengths[i] * x[j]
+                    for j in 1:n_patterns, i in 1:n_pieces))
+
+            # Trim loss constraint
+            @constraint(model, total_stock_used - total_pieces_length <= prob.max_trim_fraction * total_stock_used)
+
+        elseif prob.variant == cut_min_runs && prob.min_runs > 0
+            # Binary variable for pattern use
+            @variable(model, y[1:n_patterns], Bin)
+            M = sum(prob.demands) * 10  # Big-M
+
+            for j in 1:n_patterns
+                @constraint(model, x[j] <= M * y[j])
+                @constraint(model, x[j] >= prob.min_runs * y[j])
+            end
+        end
+
+    elseif prob.variant == cut_multi_stock
+        # Multiple stock sizes
+        n_stock = prob.n_stock_types
+        @variable(model, x[1:n_stock, 1:maximum(length.(prob.patterns_by_stock))] >= 0)
+
+        # Minimize cost
+        @objective(model, Min, sum(
+            prob.stock_costs[s] * x[s, j]
+            for s in 1:n_stock for j in 1:length(prob.patterns_by_stock[s])
+        ))
+
+        # Meet demand
+        for i in 1:n_pieces
+            @constraint(model, sum(
+                prob.patterns_by_stock[s][j][i] * x[s, j]
+                for s in 1:n_stock for j in 1:length(prob.patterns_by_stock[s])
+            ) >= prob.demands[i])
+        end
+
+        # Stock limit
+        if prob.stock_limit > 0
+            @constraint(model, sum(
+                x[s, j] for s in 1:n_stock for j in 1:length(prob.patterns_by_stock[s])
+            ) <= prob.stock_limit)
+        end
+
+    elseif prob.variant == cut_setup_cost
+        @variable(model, x[1:n_patterns] >= 0)
+        @variable(model, y[1:n_patterns], Bin)  # Pattern used
+
+        # Minimize stock + setup costs
+        @objective(model, Min, sum(x) + sum(prob.setup_costs[j] * y[j] for j in 1:n_patterns))
+
+        # Meet demand
+        for i in 1:n_pieces
+            @constraint(model, sum(prob.patterns[j][i] * x[j] for j in 1:n_patterns) >= prob.demands[i])
+        end
+
+        # Link x and y
+        M = sum(prob.demands) * 10
+        for j in 1:n_patterns
+            @constraint(model, x[j] <= M * y[j])
+        end
+
+        # Stock limit
+        if prob.stock_limit > 0
+            @constraint(model, sum(x) <= prob.stock_limit)
+        end
+
+    elseif prob.variant == cut_due_dates
+        # Multi-period cutting
+        n_periods = prob.n_periods
+        @variable(model, x[1:n_patterns, 1:n_periods] >= 0)
+        @variable(model, inventory[1:n_pieces, 0:n_periods] >= 0)
+
+        # Minimize total stock
+        @objective(model, Min, sum(x))
+
+        # Initial inventory is 0
+        for i in 1:n_pieces
+            @constraint(model, inventory[i, 0] == 0)
+        end
+
+        # Inventory balance and demand satisfaction
+        for i in 1:n_pieces
+            for t in 1:n_periods
+                production = sum(prob.patterns[j][i] * x[j, t] for j in 1:n_patterns)
+                @constraint(model, inventory[i, t-1] + production == prob.period_demands[i, t] + inventory[i, t])
+            end
+        end
+
+        # Stock limit per period
+        if prob.stock_limit > 0
+            for t in 1:n_periods
+                @constraint(model, sum(x[j, t] for j in 1:n_patterns) <= prob.stock_limit / n_periods)
+            end
+        end
     end
 
     return model
@@ -368,5 +590,5 @@ end
 register_problem(
     :cutting_stock,
     CuttingStockProblem,
-    "Cutting stock optimization problem that minimizes waste by determining optimal cutting patterns for stock material to satisfy demand for pieces of various lengths"
+    "Cutting stock problem with variants including standard, multi-stock, setup cost, trim limit, due dates, and minimum runs"
 )
