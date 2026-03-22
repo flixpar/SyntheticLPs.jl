@@ -88,10 +88,33 @@ function NetworkFlowProblem(target_variables::Int, feasibility_status::Feasibili
     # Determine objective type
     flow_objective = target_variables <= 100 ? (rand() < 0.7 ? :max_flow : :min_cost) : (rand() < 0.4 ? :max_flow : :min_cost)
 
+    # Calculate max flow using bottleneck capacity on source-to-sink path
+    # Simple approximation: sum of capacities of arcs leaving source
+    source_out_arcs = [(i, j) for (i, j) in arcs if i == source_node]
+    max_flow_estimate = isempty(source_out_arcs) ? 0.0 : sum(capacities[arc] for arc in source_out_arcs)
+
+    # Handle feasibility
+    actual_status = feasibility_status
+    if feasibility_status == unknown
+        actual_status = rand() < 0.7 ? feasible : infeasible
+    end
+
     # Set target flow for min_cost objective
     target_flow = nothing
     if flow_objective == :min_cost
-        target_flow = minimum(values(capacities)) * 0.8
+        if actual_status == feasible
+            # Ensure target flow is achievable
+            target_flow = max_flow_estimate * (0.1 + 0.3 * rand())
+        elseif actual_status == infeasible
+            # Set target flow above max flow to guarantee infeasibility
+            target_flow = max_flow_estimate * (1.2 + 0.5 * rand())
+        else
+            target_flow = minimum(values(capacities)) * 0.8
+        end
+    elseif actual_status == infeasible
+        # For max_flow with infeasibility: switch to min_cost with impossible target
+        flow_objective = :min_cost
+        target_flow = max_flow_estimate * (1.2 + 0.5 * rand())
     end
 
     return NetworkFlowProblem(n_nodes, source_node, sink_node, arcs, capacities, costs, flow_objective, target_flow)

@@ -31,6 +31,7 @@ struct ProjectSelectionProblem <: ProblemGenerator
     risk_budget::Float64
     max_high_risk_projects::Int
     high_risk_threshold::Float64
+    min_selected::Int
 end
 
 """
@@ -184,9 +185,35 @@ function ProjectSelectionProblem(target_variables::Int, feasibility_status::Feas
     total_cost = sum(values(costs))
     budget = total_cost * budget_factor
 
+    # Handle feasibility
+    min_selected = 0
+
+    actual_status = feasibility_status
+    if feasibility_status == unknown
+        actual_status = rand() < 0.7 ? feasible : infeasible
+    end
+
+    if actual_status == infeasible
+        # Require more projects than the budget can support
+        sorted_by_cost = sort(projects, by=p -> costs[p])
+        cumulative = 0.0
+        affordable = 0
+        for p in sorted_by_cost
+            cumulative += costs[p]
+            if cumulative <= budget
+                affordable += 1
+            else
+                break
+            end
+        end
+        # Require more projects than affordable
+        min_selected = affordable + max(1, rand(1:max(1, n_projects ÷ 4)))
+        min_selected = min(min_selected, n_projects)
+    end
+
     return ProjectSelectionProblem(
         n_projects, projects, costs, returns, risk_scores, dependencies,
-        budget, risk_budget, max_high_risk_projects, high_risk_threshold
+        budget, risk_budget, max_high_risk_projects, high_risk_threshold, min_selected
     )
 end
 
@@ -225,6 +252,11 @@ function build_model(prob::ProjectSelectionProblem)
     high_risk_projects = filter(p -> prob.risk_scores[p] > prob.high_risk_threshold, prob.projects)
     if !isempty(high_risk_projects)
         @constraint(model, sum(x[p] for p in high_risk_projects) <= prob.max_high_risk_projects)
+    end
+
+    # Minimum number of selected projects (for infeasibility)
+    if prob.min_selected > 0
+        @constraint(model, sum(x[p] for p in prob.projects) >= prob.min_selected)
     end
 
     return model

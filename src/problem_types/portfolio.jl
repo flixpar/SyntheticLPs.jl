@@ -21,6 +21,7 @@ struct PortfolioProblem <: ProblemGenerator
     returns::Vector{Float64}
     risks::Vector{Float64}
     risk_free_rate::Float64
+    min_total_return::Float64
 end
 
 """
@@ -80,11 +81,35 @@ function PortfolioProblem(target_variables::Int, feasibility_status::Feasibility
     min_risk_factor, max_risk_factor = risk_range
     risks = rand(min_risk_factor:0.01:max_risk_factor, n_options)
 
-    # Handle feasibility - portfolio problems are typically always feasible
-    # because we can always put everything in the risk-free asset
-    # So infeasible case would need to remove the risk-free asset or add constraints
+    # Handle feasibility
+    min_total_return = 0.0
 
-    return PortfolioProblem(n_options, total_investment, max_risk, returns, risks, risk_free_rate)
+    actual_status = feasibility_status
+    if feasibility_status == unknown
+        actual_status = rand() < 0.7 ? feasible : infeasible
+    end
+
+    if actual_status == infeasible
+        # Calculate max achievable return under risk constraint:
+        # Best case: invest as much as possible in risky assets (within risk budget),
+        # put rest in risk-free. The max return is bounded by the risk constraint.
+        sorted_idx = sortperm(returns ./ max.(risks, eps()), rev=true)
+        remaining_risk = Float64(max_risk)
+        remaining_investment = Float64(total_investment)
+        max_achievable = 0.0
+        for i in sorted_idx
+            invest = min(remaining_investment, remaining_risk / max(risks[i], eps()))
+            max_achievable += returns[i] * invest
+            remaining_risk -= risks[i] * invest
+            remaining_investment -= invest
+        end
+        max_achievable += risk_free_rate * remaining_investment
+
+        # Set minimum return above what's achievable
+        min_total_return = max_achievable * (1.1 + 0.3 * rand())
+    end
+
+    return PortfolioProblem(n_options, total_investment, max_risk, returns, risks, risk_free_rate, min_total_return)
 end
 
 """
@@ -112,6 +137,10 @@ function build_model(prob::PortfolioProblem)
     # Constraints
     @constraint(model, sum(prob.risks[i] * x[i] for i in 1:prob.n_options) <= prob.max_risk)
     @constraint(model, sum(x[i] for i in 1:prob.n_options) + x_rf == prob.total_investment)
+
+    if prob.min_total_return > 0
+        @constraint(model, sum(prob.returns[i] * x[i] for i in 1:prob.n_options) + prob.risk_free_rate * x_rf >= prob.min_total_return)
+    end
 
     return model
 end

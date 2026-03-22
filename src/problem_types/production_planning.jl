@@ -19,6 +19,7 @@ struct ProductionPlanningProblem <: ProblemGenerator
     profits::Vector{Int}
     usage::Matrix{Float64}
     resources::Vector{Float64}
+    min_production::Vector{Float64}
 end
 
 """
@@ -45,10 +46,36 @@ function ProductionPlanningProblem(target_variables::Int, feasibility_status::Fe
     min_usage, max_usage = usage_range
     usage = rand(min_usage:max_usage, n_products, n_resources)
 
-    # Calculate resource availability to ensure feasibility
+    # Calculate resource availability
     resources = sum(usage, dims=1)[:] * resource_factor
 
-    return ProductionPlanningProblem(n_products, n_resources, profits, usage, resources)
+    # Handle feasibility
+    min_production = zeros(n_products)
+
+    actual_status = feasibility_status
+    if feasibility_status == unknown
+        actual_status = rand() < 0.7 ? feasible : infeasible
+    end
+
+    if actual_status == infeasible
+        # Calculate max possible production per product
+        max_possible = [minimum(resources[j] / usage[i, j] for j in 1:n_resources) for i in 1:n_products]
+
+        # Set minimum production for a subset of products
+        n_constrained = max(2, rand(max(1, n_products ÷ 4):max(2, n_products ÷ 2)))
+        selected = randperm(n_products)[1:n_constrained]
+        for i in selected
+            min_production[i] = max_possible[i] * (0.3 + 0.3 * rand())
+        end
+
+        # Reduce the most stressed resource to create infeasibility
+        required = [sum(usage[i, j] * min_production[i] for i in 1:n_products) for j in 1:n_resources]
+        ratios = [required[j] / max(resources[j], eps()) for j in 1:n_resources]
+        critical_j = argmax(ratios)
+        resources[critical_j] = required[critical_j] * (0.7 + 0.2 * rand())
+    end
+
+    return ProductionPlanningProblem(n_products, n_resources, profits, usage, resources, min_production)
 end
 
 """
@@ -64,6 +91,12 @@ function build_model(prob::ProductionPlanningProblem)
 
     for j in 1:prob.n_resources
         @constraint(model, sum(prob.usage[i, j] * x[i] for i in 1:prob.n_products) <= prob.resources[j])
+    end
+
+    for i in 1:prob.n_products
+        if prob.min_production[i] > 0
+            @constraint(model, x[i] >= prob.min_production[i])
+        end
     end
 
     return model

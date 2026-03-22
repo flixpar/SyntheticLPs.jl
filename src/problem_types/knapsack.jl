@@ -17,6 +17,7 @@ struct KnapsackProblem <: ProblemGenerator
     capacity::Int
     values::Vector{Int}
     weights::Vector{Int}
+    min_value::Float64
 end
 
 """
@@ -58,22 +59,39 @@ function KnapsackProblem(target_variables::Int, feasibility_status::FeasibilityS
     total_avg_weight = sum(weights)
 
     # Determine capacity based on feasibility status
-    if feasibility_status == feasible || feasibility_status == unknown
-        # Set capacity to 30-70% of total weight for interesting problems
-        capacity_ratio = 0.3 + rand() * 0.4
-        capacity = round(Int, total_avg_weight * capacity_ratio)
-        capacity = max(1, capacity + rand(-50:50))  # Add variability
-    else  # infeasible
-        # Knapsack problems are always feasible (can select no items)
-        # So we create an "interesting" infeasible case by requiring all items
-        # which exceeds capacity (not a standard knapsack formulation)
-        # For now, treat as feasible
-        capacity_ratio = 0.3 + rand() * 0.4
-        capacity = round(Int, total_avg_weight * capacity_ratio)
-        capacity = max(1, capacity + rand(-50:50))
+    # Set capacity to 30-70% of total weight for interesting problems
+    capacity_ratio = 0.3 + rand() * 0.4
+    capacity = round(Int, total_avg_weight * capacity_ratio)
+    capacity = max(1, capacity + rand(-50:50))
+
+    # Handle feasibility
+    min_value = 0.0
+
+    actual_status = feasibility_status
+    if feasibility_status == unknown
+        actual_status = rand() < 0.7 ? feasible : infeasible
     end
 
-    return KnapsackProblem(n_items, capacity, values, weights)
+    if actual_status == infeasible
+        # Calculate max achievable value under capacity constraint
+        # For fractional knapsack: sort by value/weight ratio, pack greedily
+        ratios = values ./ max.(weights, 1)
+        sorted_idx = sortperm(ratios, rev=true)
+        remaining_cap = Float64(capacity)
+        max_achievable = 0.0
+        for i in sorted_idx
+            take = min(1.0, remaining_cap / weights[i])
+            max_achievable += values[i] * take
+            remaining_cap -= weights[i] * take
+            if remaining_cap <= 0
+                break
+            end
+        end
+        # Require more value than achievable
+        min_value = max_achievable * (1.1 + 0.3 * rand())
+    end
+
+    return KnapsackProblem(n_items, capacity, values, weights, min_value)
 end
 
 """
@@ -98,6 +116,11 @@ function build_model(prob::KnapsackProblem)
 
     # Constraint
     @constraint(model, sum(prob.weights[i] * x[i] for i in 1:prob.n_items) <= prob.capacity)
+
+    # Minimum value constraint (for infeasibility)
+    if prob.min_value > 0
+        @constraint(model, sum(prob.values[i] * x[i] for i in 1:prob.n_items) >= prob.min_value)
+    end
 
     return model
 end

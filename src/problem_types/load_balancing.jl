@@ -20,6 +20,7 @@ struct LoadBalancingProblem <: ProblemGenerator
     capacities::Dict{Tuple{Int,Int},Float64}
     demands::Dict{Tuple{Int,Int},Float64}
     paths::Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}
+    max_utilization::Union{Float64,Nothing}
 end
 
 """
@@ -184,7 +185,36 @@ function LoadBalancingProblem(target_variables::Int, feasibility_status::Feasibi
         end
     end
 
-    return LoadBalancingProblem(n_nodes, links, capacities, demands, paths)
+    # Handle feasibility
+    max_utilization = nothing
+
+    actual_status = feasibility_status
+    if feasibility_status == unknown
+        actual_status = rand() < 0.7 ? feasible : infeasible
+    end
+
+    if actual_status == infeasible && !isempty(demands) && !isempty(paths)
+        # Calculate the minimum utilization required to satisfy all demands
+        # For each link, find the max demand that must flow through it
+        link_min_flow = Dict{Tuple{Int,Int}, Float64}()
+        for link in links
+            link_min_flow[link] = 0.0
+        end
+        for (demand_pair, demand_amount) in demands
+            if haskey(paths, demand_pair)
+                for link in paths[demand_pair]
+                    link_min_flow[link] = max(get(link_min_flow, link, 0.0), demand_amount)
+                end
+            end
+        end
+        # Minimum utilization = max over links of (required_flow / capacity)
+        min_u = maximum(link_min_flow[link] / capacities[link] for link in links if haskey(link_min_flow, link) && link_min_flow[link] > 0; init=0.0)
+        if min_u > 0
+            max_utilization = min_u * (0.5 + 0.3 * rand())
+        end
+    end
+
+    return LoadBalancingProblem(n_nodes, links, capacities, demands, paths, max_utilization)
 end
 
 """
@@ -221,6 +251,11 @@ function build_model(prob::LoadBalancingProblem)
                 @constraint(model, f[link] >= demand_amount)
             end
         end
+    end
+
+    # Maximum utilization constraint (for infeasibility)
+    if prob.max_utilization !== nothing
+        @constraint(model, u <= prob.max_utilization)
     end
 
     return model
