@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## 2026-03-22
 
+### Redesign: Portfolio Problem Generator (CVaR with Institutional Constraints)
+
+**Previous Commit**: `d91324d`
+
+**Summary**: Complete rewrite of the portfolio problem generator. The old generator was degenerate — only 2-3 constraints regardless of variable count, with 39.2% of problems solving in ≤2 simplex iterations. Replaced with a CVaR (Conditional Value-at-Risk) portfolio optimization model with rich institutional-grade constraints.
+
+### Changed
+
+- **`PortfolioProblem`**: Completely redesigned from a simple risk-budget model to a CVaR portfolio optimization with:
+  - **CVaR risk measure**: Scenario-based linearization (Rockafellar-Uryasev) creating n_scenarios constraints that scale with problem size
+  - **Sector exposure limits**: Maximum allocation per industry sector
+  - **Region exposure limits**: Maximum allocation per geographic region
+  - **Asset class bounds**: Min/max allocation per asset class (equities, bonds, alternatives)
+  - **Factor exposure constraints**: Upper/lower bounds on risk factor exposures (beta, size, value, etc.)
+  - **Position size limits**: Per-asset concentration caps
+  - **Turnover constraints**: L1-norm turnover limit from benchmark portfolio via buy/sell decomposition
+  - **Factor model for returns**: Correlated scenario returns via multi-factor model with sector-linked loadings
+
+### Performance Comparison
+
+| Metric | Old Generator | New Generator |
+|---|---|---|
+| Constraints (100 vars) | 2-3 | ~204 |
+| Constraints (500 vars) | 2-3 | ~931 |
+| Trivial solves (≤2 iters) | 39.2% | 0% |
+| Median iterations (100 vars) | ~2 | ~38 |
+| Median iterations (500 vars) | ~2 | ~177 |
+
+### Feasibility Handling
+
+- **Feasible**: Constructs a reference portfolio from benchmark weights and widens all constraints to accommodate it with randomized slack
+- **Infeasible** (4 modes): (1) impossibly tight CVaR limit, (2) asset class lower bounds summing > 1, (3) position limits summing < 1, (4) near-zero turnover with conflicting sector caps
+- **Unknown**: 70/30 feasible/infeasible split
+
+### Files Modified
+
+- `src/problem_types/portfolio.jl` — complete rewrite
+
+---
+
 ### Bug Fixes: Feasibility Handling and Batch Generation Script
 
 **Previous Commit**: `b679ada`

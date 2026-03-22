@@ -20,7 +20,7 @@ The package includes generators for many common LP problem types, all unified wi
 - Transportation
 - Diet Problem
 - Knapsack
-- Portfolio Optimization
+- Portfolio Optimization (CVaR with sector, region, factor, and turnover constraints)
 - Network Flow
 - Multi-Commodity Flow
 - Production Planning

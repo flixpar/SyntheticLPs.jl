@@ -129,7 +129,7 @@ register_problem(:type, ProblemType, "Description")
 ### Available Problem Types
 
 The system includes 21 problem types covering major LP problem classes:
-- Transportation, Diet Problem, Knapsack, Portfolio, Network Flow
+- Transportation, Diet Problem, Knapsack, Portfolio (CVaR with institutional constraints), Network Flow
 - Production Planning, Assignment, Blending, Facility Location
 - Airline Crew, Cutting Stock, Energy, Feed Blending, Inventory
 - Land Use, Load Balancing, Product Mix, Project Selection
