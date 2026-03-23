@@ -4,6 +4,25 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-03-23
+
+### Fix: Land Use Problem Generator Feasibility Guarantee
+
+**Previous Commit**: `dfba903`
+
+**Summary**: Fixed a bug where ~17.3% of land use problems generated with `feasible` status were actually infeasible. The root cause was that the witness assignment constructed during feasibility enforcement could violate adjacency constraints and minimum zoning requirements, but resource capacities were tightened around this invalid witness without verification.
+
+### Fixed
+
+- **Adjacency violations in remainder assignment**: When assigning unassigned parcels, the fallback path (when all allowed types conflict with adjacency) ignored adjacency constraints entirely, assigning residential next to industrial. The adjacency edges remained in the model, making it infeasible. Fix: after witness construction, scan for residential-industrial adjacency violations and prune offending edges from the adjacency matrix.
+- **Incomplete minimum zoning fulfillment**: The type-2 (Commercial) assignment could fail when all parcels were consumed by types 1 and 3, with swap logic unable to find replacements (it only searched unassigned parcels). Fix: after witness construction, verify minimum counts are met; attempt swaps from over-represented types first, then reduce minimums to actual counts as a last resort.
+
+### Validation
+
+- 0/500 feasible-requested problems are infeasible (MIP), down from ~17.3%
+- 0/300 feasible-requested problems are infeasible (LP relaxation)
+- 0/300 infeasible-requested problems are accidentally feasible
+
 ## 2026-03-22
 
 ### Redesign: Portfolio Problem Generator (CVaR with Institutional Constraints)

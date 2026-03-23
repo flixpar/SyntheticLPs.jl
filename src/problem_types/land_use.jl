@@ -548,6 +548,68 @@ function LandUseProblem(target_variables::Int, feasibility_status::FeasibilitySt
             end
         end
 
+        # WITNESS VERIFICATION AND REPAIR
+        # Step 1: Repair adjacency violations — prune edges where witness
+        # has residential (type 1) adjacent to industrial (type 3)
+        if zoning_adjacency_constraints && n_zoning_types >= 3
+            for i in 1:n_parcels
+                for i2 in (i+1):n_parcels
+                    if adjacency_matrix[i, i2]
+                        if (assignment[i] == 1 && assignment[i2] == 3) ||
+                           (assignment[i] == 3 && assignment[i2] == 1)
+                            adjacency_matrix[i, i2] = false
+                            adjacency_matrix[i2, i] = false
+                        end
+                    end
+                end
+            end
+            # Rebuild neighbors after pruning
+            for i in 1:n_parcels
+                neighbors[i] = [i2 for i2 in 1:n_parcels if adjacency_matrix[i, i2]]
+            end
+        end
+
+        # Step 2: Repair minimum zoning count violations — try swaps first,
+        # then reduce minimums as last resort
+        if minimum_zoning_requirements && !isempty(min_counts_by_type)
+            for j in 1:length(min_counts_by_type)
+                actual = count(i -> assignment[i] == j, 1:n_parcels)
+                if actual < min_counts_by_type[j]
+                    deficit = min_counts_by_type[j] - actual
+                    # Try swapping parcels from over-represented types to type j
+                    for i in 1:n_parcels
+                        deficit == 0 && break
+                        assignment[i] == j && continue
+                        !(j in allowed_sets[i]) && continue
+                        # Don't steal from a type that's already at its minimum
+                        current_type = assignment[i]
+                        if current_type <= length(min_counts_by_type)
+                            current_count = count(ii -> assignment[ii] == current_type, 1:n_parcels)
+                            current_count <= min_counts_by_type[current_type] && continue
+                        end
+                        # Check adjacency compatibility for the new type
+                        adj_ok = true
+                        if zoning_adjacency_constraints && n_zoning_types >= 3
+                            for nb in neighbors[i]
+                                if (j == 1 && assignment[nb] == 3) ||
+                                   (j == 3 && assignment[nb] == 1)
+                                    adj_ok = false
+                                    break
+                                end
+                            end
+                        end
+                        adj_ok || continue
+                        assignment[i] = j
+                        deficit -= 1
+                    end
+                    # Last resort: reduce the minimum to the actual count
+                    if deficit > 0
+                        min_counts_by_type[j] = count(i -> assignment[i] == j, 1:n_parcels)
+                    end
+                end
+            end
+        end
+
         # CAPACITY TIGHTENING to admit witness with slack
         usage = zeros(Float64, n_resources)
         for k in 1:n_resources
