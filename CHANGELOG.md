@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## 2026-03-23
 
+### Feature: Quality Filter for Batch LP Generation
+
+**Previous Commit**: `28f882c`
+
+**Summary**: Added a `--quality-filter` (`-q`) flag to `scripts/generate_lps.jl` that solves each generated LP instance with HiGHS simplex and filters out poor-quality test instances. The script retries generation (up to `--max-retries` × n attempts) to reach the requested problem count.
+
+### Added
+
+- **`--quality-filter` / `-q`**: Enables solve-and-filter pipeline. Each instance is solved with HiGHS simplex before being written to disk.
+- **Filter criteria** (rejects instances that are):
+  - Too few constraints (`--min-constraints`, default 5)
+  - Infeasible (only when `--feasible-only` is also set)
+  - Unbounded
+  - Timed out (`--solve-timeout`, default 30s) or hit numerical errors
+  - Nearly optimal (ALMOST_OPTIMAL status — indicates numerical conditioning issues)
+  - Trivially solved / solved in phase 1 only (simplex iterations ≤ `--min-iterations`, default 3)
+  - Degenerate (simplex iterations > `--max-iteration-ratio` × constraint count, default 100×)
+- **`--max-retries`**: Controls total attempt budget as a multiplier of requested count (default 10)
+- **Filter statistics**: Summary output shows counts of rejected instances broken down by reason
+
+---
+
 ### Fix: Land Use Problem Generator Feasibility Guarantee
 
 **Previous Commit**: `dfba903`
