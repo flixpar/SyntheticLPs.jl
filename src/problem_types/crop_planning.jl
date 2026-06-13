@@ -12,6 +12,13 @@ Models realistic agricultural crop planning where farmers must decide how much a
 to allocate to different crops while maximizing profit and satisfying resource constraints
 (land, water, labor), crop diversity requirements, and market demand limitations.
 
+# Overview
+Models agricultural land allocation. The decisions are continuous planted areas
+for each crop. The objective maximizes net profit from crop revenue minus
+production cost. Constraints limit total land, water, labor, and market demand,
+and may require minimum area for selected crops or minimum acreage in crop-type
+groups for diversity.
+
 # Fields
 - `n_crops::Int`: Number of different crops
 - `total_land::Float64`: Total available land in hectares

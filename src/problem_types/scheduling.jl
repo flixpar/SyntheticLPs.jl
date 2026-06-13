@@ -18,6 +18,14 @@ This problem models realistic workforce scheduling with:
 - At most one shift per worker per day
 - Optional skill-based scheduling
 
+# Overview
+Models workforce scheduling over multiple days. The decisions assign workers to
+shifts. The objective minimizes total staffing cost. Constraints require enough
+workers on every shift, enforce worker availability, allow at most one shift per
+worker per day, bound each worker's total number of shifts, and limit
+consecutive working days. Skill metadata can influence generated availability,
+but the final model is driven by assignment, staffing, and workload constraints.
+
 # Fields
 All data generated in constructor based on target_variables and feasibility_status:
 - `n_workers::Int`: Number of workers

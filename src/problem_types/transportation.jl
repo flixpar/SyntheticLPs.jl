@@ -6,6 +6,12 @@ using Random
 
 Generator for transportation problems that optimize shipping goods from sources to destinations at minimum cost.
 
+# Overview
+Models the classic transportation planning problem. The decisions are shipment
+amounts on every source-destination lane. The objective minimizes total shipping
+cost. Source constraints limit outbound shipments by available supply, and
+destination constraints require inbound shipments to meet demand.
+
 # Fields
 - `n_sources::Int`: Number of supply sources
 - `n_destinations::Int`: Number of demand destinations

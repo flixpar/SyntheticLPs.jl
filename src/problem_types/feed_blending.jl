@@ -9,6 +9,13 @@ using StatsBase
 
 Generator for feed blending (diet) problems that find the least-cost mixture of ingredients while satisfying nutritional requirements.
 
+# Overview
+Models fixed-batch feed formulation. The decisions are continuous ingredient
+amounts in the recipe. The objective minimizes ingredient cost while the batch
+equality fixes total mass. Constraints enforce nutrient minimum requirements,
+nutrient maximum limits, ingredient availabilities, and optional average-content
+ratio bounds.
+
 # Fields
 - `num_ingredients::Int`: Number of ingredients available for the blend
 - `num_nutrients::Int`: Number of nutrients to consider in constraints

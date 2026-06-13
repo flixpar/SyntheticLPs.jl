@@ -8,6 +8,13 @@ using StatsBase
 
 Generator for project selection problems that maximize return by selecting a portfolio of projects.
 
+# Overview
+Models binary capital-budgeting or project portfolio selection. The decisions
+select or reject projects. The objective maximizes total expected return.
+Constraints limit total cost and risk, enforce prerequisite dependencies, cap
+the number of high-risk projects, and may require a minimum number of selected
+projects.
+
 # Fields
 - `n_projects::Int`: Number of potential projects
 - `projects::Vector{Int}`: List of project IDs

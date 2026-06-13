@@ -8,6 +8,13 @@ using Distributions
 
 Generator for energy generation mix optimization problems.
 
+# Overview
+Models short-horizon power dispatch. The decisions are generation levels for
+each selected source in each time period. The objective minimizes total
+generation cost. Constraints require demand satisfaction in every period,
+respect source capacity bounds, impose a minimum zero-emission generation share,
+and include a period-level emissions-intensity row.
+
 # Fields
 - `n_sources::Int`: Number of power generation sources
 - `n_periods::Int`: Number of time periods

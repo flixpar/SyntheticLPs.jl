@@ -8,6 +8,13 @@ using StatsBase
 
 Generator for cutting stock optimization problems with mathematically guaranteed feasibility control.
 
+# Overview
+Models one-dimensional cutting stock. The decisions are continuous usage counts
+for generated cutting patterns. The objective minimizes the total number of
+stock pieces used. Demand constraints require enough pieces of every requested
+length, and an optional stock limit caps total pattern usage. The pattern list
+contains direct single-piece patterns and sampled mixed patterns.
+
 # Fields
 - `piece_lengths::Vector{Float64}`: Length of each piece type required
 - `demands::Vector{Int}`: Demand for each piece type

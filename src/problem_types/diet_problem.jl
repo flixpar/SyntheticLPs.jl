@@ -13,6 +13,14 @@ This problem models realistic diet optimization with:
 - Total cost budget constraint
 - Minimum and maximum consumption constraints for specific foods
 
+# Overview
+Models minimum-cost diet planning. The decisions are continuous quantities of
+each food. The objective minimizes food cost while meeting nutrient minimum
+requirements. Additional constraints can impose finite food supplies, an
+overall cost budget, and food-specific minimum or maximum consumption amounts.
+The generator can build a baseline diet for feasible data or tighten nutrient,
+budget, and supply limits to create infeasible data.
+
 # Fields
 All data generated in constructor based on target_variables and feasibility_status:
 - `n_foods::Int`: Number of different foods

@@ -6,6 +6,13 @@ using Random
 
 Generator for network flow problems that optimize flow from source to sink.
 
+# Overview
+Models single-commodity directed network flow from node 1 to the final node. The
+decisions are nonnegative arc flows. Arc constraints enforce capacities and
+intermediate-node constraints conserve flow. Depending on the selected objective,
+the model either maximizes source outflow or minimizes routing cost for a fixed
+target flow.
+
 # Fields
 - `n_nodes::Int`: Number of nodes in the network
 - `source_node::Int`: Source node

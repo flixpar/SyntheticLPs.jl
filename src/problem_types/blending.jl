@@ -6,6 +6,14 @@ using Random
 
 Generator for blending problems that minimize cost while meeting quality requirements.
 
+# Overview
+Models least-cost mixture design, such as fuel, chemical, food, or material
+blending. The decisions are continuous ingredient quantities. The objective
+minimizes ingredient cost while producing at least the required blend amount.
+Constraints enforce weighted-average quality lower and upper bounds, ingredient
+supply limits, an optional total budget, and optional per-ingredient minimum or
+maximum usage rules.
+
 # Fields
 - `n_ingredients::Int`: Number of ingredients
 - `n_attributes::Int`: Number of quality attributes

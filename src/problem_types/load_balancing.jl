@@ -7,6 +7,13 @@ using Distributions
 
 Generator for load balancing problems in network traffic optimization.
 
+# Overview
+Models simplified traffic load balancing on a directed network. The decisions
+are aggregate flow on each link and a global maximum-utilization variable. The
+objective minimizes maximum utilization. Link constraints tie flow to capacity
+times utilization, and generated demand paths impose lower bounds on the links
+they use. The model does not choose paths or enforce full flow conservation.
+
 # Fields
 - `n_nodes::Int`: Number of nodes in the network
 - `links::Vector{Tuple{Int,Int}}`: List of directed links in the network

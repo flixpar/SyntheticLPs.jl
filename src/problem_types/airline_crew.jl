@@ -9,6 +9,14 @@ using Distributions
 
 Generator for airline crew pairing problems with realistic cost structures and operational constraints.
 
+# Overview
+Models crew pairing as a set-partitioning problem. The decision is whether to
+select each generated pairing, where a pairing is a short sequence of flights.
+The objective minimizes total pairing cost, and the core constraints require
+each flight to be covered exactly once. Flight connectivity, base airports, and
+pairing length are represented in the generated pairing data rather than as
+separate constraints in the JuMP model.
+
 # Fields
 - `num_flights::Int`: Number of flights in planning horizon
 - `flight_origins::Vector{Int}`: Origin airport for each flight

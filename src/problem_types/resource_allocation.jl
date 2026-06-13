@@ -7,6 +7,12 @@ using Statistics
 
 Generator for resource allocation problems.
 
+# Overview
+Models continuous allocation of limited resources across competing activities.
+The decisions are activity levels. The objective maximizes total profit.
+Resource constraints limit aggregate activity consumption of each resource, and
+optional minimum-level constraints represent required commitments.
+
 # Fields
 - `n_activities::Int`: Number of activities
 - `n_resources::Int`: Number of resource types

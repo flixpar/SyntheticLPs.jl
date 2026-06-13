@@ -16,6 +16,15 @@ This problem models realistic land use planning with:
 - Adjacency constraints (e.g., industrial cannot be adjacent to residential)
 - Minimum zoning requirements for diverse development
 
+# Overview
+Models parcel zoning assignment. The decisions assign each land parcel to one
+zoning type. The objective maximizes parcel-size-weighted net benefit from
+revenue minus development cost. Constraints require exactly one zoning per
+parcel, limit infrastructure resource consumption, forbid environmentally
+restricted parcel-zoning pairs, optionally require minimum counts for zoning
+types, and optionally prevent residential parcels from being adjacent to
+industrial parcels.
+
 # Fields
 All data generated in constructor based on target_variables and feasibility_status:
 - `n_parcels::Int`: Number of land parcels

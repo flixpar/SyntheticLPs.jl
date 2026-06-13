@@ -6,6 +6,13 @@ using Random
 
 Generator for knapsack problems (fractional) that maximize the value of items selected under a weight constraint.
 
+# Overview
+Models the continuous relaxation of a knapsack selection problem. The decisions
+are fractional item-selection levels between zero and one. The objective
+maximizes selected item value subject to a total weight capacity. Infeasible
+instances add a minimum total-value requirement above the best achievable value
+for the fractional relaxation.
+
 # Fields
 - `n_items::Int`: Number of items
 - `capacity::Int`: Knapsack capacity

@@ -8,6 +8,15 @@ using Statistics
 
 Generator for inventory control problems with realistic and diverse patterns, combining richer scenario generation with precise feasibility control.
 
+# Overview
+Models single-item production and inventory planning over time. The decisions
+are production quantities and ending inventory levels; when backlog is enabled,
+the model also decides carried shortage. The objective minimizes production,
+holding, and, when applicable, backlog costs. Balance constraints link adjacent
+periods, and production capacity limits each period's production. When
+`backlog_allowed` is false, the model uses a single nonnegative inventory state;
+when it is true, inventory is split into positive inventory and backlog states.
+
 # Fields
 - `n_periods::Int`: Number of time periods
 - `prod_capacity::Int`: Production capacity per period

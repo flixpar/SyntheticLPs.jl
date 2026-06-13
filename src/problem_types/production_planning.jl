@@ -6,6 +6,13 @@ using Random
 
 Generator for production planning problems.
 
+# Overview
+Models a dense production-planning LP. The decisions are continuous production
+quantities for products. The objective maximizes total profit. Resource
+constraints limit total consumption of each shared resource, and infeasible
+instances add minimum production commitments that exceed a targeted resource
+capacity.
+
 # Fields
 - `n_products::Int`: Number of products
 - `n_resources::Int`: Number of resources

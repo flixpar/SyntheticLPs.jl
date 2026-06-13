@@ -16,6 +16,13 @@ This problem models realistic supply chain networks with:
 - Facility opening costs and capacities
 - Mode-specific capacity constraints
 
+# Overview
+Models strategic supply-chain network design. The decisions open facilities and
+ship customer demand from open facilities over available transportation modes.
+The objective minimizes fixed facility cost plus mode-specific transportation
+cost. Constraints satisfy customer demand, gate shipments by open facility
+capacity, and limit aggregate shipment volume by transportation mode.
+
 # Fields
 All data generated in constructor based on target_variables and feasibility_status:
 - `n_facilities::Int`: Number of potential facility locations

@@ -7,6 +7,13 @@ using Distributions
 
 Generator for facility location problems.
 
+# Overview
+Models capacitated facility location. The decisions are which facilities to
+open and how much to ship from each facility to each customer. The objective
+minimizes fixed opening cost plus distance-based shipping cost. Constraints
+require customer demand to be served, gate each facility's shipping by its
+capacity and open decision, and limit total fixed opening cost by a budget.
+
 # Fields
 - `n_facilities::Int`: Number of potential facility locations
 - `n_customers::Int`: Number of customers

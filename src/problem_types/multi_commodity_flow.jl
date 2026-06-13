@@ -12,6 +12,13 @@ different commodities (e.g., different products, message types, or freight class
 to share the same network infrastructure. Each commodity has its own source-sink
 pairs and demands, but all commodities compete for limited arc capacity.
 
+# Overview
+Models multicommodity routing on a shared directed network. The decisions are
+nonnegative flows for each commodity on each arc. The objective minimizes total
+arc routing cost. Each commodity has source, sink, and transshipment balance
+constraints, while shared arc-capacity constraints couple all commodities using
+the same network infrastructure.
+
 # Fields
 - `n_nodes::Int`: Number of nodes in the network
 - `n_arcs::Int`: Number of arcs in the network

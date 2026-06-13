@@ -13,6 +13,14 @@ This problem models the design of a telecommunications network by deciding which
 and how to route multiple traffic demands (commodities) to minimize total cost while satisfying
 capacity constraints. It is a multicommodity network design problem with discrete capacity installation.
 
+# Overview
+Models fixed-charge telecom network design with multicommodity routing. The
+decisions install physical links and route each traffic commodity over directed
+arcs. The objective minimizes installation cost plus routing cost. Flow
+conservation sends every commodity from its source to its sink, physical link
+capacity is available only when the link is installed, and a budget limits total
+installation cost.
+
 # Fields
 - `n_nodes::Int`: Number of nodes in the network
 - `n_arcs::Int`: Number of potential arcs/links

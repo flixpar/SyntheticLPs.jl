@@ -9,6 +9,13 @@ using StatsBase
 
 Generator for product mix optimization problems.
 
+# Overview
+Models profit-maximizing production mix decisions. The decisions are continuous
+production quantities for each product. The objective maximizes total product
+profit. Resource-capacity constraints limit aggregate consumption across
+products, and optional market constraints impose product-level lower and upper
+production bounds.
+
 # Fields
 - `num_products::Int`: Number of products
 - `num_resources::Int`: Number of resources

@@ -6,6 +6,13 @@ using Random
 
 Generator for assignment problems that assign workers to tasks at minimum cost.
 
+# Overview
+Models worker-task matching. The decision is whether worker `i` performs task
+`j`; the objective minimizes total assignment cost. Each task must be assigned
+to exactly one worker, each worker can handle at most one task, and incompatible
+worker-task pairs are fixed to zero. Generated costs can reflect worker
+specialization and worker/task group affinity.
+
 # Fields
 - `n_workers::Int`: Number of workers
 - `n_tasks::Int`: Number of tasks

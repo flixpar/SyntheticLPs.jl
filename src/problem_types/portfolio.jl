@@ -12,6 +12,14 @@ Uses Conditional Value-at-Risk (CVaR) as the risk measure, which naturally linea
 a pure LP. Includes sector/region exposure limits, asset class allocation bounds, factor
 exposure constraints, position size limits, and turnover constraints.
 
+# Overview
+Models institutional portfolio construction. The decisions are asset weights
+plus auxiliary variables for CVaR and turnover linearization. The objective
+maximizes expected return. Constraints impose a CVaR risk limit, full investment
+of capital, sector and region upper bounds, asset-class lower and upper bounds,
+factor exposure bands, individual position limits, and turnover from a benchmark
+portfolio.
+
 # Fields
 - `n_assets::Int`: Number of investable assets
 - `n_scenarios::Int`: Number of return scenarios for CVaR linearization
