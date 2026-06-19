@@ -4,6 +4,34 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-06-19 13:15 EDT
+
+### Feature: Built-in Batch Dataset Generation API
+
+**Previous Commit**: `75882de`
+
+**Summary**: Promoted the standalone batch-generation script (`tmp/generate_lps.jl`) into a first-class, tested library API inside the package. Datasets of LP instances can now be generated directly via `generate_dataset`, with `scripts/generate_lps.jl` reduced to a thin command-line wrapper.
+
+### Added
+
+- **`src/dataset.jl`** — new in-package module providing:
+  - **`generate_dataset(; kwargs...)`**: samples problem types and target variable counts (truncated normal over `[var_min, var_max]`), builds each model, optionally quality-filters it, and writes instance files. Returns a `Vector{GeneratedInstance}` of metadata. Fully reproducible from a non-zero `seed` (all randomness flows from one seeded `MersenneTwister`: type choice, size, and per-instance seed).
+  - **`GeneratedInstance`**: metadata struct (index, problem type, target/actual variables, constraints, per-instance seed, feasibility status, filename, simplex iterations, solve time).
+  - **`QualityCriteria`** (keyword struct: `solve_timeout`, `min_constraints`, `min_iterations`, `max_iteration_ratio`) and **`QualityResult`**.
+  - **`check_quality(model, optimizer; criteria, feasible_only, optimizer_attributes)`**: solves an instance and judges it as a test/training instance (rejects too-few-constraints, infeasible-when-feasible-only, unbounded, timeout, numerical error, `ALMOST_OPTIMAL`, trivially-solved, and degenerate cases).
+  - **`manifest.json`** output: records the run config plus per-instance metadata alongside the generated files (disable with `write_manifest=false`).
+- New exports: `generate_dataset`, `GeneratedInstance`, `QualityCriteria`, `QualityResult`, `check_quality`.
+- Added `JSON` to the module imports (already a package dependency) for manifest writing.
+- New **`Dataset Generation`** testset in `test/runtests.jl` covering basic generation, reproducibility, problem-type restriction, invalid-type rejection, the `quality_filter`-without-optimizer error, file/manifest output, and manifest suppression.
+
+### Changed
+
+- **Solver-agnostic design**: the package no longer hard-codes HiGHS. Quality filtering requires the caller to pass an `optimizer` (and optional `optimizer_attributes`). `scripts/generate_lps.jl` supplies `HiGHS.Optimizer` with `"solver" => "simplex"`.
+- **`scripts/generate_lps.jl`**: rewritten as a thin argument-parsing wrapper that delegates to `generate_dataset`. New flags: `--file-format` (output extension, e.g. `mps`/`lp`) and `--no-manifest`. Behavior of existing flags is preserved.
+- README and CLAUDE.md document the new dataset API and CLI usage.
+
+---
+
 ## 2026-03-23
 
 ### Feature: Quality Filter for Batch LP Generation

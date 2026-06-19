@@ -50,6 +50,19 @@ Generate a random problem with ~200 variables:
 julia --project=@. scripts/generate_problem.jl random 200
 ```
 
+### Dataset Generation
+
+Generate a whole dataset of LP instances via the library API (`generate_dataset`)
+or its CLI wrapper. The wrapper supplies HiGHS, so use the `scripts` environment:
+
+```bash
+# 100 .mps instances into ./output
+julia --project=scripts scripts/generate_lps.jl -o output -n 100
+
+# Quality-filtered, feasible-only, with progress
+julia --project=scripts scripts/generate_lps.jl -o output -n 50 --feasible-only -q -v
+```
+
 ### Development
 
 Start Julia REPL with project loaded:
@@ -70,6 +83,11 @@ SyntheticLPs uses a type-based dispatch system for generating 21 types of realis
 - Unified interface functions: `generate_problem()`, `list_problem_types()`, `problem_info()`
 - Random problem generation with `generate_random_problem()`
 - Base function `build_model(problem::ProblemGenerator)` that each generator implements
+
+**Dataset Generation** (`src/dataset.jl`):
+- `generate_dataset(; kwargs...)`: builds a whole dataset of LP instances by sampling problem types and target variable counts; optionally writes instance files + a `manifest.json` and returns `Vector{GeneratedInstance}` metadata. Fully reproducible from a non-zero `seed`.
+- `check_quality(model, optimizer; ...)` + `QualityCriteria`/`QualityResult`: solve-based filtering of trivial/degenerate/unbounded/ill-conditioned instances.
+- The package stays solver-agnostic: quality filtering requires the caller to pass an `optimizer` (e.g. `HiGHS.Optimizer`). `scripts/generate_lps.jl` is a thin CLI wrapper that supplies HiGHS.
 
 **Problem Generators** (`src/problem_types/`):
 - Each problem type has:

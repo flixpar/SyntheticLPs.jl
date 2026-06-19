@@ -102,4 +102,59 @@ end
     for problem_type in list_problem_types()
         test_problem_generator(problem_type)
     end
+
+    # Test batch dataset generation
+    @testset "Dataset Generation" begin
+        # Basic in-memory generation (no solver required)
+        instances = generate_dataset(num_problems = 6, var_mean = 80, var_std = 20,
+                                     var_min = 30, var_max = 150, seed = 123)
+        @test instances isa Vector{GeneratedInstance}
+        @test length(instances) == 6
+        @test all(inst -> inst.num_variables > 0, instances)
+        @test all(inst -> inst.num_constraints >= 0, instances)
+        @test [inst.index for inst in instances] == collect(1:6)
+        @test all(inst -> inst.filename === nothing, instances)  # no output_dir
+
+        # Reproducibility: same seed → identical dataset
+        instances2 = generate_dataset(num_problems = 6, var_mean = 80, var_std = 20,
+                                      var_min = 30, var_max = 150, seed = 123)
+        @test [i.problem_type for i in instances] == [i.problem_type for i in instances2]
+        @test [i.num_variables for i in instances] == [i.num_variables for i in instances2]
+        @test [i.seed for i in instances] == [i.seed for i in instances2]
+
+        # Restricting problem types is respected
+        subset = generate_dataset(num_problems = 5, var_mean = 80, var_std = 20,
+                                  var_min = 30, var_max = 150, seed = 1,
+                                  problem_types = [:transportation, :knapsack])
+        @test all(inst -> inst.problem_type in (:transportation, :knapsack), subset)
+
+        # Unknown problem types are rejected
+        @test_throws ErrorException generate_dataset(num_problems = 1,
+                                                     problem_types = [:not_a_real_type])
+
+        # quality_filter without an optimizer is an error
+        @test_throws ErrorException generate_dataset(num_problems = 1, quality_filter = true)
+
+        # File output and manifest
+        tmp = mktempdir()
+        written = generate_dataset(num_problems = 4, var_mean = 80, var_std = 20,
+                                   var_min = 30, var_max = 150, seed = 7,
+                                   output_dir = tmp)
+        @test length(written) == 4
+        @test all(inst -> inst.filename !== nothing, written)
+        @test all(inst -> isfile(joinpath(tmp, inst.filename)), written)
+        @test isfile(joinpath(tmp, "manifest.json"))
+
+        # Manifest can be disabled
+        tmp2 = mktempdir()
+        generate_dataset(num_problems = 2, var_mean = 80, var_std = 20,
+                         var_min = 30, var_max = 150, seed = 7,
+                         output_dir = tmp2, write_manifest = false)
+        @test !isfile(joinpath(tmp2, "manifest.json"))
+
+        # QualityCriteria carries through configured thresholds
+        crit = QualityCriteria(min_constraints = 10, min_iterations = 5)
+        @test crit.min_constraints == 10
+        @test crit.min_iterations == 5
+    end
 end
