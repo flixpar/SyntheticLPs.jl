@@ -144,6 +144,16 @@ end
         @test length(uniform_subset) == 6
         @test all(inst -> inst.num_variables > 0, uniform_subset)
 
+        # Distributions without a finite lower support are truncated at n = 2.
+        normal_subset = generate_dataset(num_problems = 100,
+                                         size_distribution = Normal(500, 200),
+                                         problem_types = [:knapsack],
+                                         seed = 5,
+                                         candidate_multiplier = 1,
+                                         max_candidate_multiplier = 1)
+        @test length(normal_subset) == 100
+        @test minimum(inst -> inst.target_variables, normal_subset) >= 2
+
         # Per-type matching allocates an even quota to each selected type.
         by_type = generate_dataset(num_problems = 6,
                                    size_distribution = Uniform(30, 150),

@@ -262,6 +262,16 @@ function _resolve_size_distribution(size_distribution, mean::Real, std::Real,
         if !(size_distribution isa UnivariateDistribution)
             error("size_distribution must be a Distributions.UnivariateDistribution.")
         end
+        lower_bound = try
+            minimum(size_distribution)
+        catch
+            -Inf
+        end
+        if !isfinite(lower_bound)
+            dist = truncated(size_distribution; lower = 2)
+            desc = "truncated($(string(size_distribution)); lower=2)"
+            return _SizeDistributionSpec(dist, desc)
+        end
         return _SizeDistributionSpec(size_distribution, string(size_distribution))
     end
 
@@ -717,7 +727,8 @@ Returns metadata for every kept instance as a `Vector{GeneratedInstance}`.
   legacy `var_*` arguments.
 - `size_distribution = nothing`: optional `Distributions.UnivariateDistribution`
   over target sizes, e.g. `Uniform(50, 2000)` or
-  `truncated(Normal(500, 200), 50, 2000)`.
+  `truncated(Normal(500, 200), 50, 2000)`. Distributions without a finite lower
+  support are automatically truncated at `lower = 2`.
 - `problem_types = nothing`: collection of type symbols to sample from
   (`nothing`/empty = all registered types).
 - `feasible_only::Bool = false`: request guaranteed-feasible instances.
