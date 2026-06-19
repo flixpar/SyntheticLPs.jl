@@ -1,6 +1,8 @@
 using Test
 using JuMP
 using Random
+using Distributions
+using JSON
 
 using SyntheticLPs
 
@@ -107,7 +109,9 @@ end
     @testset "Dataset Generation" begin
         # Basic in-memory generation (no solver required)
         instances = generate_dataset(num_problems = 6, var_mean = 80, var_std = 20,
-                                     var_min = 30, var_max = 150, seed = 123)
+                                     var_min = 30, var_max = 150, seed = 123,
+                                     problem_types = [:transportation, :knapsack],
+                                     max_candidate_multiplier = 2)
         @test instances isa Vector{GeneratedInstance}
         @test length(instances) == 6
         @test all(inst -> inst.num_variables > 0, instances)
@@ -117,7 +121,9 @@ end
 
         # Reproducibility: same seed → identical dataset
         instances2 = generate_dataset(num_problems = 6, var_mean = 80, var_std = 20,
-                                      var_min = 30, var_max = 150, seed = 123)
+                                      var_min = 30, var_max = 150, seed = 123,
+                                      problem_types = [:transportation, :knapsack],
+                                      max_candidate_multiplier = 2)
         @test [i.problem_type for i in instances] == [i.problem_type for i in instances2]
         @test [i.num_variables for i in instances] == [i.num_variables for i in instances2]
         @test [i.seed for i in instances] == [i.seed for i in instances2]
@@ -125,8 +131,47 @@ end
         # Restricting problem types is respected
         subset = generate_dataset(num_problems = 5, var_mean = 80, var_std = 20,
                                   var_min = 30, var_max = 150, seed = 1,
-                                  problem_types = [:transportation, :knapsack])
+                                  problem_types = [:transportation, :knapsack],
+                                  max_candidate_multiplier = 2)
         @test all(inst -> inst.problem_type in (:transportation, :knapsack), subset)
+
+        # Direct Distributions.jl size distributions are accepted.
+        uniform_subset = generate_dataset(num_problems = 6,
+                                          size_distribution = Uniform(30, 150),
+                                          problem_types = [:transportation, :knapsack],
+                                          seed = 2,
+                                          max_candidate_multiplier = 2)
+        @test length(uniform_subset) == 6
+        @test all(inst -> inst.num_variables > 0, uniform_subset)
+
+        # Per-type matching allocates an even quota to each selected type.
+        by_type = generate_dataset(num_problems = 6,
+                                   size_distribution = Uniform(30, 150),
+                                   problem_types = [:transportation, :knapsack],
+                                   match_size_by_type = true,
+                                   seed = 3,
+                                   max_candidate_multiplier = 2)
+        @test count(inst -> inst.problem_type == :transportation, by_type) == 3
+        @test count(inst -> inst.problem_type == :knapsack, by_type) == 3
+
+        @test_throws ErrorException generate_dataset(
+            num_problems = 1,
+            problem_types = [:transportation, :knapsack],
+            match_size_by_type = true,
+        )
+
+        @test_throws ErrorException generate_dataset(
+            num_problems = 2,
+            size_distribution = Uniform(-10, -1),
+            problem_types = [:knapsack],
+        )
+
+        # Matching can be disabled for independent sampling.
+        unmatched = generate_dataset(num_problems = 4, var_mean = 80, var_std = 20,
+                                     var_min = 30, var_max = 150, seed = 4,
+                                     problem_types = [:transportation, :knapsack],
+                                     match_size_distribution = false)
+        @test length(unmatched) == 4
 
         # Unknown problem types are rejected
         @test_throws ErrorException generate_dataset(num_problems = 1,
@@ -139,16 +184,24 @@ end
         tmp = mktempdir()
         written = generate_dataset(num_problems = 4, var_mean = 80, var_std = 20,
                                    var_min = 30, var_max = 150, seed = 7,
+                                   problem_types = [:transportation, :knapsack],
+                                   max_candidate_multiplier = 2,
                                    output_dir = tmp)
         @test length(written) == 4
         @test all(inst -> inst.filename !== nothing, written)
         @test all(inst -> isfile(joinpath(tmp, inst.filename)), written)
         @test isfile(joinpath(tmp, "manifest.json"))
+        manifest = JSON.parsefile(joinpath(tmp, "manifest.json"))
+        @test manifest["config"]["size_match"]["enabled"] == true
+        @test manifest["config"]["size_match"]["candidate_multiplier"] == 2
+        @test length(manifest["config"]["size_match"]["groups"]) == 1
 
         # Manifest can be disabled
         tmp2 = mktempdir()
         generate_dataset(num_problems = 2, var_mean = 80, var_std = 20,
                          var_min = 30, var_max = 150, seed = 7,
+                         problem_types = [:transportation, :knapsack],
+                         max_candidate_multiplier = 2,
                          output_dir = tmp2, write_manifest = false)
         @test !isfile(joinpath(tmp2, "manifest.json"))
 

@@ -11,6 +11,7 @@
 
 using ArgParse
 using SyntheticLPs
+using Distributions
 using HiGHS
 
 function parse_commandline()
@@ -43,6 +44,30 @@ function parse_commandline()
             help = "Maximum number of variables"
             arg_type = Int
             default = 2000
+        "--size-distribution"
+            help = "Target size distribution: normal (truncated by --var-min/max) or uniform"
+            default = "normal"
+        "--no-size-matching"
+            help = "Disable post-selection that matches actual model sizes to the target distribution"
+            action = :store_true
+        "--match-size-by-type"
+            help = "Match the target size distribution independently within each selected problem type"
+            action = :store_true
+        "--candidate-multiplier"
+            help = "Minimum accepted candidates per final instance before size matching"
+            arg_type = Int
+            default = 2
+        "--max-candidate-multiplier"
+            help = "Accepted-candidate cap per final instance for iterative size matching"
+            arg_type = Int
+            default = 12
+        "--size-match-tolerance"
+            help = "Mean absolute log-ratio size error tolerance for matched actual sizes"
+            arg_type = Float64
+            default = 0.05
+        "--strict-size-match"
+            help = "Fail if size matching cannot meet --size-match-tolerance"
+            action = :store_true
         "--feasible-only"
             help = "Only generate problems guaranteed to be feasible"
             action = :store_true
@@ -82,7 +107,7 @@ function parse_commandline()
             arg_type = Int
             default = 5
         "--max-retries"
-            help = "Maximum retry multiplier when quality-filtering (total attempts = n * max-retries)"
+            help = "Raw retry multiplier for generator failures and quality-filter rejections"
             arg_type = Int
             default = 10
     end
@@ -95,6 +120,15 @@ function main()
 
     types_str = args["problem-types"]
     problem_types = isempty(types_str) ? nothing : Symbol.(strip.(split(types_str, ",")))
+
+    distribution_name = lowercase(args["size-distribution"])
+    size_distribution = if distribution_name == "normal"
+        nothing
+    elseif distribution_name == "uniform"
+        Uniform(args["var-min"], args["var-max"])
+    else
+        error("--size-distribution must be either normal or uniform, got $(args["size-distribution"])")
+    end
 
     criteria = QualityCriteria(
         solve_timeout = args["solve-timeout"],
@@ -110,9 +144,16 @@ function main()
         var_std = args["var-std"],
         var_min = args["var-min"],
         var_max = args["var-max"],
+        size_distribution = size_distribution,
         problem_types = problem_types,
         feasible_only = args["feasible-only"],
         seed = args["seed"],
+        match_size_distribution = !args["no-size-matching"],
+        match_size_by_type = args["match-size-by-type"],
+        candidate_multiplier = args["candidate-multiplier"],
+        max_candidate_multiplier = args["max-candidate-multiplier"],
+        size_match_tolerance = args["size-match-tolerance"],
+        strict_size_match = args["strict-size-match"],
         file_extension = args["file-format"],
         write_manifest = !args["no-manifest"],
         quality_filter = args["quality-filter"],

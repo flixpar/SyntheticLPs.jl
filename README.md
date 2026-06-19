@@ -124,13 +124,15 @@ instances. When `output_dir` is set, each kept instance is written to disk
 along with a `manifest.json` describing the run; metadata is always returned.
 
 ```julia
-using SyntheticLPs
+using SyntheticLPs, Distributions
 
 # Generate 100 instances with variable counts drawn from a truncated normal,
-# writing .mps files plus a manifest to ./dataset.
+# writing .mps files plus a manifest to ./dataset. By default, the generator
+# keeps an accepted candidate pool and selects instances whose actual model
+# sizes match the target distribution closely.
 instances = generate_dataset(
     num_problems = 100,
-    var_mean = 500, var_std = 200, var_min = 50, var_max = 2000,
+    size_distribution = truncated(Normal(500, 200), 50, 2000),
     output_dir = "dataset",
     seed = 1234,            # 0 = non-deterministic; any other value is reproducible
 )
@@ -139,6 +141,21 @@ for inst in instances[1:3]
     println("$(inst.problem_type): $(inst.num_variables) vars, " *
             "$(inst.num_constraints) constraints → $(inst.filename)")
 end
+```
+
+Uniform targets are supported as well. To make each selected problem type match
+the same size distribution independently, enable per-type matching:
+
+```julia
+instances = generate_dataset(
+    num_problems = 120,
+    size_distribution = Uniform(50, 2000),
+    problem_types = [:transportation, :knapsack, :portfolio],
+    match_size_by_type = true,
+    candidate_multiplier = 2,
+    output_dir = "dataset_by_type",
+    seed = 1234,
+)
 ```
 
 The package itself is solver-agnostic. To enable **quality filtering** — solving
@@ -160,7 +177,7 @@ instances = generate_dataset(
         min_iterations = 3,
         max_iteration_ratio = 100.0,
     ),
-    max_retries = 10,       # up to num_problems × max_retries attempts
+    max_retries = 10,       # raw retry budget for failures / filtered candidates
     feasible_only = true,
 )
 ```
@@ -284,6 +301,12 @@ julia --project=scripts scripts/generate_lps.jl -o output -n 50 --feasible-only 
 
 # Restrict to specific problem types and a fixed seed
 julia --project=scripts scripts/generate_lps.jl --problem-types transportation,knapsack -n 20 --seed 42
+
+# Uniform actual-size matching for each selected problem type
+julia --project=scripts scripts/generate_lps.jl -o output -n 60 \
+  --problem-types transportation,knapsack,portfolio \
+  --size-distribution uniform --var-min 50 --var-max 2000 \
+  --match-size-by-type --candidate-multiplier 2 --seed 42
 ```
 
 ## Testing
