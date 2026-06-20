@@ -80,28 +80,16 @@ const NURSE_SHIFT_ALIASES = Dict(
 is_nurse_weekend(day::Int) = mod1(day, 7) in (6, 7)
 
 # Choose (n_nurses, n_days, n_shifts) so that n_nurses * n_days * n_shifts ~ target.
+# The horizon and shift structure scale with the problem size so instances stay
+# realistic: every horizon spans whole weeks (so weekends appear) and has at least two
+# shift types (so a night shift, with its rest rules, is always present).
 function select_nurse_dimensions(target_variables::Int)
     target = max(target_variables, 1)
-    low = max(1, floor(Int, 0.9 * target))
-    high = ceil(Int, 1.1 * target)
-    best = nothing
-    best_diff = typemax(Int)
-    for days in 1:56
-        for shifts in 1:4
-            for nurses in 2:2000
-                actual = nurses * days * shifts
-                diff = abs(actual - target)
-                if diff < best_diff
-                    best = (nurses, days, shifts, actual)
-                    best_diff = diff
-                end
-                if actual >= low && actual <= high
-                    return nurses, days, shifts
-                end
-            end
-        end
-    end
-    nurses, days, shifts, _ = best
+    days, shifts = target <= 150 ? (7, 2) :
+                   target <= 600 ? (7, 3) :
+                   target <= 2000 ? (14, 3) :
+                   (28, 3)
+    nurses = max(2, round(Int, target / (days * shifts)))
     return nurses, days, shifts
 end
 
@@ -115,6 +103,20 @@ function build_nurse_shift_labels(n_shifts::Int)
         push!(labels, Symbol("shift$(length(labels)+1)"))
     end
     return labels[1:n_shifts]
+end
+
+# Early shifts that must be rested after a night shift. Used by both the feasible-roster
+# heuristic and `build_model` so the two stay in sync: shift 1 always counts as "early",
+# and shift 2 also counts once there are at least three shifts (e.g. day + evening).
+function nurse_early_shift_indices(n_shifts::Int)
+    indices = Int[]
+    if n_shifts >= 1
+        push!(indices, 1)
+    end
+    if n_shifts >= 3
+        push!(indices, 2)
+    end
+    return indices
 end
 
 function sample_nurse_types(n_nurses::Int, scenario::Symbol)
@@ -177,6 +179,7 @@ end
 function build_nurse_availability(
     n_nurses::Int, n_days::Int, n_shifts::Int,
     shift_labels::Vector{Symbol}, nurse_types::Vector{Symbol},
+    night_qualified::Vector{Bool},
 )
     availability = zeros(Int, n_nurses, n_days, n_shifts)
     for n in 1:n_nurses
@@ -206,13 +209,26 @@ function build_nurse_availability(
             end
         end
     end
-    # Guarantee at least 2 available nurses per shift slot
+    # Guarantee at least 2 available nurses per shift slot.
     for d in 1:n_days, s in 1:n_shifts
         if sum(availability[:, d, s]) < 2
             needed = 2 - sum(availability[:, d, s])
             idxs = randperm(n_nurses)[1:needed]
             for idx in idxs
                 availability[idx, d, s] = 1
+            end
+        end
+    end
+    # On night slots, also guarantee at least one night-qualified nurse is available.
+    # Only night-qualified nurses can ever cover a night shift in `build_model` (others
+    # are capped at zero night assignments), so without this a night slot's demand could
+    # be impossible to staff. `build_nurse_night_qualification` ensures the qualified pool
+    # is non-empty whenever a night shift exists.
+    night_pool = [n for n in 1:n_nurses if night_qualified[n]]
+    if !isempty(night_pool)
+        for d in 1:n_days, s in 1:n_shifts
+            if shift_labels[s] == :night && !any(availability[n, d, s] == 1 for n in night_pool)
+                availability[night_pool[rand(1:length(night_pool))], d, s] = 1
             end
         end
     end
@@ -264,7 +280,7 @@ function select_nurse(candidates::Vector{Int}, assigned_total::Vector{Int}, targ
 end
 
 # Heuristically build a feasible assignment pattern that respects availability,
-# consecutive-day limits, night cooldowns and night qualifications. The resulting
+# consecutive-day limits, post-night rest windows and night qualifications. The resulting
 # pattern is used to set demand/skill/labor parameters so that a feasible point
 # provably exists.
 function build_nurse_assignments(
@@ -284,15 +300,14 @@ function build_nurse_assignments(
     weekend_counts = zeros(Int, n_nurses)
     consecutive = zeros(Int, n_nurses)
     worked_prev_day = falses(n_nurses)
-    night_cooldown = zeros(Int, n_nurses)
+    # `night_block_until[n]` is the last day index on which nurse n's early shifts are
+    # blocked by a preceding night shift. Storing an absolute day (rather than a counter)
+    # makes the blocked window exactly days d+1..d+rest, matching `build_model`'s rest rule.
+    night_block_until = zeros(Int, n_nurses)
+    early_indices = nurse_early_shift_indices(n_shifts)
     weekend_set = Set(weekend_days)
     for d in 1:n_days
         worked_today = falses(n_nurses)
-        for n in 1:n_nurses
-            if night_cooldown[n] > 0
-                night_cooldown[n] -= 1
-            end
-        end
         weekend_flag = d in weekend_set
         for s in 1:n_shifts
             req = max(1, base_demand[d, s])
@@ -307,7 +322,7 @@ function build_nurse_assignments(
                     if worked_prev_day[n] && consecutive[n] >= max_consec[n]
                         continue
                     end
-                    if night_cooldown[n] > 0 && s == 1
+                    if d <= night_block_until[n] && s in early_indices
                         continue
                     end
                     if shift_labels[s] == :night && !night_qualified[n]
@@ -324,7 +339,7 @@ function build_nurse_assignments(
                 assigned_total[chosen] += 1
                 if shift_labels[s] == :night
                     night_counts[chosen] += 1
-                    night_cooldown[chosen] = rest_after_night[chosen]
+                    night_block_until[chosen] = d + rest_after_night[chosen]
                 end
                 if weekend_flag
                     weekend_counts[chosen] += 1
@@ -336,7 +351,7 @@ function build_nurse_assignments(
                 fallback = Int[]
                 for n in 1:n_nurses
                     if availability[n, d, s] == 1 && !worked_today[n]
-                        if night_cooldown[n] > 0 && s == 1
+                        if d <= night_block_until[n] && s in early_indices
                             continue
                         end
                         if shift_labels[s] == :night && !night_qualified[n]
@@ -352,7 +367,7 @@ function build_nurse_assignments(
                     assigned_total[chosen] += 1
                     if shift_labels[s] == :night
                         night_counts[chosen] += 1
-                        night_cooldown[chosen] = rest_after_night[chosen]
+                        night_block_until[chosen] = d + rest_after_night[chosen]
                     end
                     if weekend_flag
                         weekend_counts[chosen] += 1
@@ -373,11 +388,17 @@ function build_nurse_assignments(
 end
 
 # Set demand slightly below the achieved coverage so the heuristic pattern is feasible.
+# A slot the heuristic could not staff (coverage 0 — e.g. a night slot with no available
+# qualified nurse) gets demand 0; forcing it to >= 1 would make the requested-feasible
+# instance infeasible, since demand must never exceed the achievable coverage.
 function finalize_nurse_demand(assignments::Array{Int,3})
     _, n_days, n_shifts = size(assignments)
     demand = zeros(Int, n_days, n_shifts)
     for d in 1:n_days, s in 1:n_shifts
-        coverage = max(1, sum(assignments[:, d, s]))
+        coverage = sum(assignments[:, d, s])
+        if coverage == 0
+            continue
+        end
         slack = rand(Uniform(0.85, 0.98))
         demand[d, s] = max(1, min(coverage, round(Int, coverage * slack)))
     end
@@ -567,7 +588,8 @@ Construct a nurse scheduling problem instance.
 
 The model has exactly one decision-variable block, `x[1:n_nurses, 1:n_days, 1:n_shifts]`,
 so the variable count is `n_nurses * n_days * n_shifts`. Dimensions are chosen by
-`select_nurse_dimensions` to land within ~10% of `target_variables`.
+`select_nurse_dimensions`, which scales the horizon (7–28 days) and shift count (2–3)
+with problem size and then sets `n_nurses` to land within ~12% of `target_variables`.
 
 For `feasible` (and `unknown` resolved to feasible) instances, a heuristic schedule
 respecting availability, consecutive-day limits and night rules is built first, and
@@ -600,7 +622,7 @@ function NurseSchedulingProblem(target_variables::Int, feasibility_status::Feasi
     night_qualified = build_nurse_night_qualification(nurse_types, shift_labels)
     rest_after_night = build_nurse_rest_requirements(n_nurses, night_qualified)
     max_consecutive_days = build_nurse_consecutive_limits(n_nurses, n_days, nurse_types)
-    availability = build_nurse_availability(n_nurses, n_days, n_shifts, shift_labels, nurse_types)
+    availability = build_nurse_availability(n_nurses, n_days, n_shifts, shift_labels, nurse_types, night_qualified)
     base_demand = build_base_nurse_demand(n_days, n_shifts, n_nurses, shift_labels, scenario)
     target_totals = build_nurse_target_totals(n_nurses, n_days, nurse_types)
 
@@ -673,14 +695,9 @@ function build_model(prob::NurseSchedulingProblem)
     shift_labels = prob.shift_labels
     night_idx = findfirst(label -> lowercase(String(label)) == "night", shift_labels)
 
-    # Early shifts that must be rested after a night shift.
-    early_indices = Int[]
-    if n_shifts >= 1
-        push!(early_indices, 1)
-    end
-    if n_shifts >= 3
-        push!(early_indices, 2)
-    end
+    # Early shifts that must be rested after a night shift (shared with the feasible-roster
+    # heuristic so the generated demand/bounds stay consistent with these constraints).
+    early_indices = nurse_early_shift_indices(n_shifts)
 
     # Decision variables: assignment fraction of nurse n to (day d, shift s).
     @variable(model, 0 <= x[1:n_nurses, 1:n_days, 1:n_shifts] <= 1)
@@ -749,21 +766,22 @@ function build_model(prob::NurseSchedulingProblem)
         end
     end
 
-    # Mandatory rest (no early shifts) after a night shift.
+    # Mandatory rest (no early shifts) after a night shift. Encoded pairwise: a night on
+    # day d forbids each early shift on days d+1..d+rest individually. (Summing the whole
+    # window into one `<= 1` would also forbid working two early shifts in the window when
+    # no night is worked, which is far stronger than the intended rest rule.)
     if night_idx !== nothing && !isempty(early_indices)
         for n in 1:n_nurses
             rest = prob.rest_after_night[n]
             if rest > 0
-                for d in 1:(n_days - rest)
-                    expr = x[n, d, night_idx]
+                for d in 1:(n_days - 1)
                     for offset in 1:rest
-                        for idx in early_indices
-                            if d + offset <= n_days
-                                expr += x[n, d + offset, idx]
+                        if d + offset <= n_days
+                            for idx in early_indices
+                                @constraint(model, x[n, d, night_idx] + x[n, d + offset, idx] <= 1)
                             end
                         end
                     end
-                    @constraint(model, expr <= 1)
                 end
             end
         end

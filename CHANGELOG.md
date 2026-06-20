@@ -4,6 +4,53 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-06-20 16:50 EDT (fix nurse_scheduling feasibility & realism)
+
+**Previous Commit**: `4179085`
+
+**Summary**: Addressed two PR-review findings (PR #18) on
+`nurse_scheduling/standard` that could make `feasible`-requested instances
+solve as INFEASIBLE, and fixed an underlying dimension-selection bug that was
+masking them by making every nurse instance degenerate. After these changes a
+HiGHS sweep over targets {50,80,100,200,500,800,1500} × seeds 0–40 produces
+287/287 feasible instances solving to OPTIMAL and 287/287 infeasible instances
+solving to INFEASIBLE.
+
+### Fixed
+
+- **Realistic instance dimensions** (`select_nurse_dimensions`). The old greedy
+  search returned the first `(nurses, days, shifts)` within 10% of target, which
+  was always `days=1, shifts=1` — so every generated instance was a single-day,
+  single-shift assignment with **none** of the night/weekend/consecutive-day/
+  rest structure (and the two bugs below could never surface). It now scales the
+  horizon and shift count with problem size (7–28 days, 2–3 shifts), so weekends
+  and a night shift are always present. Variable counts stay within ~12% of
+  target (≤25% test tolerance).
+- **Coverage demand never exceeds achievable staffing** (`finalize_nurse_demand`,
+  PR comment 3447108887). A night slot with no available night-qualified nurse
+  gets zero heuristic coverage, but demand was still forced to ≥1, making the
+  coverage constraint unsatisfiable (only night-qualified nurses can staff nights
+  in `build_model`). Demand for an unstaffable slot is now 0, preserving the
+  invariant `demand ≤ achievable coverage`.
+- **Night-qualified availability on night slots** (`build_nurse_availability`).
+  The availability repair guaranteed ≥2 arbitrary nurses per slot but no
+  *night-qualified* nurse on night slots; it now also guarantees at least one
+  night-qualified nurse is available for each night slot, so most night demand is
+  staffable (residual unstaffable slots fall back to demand 0).
+- **Post-night rest matches between roster heuristic and model** (PR comment
+  3447108889). The feasible-roster heuristic only blocked shift 1 after a night,
+  while `build_model` blocked shifts 1 *and* 2 for `n_shifts ≥ 3`; the heuristic
+  also blocked one fewer day than the model (an off-by-one in the cooldown
+  counter). Both now use a shared `nurse_early_shift_indices` helper and an
+  absolute block window (days `d+1..d+rest`), so the heuristic roster always
+  satisfies the model's rest rule.
+- **Correct rest-constraint linearization** (`build_model`). The rest rule summed
+  the entire post-night window into a single `≤ 1` constraint, which (for
+  `rest ≥ 2`) also forbade working two early shifts in the window *with no night
+  shift at all* — far stronger than the intended "no early shift after a night."
+  It is now encoded pairwise (`x[night] + x[early] ≤ 1` per slot), matching the
+  documented rule and the roster heuristic.
+
 ## 2026-06-20 08:23 EDT (port high-quality variants from old branches)
 
 **Previous Commit**: `1ebc1c2`
