@@ -210,6 +210,40 @@ and fixed:
   supply_chain) whose variable counts fall just outside ±25% at some targets;
   these fail identically on a clean `main` and were left untouched.
 
+## 2026-06-20 21:12 UTC (PR #17 review feedback)
+
+**Previous Commit**: `9ace305`
+
+**Summary**: Addressed review feedback on the new stochastic / power-flow /
+regression / revenue-management generators (PR #17): removed dead feasibility
+branches that diverged from the codebase convention, and made the DC-OPF feasible
+witness scale to large networks.
+
+### Fixed
+
+- **Dead `unknown` feasibility branches** (`energy/dc_opf.jl`,
+  `regression/regression.jl`, `revenue_management/standard.jl`,
+  `stochastic_program/standard.jl`): each generator resolves an `unknown` request
+  to `feasible`/`infeasible` (70/30) at the top, so the trailing `else` branch
+  handling `unknown` was unreachable. Removed it in all four files, matching the
+  convention used by every other generator (resolve `unknown`, then branch only on
+  `feasible`/`infeasible`). Also corrected the `regression` data-generator docstring,
+  which documented the now-removed branch ("`side_rhs` randomized across the
+  boundary") — `unknown` is resolved at random to `feasible` or `infeasible`.
+
+### Changed
+
+- **`energy/dc_opf.jl`**: the feasible-case DC-power-flow witness now assembles the
+  reduced network Laplacian as a **sparse** matrix (`SparseArrays`) instead of a
+  dense `B × B` matrix. The grid topology is sparse (`n_lines` is a small multiple
+  of `n_buses`), so the dense build + factorization was cubic in `n_buses` and made
+  data generation the bottleneck for large instances; the sparse solve keeps feasible
+  generation cheap at scale. Verified that feasible instances (including
+  `target_variables = 3000`) still solve to `OPTIMAL` and infeasible requests remain
+  `INFEASIBLE`.
+- **`Project.toml`** / **`Manifest.toml`**: added the `SparseArrays` standard-library
+  dependency.
+
 ## 2026-06-20 16:32 UTC (real-world coverage: new LP archetypes)
 
 **Previous Commit**: `7c823a9`

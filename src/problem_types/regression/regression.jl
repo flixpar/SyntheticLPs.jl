@@ -28,7 +28,7 @@ controlled through the side constraint relative to the coefficient box:
   the feasible region) is non-empty.
 - `infeasible`: `side_rhs` is set strictly below `sum(beta_lower)` (the minimum
   achievable value of `dot(ones, beta)`), making the region empty.
-- `unknown`: `side_rhs` is randomized across the boundary.
+- `unknown`: resolved at random to either `feasible` or `infeasible`.
 
 Returns a `NamedTuple` `(X, y, beta_lower, beta_upper, side_coef, side_rhs)`.
 """
@@ -62,10 +62,8 @@ function generate_regression_data(n_features::Int, n_samples::Int,
 
     if actual_status == feasible
         side_rhs = lo + rand(Uniform(0.4, 0.9)) * span
-    elseif actual_status == infeasible
-        side_rhs = lo - rand(Uniform(1.0, 3.0))     # strictly below the minimum sum
     else
-        side_rhs = lo + rand(Uniform(-0.3, 1.0)) * span
+        side_rhs = lo - rand(Uniform(1.0, 3.0))     # strictly below the minimum sum
     end
 
     return (X = X, y = y, beta_lower = beta_lower, beta_upper = beta_upper,

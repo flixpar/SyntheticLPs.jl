@@ -87,12 +87,9 @@ function RevenueManagementProblem(target_variables::Int, feasibility_status::Fea
     if actual_status == feasible
         commit_frac = rand(Uniform(0.0, 0.25), n_products)
         cap_frac = rand(Uniform(0.4, 0.8), n_resources)
-    elseif actual_status == infeasible
+    else
         commit_frac = rand(Uniform(0.3, 0.7), n_products)
         cap_frac = rand(Uniform(0.4, 0.8), n_resources)
-    else
-        commit_frac = rand(Uniform(0.0, 0.4), n_products)
-        cap_frac = rand(Uniform(0.35, 0.8), n_resources)
     end
 
     commitment = demand .* commit_frac

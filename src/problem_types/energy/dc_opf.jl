@@ -2,6 +2,7 @@ using JuMP
 using Random
 using Distributions
 using LinearAlgebra
+using SparseArrays
 
 """
     DCOptimalPowerFlowProblem <: ProblemGenerator
@@ -138,11 +139,9 @@ function DCOptimalPowerFlowProblem(target_variables::Int, feasibility_status::Fe
     if actual_status == feasible
         frac = rand(Uniform(0.3, 0.7))
         total_demand = sum_pmin + frac * (sum_pmax - sum_pmin)
-    elseif actual_status == infeasible
+    else
         # Demand exceeds total generation capacity => balance is unsatisfiable.
         total_demand = sum_pmax * rand(Uniform(1.1, 1.4))
-    else
-        total_demand = sum_pmax * rand(Uniform(0.5, 1.2))
     end
 
     demand = base_demand .* (total_demand / base_total)
@@ -169,17 +168,22 @@ function DCOptimalPowerFlowProblem(target_variables::Int, feasibility_status::Fe
             inj[gen_bus[g]] += p_w[g]
         end
 
-        # Reduced network Laplacian solve (reference bus removed).
-        L = zeros(Float64, B, B)
+        # Reduced network Laplacian solve (reference bus removed). The topology is
+        # sparse (n_lines ≈ a small multiple of n_buses), so assemble a sparse
+        # Laplacian to keep the witness solve from dominating data generation on
+        # large networks.
+        rows = Int[]
+        cols = Int[]
+        vals = Float64[]
         for l in 1:n_lines
             a = line_from[l]
             b = line_to[l]
             s = susceptance[l]
-            L[a, a] += s
-            L[b, b] += s
-            L[a, b] -= s
-            L[b, a] -= s
+            append!(rows, (a, b, a, b))
+            append!(cols, (a, b, b, a))
+            append!(vals, (s, s, -s, -s))   # duplicate diagonal entries are summed
         end
+        L = sparse(rows, cols, vals, B, B)
         keep = setdiff(1:B, [ref_bus])
         θ = zeros(Float64, B)
         θ[keep] = L[keep, keep] \ inj[keep]

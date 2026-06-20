@@ -126,11 +126,9 @@ function StochasticProgramProblem(target_variables::Int, feasibility_status::Fea
 
     if actual_status == feasible
         resource_budget = required_resource * rand(Uniform(1.2, 2.0))
-    elseif actual_status == infeasible
+    else
         # Budget strictly below the minimum required => no feasible first stage.
         resource_budget = required_resource * rand(Uniform(0.6, 0.9))
-    else
-        resource_budget = required_resource * rand(Uniform(0.7, 2.0))
     end
 
     return StochasticProgramProblem(
