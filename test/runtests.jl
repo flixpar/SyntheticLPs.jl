@@ -113,8 +113,9 @@ end
         # Every category contributes at least one variant.
         @test Set(p.category for p in problems) == Set(cats)
 
-        # Listing variants of a category.
-        @test list_variants(:transportation) == [:standard]
+        # Listing variants of a category (returned sorted by variant name).
+        @test issubset(Set([:standard, :balanced, :capacitated, :transshipment,
+                            :emission_constrained]), Set(list_variants(:transportation)))
         @test list_variants(:portfolio) == [:cvar]
 
         # ProblemVariant construction, parsing, and printing.

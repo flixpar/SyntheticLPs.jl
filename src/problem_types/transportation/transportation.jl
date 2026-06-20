@@ -7,3 +7,7 @@
 # creating a file in this folder and including it below.
 
 include("standard.jl")
+include("balanced.jl")
+include("capacitated.jl")
+include("transshipment.jl")
+include("emission_constrained.jl")
