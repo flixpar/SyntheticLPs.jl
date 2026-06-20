@@ -4,6 +4,108 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-06-20 17:50 EDT (port 7 high-value variants from the branch review)
+
+**Previous Commit**: `7c823a9`
+
+**Summary**: Ported and upgraded seven high-value problem variants identified in
+`docs/variant_branch_review.md` that had not yet been integrated into `main`,
+adding one new category (`vehicle_routing`) and diversifying four single-variant
+categories (`knapsack`, `network_flow`, `portfolio`, `assignment`) plus a classic
+addition to `facility_location`. Each was reimplemented to the project quality bar
+(scale-tiered realistic data, careful `target_variables` scaling, provable
+feasibility) rather than copied — every reviewer-noted defect (degenerate LP
+relaxations, no-op infeasibility handling) was fixed. The work was driven by a
+dynamic multi-agent workflow (port → wire → verify → fix loop). Every new variant
+was verified with HiGHS: across targets {100, 500} × seeds {0,1,2}, all
+`feasible` instances solve to OPTIMAL, all `infeasible` instances solve to
+INFEASIBLE *in the LP relaxation* (the framework relaxes integrality by default),
+all `unknown` instances solve without error, variable counts land within ±25% of
+target, and instances are reproducible. The full test suite goes from 1955 → 2217
+passing assertions (+259 from the new variants, 37 each) with no new failures.
+`list_problems()` grows from 49 to 56 registered `category/variant` pairs.
+
+### Added
+
+- **New category `vehicle_routing`** with variant `cvrp` — Capacitated Vehicle
+  Routing Problem as a MIP using the Gavish–Graves **single-commodity-flow**
+  subtour-elimination formulation. Binary arc variables `x[i,j]` plus continuous
+  load variables `f[i,j]` coupled by `f[i,j] ≤ Q·x[i,j]`; load is sourced at the
+  depot and conserved at customers, so the continuous relaxation is a genuine
+  depot-anchored routing relaxation (fixing the degenerate per-vehicle-flow
+  relaxation in the source branch). Depot near grid center, clustered customers,
+  log-normal demands. `total_vars = 2·(N+1)·N`, so `N ≈ √(target/2)`. Infeasible
+  via aggregate fleet shortfall `total_demand > K·Q` (survives relaxation).
+- **`knapsack/multidimensional`** — true multi-constraint 0/1 knapsack with D=2–5
+  correlated resource dimensions (weight/volume/budget/labor). Infeasibility is a
+  structural covering floor (`Σx ≥ m`, where the `m` lightest items already
+  overflow the tightest resource), replacing the source branch's no-op
+  capacity-shrink. `n_items = target`.
+- **`knapsack/bounded`** — bounded knapsack with integer per-item multiplicities
+  `0 ≤ x_i ≤ u_i`. Infeasibility via a value floor above the exact bounded
+  fractional-knapsack greedy optimum (provably unmet in the relaxation).
+  `n_items = target`.
+- **`network_flow/generalized_flow`** — generalized (lossy) min-cost flow with
+  per-arc gain multipliers `g ∈ (0.85, 1.0]`; multiplicative conservation
+  (`Σ_in g·f = Σ_out f`) and a delivered-at-sink demand. Objective minimizes
+  routing cost (not the degenerate source-outflow maximization of the branch).
+  Feasibility guaranteed by sizing the known backbone path; infeasibility by
+  capping post-gain sink inflow below demand. `vars = #arcs = target`.
+- **`portfolio/tracking_error`** — index-tracking / enhanced-indexing portfolio:
+  maximize expected return subject to a tracking-error budget (MAD linearization
+  `u_s ≥ ±active_return`), full investment, long-only position limits, and
+  two-sided sector-deviation bands around the benchmark. Pure LP. The benchmark is
+  feasible by construction; infeasibility via `Σ max_position < 1`.
+  `vars = n_assets + n_scenarios`. `cvar` remains the category default.
+- **`assignment/workload_balance`** — minimax / makespan task-to-worker
+  assignment (`min L` with per-worker load `≤ L`) under per-worker capacities and
+  skill eligibility; distinct from `assignment/standard` (min-cost matching) and
+  `load_balancing` (network link utilization). Feasibility guaranteed by a greedy
+  LPT construction; infeasibility via capacity pigeonhole `Σ cap_w < total_load`.
+  `vars = W·T + 1`.
+- **`facility_location/p_median`** — classic p-median: open exactly `p`
+  facilities, assign each customer to one with demand-weighted distance, using the
+  tight disaggregated linking `y[w,c] ≤ z[w]` (fixing the degenerate continuous
+  assignment in the branch). Count-based service capacity enables infeasibility
+  via `p·count_cap < C`. `vars = F·(C+1)`.
+
+### Changed
+
+- Wired the new variants into their category entry points
+  (`knapsack.jl`, `network_flow.jl`, `portfolio.jl`, `assignment.jl`,
+  `facility_location.jl`) and added the `vehicle_routing` category include to
+  `src/SyntheticLPs.jl`.
+- Updated `test/runtests.jl`: the `list_variants(:portfolio)` assertion now expects
+  `[:cvar, :tracking_error]`.
+- Updated `README.md` and `CLAUDE.md` category listings (28 → 29 categories),
+  the new multi-variant annotations, and the LP/MIP model-class notes.
+
+### Fixed (review follow-up — edge-case sizing)
+
+- **`portfolio/tracking_error`**: the per-asset position-limit range
+  `Uniform(max(2/n_assets, 0.02), min(0.4, 6/n_assets))` inverted (lower > upper)
+  for `n_assets == 5` (target ≲ 24) and `n_assets > 300` (target ≳ 1505, within
+  the default `var_max = 2000`), throwing a `DomainError` before any model was
+  built. The cap is now expressed as a multiple of equal-weight, clamped so the
+  lower bound is always strictly below the upper bound across all supported sizes.
+  Feasibility is unchanged (the cap is still raised to `>= benchmark`).
+- **`facility_location/p_median`**: for the minimum customer count `C == 2` (tiny
+  targets, e.g. target ≤ 9 giving `C = 2`), the infeasible-mode `p` shrink floored
+  at `p_lo = 2`, leaving `p == C`; combined with the `count_cap >= 1` clamp this
+  gave `p*count_cap = 2 = C` (not `< C`), so an `infeasible` request silently
+  produced a feasible model. `p` may now shrink to 1 (the 1-median) so the
+  `p*count_cap < C` pigeonhole holds even at `C = 2`.
+- Verified across targets from 6 to 2000 (440 HiGHS solves): all `feasible` →
+  OPTIMAL, all `infeasible` → INFEASIBLE, no generation errors.
+
+### Known issues (pre-existing, not introduced here)
+
+- Six assertions fail at `test/runtests.jl:33` (the ±25% variable-count tolerance
+  with fixed seed 0) for `airline_crew/standard`, `cutting_stock/standard`,
+  `network_flow/standard`, `scheduling/standard`, and `supply_chain/standard`.
+  Verified identical on clean `origin/main` (7c823a9), so these are pre-existing
+  sizing-tolerance issues in untouched generators, out of scope for this change.
+
 ## 2026-06-20 16:50 EDT (fix nurse_scheduling feasibility & realism)
 
 **Previous Commit**: `4179085`

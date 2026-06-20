@@ -72,7 +72,7 @@ julia --project=@.
 
 ## Architecture
 
-SyntheticLPs uses a type-based dispatch system for generating realistic linear programming problems. Problems are organized as a two-level hierarchy: a **category** (a problem domain, e.g. `:transportation`) groups one or more **variants** (concrete generators with their own data generation and model formulation, e.g. `:standard`). There are 28 categories; most have a single variant, while several (transportation, energy, inventory, supply_chain, blending, cutting_stock, diet_problem, facility_location) carry multiple variants with distinct formulations. All generators follow a consistent pattern using Julia's multiple dispatch.
+SyntheticLPs uses a type-based dispatch system for generating realistic linear programming problems. Problems are organized as a two-level hierarchy: a **category** (a problem domain, e.g. `:transportation`) groups one or more **variants** (concrete generators with their own data generation and model formulation, e.g. `:standard`). There are 29 categories; most have a single variant, while several (transportation, energy, inventory, supply_chain, blending, cutting_stock, diet_problem, facility_location, knapsack, network_flow, assignment, portfolio) carry multiple variants with distinct formulations. All generators follow a consistent pattern using Julia's multiple dispatch.
 
 ### Core Components
 
@@ -159,24 +159,30 @@ register_variant(:category, :standard, VariantStruct, "Description")
 
 ### Available Problem Categories
 
-The system includes 28 categories covering major LP/MIP problem classes. Each
-category's default variant is `:standard` except `portfolio` (`:cvar`).
+The system includes 29 categories covering major LP/MIP problem classes. Each
+category's default variant is `:standard` except `portfolio` (`:cvar`) and
+`vehicle_routing` (`:cvrp`).
 Categories with multiple variants are listed with them below.
-- Transportation (`standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`), Diet Problem (`standard`, `nutrient_bounds`, `food_groups`), Knapsack, Portfolio (CVaR with institutional constraints), Network Flow, Multi-Commodity Flow
-- Production Planning, Assignment, Blending (`standard`, `equipment_batches`, `multi_product`), Facility Location (`standard`, `two_echelon`), Crop Planning
+- Transportation (`standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`), Diet Problem (`standard`, `nutrient_bounds`, `food_groups`), Knapsack (`standard`, `multidimensional`, `bounded`), Portfolio (`cvar`, `tracking_error`), Network Flow (`standard`, `generalized_flow`), Multi-Commodity Flow
+- Production Planning, Assignment (`standard`, `workload_balance`), Blending (`standard`, `equipment_batches`, `multi_product`), Facility Location (`standard`, `two_echelon`, `p_median`), Crop Planning
 - Airline Crew, Bin Packing, Cutting Stock (`standard`, `setup_cost`, `due_dates`), Energy (`standard`, `ramping`, `reserves`, `storage`, `transmission`), Feed Blending, Inventory (`standard`, `lot_sizing`, `multi_item`, `multi_echelon`), Telecom Network Design
 - Job Shop Scheduling, Land Use, Load Balancing, Nurse Scheduling, Product Mix, Project Selection
-- Resource Allocation, Scheduling, Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`), Unit Commitment
+- Resource Allocation, Scheduling, Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`), Unit Commitment, Vehicle Routing (`cvrp`)
 
 #### Model classes (LP / MIP / LP relaxation)
 
 The corpus deliberately mixes three model classes; treat the names accordingly:
 - **Pure LPs**: continuous formulations (e.g. transportation variants, diet
-  variants, blending variants, most energy variants).
-- **MIPs** (binary/integer variables): e.g. `facility_location` variants,
-  `cutting_stock/setup_cost`, `inventory/lot_sizing`, `bin_packing`,
-  `job_shop_scheduling`, `supply_chain/single_source`. These are real
-  mixed-integer formulations (the package already used binaries before this).
+  variants, blending variants, most energy variants, `network_flow/generalized_flow`,
+  and both portfolio variants `cvar`/`tracking_error`).
+- **MIPs** (binary/integer variables): e.g. `facility_location` variants
+  (including `p_median`), `cutting_stock/setup_cost`, `inventory/lot_sizing`,
+  `bin_packing`, `job_shop_scheduling`, `supply_chain/single_source`,
+  `knapsack/multidimensional` (binary) and `knapsack/bounded` (integer),
+  `assignment/workload_balance` (binary min-makespan), and `vehicle_routing/cvrp`
+  (binary arc selection with single-commodity-flow subtour elimination — its
+  continuous relaxation is a genuine depot-anchored routing relaxation, not a
+  degenerate one). These are real mixed-integer formulations.
 - **LP relaxations of MIPs**: continuous relaxations of integer models, useful as
   LP-solver test instances but *not* directly implementable integer solutions —
   notably `nurse_scheduling` (fractional rosters) and `unit_commitment`
