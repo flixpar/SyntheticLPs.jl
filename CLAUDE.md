@@ -72,7 +72,7 @@ julia --project=@.
 
 ## Architecture
 
-SyntheticLPs uses a type-based dispatch system for generating realistic linear programming problems. Problems are organized as a two-level hierarchy: a **category** (a problem domain, e.g. `:transportation`) groups one or more **variants** (concrete generators with their own data generation and model formulation, e.g. `:standard`). There are 28 categories; most have a single variant, while several (transportation, energy, inventory, supply_chain, blending, cutting_stock, diet_problem, facility_location) carry multiple variants with distinct formulations. All generators follow a consistent pattern using Julia's multiple dispatch.
+SyntheticLPs uses a type-based dispatch system for generating realistic linear programming problems. Problems are organized as a two-level hierarchy: a **category** (a problem domain, e.g. `:transportation`) groups one or more **variants** (concrete generators with their own data generation and model formulation, e.g. `:standard`). There are 31 categories; most have a single variant, while several (transportation, energy, inventory, supply_chain, blending, cutting_stock, diet_problem, facility_location, regression) carry multiple variants with distinct formulations. All generators follow a consistent pattern using Julia's multiple dispatch.
 
 ### Core Components
 
@@ -159,20 +159,23 @@ register_variant(:category, :standard, VariantStruct, "Description")
 
 ### Available Problem Categories
 
-The system includes 28 categories covering major LP/MIP problem classes. Each
-category's default variant is `:standard` except `portfolio` (`:cvar`).
-Categories with multiple variants are listed with them below.
+The system includes 31 categories covering major LP/MIP problem classes. Each
+category's default variant is `:standard` except `portfolio` (`:cvar`) and
+`regression` (`:lad`). Categories with multiple variants are listed with them
+below.
 - Transportation (`standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`), Diet Problem (`standard`, `nutrient_bounds`, `food_groups`), Knapsack, Portfolio (CVaR with institutional constraints), Network Flow, Multi-Commodity Flow
 - Production Planning, Assignment, Blending (`standard`, `equipment_batches`, `multi_product`), Facility Location (`standard`, `two_echelon`), Crop Planning
-- Airline Crew, Bin Packing, Cutting Stock (`standard`, `setup_cost`, `due_dates`), Energy (`standard`, `ramping`, `reserves`, `storage`, `transmission`), Feed Blending, Inventory (`standard`, `lot_sizing`, `multi_item`, `multi_echelon`), Telecom Network Design
+- Airline Crew, Bin Packing, Cutting Stock (`standard`, `setup_cost`, `due_dates`), Energy (`standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`), Feed Blending, Inventory (`standard`, `lot_sizing`, `multi_item`, `multi_echelon`), Telecom Network Design
 - Job Shop Scheduling, Land Use, Load Balancing, Nurse Scheduling, Product Mix, Project Selection
 - Resource Allocation, Scheduling, Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`), Unit Commitment
+- Regression (`lad`, `quantile`, `chebyshev`; dense statistical LPs), Revenue Management (network DLP), Stochastic Program (two-stage with recourse)
 
 #### Model classes (LP / MIP / LP relaxation)
 
 The corpus deliberately mixes three model classes; treat the names accordingly:
 - **Pure LPs**: continuous formulations (e.g. transportation variants, diet
-  variants, blending variants, most energy variants).
+  variants, blending variants, most energy variants, regression variants,
+  revenue management, stochastic program).
 - **MIPs** (binary/integer variables): e.g. `facility_location` variants,
   `cutting_stock/setup_cost`, `inventory/lot_sizing`, `bin_packing`,
   `job_shop_scheduling`, `supply_chain/single_source`. These are real
