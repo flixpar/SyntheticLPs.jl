@@ -64,6 +64,23 @@ struct CVRPProblem <: ProblemGenerator
     dist::Matrix{Float64}
 end
 
+# First-fit-decreasing bin count: the number of capacity-`Q` bins a
+# first-fit-decreasing packing of `demands` uses. With `Q >= maximum(demands)`
+# every item fits in some bin, so this certifies the demands can be split into
+# that many routes of capacity `Q` (used to guarantee integer CVRP feasibility).
+function _ffd_bin_count(demands::Vector{Float64}, Q::Float64)
+    remaining = Float64[]            # remaining capacity of each open bin
+    for d in sort(demands; rev=true)
+        b = findfirst(>=(d), remaining)
+        if b === nothing
+            push!(remaining, Q - d)
+        else
+            remaining[b] -= d
+        end
+    end
+    return length(remaining)
+end
+
 """
     CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
@@ -85,9 +102,11 @@ So `N ≈ round(sqrt(target_variables / 2))` (clamped to `N ≥ 3`). For
 - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
 - `seed`: Random seed for reproducibility
 
-# Feasibility (must hold for the LP relaxation)
-- `feasible`: `K*Q ≥ total_demand` with margin (≈ 1.15×), `K ≤ N`, and every
-  single demand `≤ Q`. A feasible routing then exists and the relaxation is feasible.
+# Feasibility
+- `feasible`: `K*Q ≥ total_demand` with margin (≈ 1.15×), `K ≤ N`, every single
+  demand `≤ Q`, and the demands are certified to pack into `≤ K` routes of capacity
+  `Q` (Q is raised until a first-fit-decreasing packing fits). A concrete integer
+  routing therefore exists, so both the MIP and its LP relaxation are feasible.
 - `infeasible`: keep the structure but inflate demands so aggregate fleet
   capacity is strictly insufficient: `total_demand = K*Q * (1.1..1.3)`. Since the
   depot net-outflow `Σ_j f[depot,j]` must equal `total_demand` yet is bounded by
@@ -126,7 +145,7 @@ function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatu
 
     # --- Customers clustered into a few neighborhoods ---
     cluster_centers = [(grid_size * rand(), grid_size * rand()) for _ in 1:n_clusters]
-    cluster_spread = min(grid_size, grid_size) / (2.5 * n_clusters)
+    cluster_spread = grid_size / (2.5 * n_clusters)
     customer_locations = Tuple{Float64,Float64}[]
     for _ in 1:N
         center = rand(cluster_centers)
@@ -183,6 +202,16 @@ function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatu
         # Re-assert per-customer fit (Q may have grown, never shrink below it).
         if vehicle_capacity < max_demand * 1.1
             vehicle_capacity = round(max_demand * 1.1, digits=2)
+        end
+        # Aggregate capacity (K*Q >= total_demand) is necessary but NOT sufficient
+        # for the *integer* CVRP: the demands must also partition into K routes of
+        # capacity Q. Raise Q until a first-fit-decreasing packing fits in <= K
+        # bins, certifying a concrete integer routing exists (with N >= K this
+        # extends to exactly K non-empty routes). Raising Q only loosens the LP
+        # relaxation, so its feasibility is preserved too. Terminates because Q
+        # grows monotonically and Q >= total_demand needs a single bin.
+        while _ffd_bin_count(demands, vehicle_capacity) > n_vehicles
+            vehicle_capacity = round(vehicle_capacity * 1.1, digits=2)
         end
 
     elseif feasibility_status == infeasible

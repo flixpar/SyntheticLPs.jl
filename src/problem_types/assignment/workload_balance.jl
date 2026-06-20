@@ -89,8 +89,6 @@ function WorkloadBalanceAssignmentProblem(target_variables::Int, feasibility_sta
     ratio = 1.5 + 1.5 * rand()  # tasks are 1.5x .. 3.0x the worker count
     n_workers = max(2, round(Int, sqrt(eff / ratio)))
     n_tasks = max(n_workers + 1, round(Int, eff / n_workers))
-    # One fine-tune pass so W*T tracks target after the integer rounding above.
-    n_tasks = max(n_workers + 1, round(Int, eff / n_workers))
 
     # --- Scale-tiered parameter ranges (processing times / shift lengths) ---
     total_vars = n_workers * n_tasks + 1
@@ -158,9 +156,9 @@ function WorkloadBalanceAssignmentProblem(target_variables::Int, feasibility_sta
         for w in 1:n_workers
             capacities[w] = total_cap * raw[w] / s
         end
-        # Guard: ensure strict shortfall even after rounding noise.
-        scale = (frac * total_load) / sum(capacities)
-        capacities .*= scale
+        # sum(capacities) == total_cap == frac * total_load < total_load by
+        # construction, and the floor() rounding below only widens the shortfall,
+        # so the strict pigeonhole infeasibility holds with no extra rescaling.
 
     else
         # feasible / unknown: build generous, heterogeneous capacities and then,
@@ -189,7 +187,7 @@ function WorkloadBalanceAssignmentProblem(target_variables::Int, feasibility_sta
             for j in order
                 cands = [w for w in 1:n_workers if eligible[w, j]]
                 # (Guaranteed non-empty by the coverage fix above.)
-                best = cands[argmin([assigned_load[w] for w in cands])]
+                best = argmin(w -> assigned_load[w], cands)
                 assigned_load[best] += loads[j]
             end
             for w in 1:n_workers

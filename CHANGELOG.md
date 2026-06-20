@@ -4,6 +4,44 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-06-20 19:10 EDT (address PR #19 review feedback)
+
+**Previous Commit**: `f7a657f`
+
+**Summary**: Addressed automated code-review feedback on PR #19 (gemini-code-assist
+and chatgpt-codex). Five are small cleanups of redundant/non-idiomatic code in the
+newly ported variants; one strengthens the `feasible` guarantee of
+`vehicle_routing/cvrp` from LP-relaxation-only to genuine integer feasibility. No
+behavior change for any sampled instance (the new CVRP guard is a strict no-op
+across 3600 scanned instances and consumes no RNG, so the generated corpus and all
+seeds are byte-identical). Test suite unchanged at 2217 passing assertions; the 6
+pre-existing variable-count-tolerance failures (airline_crew, cutting_stock,
+network_flow/standard, scheduling, supply_chain×2) are unrelated to these files.
+
+### Changed
+
+- **`vehicle_routing/cvrp`** — the `feasible` branch now certifies that customer
+  demands partition into `≤ K` routes of capacity `Q` via a first-fit-decreasing
+  bin-packing check (new internal `_ffd_bin_count`), raising `Q` if needed.
+  Aggregate fleet capacity (`K·Q ≥ total_demand`) is necessary but not sufficient
+  for the *integer* CVRP (`relax_integer=false`); the guard makes a concrete
+  integer routing provably exist, so both the MIP and its LP relaxation are
+  feasible (matching the integer-solution-construction approach already used by
+  `assignment/workload_balance`). Verified: 100/100 feasible CVRP MIPs solve to
+  OPTIMAL under HiGHS. In practice the log-normal demand sizing already kept all
+  3600 scanned instances bin-packable, so `Q` is never actually raised — the guard
+  is purely defensive. Docstring updated (feasibility no longer scoped to the LP
+  relaxation only). Also removed a redundant `min(grid_size, grid_size)`.
+- **`assignment/workload_balance`** — removed a duplicate `n_tasks` recomputation
+  (the "fine-tune pass" was identical to the first assignment and a no-op); removed
+  a redundant capacity rescale in the `infeasible` branch (`scale` was always
+  `1.0`; the trailing `floor()` already guarantees the strict shortfall); switched
+  the greedy-LPT worker pick to the idiomatic two-argument `argmin(w -> ..., cands)`
+  (no temporary array).
+- **`network_flow/generalized_flow`** — simplified the empty-arc conservation
+  fallbacks from `AffExpr(0.0)` to `0.0` (a node with both in- and out-arcs empty
+  is skipped, so at least one side is always an affine expression with variables).
+
 ## 2026-06-20 17:50 EDT (port 7 high-value variants from the branch review)
 
 **Previous Commit**: `7c823a9`

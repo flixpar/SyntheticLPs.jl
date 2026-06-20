@@ -302,8 +302,8 @@ function build_model(prob::GeneralizedFlowProblem)
         in_arcs = [arc for arc in arcs if arc[2] == v]
         out_arcs = [arc for arc in arcs if arc[1] == v]
         (isempty(in_arcs) && isempty(out_arcs)) && continue
-        inflow = isempty(in_arcs) ? AffExpr(0.0) : sum(prob.gains[arc] * f[arc] for arc in in_arcs)
-        outflow = isempty(out_arcs) ? AffExpr(0.0) : sum(f[arc] for arc in out_arcs)
+        inflow = isempty(in_arcs) ? 0.0 : sum(prob.gains[arc] * f[arc] for arc in in_arcs)
+        outflow = isempty(out_arcs) ? 0.0 : sum(f[arc] for arc in out_arcs)
         @constraint(model, inflow == outflow)
     end
 
