@@ -15,32 +15,40 @@ This package provides:
 
 ## Problem Types
 
-The package includes generators for many common LP problem types, all unified with a standardized interface:
+The package includes generators for 28 common LP/MIP problem categories, all
+unified with a standardized interface. Each category groups one or more
+**variants** — concrete formulations with their own data generation and model
+structure (see [Categories and Variants](#categories-and-variants)). Categories
+with more than one variant are annotated below.
 
-- Transportation
-- Diet Problem
+- Transportation — variants: `standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`
+- Diet Problem — variants: `standard`, `nutrient_bounds`, `food_groups`
 - Knapsack
 - Portfolio Optimization (CVaR with sector, region, factor, and turnover constraints)
 - Network Flow
 - Multi-Commodity Flow
 - Production Planning
 - Assignment
-- Blending
+- Blending — variants: `standard`, `equipment_batches`, `multi_product`
 - Airline Crew
-- Cutting Stock
-- Energy
-- Facility Location
+- Bin Packing
+- Cutting Stock — variants: `standard`, `setup_cost`, `due_dates`
+- Energy — variants: `standard`, `ramping`, `reserves`, `storage`, `transmission`
+- Facility Location — variants: `standard`, `two_echelon`
 - Feed Blending
-- Inventory
+- Inventory — variants: `standard`, `lot_sizing`, `multi_item`, `multi_echelon`
+- Job Shop Scheduling
 - Land Use
 - Load Balancing
+- Nurse Scheduling
 - Product Mix
 - Project Selection
 - Resource Allocation
 - Scheduling
-- Supply Chain
+- Supply Chain — variants: `standard`, `single_source`, `carbon`, `multi_product`
 - Crop Planning
 - Telecom Network Design
+- Unit Commitment
 
 ## Usage
 
