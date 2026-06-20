@@ -4,6 +4,15 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-06-19 (code review fixes)
+
+**Previous Commit**: `e3aaec0`
+
+### Fixed
+
+- **Reproducibility**: `resolve_problem_types` now sorts the default "all types" selection (`src/dataset.jl`). Previously it returned `list_problem_types()` in `Dict` key order, which the seeded RNG consumes positionally — so a seeded dataset built with the default `problem_types` was only reproducible within a single process/Julia version, contradicting the documented seed-reproducibility guarantee. Explicit `problem_types` selections still preserve caller order.
+- **Interrupt handling**: `_attempt_candidate` now re-throws `InterruptException` instead of swallowing it in its catch-all (`src/dataset.jl`). Ctrl-C during generation now aborts the run rather than being counted as a generation failure and retried until the attempt budget is exhausted.
+
 ## 2026-06-19 13:15 EDT
 
 ### Feature: Built-in Batch Dataset Generation API

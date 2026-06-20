@@ -211,7 +211,11 @@ registered types. Throws if any requested type is not registered.
 function resolve_problem_types(problem_types)
     available = list_problem_types()
     if problem_types === nothing || isempty(problem_types)
-        return available
+        # Sort so the default "all types" selection has a stable order: the RNG
+        # consumes types positionally, so an unsorted Dict key order would make
+        # a seeded dataset reproducible only within a single process/Julia
+        # version, contradicting the documented seed-reproducibility guarantee.
+        return sort(available)
     end
     requested = Symbol.(problem_types)
     invalid = setdiff(requested, available)
@@ -459,6 +463,9 @@ function _attempt_candidate(rng::AbstractRNG,
             stime,
         )
     catch e
+        # Never swallow a user interrupt: let Ctrl-C abort the run instead of
+        # being counted as a generation failure and retried.
+        e isa InterruptException && rethrow()
         stats.failed += 1
         if verbose
             println("[attempt $(stats.attempts)] failed $problem_type " *
