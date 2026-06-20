@@ -210,6 +210,100 @@ and fixed:
   supply_chain) whose variable counts fall just outside ±25% at some targets;
   these fail identically on a clean `main` and were left untouched.
 
+## 2026-06-20 21:12 UTC (PR #17 review feedback)
+
+**Previous Commit**: `9ace305`
+
+**Summary**: Addressed review feedback on the new stochastic / power-flow /
+regression / revenue-management generators (PR #17): removed dead feasibility
+branches that diverged from the codebase convention, and made the DC-OPF feasible
+witness scale to large networks.
+
+### Fixed
+
+- **Dead `unknown` feasibility branches** (`energy/dc_opf.jl`,
+  `regression/regression.jl`, `revenue_management/standard.jl`,
+  `stochastic_program/standard.jl`): each generator resolves an `unknown` request
+  to `feasible`/`infeasible` (70/30) at the top, so the trailing `else` branch
+  handling `unknown` was unreachable. Removed it in all four files, matching the
+  convention used by every other generator (resolve `unknown`, then branch only on
+  `feasible`/`infeasible`). Also corrected the `regression` data-generator docstring,
+  which documented the now-removed branch ("`side_rhs` randomized across the
+  boundary") — `unknown` is resolved at random to `feasible` or `infeasible`.
+
+### Changed
+
+- **`energy/dc_opf.jl`**: the feasible-case DC-power-flow witness now assembles the
+  reduced network Laplacian as a **sparse** matrix (`SparseArrays`) instead of a
+  dense `B × B` matrix. The grid topology is sparse (`n_lines` is a small multiple
+  of `n_buses`), so the dense build + factorization was cubic in `n_buses` and made
+  data generation the bottleneck for large instances; the sparse solve keeps feasible
+  generation cheap at scale. Verified that feasible instances (including
+  `target_variables = 3000`) still solve to `OPTIMAL` and infeasible requests remain
+  `INFEASIBLE`.
+- **`Project.toml`** / **`Manifest.toml`**: added the `SparseArrays` standard-library
+  dependency.
+
+## 2026-06-20 16:32 UTC (real-world coverage: new LP archetypes)
+
+**Previous Commit**: `7c823a9`
+
+**Summary**: Broadened the realized distribution of generated LPs to fill the
+biggest gaps identified in a coverage review. The existing 24 categories
+over-indexed on *sparse, combinatorial* OR (network flow, allocation, blending)
+and under-represented four important real-world LP families: stochastic /
+decomposable, physics-based, *dense* statistical, and revenue-management LPs.
+This change adds three new categories and a new variant of `energy` to address
+each, taking the package to 31 categories.
+
+### Added
+
+- **`stochastic_program/standard`** (`src/problem_types/stochastic_program/`): a
+  two-stage stochastic linear program with recourse (stochastic
+  capacity/distribution planning). First-stage capacity decisions are coupled to
+  `S` independent scenario blocks of shipment + penalized-shortfall variables,
+  producing the canonical **dual block-angular** structure that decomposition
+  methods (L-shaped / Benders) target — a structure absent from the prior set.
+  Complete recourse keeps the second stage always feasible; feasibility is
+  controlled entirely through a first-stage resource budget vs. minimum committed
+  capacity. Variables: `n_facilities + S·(n_facilities·n_customers + n_customers)`.
+
+- **`energy/dc_opf`** (`src/problem_types/energy/dc_opf.jl`): DC optimal power
+  flow / economic dispatch over a transmission network. Couples a flow network to
+  physical bus-angle variables through susceptance-weighted (non-±1, non-unimodular)
+  flow-definition rows, with nodal power balance, thermal line limits, and
+  generator bounds. The feasible case is guaranteed by constructing an explicit
+  DC-power-flow witness (a reduced network-Laplacian solve) and sizing line limits
+  to accommodate it; infeasibility is forced via generation–load imbalance.
+  Variables: `n_generators + n_buses + n_lines`. Adds `:dc_opf` as a further
+  `energy` variant (alongside `:standard` and the others); the entry point gained a
+  category-level `register_category` description and `:standard` remains the default.
+
+- **`regression`** category with three variants — `:lad` (default), `:quantile`,
+  and `:chebyshev` (`src/problem_types/regression/`): least-absolute-deviations
+  (L1), quantile (pinball-loss), and Chebyshev (L∞/minimax) regression as LPs.
+  These introduce **dense data-matrix LPs** — a numerical/structural profile that
+  diversifies the otherwise sparse, combinatorial test set. The three variants
+  share a common data generator (`generate_regression_data`) and differ only in
+  the loss being linearized; feasibility is controlled by a coefficient side
+  constraint relative to per-coefficient box bounds.
+
+- **`revenue_management/standard`** (`src/problem_types/revenue_management/`):
+  network revenue management deterministic LP (the "DLP"). Allocates perishable
+  resource (e.g. flight-leg) capacity to fare-bearing products over a
+  resource–product incidence matrix to maximize revenue; the optimal duals are the
+  bid prices used in RM control. Feasibility is controlled through contractual
+  commitments (minimum acceptances) vs. resource capacity. Variables: `n_products`.
+
+### Changed
+
+- **`src/SyntheticLPs.jl`**: registered the three new category entry points in the
+  include list.
+- **`src/problem_types/energy/energy.jl`**: added an explicit `register_category`
+  description and an `include` for `dc_opf.jl`.
+- **README.md / CLAUDE.md**: updated the category listings and counts (28 → 31),
+  and documented the multi-variant `energy` and `regression` categories.
+
 ## 2026-06-19 22:47 EDT (PR #16 review feedback)
 
 **Previous Commit**: `fc0ba22`

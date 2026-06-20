@@ -33,7 +33,7 @@ with more than one variant are annotated below.
 - Airline Crew
 - Bin Packing
 - Cutting Stock — variants: `standard`, `setup_cost`, `due_dates`
-- Energy — variants: `standard`, `ramping`, `reserves`, `storage`, `transmission`
+- Energy — variants: `standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`
 - Facility Location — variants: `standard`, `two_echelon`
 - Feed Blending
 - Inventory — variants: `standard`, `lot_sizing`, `multi_item`, `multi_echelon`
@@ -43,12 +43,20 @@ with more than one variant are annotated below.
 - Nurse Scheduling
 - Product Mix
 - Project Selection
+- Regression (dense statistical LPs: least-absolute-deviations, quantile, and Chebyshev/minimax)
 - Resource Allocation
+- Revenue Management (network deterministic LP / bid-price)
 - Scheduling
+- Stochastic Program (two-stage with recourse; dual block-angular structure)
 - Supply Chain — variants: `standard`, `single_source`, `carbon`, `multi_product`
 - Crop Planning
 - Telecom Network Design
 - Unit Commitment
+
+Several categories ship multiple variants — for example `energy` has `standard`
+(generation mix) and `dc_opf` (DC optimal power flow), and `regression` has
+`lad`, `quantile`, and `chebyshev` — selectable via the `variant=` keyword or a
+`"category/variant"` reference (see below).
 
 ## Usage
 

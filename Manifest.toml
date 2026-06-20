@@ -2,7 +2,7 @@
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "517f598ce6e85da4e992896404e0abc33b6c7431"
+project_hash = "ca918b1123e1067a461f00edbc0b93a7da6685ca"
 
 [[deps.AliasTables]]
 deps = ["PtrArrays", "Random"]
@@ -427,7 +427,7 @@ uuid = "bea87d4a-7f5b-5778-9afe-8cc45184846c"
 version = "7.8.3+2"
 
 [[deps.SyntheticLPs]]
-deps = ["Distributions", "JSON", "JuMP", "LinearAlgebra", "Random", "Statistics", "StatsBase"]
+deps = ["Distributions", "JSON", "JuMP", "LinearAlgebra", "Random", "SparseArrays", "Statistics", "StatsBase"]
 path = "."
 uuid = "6c18d9e4-3017-4cc6-8f05-9e4aefa327ea"
 version = "0.1.0"
