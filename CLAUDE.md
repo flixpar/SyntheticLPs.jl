@@ -72,7 +72,7 @@ julia --project=@.
 
 ## Architecture
 
-SyntheticLPs uses a type-based dispatch system for generating realistic linear programming problems. Problems are organized as a two-level hierarchy: a **category** (a problem domain, e.g. `:transportation`) groups one or more **variants** (concrete generators with their own data generation and model formulation, e.g. `:standard`). There are 29 categories; most have a single variant, while several (transportation, energy, inventory, supply_chain, blending, cutting_stock, diet_problem, facility_location, knapsack, network_flow, assignment, portfolio) carry multiple variants with distinct formulations. All generators follow a consistent pattern using Julia's multiple dispatch.
+SyntheticLPs uses a type-based dispatch system for generating realistic linear programming problems. Problems are organized as a two-level hierarchy: a **category** (a problem domain, e.g. `:transportation`) groups one or more **variants** (concrete generators with their own data generation and model formulation, e.g. `:standard`). There are 32 categories; most have a single variant, while several (transportation, energy, inventory, supply_chain, blending, cutting_stock, diet_problem, facility_location, knapsack, network_flow, assignment, portfolio, regression) carry multiple variants with distinct formulations. All generators follow a consistent pattern using Julia's multiple dispatch.
 
 ### Core Components
 
@@ -159,22 +159,24 @@ register_variant(:category, :standard, VariantStruct, "Description")
 
 ### Available Problem Categories
 
-The system includes 29 categories covering major LP/MIP problem classes. Each
-category's default variant is `:standard` except `portfolio` (`:cvar`) and
-`vehicle_routing` (`:cvrp`).
+The system includes 32 categories covering major LP/MIP problem classes. Each
+category's default variant is `:standard` except `portfolio` (`:cvar`),
+`vehicle_routing` (`:cvrp`), and `regression` (`:lad`).
 Categories with multiple variants are listed with them below.
 - Transportation (`standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`), Diet Problem (`standard`, `nutrient_bounds`, `food_groups`), Knapsack (`standard`, `multidimensional`, `bounded`), Portfolio (`cvar`, `tracking_error`), Network Flow (`standard`, `generalized_flow`), Multi-Commodity Flow
 - Production Planning, Assignment (`standard`, `workload_balance`), Blending (`standard`, `equipment_batches`, `multi_product`), Facility Location (`standard`, `two_echelon`, `p_median`), Crop Planning
-- Airline Crew, Bin Packing, Cutting Stock (`standard`, `setup_cost`, `due_dates`), Energy (`standard`, `ramping`, `reserves`, `storage`, `transmission`), Feed Blending, Inventory (`standard`, `lot_sizing`, `multi_item`, `multi_echelon`), Telecom Network Design
+- Airline Crew, Bin Packing, Cutting Stock (`standard`, `setup_cost`, `due_dates`), Energy (`standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`), Feed Blending, Inventory (`standard`, `lot_sizing`, `multi_item`, `multi_echelon`), Telecom Network Design
 - Job Shop Scheduling, Land Use, Load Balancing, Nurse Scheduling, Product Mix, Project Selection
 - Resource Allocation, Scheduling, Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`), Unit Commitment, Vehicle Routing (`cvrp`)
+- Regression (`lad`, `quantile`, `chebyshev`; dense statistical LPs), Revenue Management (network DLP), Stochastic Program (two-stage with recourse)
 
 #### Model classes (LP / MIP / LP relaxation)
 
 The corpus deliberately mixes three model classes; treat the names accordingly:
 - **Pure LPs**: continuous formulations (e.g. transportation variants, diet
   variants, blending variants, most energy variants, `network_flow/generalized_flow`,
-  and both portfolio variants `cvar`/`tracking_error`).
+  both portfolio variants `cvar`/`tracking_error`, regression variants, revenue
+  management, and stochastic program).
 - **MIPs** (binary/integer variables): e.g. `facility_location` variants
   (including `p_median`), `cutting_stock/setup_cost`, `inventory/lot_sizing`,
   `bin_packing`, `job_shop_scheduling`, `supply_chain/single_source`,
