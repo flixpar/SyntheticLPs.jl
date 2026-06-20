@@ -4,7 +4,66 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## 2026-06-19 (PR #15 review fixes)
+## 2026-06-19 21:57 EDT (hierarchical problem variant system)
+
+**Previous Commit**: `d350e8e`
+
+**Summary**: Introduced a first-class two-level problem hierarchy — a **category**
+(the former "problem type", e.g. `:transportation`) groups one or more
+**variants** (concrete generators with their own data generation and model
+formulation, e.g. `:standard`). Each of the 24 problem types was migrated from a
+single flat file into a folder with a thin category entry point plus one file per
+variant, so new formulations can be added as separate files rather than as
+branching logic inside one large file. No new variants were added: every category
+keeps its existing single formulation (named `:standard`, except `portfolio`'s
+CVaR formulation which is `:cvar`). Breaking change (research package, no
+back-compat shims).
+
+### Added
+
+- **`ProblemVariant` identifier** (`src/SyntheticLPs.jl`): a `category/variant`
+  reference used throughout the package. Constructible from `(category, variant)`
+  symbols, a bare category symbol (→ the category's default variant), or a
+  `"category"`/`"category/variant"` string; prints as `category/variant`.
+- **Two-level registry** (`src/SyntheticLPs.jl`): `LP_REGISTRY::Dict{Symbol,CategorySpec}`
+  with `CategorySpec`/`VariantSpec`. New registration API `register_category(:cat,
+  desc)` and `register_variant(:cat, :variant, Type, desc; default=false)`. A
+  variant lazily creates its category (using the variant's description) so
+  single-variant categories need no explicit `register_category` call; the first
+  registered variant is the default unless `default=true` designates another.
+- **Introspection**: `list_categories()`, `list_variants(category)`,
+  `list_problems()` (all `category/variant` pairs), and `problem_info(category,
+  variant)` for variant-level metadata.
+- **Variant selection** in `generate_problem`: accepts a category symbol with an
+  optional `variant=` keyword, a `ProblemVariant`, or a `"category/variant"`
+  string (via the scripts). `scripts/generate_problem.jl` accepts
+  `category/variant` and its `list` shows variants; `scripts/generate_lps.jl`
+  `--problem-types` accepts categories (expand to all their variants) and explicit
+  `category/variant` references.
+
+### Changed
+
+- **Problem type layout** (`src/problem_types/`): each `<name>.jl` became
+  `<name>/{<name>.jl (entry point), <variant>.jl (variant)}`; `register_problem`
+  was replaced by `register_variant`. Include paths in `src/SyntheticLPs.jl`
+  updated accordingly.
+- **`list_problem_types()`** now aliases `list_categories()` (still returns a
+  `Vector{Symbol}` of categories).
+- **`generate_random_problem`** now returns the selected `ProblemVariant` as its
+  second value (was a category `Symbol`); sampling is uniform over all registered
+  variants.
+- **Dataset generation** (`src/dataset.jl`): `GeneratedInstance` gained a
+  `variant::Symbol` field (`problem_type` still holds the category).
+  `resolve_problem_types` returns `Vector{ProblemVariant}`, expanding a selected
+  category to all its variants (sorted) and accepting explicit `category/variant`
+  selectors. Sampling is over variants; `match_size_by_type` groups quotas by
+  category. Instance filenames now include the variant
+  (`<category>_<variant>_v<n>_<idx>.<ext>`), and `manifest.json` records a
+  per-instance `variant` (with `problem_types` listed as `category/variant`).
+
+### Removed
+
+- **`register_problem`**: superseded by `register_category` + `register_variant`.
 
 **Previous Commit**: `7d25612`
 

@@ -51,13 +51,13 @@ using SyntheticLPs
 using JuMP
 using Clp  # or any other LP solver
 
-# List available problem types
-problem_types = list_problem_types()
+# List available problem categories
+categories = list_problem_types()   # alias for list_categories()
 
-# Get information about a problem type
+# Get information about a category (its description, variants, default variant)
 info = problem_info(:transportation)
 
-# Generate a problem with target variable count
+# Generate a problem with target variable count (uses the category's default variant)
 model, problem = generate_problem(:transportation, 100, unknown, 0)
 
 # The problem instance contains all the generated data
@@ -68,6 +68,28 @@ println("Number of destinations: ", problem.n_destinations)
 set_optimizer(model, Clp.Optimizer)
 optimize!(model)
 solution_summary(model)
+```
+
+### Categories and Variants
+
+Each problem domain is a **category** (e.g. `:transportation`) that groups one or
+more **variants** — concrete formulations with their own data generation and
+model. A `ProblemVariant` names one variant of one category and prints as
+`category/variant`.
+
+```julia
+# Every registered category and variant
+list_categories()                       # [:airline_crew, :assignment, ...]
+list_variants(:portfolio)               # [:cvar]
+list_problems()                         # [ProblemVariant(:airline_crew, :standard), ...]
+
+# Select a specific variant — three equivalent forms
+model, problem = generate_problem(:portfolio, 100, unknown, 0; variant=:cvar)
+model, problem = generate_problem(ProblemVariant(:portfolio, :cvar), 100, unknown, 0)
+model, problem = generate_problem(ProblemVariant("portfolio/cvar"), 100, unknown, 0)
+
+# Variant-level metadata
+problem_info(:portfolio, :cvar)         # Dict with :description, :type, ...
 ```
 
 ### Feasibility Control
@@ -99,15 +121,15 @@ model2, problem2 = generate_problem(:knapsack, 50, unknown, seed)
 ### Random Problem Generation
 
 ```julia
-# Generate a random problem of any type targeting ~100 variables
-model, problem_type, problem = generate_random_problem(100)
+# Generate a random problem of any variant targeting ~100 variables
+model, ref, problem = generate_random_problem(100)
 
-# Check what problem type was selected and its variable count
-println("Problem type: $problem_type")
+# `ref` is a ProblemVariant (prints as `category/variant`)
+println("Problem: $ref")           # e.g. "transportation/standard"
 println("Variables: $(num_variables(model))")
 
 # Generate with feasibility control
-model, problem_type, problem = generate_random_problem(200; feasibility_status=feasible)
+model, ref, problem = generate_random_problem(200; feasibility_status=feasible)
 
 # Solve the model
 set_optimizer(model, Clp.Optimizer)
@@ -185,16 +207,30 @@ instances = generate_dataset(
 A single instance can also be evaluated directly with
 `check_quality(model, HiGHS.Optimizer)`.
 
-## Extending with New Problem Types
+## Extending with New Categories and Variants
 
-To add a new problem type:
+Each category lives in its own folder under `src/problem_types/<category>/`:
 
-1. Create a new file in `src/problem_types/your_problem.jl`
-2. Define a struct inheriting from `ProblemGenerator`
-3. Implement the constructor and `build_model` function
-4. Register the problem type
+```
+src/problem_types/transportation/
+    transportation.jl   # category entry point: includes the variant file(s)
+    standard.jl         # a variant: struct + constructor + build_model + register_variant
+```
 
-Example template:
+**To add a new variant to an existing category**, create a file in that
+category's folder, implement it (see template below), and `include` it from the
+category's `<category>.jl` entry point.
+
+**To add a new category**, create `src/problem_types/<category>/<category>.jl`
+(the entry point), add at least one variant file, and add a single
+`include("problem_types/<category>/<category>.jl")` line to `src/SyntheticLPs.jl`.
+
+A category is created automatically by its first variant's `register_variant`
+call (which supplies the category description). Call `register_category(:cat,
+"…")` explicitly in the entry point only when you want a category-level
+description distinct from its variants (typical once a category has several).
+
+Variant file template:
 
 ```julia
 using JuMP
@@ -251,12 +287,20 @@ function build_model(prob::YourProblem)
     return model
 end
 
-# Register the problem type
-register_problem(
-    :your_problem,
+# Register this variant under its category (lazily creates the category)
+register_variant(
+    :your_category,
+    :your_variant,
     YourProblem,
-    "Description of your problem"
+    "Description of this variant"
 )
+```
+
+The category entry point (`src/problem_types/your_category/your_category.jl`)
+then just includes the variant file(s):
+
+```julia
+include("your_variant.jl")
 ```
 
 Key principles:
@@ -270,8 +314,14 @@ Key principles:
 The package includes a command-line script for generating problems:
 
 ```bash
-# Generate a transportation problem with ~100 variables
+# Generate a transportation problem with ~100 variables (category default variant)
 julia --project=@. scripts/generate_problem.jl transportation 100 problem.mps
+
+# Select a specific variant with category/variant
+julia --project=@. scripts/generate_problem.jl portfolio/cvar 100 problem.mps
+
+# List all categories and their variants
+julia --project=@. scripts/generate_problem.jl list
 
 # Generate a feasible knapsack problem with ~50 variables and solve it
 julia --project=@. scripts/generate_problem.jl knapsack 50 --feasible --solve

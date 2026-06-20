@@ -7,16 +7,17 @@ using JSON
 using SyntheticLPs
 
 """
-    test_problem_generator(problem_type::Symbol)
+    test_problem_generator(ref)
 
-Test the problem generator for the given problem type.
+Test the problem generator for the given problem reference (a `ProblemVariant`,
+or anything else accepted by `generate_problem`).
 """
-function test_problem_generator(problem_type::Symbol)
-    @testset "$(problem_type) Problem Generator" begin
+function test_problem_generator(ref)
+    @testset "$(ref) Problem Generator" begin
         # Test with different target variable counts
         for target_vars in [50, 100, 500]
             @test_nowarn begin
-                model, problem = generate_problem(problem_type, target_vars, unknown, 0)
+                model, problem = generate_problem(ref, target_vars, unknown, 0)
                 @test model isa JuMP.Model
                 @test problem isa ProblemGenerator
 
@@ -36,7 +37,7 @@ function test_problem_generator(problem_type::Symbol)
         # Test with different feasibility statuses
         for feas_status in [feasible, infeasible, unknown]
             @test_nowarn begin
-                model, problem = generate_problem(problem_type, 100, feas_status, 0)
+                model, problem = generate_problem(ref, 100, feas_status, 0)
                 @test model isa JuMP.Model
                 @test problem isa ProblemGenerator
                 @test num_variables(model) > 0
@@ -47,8 +48,8 @@ function test_problem_generator(problem_type::Symbol)
         seed = 12345
         @test_nowarn begin
             # Generate the same problem twice with the same seed
-            model1, problem1 = generate_problem(problem_type, 150, unknown, seed)
-            model2, problem2 = generate_problem(problem_type, 150, unknown, seed)
+            model1, problem1 = generate_problem(ref, 150, unknown, seed)
+            model2, problem2 = generate_problem(ref, 150, unknown, seed)
 
             # Verify that the models are identical (same number of vars and constraints)
             @test num_variables(model1) == num_variables(model2)
@@ -80,16 +81,16 @@ end
         # Test random problem generation
         @test_nowarn begin
             # Test with target variables
-            model, type, problem = generate_random_problem(100)
+            model, ref, problem = generate_random_problem(100)
             @test model isa JuMP.Model
-            @test type isa Symbol
+            @test ref isa ProblemVariant
             @test problem isa ProblemGenerator
             @test num_variables(model) > 0
 
             # Test with feasibility status
-            model2, type2, problem2 = generate_random_problem(100; feasibility_status=feasible)
+            model2, ref2, problem2 = generate_random_problem(100; feasibility_status=feasible)
             @test model2 isa JuMP.Model
-            @test type2 isa Symbol
+            @test ref2 isa ProblemVariant
             @test problem2 isa ProblemGenerator
             @test num_variables(model2) > 0
         end
@@ -100,9 +101,47 @@ end
         @test unknown isa FeasibilityStatus
     end
 
-    # Test individual problem generators
-    for problem_type in list_problem_types()
-        test_problem_generator(problem_type)
+    # Test the category/variant interface
+    @testset "Variant Interface" begin
+        cats = list_categories()
+        @test cats isa Vector{Symbol}
+        @test Set(cats) == Set(list_problem_types())
+
+        problems = list_problems()
+        @test problems isa Vector{ProblemVariant}
+        @test !isempty(problems)
+        # Every category contributes at least one variant.
+        @test Set(p.category for p in problems) == Set(cats)
+
+        # Listing variants of a category.
+        @test list_variants(:transportation) == [:standard]
+        @test list_variants(:portfolio) == [:cvar]
+
+        # ProblemVariant construction, parsing, and printing.
+        @test ProblemVariant("transportation") == ProblemVariant(:transportation, :standard)
+        @test ProblemVariant("transportation/standard") == ProblemVariant(:transportation, :standard)
+        @test string(ProblemVariant("transportation/standard")) == "transportation/standard"
+        @test_throws ErrorException ProblemVariant("a/b/c")
+
+        # Variant-level info.
+        vinfo = problem_info(:transportation, :standard)
+        @test vinfo isa Dict
+        @test vinfo[:description] isa String
+
+        # Generating via every selector form yields the same model size.
+        m_cat, _ = generate_problem(:transportation, 100, unknown, 0)
+        m_kw, _ = generate_problem(:transportation, 100, unknown, 0; variant=:standard)
+        m_ref, _ = generate_problem(ProblemVariant("transportation/standard"), 100, unknown, 0)
+        @test num_variables(m_cat) == num_variables(m_kw) == num_variables(m_ref)
+
+        # Unknown category / variant are rejected.
+        @test_throws ErrorException generate_problem(:not_a_category, 50, unknown, 0)
+        @test_throws ErrorException generate_problem(:transportation, 50, unknown, 0; variant=:nope)
+    end
+
+    # Test individual problem generators (every registered variant)
+    for ref in list_problems()
+        test_problem_generator(ref)
     end
 
     # Test batch dataset generation
@@ -118,6 +157,7 @@ end
         @test all(inst -> inst.num_constraints >= 0, instances)
         @test [inst.index for inst in instances] == collect(1:6)
         @test all(inst -> inst.filename === nothing, instances)  # no output_dir
+        @test all(inst -> inst.variant == :standard, instances)  # category default
 
         # Reproducibility: same seed → identical dataset
         instances2 = generate_dataset(num_problems = 6, var_mean = 80, var_std = 20,
@@ -200,11 +240,13 @@ end
         @test length(written) == 4
         @test all(inst -> inst.filename !== nothing, written)
         @test all(inst -> isfile(joinpath(tmp, inst.filename)), written)
+        @test all(inst -> occursin("_$(inst.variant)_", inst.filename), written)  # variant in filename
         @test isfile(joinpath(tmp, "manifest.json"))
         manifest = JSON.parsefile(joinpath(tmp, "manifest.json"))
         @test manifest["config"]["size_match"]["enabled"] == true
         @test manifest["config"]["size_match"]["candidate_multiplier"] == 2
         @test length(manifest["config"]["size_match"]["groups"]) == 1
+        @test all(inst -> haskey(inst, "variant"), manifest["instances"])
 
         # Manifest can be disabled
         tmp2 = mktempdir()

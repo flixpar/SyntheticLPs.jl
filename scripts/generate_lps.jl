@@ -72,7 +72,9 @@ function parse_commandline()
             help = "Only generate problems guaranteed to be feasible"
             action = :store_true
         "--problem-types"
-            help = "Comma-separated list of problem types to sample from (default: all)"
+            help = "Comma-separated list of categories (e.g. transportation) or " *
+                   "category/variant references (e.g. portfolio/cvar) to sample " *
+                   "from. A category expands to all its variants. (default: all)"
             default = ""
         "--file-format"
             help = "Output file format / extension (e.g. mps, lp)"
@@ -119,7 +121,9 @@ function main()
     args = parse_commandline()
 
     types_str = args["problem-types"]
-    problem_types = isempty(types_str) ? nothing : Symbol.(strip.(split(types_str, ",")))
+    # Pass selectors through as strings so `resolve_problem_types` can parse both
+    # bare categories and `category/variant` references.
+    problem_types = isempty(types_str) ? nothing : String.(strip.(split(types_str, ",")))
 
     distribution_name = lowercase(args["size-distribution"])
     size_distribution = if distribution_name == "normal"

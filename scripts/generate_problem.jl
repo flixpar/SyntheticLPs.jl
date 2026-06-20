@@ -1,11 +1,16 @@
 # Script to generate LP problems using SyntheticLPs module
 # Usage:
-#   julia --project=@. scripts/generate_problem.jl [problem_type] [target_variables] [output_file]
+#   julia --project=@. scripts/generate_problem.jl [problem] [target_variables] [output_file]
+#
+# `problem` is a category (e.g. `transportation`, uses its default variant), a
+# `category/variant` reference (e.g. `portfolio/cvar`), `random`, or `list`.
 #
 # Example:
 #   julia --project=@. scripts/generate_problem.jl transportation 100 problem.mps
+#   julia --project=@. scripts/generate_problem.jl portfolio/cvar 100 problem.mps
 #   julia --project=@. scripts/generate_problem.jl knapsack 50 --feasible --solve
 #   julia --project=@. scripts/generate_problem.jl diet_problem 100 --infeasible
+#   julia --project=@. scripts/generate_problem.jl list
 
 using Pkg
 Pkg.activate(@__DIR__)
@@ -18,7 +23,7 @@ using JuMP
 using HiGHS
 
 # Parse command line arguments
-problem_type = length(ARGS) >= 1 ? Symbol(ARGS[1]) : :random
+problem_arg = length(ARGS) >= 1 ? ARGS[1] : "random"
 target_variables = length(ARGS) >= 2 ? parse(Int, ARGS[2]) : 50
 output_file = nothing
 feasibility_status = unknown
@@ -41,32 +46,43 @@ for arg in ARGS[3:end]
     end
 end
 
-# Get the list of available problem types
-available_types = list_problem_types()
-
-if problem_type == :list
-    println("Available problem types:")
-    for (i, type) in enumerate(sort(available_types))
-        info = problem_info(type)
-        println("  $i. $type - $(info[:description])")
+if problem_arg == "list"
+    println("Available problem categories (and variants):")
+    for (i, category) in enumerate(sort(list_categories()))
+        info = problem_info(category)
+        println("  $i. $category - $(info[:description])")
+        for v in info[:variants]
+            marker = v == info[:default_variant] ? " (default)" : ""
+            println("       • $category/$v$marker")
+        end
     end
     exit(0)
-elseif problem_type == :random
+elseif problem_arg == "random"
     println("Generating a random problem targeting ~$target_variables variables")
     println("Feasibility status: $feasibility_status")
-    model, selected_type, problem = generate_random_problem(target_variables; feasibility_status=feasibility_status, seed=seed)
-    println("Problem type selected: $selected_type")
+    model, selected_ref, problem = generate_random_problem(target_variables; feasibility_status=feasibility_status, seed=seed)
+    println("Problem selected: $selected_ref")
 else
-    if !(problem_type in available_types)
-        println("Error: Unknown problem type '$problem_type'")
-        println("Available types: $(sort(available_types))")
-        println("Use 'list' to see details of all problem types")
+    # Accept a category (default variant) or an explicit `category/variant`.
+    parts = split(problem_arg, '/')
+    category = Symbol(parts[1])
+    if !(category in list_categories())
+        println("Error: Unknown problem category '$category'")
+        println("Available categories: $(sort(list_categories()))")
+        println("Use 'list' to see all categories and their variants.")
         exit(1)
     end
+    if length(parts) == 2 && !(Symbol(parts[2]) in list_variants(category))
+        println("Error: Unknown variant '$(parts[2])' for category '$category'")
+        println("Available variants: $(list_variants(category))")
+        exit(1)
+    end
+    ref = length(parts) == 2 ? ProblemVariant(category, Symbol(parts[2])) :
+                               ProblemVariant(category)
 
-    println("Generating $problem_type problem targeting ~$target_variables variables")
+    println("Generating $ref problem targeting ~$target_variables variables")
     println("Feasibility status: $feasibility_status")
-    model, problem = generate_problem(problem_type, target_variables, feasibility_status, seed)
+    model, problem = generate_problem(ref, target_variables, feasibility_status, seed)
 end
 
 # Print summary

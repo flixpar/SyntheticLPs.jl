@@ -1,11 +1,13 @@
 # SyntheticLPs Generator Documentation
 
 This directory documents each synthetic LP generator implemented under
-`src/problem_types/`. Every generator follows the same package-level contract:
-the constructor samples all randomized data from `target_variables`,
-`feasibility_status`, and `seed`, stores that data in a concrete
-`ProblemGenerator` struct, and `build_model` converts the stored data into a
-deterministic JuMP model.
+`src/problem_types/`. Generators are organized as **categories** (problem
+domains, one folder each under `src/problem_types/<category>/`) that group one or
+more **variants** (concrete formulations, one file each). Every variant follows
+the same package-level contract: the constructor samples all randomized data from
+`target_variables`, `feasibility_status`, and `seed`, stores that data in a
+concrete `ProblemGenerator` struct, and `build_model` converts the stored data
+into a deterministic JuMP model.
 
 For a browsable, high-level tour of all generators alongside these details, open
 the self-contained [HTML explainer](explainer.html) (no server or internet
