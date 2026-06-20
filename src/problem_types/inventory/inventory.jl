@@ -7,3 +7,6 @@
 # creating a file in this folder and including it below.
 
 include("standard.jl")
+include("lot_sizing.jl")
+include("multi_item.jl")
+include("multi_echelon.jl")
