@@ -7,6 +7,11 @@ the constructor samples all randomized data from `target_variables`,
 `ProblemGenerator` struct, and `build_model` converts the stored data into a
 deterministic JuMP model.
 
+For a browsable, high-level tour of all generators alongside these details, open
+the self-contained [HTML explainer](explainer.html) (no server or internet
+required). It is generated from these markdown pages by
+`scripts/build_explainer.py`.
+
 ## Shared Interface
 
 Use `generate_problem(problem_sym, target_variables, feasibility_status, seed)`
