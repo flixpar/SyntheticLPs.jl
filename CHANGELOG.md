@@ -4,6 +4,20 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-06-19 (PR #15 review fixes)
+
+**Previous Commit**: `7d25612`
+
+### Fixed
+
+- **Size-distribution truncation** (`_resolve_size_distribution`, `src/dataset.jl`): a user-supplied `size_distribution` is now truncated to `lower = 2` whenever its support reaches below 2 (finite lower bound `< 2`, e.g. `Uniform(0, 100)`/`Exponential`, in addition to the existing unbounded-below case). Previously only `-Inf`-lower distributions were truncated, so finite-support distributions could yield sizes that round toward 0/1. Also added an explicit error when the distribution's upper bound is `< 2`.
+- **Duplicate problem types** (`resolve_problem_types`, `src/dataset.jl`): the requested `problem_types` are now de-duplicated via `unique`. Duplicates previously inflated `length(types)` in `_type_quotas` while collapsing in the per-type `Dict`, corrupting the per-type quota math under `match_size_by_type`.
+- **Degeneracy check with zero constraints** (`check_quality`, `src/dataset.jl`): the excessive-iterations (degenerate) check is now guarded by `n_cons > 0`. With `min_constraints = 0`, `n_cons` could be 0, making `max_iters = 0` and rejecting every nonzero iteration count as degenerate.
+
+### Changed
+
+- **Manifest reproducibility** (`src/dataset.jl`): `manifest.json` now records the `quality_criteria` used to filter the dataset, via a new `_jsonable(::QualityCriteria)` method. This makes a filtered dataset fully documented/reproducible from the manifest alone.
+
 ## 2026-06-19 (code review fixes)
 
 **Previous Commit**: `e3aaec0`

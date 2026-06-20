@@ -157,9 +157,13 @@ function check_quality(model::Model, optimizer;
         end
 
         # Excessive iterations relative to problem size — likely degenerate.
-        max_iters = ceil(Int, criteria.max_iteration_ratio * n_cons)
-        if iters > max_iters
-            return QualityResult(false, "degenerate", iters, stime, ts)
+        # Skip when n_cons == 0 (e.g. min_constraints == 0): max_iters would be
+        # 0 and reject every nonzero iteration count as degenerate.
+        if n_cons > 0
+            max_iters = ceil(Int, criteria.max_iteration_ratio * n_cons)
+            if iters > max_iters
+                return QualityResult(false, "degenerate", iters, stime, ts)
+            end
         end
     end
 
@@ -217,7 +221,7 @@ function resolve_problem_types(problem_types)
         # version, contradicting the documented seed-reproducibility guarantee.
         return sort(available)
     end
-    requested = Symbol.(problem_types)
+    requested = unique(Symbol.(problem_types))
     invalid = setdiff(requested, available)
     if !isempty(invalid)
         error("Unknown problem types: $(join(invalid, ", ")). " *
@@ -271,7 +275,18 @@ function _resolve_size_distribution(size_distribution, mean::Real, std::Real,
         catch
             -Inf
         end
-        if !isfinite(lower_bound)
+        upper_bound = try
+            maximum(size_distribution)
+        catch
+            Inf
+        end
+        if upper_bound < 2
+            error("size_distribution upper bound ($upper_bound) must be >= 2.")
+        end
+        # Truncate to lower=2 whenever the support reaches below 2 (including
+        # unbounded-below distributions), so sampled sizes are always valid
+        # problem sizes rather than rounding toward 0.
+        if !isfinite(lower_bound) || lower_bound < 2
             dist = truncated(size_distribution; lower = 2)
             desc = "truncated($(string(size_distribution)); lower=2)"
             return _SizeDistributionSpec(dist, desc)
@@ -948,6 +963,7 @@ function generate_dataset(;
                         var_mean = var_mean, var_std = var_std,
                         var_min = var_min, var_max = var_max,
                         feasible_only = feasible_only, quality_filter = quality_filter,
+                        quality_criteria = quality_criteria,
                         attempts = stats.attempts, failed = stats.failed,
                         filter_counts = stats.filter_counts,
                         size_match = size_match_report)
@@ -1005,3 +1021,9 @@ end
 # Make filter-count dicts and other values JSON-friendly.
 _jsonable(x) = x
 _jsonable(d::AbstractDict) = Dict(string(k) => _jsonable(v) for (k, v) in d)
+_jsonable(c::QualityCriteria) = Dict(
+    "solve_timeout" => c.solve_timeout,
+    "min_constraints" => c.min_constraints,
+    "min_iterations" => c.min_iterations,
+    "max_iteration_ratio" => c.max_iteration_ratio,
+)
