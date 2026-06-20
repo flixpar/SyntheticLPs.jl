@@ -27,9 +27,9 @@ println("\nLarge transportation problem with ~500 variables:")
 println("  - ", problem.n_sources, " sources")
 println("  - ", problem.n_destinations, " destinations")
 
-# Example 4: Generate a random problem of any type
-model, problem_type, problem = generate_random_problem(200)
-println("\nRandom problem of type: ", problem_type, " with ~200 variables")
+# Example 4: Generate a random problem of any variant
+model, ref, problem = generate_random_problem(200)
+println("\nRandom problem: ", ref, " with ~200 variables")
 
 # Example 5: Generate a feasible knapsack problem and solve it
 model, problem = generate_problem(:knapsack, 75, feasible, 42)

@@ -46,8 +46,8 @@ end
 # Test random problem generation
 println("\nTesting random problem generation...")
 try
-    model, problem_sym, problem = generate_random_problem(50; feasibility_status=unknown, seed=42)
-    println("✓ Successfully generated random problem of type $problem_sym with $(num_variables(model)) variables and $(num_constraints(model, count_variable_in_set_constraints=true)) constraints")
+    model, ref, problem = generate_random_problem(50; feasibility_status=unknown, seed=42)
+    println("✓ Successfully generated random problem $ref with $(num_variables(model)) variables and $(num_constraints(model, count_variable_in_set_constraints=true)) constraints")
 catch e
     println("✗ Error generating random problem: $(e)")
 end

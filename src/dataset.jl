@@ -181,7 +181,8 @@ Metadata describing a single instance produced by [`generate_dataset`](@ref).
 
 # Fields
 - `index::Int`: 1-based position of the instance within the dataset.
-- `problem_type::Symbol`: which generator produced it.
+- `problem_type::Symbol`: the category that produced it (e.g. `:transportation`).
+- `variant::Symbol`: the variant within that category (e.g. `:standard`).
 - `target_variables::Int`: requested variable count.
 - `num_variables::Int`: actual variable count of the built model.
 - `num_constraints::Int`: actual constraint count (excludes variable bounds).
@@ -195,6 +196,7 @@ Metadata describing a single instance produced by [`generate_dataset`](@ref).
 struct GeneratedInstance
     index::Int
     problem_type::Symbol
+    variant::Symbol
     target_variables::Int
     num_variables::Int
     num_constraints::Int
@@ -206,29 +208,57 @@ struct GeneratedInstance
 end
 
 """
-    resolve_problem_types(problem_types)
+    resolve_problem_types(problem_types) -> Vector{ProblemVariant}
 
-Normalize a user-supplied `problem_types` selection into a validated vector of
-registered problem-type symbols. `nothing` or an empty collection selects all
-registered types. Throws if any requested type is not registered.
+Normalize a user-supplied `problem_types` selection into a validated, de-duplicated
+vector of `ProblemVariant`s.
+
+`nothing` or an empty collection selects every registered variant. Each selector
+may be:
+- a category `Symbol` (e.g. `:transportation`) or bare string (`"transportation"`),
+  which expands to *all* variants of that category, sorted;
+- a `"category/variant"` string or a `ProblemVariant`, naming one specific variant.
+
+Throws if any requested category or variant is not registered.
 """
 function resolve_problem_types(problem_types)
-    available = list_problem_types()
     if problem_types === nothing || isempty(problem_types)
-        # Sort so the default "all types" selection has a stable order: the RNG
-        # consumes types positionally, so an unsorted Dict key order would make
-        # a seeded dataset reproducible only within a single process/Julia
-        # version, contradicting the documented seed-reproducibility guarantee.
-        return sort(available)
+        # `list_problems()` returns every variant sorted by (category, variant).
+        # A stable order matters because the RNG consumes selections
+        # positionally, so an unsorted order would make a seeded dataset
+        # reproducible only within a single process/Julia version.
+        return list_problems()
     end
-    requested = unique(Symbol.(problem_types))
-    invalid = setdiff(requested, available)
-    if !isempty(invalid)
-        error("Unknown problem types: $(join(invalid, ", ")). " *
-              "Available: $(join(sort(available), ", "))")
+
+    resolved = ProblemVariant[]
+    for sel in problem_types
+        append!(resolved, _expand_selector(sel))
     end
-    return requested
+    return unique(resolved)
 end
+
+# Expand a single selector into its concrete variants, validating against the
+# registry. A category expands to all its (sorted) variants; an explicit
+# `category/variant` reference resolves to just that variant.
+function _expand_selector(sel::ProblemVariant)
+    get_variant(sel)  # validates category + variant; throws if unknown
+    return [sel]
+end
+function _expand_selector(sel::AbstractString)
+    return occursin('/', sel) ? _expand_selector(ProblemVariant(sel)) :
+                                _expand_selector(Symbol(strip(sel)))
+end
+function _expand_selector(sel::Symbol)
+    haskey(LP_REGISTRY, sel) ||
+        error("Unknown problem category: $sel. " *
+              "Available: $(join(sort(list_categories()), ", "))")
+    return [ProblemVariant(sel, v) for v in list_variants(sel)]
+end
+
+# Distinct categories (sorted) covered by a set of variants — used to group
+# `match_size_by_type` quotas at the category level.
+_selected_categories(variants::Vector{ProblemVariant}) =
+    sort(unique(v.category for v in variants))
 
 struct _SizeDistributionSpec
     source::Any
@@ -236,7 +266,7 @@ struct _SizeDistributionSpec
 end
 
 struct _DatasetCandidate
-    problem_type::Symbol
+    ref::ProblemVariant
     target_variables::Int
     num_variables::Int
     num_constraints::Int
@@ -431,7 +461,7 @@ function _increment_filter_count!(stats::_GenerationStats, reason::String)
 end
 
 function _attempt_candidate(rng::AbstractRNG,
-                            problem_type::Symbol,
+                            ref::ProblemVariant,
                             target_vars::Int,
                             feasibility::FeasibilityStatus,
                             relax_integer::Bool,
@@ -444,7 +474,7 @@ function _attempt_candidate(rng::AbstractRNG,
                             verbose::Bool)
     problem_seed = rand(rng, 1:typemax(Int32))
     try
-        model, _ = generate_problem(problem_type, target_vars, feasibility,
+        model, _ = generate_problem(ref, target_vars, feasibility,
                                     problem_seed; relax_integer = relax_integer)
 
         iterations = -1
@@ -457,7 +487,7 @@ function _attempt_candidate(rng::AbstractRNG,
             if !result.passed
                 _increment_filter_count!(stats, result.reason)
                 if verbose
-                    println("[attempt $(stats.attempts)] filtered $problem_type " *
+                    println("[attempt $(stats.attempts)] filtered $ref " *
                             "($target_vars vars): $(result.reason) " *
                             "($(result.iterations) iters, " *
                             "$(round(result.solve_time, digits = 2))s)")
@@ -469,7 +499,7 @@ function _attempt_candidate(rng::AbstractRNG,
         end
 
         return _DatasetCandidate(
-            problem_type,
+            ref,
             target_vars,
             num_variables(model),
             num_constraints(model; count_variable_in_set_constraints = false),
@@ -483,10 +513,10 @@ function _attempt_candidate(rng::AbstractRNG,
         e isa InterruptException && rethrow()
         stats.failed += 1
         if verbose
-            println("[attempt $(stats.attempts)] failed $problem_type " *
+            println("[attempt $(stats.attempts)] failed $ref " *
                     "($target_vars vars): $e")
         else
-            @warn "Failed to generate $problem_type with $target_vars vars" exception = (e, catch_backtrace())
+            @warn "Failed to generate $ref with $target_vars vars" exception = (e, catch_backtrace())
         end
         return nothing
     end
@@ -494,7 +524,7 @@ end
 
 function _fill_candidate_pool!(candidates::Vector{_DatasetCandidate},
                                rng::AbstractRNG,
-                               group_types::Vector{Symbol},
+                               group_variants::Vector{ProblemVariant},
                                quota::Int,
                                desired_count::Int,
                                target_index_start::Int,
@@ -513,10 +543,10 @@ function _fill_candidate_pool!(candidates::Vector{_DatasetCandidate},
     while length(candidates) < desired_count && local_attempts < attempt_limit
         local_attempts += 1
         stats.attempts += 1
-        problem_type = length(group_types) == 1 ? group_types[1] : rand(rng, group_types)
+        ref = length(group_variants) == 1 ? group_variants[1] : rand(rng, group_variants)
         target_vars = _candidate_target_variables(rng, size_spec, quota,
                                                   target_index_start + local_attempts - 1)
-        candidate = _attempt_candidate(rng, problem_type, target_vars, feasibility,
+        candidate = _attempt_candidate(rng, ref, target_vars, feasibility,
                                        relax_integer, quality_filter, optimizer,
                                        quality_criteria, optimizer_attributes,
                                        feasible_only, stats, verbose)
@@ -546,7 +576,7 @@ end
 
 function _generate_matched_group(rng::AbstractRNG,
                                  group_label::AbstractString,
-                                 group_types::Vector{Symbol},
+                                 group_variants::Vector{ProblemVariant},
                                  quota::Int,
                                  size_spec::_SizeDistributionSpec,
                                  feasibility::FeasibilityStatus,
@@ -574,7 +604,7 @@ function _generate_matched_group(rng::AbstractRNG,
         remaining_attempts = attempt_limit - group_attempts
         if remaining_attempts > 0 && length(candidates) < desired_count
             group_attempts += _fill_candidate_pool!(
-                candidates, rng, group_types, quota, desired_count,
+                candidates, rng, group_variants, quota, desired_count,
                 group_attempts, remaining_attempts, size_spec, feasibility,
                 relax_integer, quality_filter, optimizer, quality_criteria,
                 optimizer_attributes, feasible_only, stats, verbose)
@@ -605,7 +635,7 @@ function _generate_matched_group(rng::AbstractRNG,
 end
 
 function _generate_unmatched_candidates(rng::AbstractRNG,
-                                        types::Vector{Symbol},
+                                        types::Vector{ProblemVariant},
                                         num_problems::Int,
                                         size_spec::_SizeDistributionSpec,
                                         feasibility::FeasibilityStatus,
@@ -624,9 +654,9 @@ function _generate_unmatched_candidates(rng::AbstractRNG,
     while length(candidates) < num_problems && local_attempts < attempt_limit
         local_attempts += 1
         stats.attempts += 1
-        problem_type = rand(rng, types)
+        ref = rand(rng, types)
         target_vars = _sample_num_variables(rng, size_spec)
-        candidate = _attempt_candidate(rng, problem_type, target_vars, feasibility,
+        candidate = _attempt_candidate(rng, ref, target_vars, feasibility,
                                        relax_integer, quality_filter, optimizer,
                                        quality_criteria, optimizer_attributes,
                                        feasible_only, stats, verbose)
@@ -640,17 +670,17 @@ function _generate_unmatched_candidates(rng::AbstractRNG,
     return candidates
 end
 
-function _type_quotas(rng::AbstractRNG, types::Vector{Symbol}, num_problems::Int)
-    if num_problems < length(types)
+function _type_quotas(rng::AbstractRNG, categories::Vector{Symbol}, num_problems::Int)
+    if num_problems < length(categories)
         error("match_size_by_type=true requires num_problems >= number of " *
-              "selected problem types ($(length(types))).")
+              "selected problem categories ($(length(categories))).")
     end
-    base_count = div(num_problems, length(types))
-    remainder = rem(num_problems, length(types))
-    quotas = Dict(type => base_count for type in types)
-    remainder_types = shuffle(rng, copy(types))
-    for type in remainder_types[1:remainder]
-        quotas[type] += 1
+    base_count = div(num_problems, length(categories))
+    remainder = rem(num_problems, length(categories))
+    quotas = Dict(category => base_count for category in categories)
+    remainder_categories = shuffle(rng, copy(categories))
+    for category in remainder_categories[1:remainder]
+        quotas[category] += 1
     end
     return quotas
 end
@@ -674,9 +704,10 @@ function _materialize_instances(candidates::Vector{_DatasetCandidate},
                                 verbose::Bool)
     instances = GeneratedInstance[]
     for (idx, candidate) in enumerate(candidates)
+        ref = candidate.ref
         filename = nothing
         if output_dir !== nothing
-            model, _ = generate_problem(candidate.problem_type,
+            model, _ = generate_problem(ref,
                                         candidate.target_variables,
                                         feasibility,
                                         candidate.seed;
@@ -684,12 +715,13 @@ function _materialize_instances(candidates::Vector{_DatasetCandidate},
             actual_vars = num_variables(model)
             actual_cons = num_constraints(model; count_variable_in_set_constraints = false)
             if actual_vars != candidate.num_variables || actual_cons != candidate.num_constraints
-                error("Regenerated $(candidate.problem_type) with seed " *
+                error("Regenerated $ref with seed " *
                       "$(candidate.seed) changed size from " *
                       "$(candidate.num_variables)/$(candidate.num_constraints) " *
                       "to $actual_vars/$actual_cons.")
             end
-            filename = _instance_filename(candidate.problem_type,
+            filename = _instance_filename(ref.category,
+                                          ref.variant,
                                           candidate.num_variables,
                                           idx,
                                           file_extension)
@@ -698,7 +730,8 @@ function _materialize_instances(candidates::Vector{_DatasetCandidate},
 
         push!(instances, GeneratedInstance(
             idx,
-            candidate.problem_type,
+            ref.category,
+            ref.variant,
             candidate.target_variables,
             candidate.num_variables,
             candidate.num_constraints,
@@ -711,7 +744,7 @@ function _materialize_instances(candidates::Vector{_DatasetCandidate},
 
         if verbose
             msg = "[$idx/$(length(candidates))] " *
-                  "$(filename === nothing ? candidate.problem_type : filename) " *
+                  "$(filename === nothing ? string(ref) : filename) " *
                   "(target=$(candidate.target_variables), " *
                   "actual=$(candidate.num_variables), " *
                   "cons=$(candidate.num_constraints)"
@@ -723,9 +756,9 @@ function _materialize_instances(candidates::Vector{_DatasetCandidate},
     return instances
 end
 
-function _instance_filename(problem_type::Symbol, num_vars::Int, idx::Int,
+function _instance_filename(category::Symbol, variant::Symbol, num_vars::Int, idx::Int,
                             file_extension::AbstractString)
-    return "$(problem_type)_v$(num_vars)_$(lpad(idx, 5, '0')).$(file_extension)"
+    return "$(category)_$(variant)_v$(num_vars)_$(lpad(idx, 5, '0')).$(file_extension)"
 end
 
 """
@@ -864,14 +897,19 @@ function generate_dataset(;
     if num_problems == 0
         selected_candidates = _DatasetCandidate[]
     elseif match_size_distribution && match_size_by_type
-        quotas = _type_quotas(rng, types, num_problems)
+        # Quota is split across categories; within each category we sample over
+        # the selected variants of that category.
+        categories = _selected_categories(types)
+        quotas = _type_quotas(rng, categories, num_problems)
         per_type_quotas = Dict(string(k) => v for (k, v) in quotas)
-        for problem_type in types
-            quota = quotas[problem_type]
+        for category in categories
+            quota = quotas[category]
+            group_variants = sort([v for v in types if v.category == category];
+                                  by = v -> v.variant)
             selected, summary = _generate_matched_group(
                 rng,
-                string(problem_type),
-                [problem_type],
+                string(category),
+                group_variants,
                 quota,
                 size_spec,
                 feasibility,
@@ -891,7 +929,7 @@ function generate_dataset(;
             )
             append!(selected_candidates, selected)
             report = _summary_dict(summary)
-            report["group"] = string(problem_type)
+            report["group"] = string(category)
             report["quota"] = quota
             push!(group_reports, report)
         end
@@ -1002,6 +1040,7 @@ function _write_manifest(output_dir, instances, types; kwargs...)
         "instances" => [Dict(
             "index" => inst.index,
             "problem_type" => string(inst.problem_type),
+            "variant" => string(inst.variant),
             "target_variables" => inst.target_variables,
             "num_variables" => inst.num_variables,
             "num_constraints" => inst.num_constraints,
