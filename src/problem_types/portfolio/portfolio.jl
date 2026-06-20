@@ -7,3 +7,4 @@
 # creating a file in this folder and including it below.
 
 include("cvar.jl")
+include("tracking_error.jl")
