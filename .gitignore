@@ -5,6 +5,7 @@
 results/
 
 backup/
+tmp/
 
 .DS_Store
 .claude

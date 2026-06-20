@@ -115,6 +115,76 @@ optimize!(model)
 solution_summary(model)
 ```
 
+### Batch Dataset Generation
+
+To build a whole dataset of LP instances (e.g. for training an ML model), use
+`generate_dataset`. It repeatedly samples a problem type and a target variable
+count, builds each model, and optionally solves it to filter out low-quality
+instances. When `output_dir` is set, each kept instance is written to disk
+along with a `manifest.json` describing the run; metadata is always returned.
+
+```julia
+using SyntheticLPs, Distributions
+
+# Generate 100 instances with variable counts drawn from a truncated normal,
+# writing .mps files plus a manifest to ./dataset. By default, the generator
+# keeps an accepted candidate pool and selects instances whose actual model
+# sizes match the target distribution closely.
+instances = generate_dataset(
+    num_problems = 100,
+    size_distribution = truncated(Normal(500, 200), 50, 2000),
+    output_dir = "dataset",
+    seed = 1234,            # 0 = non-deterministic; any other value is reproducible
+)
+
+for inst in instances[1:3]
+    println("$(inst.problem_type): $(inst.num_variables) vars, " *
+            "$(inst.num_constraints) constraints → $(inst.filename)")
+end
+```
+
+Uniform targets are supported as well. To make each selected problem type match
+the same size distribution independently, enable per-type matching:
+
+```julia
+instances = generate_dataset(
+    num_problems = 120,
+    size_distribution = Uniform(50, 2000),
+    problem_types = [:transportation, :knapsack, :portfolio],
+    match_size_by_type = true,
+    candidate_multiplier = 2,
+    output_dir = "dataset_by_type",
+    seed = 1234,
+)
+```
+
+The package itself is solver-agnostic. To enable **quality filtering** — solving
+each instance and rejecting trivial, degenerate, unbounded, timed-out, or
+ill-conditioned ones — pass an `optimizer`:
+
+```julia
+using SyntheticLPs, HiGHS
+
+instances = generate_dataset(
+    num_problems = 100,
+    output_dir = "dataset",
+    quality_filter = true,
+    optimizer = HiGHS.Optimizer,
+    optimizer_attributes = ("solver" => "simplex",),
+    quality_criteria = QualityCriteria(
+        solve_timeout = 30.0,
+        min_constraints = 5,
+        min_iterations = 3,
+        max_iteration_ratio = 100.0,
+    ),
+    max_retries = 10,       # raw retry budget for failures / filtered candidates
+    feasible_only = true,
+)
+```
+
+A single instance can also be evaluated directly with
+`check_quality(model, HiGHS.Optimizer)`.
+
 ## Extending with New Problem Types
 
 To add a new problem type:
@@ -217,6 +287,26 @@ julia --project=@. scripts/generate_problem.jl portfolio 150 --seed=12345
 
 # List all available problem types
 julia --project=@. scripts/generate_problem.jl list
+```
+
+For generating whole datasets, `scripts/generate_lps.jl` is a thin command-line
+wrapper around `generate_dataset` (it supplies HiGHS for quality filtering):
+
+```bash
+# Generate 100 .mps instances into ./output
+julia --project=scripts scripts/generate_lps.jl -o output -n 100
+
+# Generate 50 feasible, quality-filtered instances with progress output
+julia --project=scripts scripts/generate_lps.jl -o output -n 50 --feasible-only -q -v
+
+# Restrict to specific problem types and a fixed seed
+julia --project=scripts scripts/generate_lps.jl --problem-types transportation,knapsack -n 20 --seed 42
+
+# Uniform actual-size matching for each selected problem type
+julia --project=scripts scripts/generate_lps.jl -o output -n 60 \
+  --problem-types transportation,knapsack,portfolio \
+  --size-distribution uniform --var-min 50 --var-max 2000 \
+  --match-size-by-type --candidate-multiplier 2 --seed 42
 ```
 
 ## Testing

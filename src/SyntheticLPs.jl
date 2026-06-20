@@ -3,6 +3,7 @@ module SyntheticLPs
 using JuMP
 using Random
 using Distributions
+using JSON
 
 # Base types
 abstract type ProblemGenerator end
@@ -21,6 +22,9 @@ export list_problem_types
 export problem_info
 export generate_random_problem
 export register_problem
+export generate_dataset
+export GeneratedInstance
+export QualityCriteria, QualityResult, check_quality
 
 # Registration system
 # Dictionary to store problem type metadata
@@ -204,5 +208,8 @@ include("problem_types/scheduling.jl")
 include("problem_types/supply_chain.jl")
 include("problem_types/telecom_network_design.jl")
 include("problem_types/transportation.jl")
+
+# Batch dataset generation (uses the interface functions defined above)
+include("dataset.jl")
 
 end # module
