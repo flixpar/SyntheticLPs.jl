@@ -440,6 +440,7 @@ include("problem_types/scheduling/scheduling.jl")
 include("problem_types/supply_chain/supply_chain.jl")
 include("problem_types/telecom_network_design/telecom_network_design.jl")
 include("problem_types/transportation/transportation.jl")
+include("problem_types/unit_commitment/unit_commitment.jl")
 
 # Batch dataset generation (uses the interface functions defined above)
 include("dataset.jl")
