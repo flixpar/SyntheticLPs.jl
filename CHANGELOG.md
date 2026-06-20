@@ -4,6 +4,212 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-06-20 16:50 EDT (fix nurse_scheduling feasibility & realism)
+
+**Previous Commit**: `4179085`
+
+**Summary**: Addressed two PR-review findings (PR #18) on
+`nurse_scheduling/standard` that could make `feasible`-requested instances
+solve as INFEASIBLE, and fixed an underlying dimension-selection bug that was
+masking them by making every nurse instance degenerate. After these changes a
+HiGHS sweep over targets {50,80,100,200,500,800,1500} × seeds 0–40 produces
+287/287 feasible instances solving to OPTIMAL and 287/287 infeasible instances
+solving to INFEASIBLE.
+
+### Fixed
+
+- **Realistic instance dimensions** (`select_nurse_dimensions`). The old greedy
+  search returned the first `(nurses, days, shifts)` within 10% of target, which
+  was always `days=1, shifts=1` — so every generated instance was a single-day,
+  single-shift assignment with **none** of the night/weekend/consecutive-day/
+  rest structure (and the two bugs below could never surface). It now scales the
+  horizon and shift count with problem size (7–28 days, 2–3 shifts), so weekends
+  and a night shift are always present. Variable counts stay within ~12% of
+  target (≤25% test tolerance).
+- **Coverage demand never exceeds achievable staffing** (`finalize_nurse_demand`,
+  PR comment 3447108887). A night slot with no available night-qualified nurse
+  gets zero heuristic coverage, but demand was still forced to ≥1, making the
+  coverage constraint unsatisfiable (only night-qualified nurses can staff nights
+  in `build_model`). Demand for an unstaffable slot is now 0, preserving the
+  invariant `demand ≤ achievable coverage`.
+- **Night-qualified availability on night slots** (`build_nurse_availability`).
+  The availability repair guaranteed ≥2 arbitrary nurses per slot but no
+  *night-qualified* nurse on night slots; it now also guarantees at least one
+  night-qualified nurse is available for each night slot, so most night demand is
+  staffable (residual unstaffable slots fall back to demand 0).
+- **Post-night rest matches between roster heuristic and model** (PR comment
+  3447108889). The feasible-roster heuristic only blocked shift 1 after a night,
+  while `build_model` blocked shifts 1 *and* 2 for `n_shifts ≥ 3`; the heuristic
+  also blocked one fewer day than the model (an off-by-one in the cooldown
+  counter). Both now use a shared `nurse_early_shift_indices` helper and an
+  absolute block window (days `d+1..d+rest`), so the heuristic roster always
+  satisfies the model's rest rule.
+- **Correct rest-constraint linearization** (`build_model`). The rest rule summed
+  the entire post-night window into a single `≤ 1` constraint, which (for
+  `rest ≥ 2`) also forbade working two early shifts in the window *with no night
+  shift at all* — far stronger than the intended "no early shift after a night."
+  It is now encoded pairwise (`x[night] + x[early] ≤ 1` per slot), matching the
+  documented rule and the roster heuristic.
+
+## 2026-06-20 08:23 EDT (port high-quality variants from old branches)
+
+**Previous Commit**: `1ebc1c2`
+
+**Summary**: Reviewed all pre-variant-system branches (`claude/*`, `codex/*`)
+that introduced problem variants, evaluated each variant independently for
+formulation correctness and data quality, and ported the 25 highest-quality
+ones into the new category/variant system (with fixes). The package grows from
+24 to **28 categories** and from 24 to **49 registered variants**. Deferred/
+rejected variants (110) are catalogued in `docs/variant_branch_review.md` for
+future, higher-quality reimplementation.
+
+Every ported variant is self-contained (struct + constructor + deterministic
+`build_model` + `register_variant`), documented with full docstrings, and
+verified by `test/runtests.jl` (structure, ±25% variable-count scaling,
+reproducibility) **and** a HiGHS solve smoke-test (feasible→solvable,
+infeasible→infeasible across seeds 0–2).
+
+### Added
+
+- **4 new categories**:
+  - `bin_packing/standard` — minimize bins used, realistic item sizes, true
+    category-conflict constraints (per-bin category-presence binaries).
+  - `nurse_scheduling/standard` — nurse rostering with skill mix, shift
+    coverage, and realistic labor-contract rules (ported from
+    `codex/add-nurse-scheduling`, score 8).
+  - `job_shop_scheduling/standard` — disjunctive job-shop with machine
+    no-overlap and **weighted tardiness** (soft due dates, reworked from the
+    source's hard-deadline formulation to remove false infeasibility).
+  - `unit_commitment/standard` — thermal+renewable unit commitment (LP
+    relaxation) with ramping, startup/shutdown, and reserves
+    (ported from `codex/implement-unit-commitment`, score 8).
+- **21 new variants** in existing categories:
+  - transportation: `balanced`, `capacitated`, `transshipment`, `emission_constrained`
+  - energy: `ramping`, `reserves`, `storage`, `transmission`
+  - inventory: `lot_sizing`, `multi_item`, `multi_echelon`
+  - supply_chain: `single_source`, `carbon`, `multi_product`
+  - blending: `equipment_batches`, `multi_product`
+  - cutting_stock: `setup_cost`, `due_dates`
+  - diet_problem: `nutrient_bounds`, `food_groups`
+  - facility_location: `two_echelon` (two-echelon FL with discrete warehouse
+    sizing; ported from `add-transportation-generators/warehouse_location`).
+- **`docs/variant_branch_review.md`**: full review record — methodology, the 25
+  ported variants, overlap-resolution decisions, and the 110 deferred/rejected
+  variants with scores and reasons.
+
+### Fixed (applied to ported variants during the port)
+
+- **Variable-count scaling**: many source variants ignored extra variable sets
+  when sizing (e.g. reserve/storage/echelon/transfer/setup/lot variables),
+  overshooting `target_variables`. Every ported variant now sizes its dimensions
+  from the full variable-count formula and stays within the test's ±25% bound,
+  including small targets (added a `:tiny` band to `unit_commitment` and lowered
+  the small-target minimums for `energy/reserves` and `energy/storage`).
+- **Feasibility reliability**: reworked several `infeasible` constructions that
+  were only probabilistically infeasible (e.g. `blending/multi_product`,
+  `facility_location/two_echelon`, `cutting_stock/due_dates`) into deterministic
+  contradictions with margin; `unknown` no longer force-infeasibilizes.
+- **Degenerate objectives**: added an inventory holding cost to
+  `cutting_stock/due_dates`, a terminal state-of-charge floor to `energy/storage`,
+  reserve provision cost to `energy/reserves`, and removed the no-op emissions
+  constraint carried over into the energy variants.
+- **Formulation correctness**: fixed `bin_packing` category-conflict semantics
+  (was forbidding two same-category items in a bin), restricted
+  `inventory/multi_echelon` transfers to a star topology, and scaled
+  `cutting_stock/setup_cost` setup costs relative to material value.
+
+### Fixed (post-port review follow-up)
+
+Five correctness defects surfaced by code review of the ported variants, all
+confirmed (three by reproducing the cited seeds, two by formulation analysis)
+and fixed:
+
+- **`supply_chain/multi_product`** (P1, feasibility mislabel): feasible instances
+  could be infeasible because capacities were sized against `total_demand`, while
+  the model enforces the larger jittered per-product demand total. Now sized
+  against realized per-product demand with a **connectivity-aware** per-facility
+  guarantee (each facility can absorb all its linked customers' product demand).
+  Verified feasible across 40 seeds × 3 sizes (incl. the reported `(50, feasible, 7065)`).
+- **`inventory/multi_item`** (P1, feasibility mislabel): `infeasible` set capacity
+  below the single-period **peak** weighted load, which prebuild-and-carry can
+  satisfy. Now based on the binding **cumulative** rate
+  `max_t (cumulative_weighted_demand[t] − weighted_initial_inventory) / t`, a true
+  no-backlog contradiction (incl. the reported `(20, infeasible, 424)`).
+- **`energy/reserves`** (P2, double-counting): spinning and non-spinning reserve
+  each independently drew on `capacity − x`, certifying up to twice the real
+  headroom. Replaced with a single shared-headroom constraint
+  `x + spin + nonspin ≤ capacity` (matching the constructor's own feasible sizing).
+- **`diet_problem/nutrient_bounds`** (P2, crash): `primary_count` could exceed
+  `n_foods` for very small targets, throwing `BoundsError` (e.g. size 2). Clamped
+  to the available foods.
+- **`cutting_stock/setup_cost`** (P2, cuts off valid solutions): the per-pattern
+  big-M used `min_i ceil(demand_i / pattern_i)`, forbidding running a pattern
+  enough times to serve a high-demand piece when it co-produces a low-demand one
+  (overproduction is legitimate). Changed to `max_i` (a valid bound preserving the
+  optimum).
+
+### Fixed (second review follow-up: scaling, diversity, framing)
+
+- **`bin_packing/standard`** (variable-count scaling): the bin count is set by the
+  actual packing requirement, not a free dimension, so the old sizing overshot the
+  target by ~1.5–2× (e.g. target 100 → ~175–250). Now sizes `n_items` from the
+  estimated packing density so the count tracks the target across the whole range
+  (medians now within a few % at 100/500/2000; previously up to ~64% off at 2000).
+- **`energy/ramping`, `energy/reserves`, `energy/storage`** (fleet diversity +
+  large-target scaling): the 7-type generator catalogue was sampled without
+  replacement, hard-capping the fleet at ~7 units, so large instances scaled only
+  by time periods and were low-diversity. The fleet now uses distinct types first,
+  then repeats them as additional units with unique names and jittered
+  techno-economic attributes (realistic multi-unit fleets); large-band caps raised.
+  n_sources now scales with the target (e.g. ramping reaches ~18 units at large
+  targets) and large targets no longer badly undershoot. Also fixed an
+  `energy/storage` sizing-loop bug where an over-cap initial period estimate made
+  the loop break before scaling the fleet.
+- **`transportation/transshipment`** (binding constraints): hub-leg arc capacities
+  were ~0.8–1.4× total demand each, so a single hub could absorb everything and the
+  constraints almost never bound. Resized to ≈ total_demand / n_hubs so hub legs
+  are genuinely binding; feasibility is unaffected (direct arcs remain an uncapped
+  fallback).
+- **`cutting_stock/due_dates`** (degenerate columns): replaced the
+  duplicate-allowing pattern padding with distinct reduced-yield single-piece
+  columns (valid, non-duplicate) and widened genuine-pattern search, reducing
+  benchmark-inflation filler.
+- **Model-class framing** (docs): `nurse_scheduling` and `unit_commitment`
+  docstrings now state explicitly that they are LP relaxations of integer models
+  (fractional rosters / commitment), and CLAUDE.md documents that the corpus
+  intentionally mixes pure LPs, MIPs, and LP relaxations.
+
+### Fixed (third review follow-up: infeasible sizing + repeated technologies)
+
+- **`bin_packing/standard` infeasible instances** now preserve target-sized
+  dimensions. Instead of shrinking the bin count (which badly undershot
+  `target_variables`) or adding an extra item, infeasibility is created by an
+  aggregate capacity contradiction: total item volume is forced above
+  `n_bins * bin_capacity`. This survives LP relaxation and keeps the variable
+  count unchanged.
+- **`energy/ramping`, `energy/reserves`, `energy/storage` repeated units** now
+  carry both a unique unit name (`coal_2`) and a base technology (`coal`) during
+  construction. Technology-dependent capacity-share and ramp-rate distributions
+  use the base technology, so repeated nuclear/coal units no longer accidentally
+  behave like generic flexible gas units.
+
+### Changed
+
+- **`test/runtests.jl`**: updated the variant-interface assertions for the new
+  multi-variant transportation category, and the dataset-generation assertion to
+  reflect that a bare category selector now samples across all its variants.
+
+### Notes
+
+- Deferred (not ported): both vehicle-routing implementations and last-mile
+  delivery (degenerate LP relaxations — the depot does not anchor routes),
+  `production_planning/multi_period_inventory` (sizing bug + overlap), and ~100
+  lower-scoring or duplicate variants. See `docs/variant_branch_review.md`.
+- Pre-existing test failures unrelated to this change remain in 5 `*/standard`
+  generators (airline_crew, cutting_stock, network_flow, scheduling,
+  supply_chain) whose variable counts fall just outside ±25% at some targets;
+  these fail identically on a clean `main` and were left untouched.
+
 ## 2026-06-19 22:47 EDT (PR #16 review feedback)
 
 **Previous Commit**: `fc0ba22`

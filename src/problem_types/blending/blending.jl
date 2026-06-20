@@ -7,3 +7,5 @@
 # creating a file in this folder and including it below.
 
 include("standard.jl")
+include("equipment_batches.jl")
+include("multi_product.jl")

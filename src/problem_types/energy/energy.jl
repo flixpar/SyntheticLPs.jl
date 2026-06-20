@@ -7,3 +7,7 @@
 # creating a file in this folder and including it below.
 
 include("standard.jl")
+include("ramping.jl")
+include("reserves.jl")
+include("storage.jl")
+include("transmission.jl")

@@ -7,3 +7,5 @@
 # creating a file in this folder and including it below.
 
 include("standard.jl")
+include("nutrient_bounds.jl")
+include("food_groups.jl")

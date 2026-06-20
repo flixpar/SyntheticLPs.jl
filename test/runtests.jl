@@ -113,8 +113,9 @@ end
         # Every category contributes at least one variant.
         @test Set(p.category for p in problems) == Set(cats)
 
-        # Listing variants of a category.
-        @test list_variants(:transportation) == [:standard]
+        # Listing variants of a category (returned sorted by variant name).
+        @test issubset(Set([:standard, :balanced, :capacitated, :transshipment,
+                            :emission_constrained]), Set(list_variants(:transportation)))
         @test list_variants(:portfolio) == [:cvar]
 
         # ProblemVariant construction, parsing, and printing.
@@ -158,7 +159,8 @@ end
         @test all(inst -> inst.num_constraints >= 0, instances)
         @test [inst.index for inst in instances] == collect(1:6)
         @test all(inst -> inst.filename === nothing, instances)  # no output_dir
-        @test all(inst -> inst.variant == :standard, instances)  # category default
+        # A bare category selector samples across all its registered variants.
+        @test all(inst -> inst.variant in Set(list_variants(inst.problem_type)), instances)
 
         # Reproducibility: same seed → identical dataset
         instances2 = generate_dataset(num_problems = 6, var_mean = 80, var_std = 20,
