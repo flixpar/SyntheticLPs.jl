@@ -8,3 +8,4 @@
 
 include("standard.jl")
 include("two_echelon.jl")
+include("p_median.jl")
