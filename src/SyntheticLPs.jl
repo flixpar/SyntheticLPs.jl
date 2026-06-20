@@ -415,6 +415,7 @@ end
 # registers the category (if needed) and includes one file per variant.
 include("problem_types/airline_crew/airline_crew.jl")
 include("problem_types/assignment/assignment.jl")
+include("problem_types/bin_packing/bin_packing.jl")
 include("problem_types/blending/blending.jl")
 include("problem_types/crop_planning/crop_planning.jl")
 include("problem_types/cutting_stock/cutting_stock.jl")
