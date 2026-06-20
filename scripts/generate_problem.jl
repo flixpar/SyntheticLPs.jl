@@ -65,6 +65,10 @@ elseif problem_arg == "random"
 else
     # Accept a category (default variant) or an explicit `category/variant`.
     parts = split(problem_arg, '/')
+    if length(parts) > 2
+        println("Error: Invalid problem reference '$problem_arg'; expected 'category' or 'category/variant'")
+        exit(1)
+    end
     category = Symbol(parts[1])
     if !(category in list_categories())
         println("Error: Unknown problem category '$category'")

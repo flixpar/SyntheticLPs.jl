@@ -105,9 +105,14 @@ using the variant's description, so single-variant categories need no explicit
 `register_category` call.
 """
 function register_category(category::Symbol, description::AbstractString)
-    return get!(LP_REGISTRY, category,
-                CategorySpec(category, String(description),
-                             Dict{Symbol,VariantSpec}(), nothing, false))
+    cat = get!(LP_REGISTRY, category) do
+        CategorySpec(category, String(description),
+                     Dict{Symbol,VariantSpec}(), nothing, false)
+    end
+    # Always apply the explicit description, even if the category was already
+    # created lazily by `register_variant`, so registration order doesn't matter.
+    cat.description = String(description)
+    return cat
 end
 
 """
@@ -260,6 +265,19 @@ function generate_problem(ref::ProblemVariant, target_variables::Int,
                           feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
                           relax_integer::Bool=true)
     return generate_problem(get_problem_type(ref), target_variables,
+                            feasibility_status, seed; relax_integer=relax_integer)
+end
+
+"""
+    generate_problem(ref::AbstractString, target_variables, feasibility_status, seed; relax_integer=true)
+
+Generate a problem from a `"category"` or `"category/variant"` string, parsed via
+[`ProblemVariant`](@ref).
+"""
+function generate_problem(ref::AbstractString, target_variables::Int,
+                          feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
+                          relax_integer::Bool=true)
+    return generate_problem(ProblemVariant(ref), target_variables,
                             feasibility_status, seed; relax_integer=relax_integer)
 end
 

@@ -132,7 +132,8 @@ end
         m_cat, _ = generate_problem(:transportation, 100, unknown, 0)
         m_kw, _ = generate_problem(:transportation, 100, unknown, 0; variant=:standard)
         m_ref, _ = generate_problem(ProblemVariant("transportation/standard"), 100, unknown, 0)
-        @test num_variables(m_cat) == num_variables(m_kw) == num_variables(m_ref)
+        m_str, _ = generate_problem("transportation/standard", 100, unknown, 0)
+        @test num_variables(m_cat) == num_variables(m_kw) == num_variables(m_ref) == num_variables(m_str)
 
         # Unknown category / variant are rejected.
         @test_throws ErrorException generate_problem(:not_a_category, 50, unknown, 0)

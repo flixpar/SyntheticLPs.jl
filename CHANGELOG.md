@@ -4,6 +4,39 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-06-19 22:47 EDT (PR #16 review feedback)
+
+**Previous Commit**: `fc0ba22`
+
+**Summary**: Addressed review feedback on the hierarchical category/variant
+system (PR #16): made the registration API order-independent, added a string
+selector overload for `generate_problem`, and tightened input validation in the
+problem-generation script.
+
+### Changed
+
+- **`register_category`** (`src/SyntheticLPs.jl`): now always applies the supplied
+  description to the `CategorySpec`, even when the category was already created
+  lazily by `register_variant`. Previously the description was only set on first
+  insertion (via `get!`), so an explicit `register_category` call placed after the
+  variant includes was silently ignored. Registration order no longer matters.
+
+### Added
+
+- **String selector for `generate_problem`** (`src/SyntheticLPs.jl`): added a
+  `generate_problem(ref::AbstractString, ...)` overload that parses a `"category"`
+  or `"category/variant"` string via `ProblemVariant`. This makes `generate_problem`
+  consistent with the rest of the string-accepting API (`ProblemVariant`,
+  `get_problem_type`); previously the string form raised a `MethodError`. Covered
+  by a new assertion in the "Variant Interface" testset.
+
+### Fixed
+
+- **`scripts/generate_problem.jl`**: a problem argument with more than one slash
+  (e.g. `"category/variant/extra"`) previously fell back silently to the category's
+  default variant. The script now validates `length(parts) <= 2` and errors with a
+  clear message otherwise.
+
 ## 2026-06-19 21:57 EDT (hierarchical problem variant system)
 
 **Previous Commit**: `d350e8e`
