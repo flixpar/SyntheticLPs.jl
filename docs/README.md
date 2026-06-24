@@ -9,6 +9,8 @@ the same package-level contract: the constructor samples all randomized data fro
 concrete `ProblemGenerator` struct, and `build_model` converts the stored data
 into a deterministic JuMP model.
 
+For a strategic review of the current generator portfolio and recommended additions, see the [Coverage and Gap Analysis](coverage_gap_analysis.md).
+
 For a browsable, high-level tour of all generators alongside these details, open
 the self-contained [HTML explainer](explainer.html) (no server or internet
 required). It is generated from these markdown pages by
@@ -42,6 +44,7 @@ where relaxation changes the solved model.
 
 - [Airline Crew](airline_crew.md)
 - [Assignment](assignment.md)
+- [Benchmark Pathologies](benchmark_pathologies.md)
 - [Blending](blending.md)
 - [Crop Planning](crop_planning.md)
 - [Cutting Stock](cutting_stock.md)
@@ -61,6 +64,8 @@ where relaxation changes the solved model.
 - [Project Selection](project_selection.md)
 - [Resource Allocation](resource_allocation.md)
 - [Scheduling](scheduling.md)
+- [Service Network Design](service_network_design.md)
 - [Supply Chain](supply_chain.md)
 - [Telecom Network Design](telecom_network_design.md)
 - [Transportation](transportation.md)
+- [Workforce Shift Scheduling](workforce_shift_scheduling.md)

@@ -73,3 +73,4 @@ end
 include("lad.jl")
 include("quantile.jl")
 include("chebyshev.jl")
+include("basis_pursuit.jl")

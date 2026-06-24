@@ -10,3 +10,5 @@ include("standard.jl")
 include("single_source.jl")
 include("carbon.jl")
 include("multi_product.jl")
+
+include("network_planning.jl")
