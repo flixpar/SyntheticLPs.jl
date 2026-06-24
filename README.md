@@ -13,9 +13,11 @@ This package provides:
 - Deterministic problem generation with reproducible seeds
 - Easy extensibility for new problem types
 
+For a deeper assessment of how these generators map to real-world LP practice and which domains would most improve coverage, see the [coverage and gap analysis](docs/coverage_gap_analysis.md).
+
 ## Problem Types
 
-The package includes generators for 29 common LP/MIP problem categories, all
+The package includes generators for 32 common LP/MIP problem categories, all
 unified with a standardized interface. Each category groups one or more
 **variants** — concrete formulations with their own data generation and model
 structure (see [Categories and Variants](#categories-and-variants)). Categories
@@ -43,20 +45,23 @@ with more than one variant are annotated below.
 - Nurse Scheduling
 - Product Mix
 - Project Selection
-- Regression (dense statistical LPs: least-absolute-deviations, quantile, and Chebyshev/minimax)
+- Regression (dense statistical LPs: least-absolute-deviations, quantile, Chebyshev/minimax, and basis pursuit)
 - Resource Allocation
 - Revenue Management (network deterministic LP / bid-price)
 - Scheduling
+- Service Network Design — variants: `time_expanded`
+- Benchmark Pathologies — variants: `degenerate_network`, `scaling_stress`
 - Stochastic Program (two-stage with recourse; dual block-angular structure)
-- Supply Chain — variants: `standard`, `single_source`, `carbon`, `multi_product`
+- Supply Chain — variants: `standard`, `single_source`, `carbon`, `multi_product`, `network_planning`
 - Crop Planning
 - Telecom Network Design
 - Unit Commitment
 - Vehicle Routing — variants: `cvrp` (capacitated vehicle routing, single-commodity-flow formulation)
+- Workforce Shift Scheduling — variants: `covering`
 
 Several categories ship multiple variants — for example `energy` has `standard`
 (generation mix) and `dc_opf` (DC optimal power flow), and `regression` has
-`lad`, `quantile`, and `chebyshev` — selectable via the `variant=` keyword or a
+`lad`, `quantile`, `chebyshev`, and `basis_pursuit` — selectable via the `variant=` keyword or a
 `"category/variant"` reference (see below).
 
 ## Usage
