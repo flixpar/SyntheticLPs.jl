@@ -27,6 +27,7 @@ export list_problem_types
 export list_variants
 export list_problems
 export problem_info
+export bounds_to_constraints!
 export generate_dataset
 export GeneratedInstance
 export QualityCriteria, QualityResult, check_quality
@@ -216,6 +217,11 @@ get_problem_type(category::Symbol) = get_problem_type(ProblemVariant(category))
 get_problem_type(s::AbstractString) = get_problem_type(ProblemVariant(s))
 
 # ---------------------------------------------------------------------------
+# Model transforms (post-build reformulations)
+# ---------------------------------------------------------------------------
+include("transforms.jl")
+
+# ---------------------------------------------------------------------------
 # Model building and problem generation
 # ---------------------------------------------------------------------------
 
@@ -234,10 +240,16 @@ Each variant must implement this method.
 function build_model end
 
 """
-    generate_problem(::Type{T}, target_variables, feasibility_status, seed; relax_integer=true)
+    generate_problem(::Type{T}, target_variables, feasibility_status, seed;
+                     relax_integer=true, bounds_to_constraints=false)
 
 Generate a linear programming problem from a generator type by constructing an
 instance and building its model.
+
+When `bounds_to_constraints=true`, variable bounds (other than plain `x ≥ 0`
+nonnegativity) are reformulated as explicit affine constraints via
+[`bounds_to_constraints!`](@ref). This runs *after* integrality relaxation, so
+bounds introduced by relaxing integer/binary variables are converted too.
 
 # Returns
 - `model`: The JuMP model
@@ -245,7 +257,8 @@ instance and building its model.
 """
 function generate_problem(::Type{T}, target_variables::Int,
                           feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
-                          relax_integer::Bool=true) where T <: ProblemGenerator
+                          relax_integer::Bool=true,
+                          bounds_to_constraints::Bool=false) where T <: ProblemGenerator
     problem = T(target_variables, feasibility_status, seed)
     model = build_model(problem)
 
@@ -253,37 +266,45 @@ function generate_problem(::Type{T}, target_variables::Int,
         relax_integrality(model)
     end
 
+    if bounds_to_constraints
+        bounds_to_constraints!(model)
+    end
+
     return model, problem
 end
 
 """
-    generate_problem(ref::ProblemVariant, target_variables, feasibility_status, seed; relax_integer=true)
+    generate_problem(ref::ProblemVariant, target_variables, feasibility_status, seed;
+                     relax_integer=true, bounds_to_constraints=false)
 
 Generate a problem from a fully-qualified `category/variant` reference.
 """
 function generate_problem(ref::ProblemVariant, target_variables::Int,
                           feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
-                          relax_integer::Bool=true)
+                          relax_integer::Bool=true, bounds_to_constraints::Bool=false)
     return generate_problem(get_problem_type(ref), target_variables,
-                            feasibility_status, seed; relax_integer=relax_integer)
+                            feasibility_status, seed; relax_integer=relax_integer,
+                            bounds_to_constraints=bounds_to_constraints)
 end
 
 """
-    generate_problem(ref::AbstractString, target_variables, feasibility_status, seed; relax_integer=true)
+    generate_problem(ref::AbstractString, target_variables, feasibility_status, seed;
+                     relax_integer=true, bounds_to_constraints=false)
 
 Generate a problem from a `"category"` or `"category/variant"` string, parsed via
 [`ProblemVariant`](@ref).
 """
 function generate_problem(ref::AbstractString, target_variables::Int,
                           feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
-                          relax_integer::Bool=true)
+                          relax_integer::Bool=true, bounds_to_constraints::Bool=false)
     return generate_problem(ProblemVariant(ref), target_variables,
-                            feasibility_status, seed; relax_integer=relax_integer)
+                            feasibility_status, seed; relax_integer=relax_integer,
+                            bounds_to_constraints=bounds_to_constraints)
 end
 
 """
     generate_problem(category::Symbol, target_variables, feasibility_status, seed;
-                     variant=nothing, relax_integer=true)
+                     variant=nothing, relax_integer=true, bounds_to_constraints=false)
 
 Generate a problem for a category. With `variant=nothing` the category's default
 variant is used; pass `variant=:name` to select a specific variant.
@@ -294,6 +315,9 @@ variant is used; pass `variant=:name` to select a specific variant.
 - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
 - `seed`: Random seed for reproducibility
 - `variant`: Optional variant symbol; defaults to the category default
+- `relax_integer`: Relax integrality of the generated model
+- `bounds_to_constraints`: Reformulate variable bounds (other than `x ≥ 0`) as
+  explicit affine constraints
 
 # Returns
 - `model`: The JuMP model
@@ -301,11 +325,13 @@ variant is used; pass `variant=:name` to select a specific variant.
 """
 function generate_problem(category::Symbol, target_variables::Int,
                           feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
-                          variant::Union{Symbol,Nothing}=nothing, relax_integer::Bool=true)
+                          variant::Union{Symbol,Nothing}=nothing, relax_integer::Bool=true,
+                          bounds_to_constraints::Bool=false)
     ref = variant === nothing ? ProblemVariant(category) :
                                 ProblemVariant(category, variant)
     return generate_problem(ref, target_variables, feasibility_status, seed;
-                            relax_integer=relax_integer)
+                            relax_integer=relax_integer,
+                            bounds_to_constraints=bounds_to_constraints)
 end
 
 # ---------------------------------------------------------------------------
@@ -380,7 +406,8 @@ function problem_info(category::Symbol, variant::Symbol)
 end
 
 """
-    generate_random_problem(target_variables; feasibility_status=unknown, relax_integer=true, seed=0)
+    generate_random_problem(target_variables; feasibility_status=unknown,
+                            relax_integer=true, bounds_to_constraints=false, seed=0)
 
 Generate a problem of a randomly selected variant targeting approximately the
 specified number of variables. Sampling is uniform over all registered
@@ -393,7 +420,8 @@ specified number of variables. Sampling is uniform over all registered
 """
 function generate_random_problem(target_variables::Int;
                                  feasibility_status::FeasibilityStatus=unknown,
-                                 relax_integer::Bool=true, seed::Int=0)
+                                 relax_integer::Bool=true,
+                                 bounds_to_constraints::Bool=false, seed::Int=0)
     Random.seed!(seed)
 
     problems = list_problems()
@@ -403,7 +431,8 @@ function generate_random_problem(target_variables::Int;
 
     ref = rand(problems)
     model, problem = generate_problem(ref, target_variables, feasibility_status, seed;
-                                      relax_integer=relax_integer)
+                                      relax_integer=relax_integer,
+                                      bounds_to_constraints=bounds_to_constraints)
 
     return model, ref, problem
 end

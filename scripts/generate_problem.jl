@@ -10,6 +10,7 @@
 #   julia --project=@. scripts/generate_problem.jl portfolio/cvar 100 problem.mps
 #   julia --project=@. scripts/generate_problem.jl knapsack 50 --feasible --solve
 #   julia --project=@. scripts/generate_problem.jl diet_problem 100 --infeasible
+#   julia --project=@. scripts/generate_problem.jl knapsack 50 --bounds-to-constraints
 #   julia --project=@. scripts/generate_problem.jl list
 
 using Pkg
@@ -28,9 +29,13 @@ target_variables = length(ARGS) >= 2 ? parse(Int, ARGS[2]) : 50
 output_file = nothing
 feasibility_status = unknown
 seed = 0
+bounds_to_constraints = false
 
-# Parse optional arguments
+# Parse optional arguments. `global` is required because this loop runs at the
+# script's top level (soft scope), so assignments would otherwise create locals
+# and silently leave these globals at their defaults.
 for arg in ARGS[3:end]
+    global feasibility_status, seed, output_file, bounds_to_constraints
     if arg == "--solve"
         # Handled later
     elseif arg == "--feasible"
@@ -39,6 +44,8 @@ for arg in ARGS[3:end]
         feasibility_status = infeasible
     elseif arg == "--unknown"
         feasibility_status = unknown
+    elseif arg == "--bounds-to-constraints"
+        bounds_to_constraints = true
     elseif startswith(arg, "--seed=")
         seed = parse(Int, split(arg, "=")[2])
     elseif !startswith(arg, "--")
@@ -60,7 +67,7 @@ if problem_arg == "list"
 elseif problem_arg == "random"
     println("Generating a random problem targeting ~$target_variables variables")
     println("Feasibility status: $feasibility_status")
-    model, selected_ref, problem = generate_random_problem(target_variables; feasibility_status=feasibility_status, seed=seed)
+    model, selected_ref, problem = generate_random_problem(target_variables; feasibility_status=feasibility_status, bounds_to_constraints=bounds_to_constraints, seed=seed)
     println("Problem selected: $selected_ref")
 else
     # Accept a category (default variant) or an explicit `category/variant`.
@@ -86,7 +93,7 @@ else
 
     println("Generating $ref problem targeting ~$target_variables variables")
     println("Feasibility status: $feasibility_status")
-    model, problem = generate_problem(ref, target_variables, feasibility_status, seed)
+    model, problem = generate_problem(ref, target_variables, feasibility_status, seed; bounds_to_constraints=bounds_to_constraints)
 end
 
 # Print summary

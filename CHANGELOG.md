@@ -4,6 +4,53 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-06-29 17:26 EDT (bounds-to-constraints reformulation)
+
+**Previous Commit**: `c617dd7`
+
+**Summary**: Added an opt-in reformulation that rewrites variable bounds as
+explicit affine constraints, plumbed through the whole generation stack as the
+keyword `bounds_to_constraints` (default `false`, so the corpus is byte-identical
+when unused). Also fixed a pre-existing soft-scope bug in
+`scripts/generate_problem.jl` that silently dropped its `--feasible`/`--infeasible`,
+`--seed=`, and output-file arguments.
+
+**Details**:
+
+- **New file `src/transforms.jl`** — home for post-`build_model` model
+  reformulations, applied centrally in `generate_problem` (not per-variant),
+  the same way JuMP's `relax_integrality` is. Exports `bounds_to_constraints!`.
+- **`bounds_to_constraints!(model)`** — walks every variable and converts its
+  bounds to affine rows: a fixed value becomes an equality row, an upper bound
+  and a *nonzero* lower bound become inequality rows, and the corresponding
+  variable bound is removed. A plain `x ≥ 0` nonnegativity lower bound is left as
+  a variable bound (standard form), so only the "interesting" bounds are moved.
+- **Wiring** — `bounds_to_constraints::Bool=false` keyword added to all four
+  `generate_problem` methods, `generate_random_problem`, and `generate_dataset`
+  (threaded through its candidate/materialize helpers alongside `relax_integer`).
+  Applied *after* integrality relaxation so bounds introduced by relaxing
+  integer/binary variables (e.g. `0 ≤ x ≤ 1`) are converted too. Recorded in the
+  dataset `manifest.json` config and in verbose output.
+- **CLI** — `--bounds-to-constraints` flag on both `scripts/generate_problem.jl`
+  and `scripts/generate_lps.jl`.
+- **Side effect (intended)** — converted bounds become genuine constraint rows,
+  so they are now counted by
+  `num_constraints(model; count_variable_in_set_constraints=false)`. This raises
+  the recorded `num_constraints` per instance and therefore feeds into dataset
+  size-matching and the quality filter's constraint-based thresholds
+  (`min_constraints`, `max_iteration_ratio`).
+- **Bug fix** — `scripts/generate_problem.jl` parsed its optional arguments in a
+  top-level `for` loop whose assignments fell into Julia soft scope and became
+  new locals, so `--feasible`/`--infeasible`/`--unknown`, `--seed=`, and the
+  output-file positional were silently ignored. Added the required `global`
+  declaration; these flags now take effect.
+- **Tests** — new `Bounds to Constraints` testset: direct structural checks on
+  `bounds_to_constraints!` (nonnegativity preserved, other bounds become the
+  right number of rows, variable count unchanged), plus `generate_problem` and
+  `generate_dataset` integration (constraint counts increase, manifest flag set).
+  Suite now 2460 passing assertions (up from 2448); the 6 pre-existing
+  variable-count-tolerance failures are unchanged and unrelated.
+
 ## 2026-06-20 19:10 EDT (address PR #19 review feedback)
 
 **Previous Commit**: `f7a657f`

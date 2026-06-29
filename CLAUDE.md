@@ -85,6 +85,10 @@ SyntheticLPs uses a type-based dispatch system for generating realistic linear p
 - Random problem generation with `generate_random_problem()` (returns the selected `ProblemVariant`)
 - Base function `build_model(problem::ProblemGenerator)` that each variant implements
 
+**Model transforms** (`src/transforms.jl`):
+- Post-`build_model` reformulations of the finished JuMP model, applied centrally in `generate_problem()` (not per-variant), exactly like `relax_integrality`.
+- `bounds_to_constraints!(model)`: reformulates variable bounds as explicit affine constraints, keeping a plain `x ≥ 0` nonnegativity bound but converting all other bounds (upper, fixed, nonzero lower). Exposed everywhere as the keyword `bounds_to_constraints::Bool=false` on `generate_problem()`/`generate_random_problem()`/`generate_dataset()` (and `--bounds-to-constraints` on both CLI scripts). Runs *after* `relax_integer`, so relaxation-introduced bounds are converted too. Converted bounds become genuine rows, so they raise `num_constraints(...; count_variable_in_set_constraints=false)` and thus affect dataset size-matching and quality-filter thresholds.
+
 **Dataset Generation** (`src/dataset.jl`):
 - `generate_dataset(; kwargs...)`: builds a whole dataset of LP instances by sampling problem types and target variable counts; optionally writes instance files + a `manifest.json` and returns `Vector{GeneratedInstance}` metadata. Fully reproducible from a non-zero `seed`.
 - `check_quality(model, optimizer; ...)` + `QualityCriteria`/`QualityResult`: solve-based filtering of trivial/degenerate/unbounded/ill-conditioned instances.
