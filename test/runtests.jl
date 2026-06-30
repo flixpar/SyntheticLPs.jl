@@ -265,4 +265,61 @@ end
         @test crit.min_constraints == 10
         @test crit.min_iterations == 5
     end
+
+    # Test the bounds-to-constraints reformulation
+    @testset "Bounds to Constraints" begin
+        # Direct transform on a hand-built model exercising every bound kind.
+        m = Model()
+        @variable(m, x >= 0)        # plain nonnegativity — preserved
+        @variable(m, 2 <= y <= 5)   # nonzero lower + upper — both become rows
+        @variable(m, z == 3)        # fixed — becomes an equality row
+        @variable(m, w <= 7)        # upper only — becomes a row
+        @objective(m, Max, x + y + z + w)
+        @constraint(m, x + y + z + w <= 100)
+
+        aff_before = num_constraints(m; count_variable_in_set_constraints = false)
+        result = bounds_to_constraints!(m)
+        @test result === m  # mutates and returns the same model
+        aff_after = num_constraints(m; count_variable_in_set_constraints = false)
+
+        # +4 rows: lower(y), upper(y), fixed(z), upper(w). x ≥ 0 is left alone.
+        @test aff_after == aff_before + 4
+
+        # Nonnegativity is preserved; all other bounds are stripped.
+        @test has_lower_bound(x)
+        @test !has_lower_bound(y)
+        @test !has_upper_bound(y)
+        @test !is_fixed(z)
+        @test !has_upper_bound(w)
+
+        # The variable count is unchanged by the reformulation.
+        @test num_variables(m) == 4
+
+        # Via generate_problem: every item in knapsack/bounded carries an upper
+        # bound (0 ≤ x ≤ uᵢ), so converting adds affine rows without changing the
+        # variable count. (Integrality is relaxed by default before conversion.)
+        ref = ProblemVariant("knapsack/bounded")
+        m_plain, _ = generate_problem(ref, 100, unknown, 0)
+        m_conv, _  = generate_problem(ref, 100, unknown, 0; bounds_to_constraints = true)
+        @test num_variables(m_conv) == num_variables(m_plain)
+        @test num_constraints(m_conv; count_variable_in_set_constraints = false) >
+              num_constraints(m_plain; count_variable_in_set_constraints = false)
+
+        # generate_dataset threads the option through: converted bounds raise the
+        # recorded constraint counts, and the choice is recorded in the manifest.
+        tmp = mktempdir()
+        plain = generate_dataset(num_problems = 4, var_mean = 80, var_std = 20,
+                                 var_min = 30, var_max = 150, seed = 21,
+                                 problem_types = ["knapsack/bounded"],
+                                 max_candidate_multiplier = 2)
+        converted = generate_dataset(num_problems = 4, var_mean = 80, var_std = 20,
+                                     var_min = 30, var_max = 150, seed = 21,
+                                     problem_types = ["knapsack/bounded"],
+                                     max_candidate_multiplier = 2,
+                                     bounds_to_constraints = true,
+                                     output_dir = tmp)
+        @test sum(i -> i.num_constraints, converted) > sum(i -> i.num_constraints, plain)
+        manifest = JSON.parsefile(joinpath(tmp, "manifest.json"))
+        @test manifest["config"]["bounds_to_constraints"] == true
+    end
 end

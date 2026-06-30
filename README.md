@@ -122,6 +122,27 @@ model, problem = generate_problem(:diet_problem, 100, infeasible, 0)
 model, problem = generate_problem(:portfolio, 100, unknown, 0)
 ```
 
+### Bound Reformulation
+
+By default, variable bounds are emitted as JuMP/MOI variable bounds. Pass
+`bounds_to_constraints=true` to instead reformulate them as explicit affine
+constraints — useful for generating LPs in a more standard-form-like shape.
+A plain `x ≥ 0` nonnegativity bound is left as a variable bound; every other
+bound (upper bounds, fixed values, and nonzero lower bounds) becomes a row.
+
+```julia
+# Bounds (other than x ≥ 0) become explicit constraint rows
+model, problem = generate_problem(:knapsack, 100, unknown, 0; bounds_to_constraints=true)
+
+# Or apply it to an already-built JuMP model in place
+bounds_to_constraints!(model)
+```
+
+The reformulation runs *after* integrality relaxation, so bounds introduced by
+relaxing integer/binary variables (e.g. `0 ≤ x ≤ 1`) are converted too. Because
+the converted bounds become genuine rows, they are now counted by
+`num_constraints(model; count_variable_in_set_constraints=false)`.
+
 ### Reproducible Generation with Seeds
 
 ```julia
@@ -346,6 +367,9 @@ julia --project=@. scripts/generate_problem.jl knapsack 50 --feasible --solve
 # Generate an infeasible diet problem with ~100 variables
 julia --project=@. scripts/generate_problem.jl diet_problem 100 --infeasible output.mps
 
+# Reformulate variable bounds (other than x >= 0) into explicit constraints
+julia --project=@. scripts/generate_problem.jl knapsack 50 --bounds-to-constraints
+
 # Generate a random problem with ~200 variables
 julia --project=@. scripts/generate_problem.jl random 200
 
@@ -368,6 +392,9 @@ julia --project=scripts scripts/generate_lps.jl -o output -n 50 --feasible-only 
 
 # Restrict to specific problem types and a fixed seed
 julia --project=scripts scripts/generate_lps.jl --problem-types transportation,knapsack -n 20 --seed 42
+
+# Reformulate variable bounds (other than x >= 0) into explicit constraints
+julia --project=scripts scripts/generate_lps.jl -o output -n 20 --bounds-to-constraints
 
 # Uniform actual-size matching for each selected problem type
 julia --project=scripts scripts/generate_lps.jl -o output -n 60 \

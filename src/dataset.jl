@@ -465,6 +465,7 @@ function _attempt_candidate(rng::AbstractRNG,
                             target_vars::Int,
                             feasibility::FeasibilityStatus,
                             relax_integer::Bool,
+                            bounds_to_constraints::Bool,
                             quality_filter::Bool,
                             optimizer,
                             quality_criteria::QualityCriteria,
@@ -475,7 +476,8 @@ function _attempt_candidate(rng::AbstractRNG,
     problem_seed = rand(rng, 1:typemax(Int32))
     try
         model, _ = generate_problem(ref, target_vars, feasibility,
-                                    problem_seed; relax_integer = relax_integer)
+                                    problem_seed; relax_integer = relax_integer,
+                                    bounds_to_constraints = bounds_to_constraints)
 
         iterations = -1
         stime = NaN
@@ -532,6 +534,7 @@ function _fill_candidate_pool!(candidates::Vector{_DatasetCandidate},
                                size_spec::_SizeDistributionSpec,
                                feasibility::FeasibilityStatus,
                                relax_integer::Bool,
+                               bounds_to_constraints::Bool,
                                quality_filter::Bool,
                                optimizer,
                                quality_criteria::QualityCriteria,
@@ -547,7 +550,8 @@ function _fill_candidate_pool!(candidates::Vector{_DatasetCandidate},
         target_vars = _candidate_target_variables(rng, size_spec, quota,
                                                   target_index_start + local_attempts - 1)
         candidate = _attempt_candidate(rng, ref, target_vars, feasibility,
-                                       relax_integer, quality_filter, optimizer,
+                                       relax_integer, bounds_to_constraints,
+                                       quality_filter, optimizer,
                                        quality_criteria, optimizer_attributes,
                                        feasible_only, stats, verbose)
         candidate === nothing || push!(candidates, candidate)
@@ -581,6 +585,7 @@ function _generate_matched_group(rng::AbstractRNG,
                                  size_spec::_SizeDistributionSpec,
                                  feasibility::FeasibilityStatus,
                                  relax_integer::Bool,
+                                 bounds_to_constraints::Bool,
                                  quality_filter::Bool,
                                  optimizer,
                                  quality_criteria::QualityCriteria,
@@ -606,8 +611,8 @@ function _generate_matched_group(rng::AbstractRNG,
             group_attempts += _fill_candidate_pool!(
                 candidates, rng, group_variants, quota, desired_count,
                 group_attempts, remaining_attempts, size_spec, feasibility,
-                relax_integer, quality_filter, optimizer, quality_criteria,
-                optimizer_attributes, feasible_only, stats, verbose)
+                relax_integer, bounds_to_constraints, quality_filter, optimizer,
+                quality_criteria, optimizer_attributes, feasible_only, stats, verbose)
         end
 
         if length(candidates) < quota
@@ -640,6 +645,7 @@ function _generate_unmatched_candidates(rng::AbstractRNG,
                                         size_spec::_SizeDistributionSpec,
                                         feasibility::FeasibilityStatus,
                                         relax_integer::Bool,
+                                        bounds_to_constraints::Bool,
                                         quality_filter::Bool,
                                         optimizer,
                                         quality_criteria::QualityCriteria,
@@ -657,7 +663,8 @@ function _generate_unmatched_candidates(rng::AbstractRNG,
         ref = rand(rng, types)
         target_vars = _sample_num_variables(rng, size_spec)
         candidate = _attempt_candidate(rng, ref, target_vars, feasibility,
-                                       relax_integer, quality_filter, optimizer,
+                                       relax_integer, bounds_to_constraints,
+                                       quality_filter, optimizer,
                                        quality_criteria, optimizer_attributes,
                                        feasible_only, stats, verbose)
         candidate === nothing || push!(candidates, candidate)
@@ -701,6 +708,7 @@ function _materialize_instances(candidates::Vector{_DatasetCandidate},
                                 file_extension::AbstractString,
                                 feasibility::FeasibilityStatus,
                                 relax_integer::Bool,
+                                bounds_to_constraints::Bool,
                                 verbose::Bool)
     instances = GeneratedInstance[]
     for (idx, candidate) in enumerate(candidates)
@@ -711,7 +719,8 @@ function _materialize_instances(candidates::Vector{_DatasetCandidate},
                                         candidate.target_variables,
                                         feasibility,
                                         candidate.seed;
-                                        relax_integer = relax_integer)
+                                        relax_integer = relax_integer,
+                                        bounds_to_constraints = bounds_to_constraints)
             actual_vars = num_variables(model)
             actual_cons = num_constraints(model; count_variable_in_set_constraints = false)
             if actual_vars != candidate.num_variables || actual_cons != candidate.num_constraints
@@ -788,6 +797,11 @@ Returns metadata for every kept instance as a `Vector{GeneratedInstance}`.
   (`nothing`/empty = all registered types).
 - `feasible_only::Bool = false`: request guaranteed-feasible instances.
 - `relax_integer::Bool = true`: relax integrality of generated models.
+- `bounds_to_constraints::Bool = false`: reformulate variable bounds (other than
+  plain `x ≥ 0` nonnegativity) as explicit affine constraints. Applied after
+  integrality relaxation. Note: converted bounds become genuine constraint rows,
+  so they raise the `num_constraints` recorded for each instance and feed into
+  size matching and the quality filter's constraint-based thresholds.
 - `seed::Int = 0`: master seed (`0` = non-deterministic).
 - `match_size_distribution::Bool = true`: post-select candidates so actual
   variable counts match target distribution quantiles.
@@ -831,6 +845,7 @@ function generate_dataset(;
         problem_types = nothing,
         feasible_only::Bool = false,
         relax_integer::Bool = true,
+        bounds_to_constraints::Bool = false,
         seed::Int = 0,
         match_size_distribution::Bool = true,
         match_size_by_type::Bool = false,
@@ -878,6 +893,7 @@ function generate_dataset(;
         println("  Size matching: $(match_size_distribution ? "enabled" : "disabled")" *
                 (match_size_by_type ? " (per type)" : ""))
         println("  Feasibility: $(feasible_only ? "feasible only" : "unknown")")
+        bounds_to_constraints && println("  Bounds → constraints: enabled")
         println("  Problem types: $(length(types))")
         if quality_filter
             println("  Quality filter: enabled (timeout=$(quality_criteria.solve_timeout)s, " *
@@ -914,6 +930,7 @@ function generate_dataset(;
                 size_spec,
                 feasibility,
                 relax_integer,
+                bounds_to_constraints,
                 quality_filter,
                 optimizer,
                 quality_criteria,
@@ -942,6 +959,7 @@ function generate_dataset(;
             size_spec,
             feasibility,
             relax_integer,
+            bounds_to_constraints,
             quality_filter,
             optimizer,
             quality_criteria,
@@ -968,6 +986,7 @@ function generate_dataset(;
             size_spec,
             feasibility,
             relax_integer,
+            bounds_to_constraints,
             quality_filter,
             optimizer,
             quality_criteria,
@@ -982,7 +1001,7 @@ function generate_dataset(;
     shuffle!(rng, selected_candidates)
     instances = _materialize_instances(selected_candidates, output_dir,
                                        file_extension, feasibility,
-                                       relax_integer, verbose)
+                                       relax_integer, bounds_to_constraints, verbose)
 
     size_match_report = Dict{String,Any}(
         "enabled" => match_size_distribution,
@@ -1000,7 +1019,9 @@ function generate_dataset(;
         _write_manifest(output_dir, instances, types; seed = seed,
                         var_mean = var_mean, var_std = var_std,
                         var_min = var_min, var_max = var_max,
-                        feasible_only = feasible_only, quality_filter = quality_filter,
+                        feasible_only = feasible_only,
+                        bounds_to_constraints = bounds_to_constraints,
+                        quality_filter = quality_filter,
                         quality_criteria = quality_criteria,
                         attempts = stats.attempts, failed = stats.failed,
                         filter_counts = stats.filter_counts,

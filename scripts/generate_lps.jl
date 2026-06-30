@@ -71,6 +71,9 @@ function parse_commandline()
         "--feasible-only"
             help = "Only generate problems guaranteed to be feasible"
             action = :store_true
+        "--bounds-to-constraints"
+            help = "Reformulate variable bounds (other than x >= 0) as explicit affine constraints"
+            action = :store_true
         "--problem-types"
             help = "Comma-separated list of categories (e.g. transportation) or " *
                    "category/variant references (e.g. portfolio/cvar) to sample " *
@@ -151,6 +154,7 @@ function main()
         size_distribution = size_distribution,
         problem_types = problem_types,
         feasible_only = args["feasible-only"],
+        bounds_to_constraints = args["bounds-to-constraints"],
         seed = args["seed"],
         match_size_distribution = !args["no-size-matching"],
         match_size_by_type = args["match-size-by-type"],
