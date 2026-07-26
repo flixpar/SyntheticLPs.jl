@@ -36,6 +36,7 @@ struct EnergyProblem <: ProblemGenerator
     demands::Vector{Float64}
     emission_limits::Dict{String,Float64}
     renewable_fraction::Float64
+    emission_intensity_target::Float64
 end
 
 """
@@ -365,8 +366,36 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
         end
     end
 
+    # --- Model-consistent feasibility guard ---
+    # build_model bounds x[s,t] <= capacities[s] and requires sum(x[:,t]) >= demand[t]
+    # (there is no reserve constraint in the model), so the LP is infeasible iff some
+    # period's demand exceeds the total available capacity sum(capacities). The
+    # availability_factors / peak_demand / scenario adjustments above produce realistic
+    # demand and capacity profiles; this final guard guarantees the requested status
+    # against the constraints that are actually in the model.
+    total_capacity = sum(values(capacities))
+    max_demand = isempty(demands) ? 0.0 : maximum(demands)
+    if actual_status == :feasible
+        if max_demand > total_capacity * 0.9 && max_demand > 0
+            scale_factor = (total_capacity * 0.9) / max_demand
+            demands .= demands .* scale_factor
+        end
+    else
+        if max_demand <= total_capacity
+            scale_factor = (total_capacity * 1.10) / max(max_demand, 1e-9)
+            demands .= demands .* scale_factor
+        end
+    end
+
+    # Emissions intensity target: a fixed cap strictly below the dirtiest source's
+    # emission rate, so the per-period emissions constraint can actually bind. (The
+    # previous `<= max_emission * sum(x)` form was an algebraic tautology — a weighted
+    # average is always <= its maximum weight — and so could never constrain anything.)
+    max_emission = isempty(emission_limits) ? 0.0 : maximum(values(emission_limits))
+    emission_intensity_target = iszero(max_emission) ? 1.0 : max_emission * rand(Uniform(0.7, 0.95))
+
     return EnergyProblem(n_sources, n_periods, sources, time_periods, generation_costs, capacities,
-                        demands, emission_limits, renewable_fraction)
+                        demands, emission_limits, renewable_fraction, emission_intensity_target)
 end
 
 """
@@ -396,12 +425,14 @@ function build_model(prob::EnergyProblem)
         @constraint(model, sum(x[s,t] for s in prob.sources) >= prob.demands[t])
     end
 
-    # Emissions
-    max_emission = maximum(values(prob.emission_limits))
+    # Emissions: cap the generation-weighted average emission intensity at a fixed
+    # target below the dirtiest source's rate, so the row can actually bind (a
+    # `<= max_rate * sum(x)` form would be a tautology — a weighted average never
+    # exceeds its largest weight).
     for t in prob.time_periods
         @constraint(model,
             sum(prob.emission_limits[s] * x[s,t] for s in prob.sources) <=
-            sum(x[s,t] for s in prob.sources) * max_emission
+            prob.emission_intensity_target * sum(x[s,t] for s in prob.sources)
         )
     end
 

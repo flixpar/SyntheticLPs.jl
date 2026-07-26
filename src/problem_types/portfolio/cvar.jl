@@ -183,7 +183,11 @@ function PortfolioProblem(target_variables::Int, feasibility_status::Feasibility
     factor_upper = ref_exposure .+ rand(Uniform(0.1, 0.3), n_factors)
 
     # --- Position limits ---
-    max_position = [rand(Uniform(max(2.0 / n_assets, 0.02), min(0.3, 5.0 / n_assets))) for _ in 1:n_assets]
+    # Each position cap is a small multiple of the equal-weight 1/n_assets (between
+    # 2× and 5×). Sampling directly in [2/n, 2/n + 3/n] avoids the inverted-bounds
+    # Uniform(a > b) crash the previous `max(2/n, 0.02) .. min(0.3, 5/n)` form hit for
+    # very small or very large n_assets.
+    max_position = [(2.0 + 3.0 * rand()) / n_assets for _ in 1:n_assets]
     if sum(max_position) < 1.05
         max_position .*= (1.1 / sum(max_position))
     end

@@ -376,26 +376,47 @@ function CropPlanningProblem(target_variables::Int, feasibility_status::Feasibil
         labor_capacity = max(labor_capacity, sum(labor_requirements .* min_area_per_crop) * 1.2)
 
     elseif solution_status == :infeasible
-        # Calculate provable lower bounds on resource usage
-        # Lower bound: minimum water/labor needed when using minimum-requirement crops only
-        min_water_bound = 0.0
-        min_labor_bound = 0.0
+        # Provable infeasibility via a resource lower bound.
+        #
+        # The model's land constraint is sum(x) <= total_land (an UPPER bound), so the
+        # farmer is free to leave land fallow. The minimum achievable resource usage is
+        # therefore the usage at the mandatory lower bounds x[i] = min_area_per_crop[i]
+        # — NOT (as a previous version assumed) the usage when every hectare is planted.
+        # Setting a resource capacity below that true minimum makes the instance
+        # infeasible, because x[i] >= min_area_per_crop[i] forces usage >= minimum.
+        #
+        # For the bound to be positive we need a non-trivial set of mandatory crops;
+        # otherwise x = 0 is feasible and no resource shortage can bind.
+        if sum(min_area_per_crop) <= 0.0
+            n_essential = max(2, round(Int, n_crops * rand(Uniform(0.25, 0.5))))
+            essential = randperm(n_crops)[1:n_essential]
+            for i in essential
+                # Respect the market demand ceiling when imposing a minimum.
+                floor_i = max(0.0, market_demand_limits[i]) * rand(Uniform(0.3, 0.6))
+                min_area_per_crop[i] = max(min_area_per_crop[i], floor_i)
+            end
+            # Re-apply the market cap and total-land scaling to the new minima.
+            for i in 1:n_crops
+                if min_area_per_crop[i] > market_demand_limits[i]
+                    min_area_per_crop[i] = market_demand_limits[i]
+                end
+            end
+            min_total_area = sum(min_area_per_crop)
+            if min_total_area > total_land && min_total_area > 0
+                min_area_per_crop .*= total_land / min_total_area
+            end
+        end
 
-        # Strategy: compute minimum resource usage when satisfying all minimum area requirements
+        # True minimum resource usage = usage at the mandatory lower bounds.
         min_water_bound = sum(water_requirements .* min_area_per_crop)
         min_labor_bound = sum(labor_requirements .* min_area_per_crop)
 
-        # For remaining land, use crops with minimum resource requirements
-        remaining_land_required = max(0.0, total_land - sum(min_area_per_crop))
-
-        if remaining_land_required > 0
-            # Find crop with minimum water requirement
-            min_water_crop = argmin(water_requirements)
-            min_water_bound += water_requirements[min_water_crop] * remaining_land_required
-
-            # Find crop with minimum labor requirement
-            min_labor_crop = argmin(labor_requirements)
-            min_labor_bound += labor_requirements[min_labor_crop] * remaining_land_required
+        # Defensive: ensure the bound is positive so the shortage can bind.
+        if min_water_bound <= 0.0
+            min_water_bound = sum(water_requirements) * 0.01
+        end
+        if min_labor_bound <= 0.0
+            min_labor_bound = sum(labor_requirements) * 0.01
         end
 
         # Set capacity below lower bound to guarantee infeasibility

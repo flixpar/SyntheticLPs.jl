@@ -209,7 +209,10 @@ function LandUseProblem(target_variables::Int, feasibility_status::FeasibilitySt
     adjacency_matrix = zeros(Bool, n_parcels, n_parcels)
     if zoning_adjacency_constraints && n_parcels > 1
         for i in 1:n_parcels
-            n_neighbors = rand(2:min(4, n_parcels-1))
+            # Clamp the neighbor count to the available other parcels; floor at 1 so
+            # the range is never empty (the previous `rand(2:min(4, n_parcels-1))`
+            # crashed with `collection must be non-empty` when n_parcels == 2).
+            n_neighbors = max(1, min(n_parcels - 1, rand(2:4)))
             neighbors = sample(setdiff(1:n_parcels, [i]), n_neighbors, replace=false)
             adjacency_matrix[i, neighbors] .= true
             adjacency_matrix[neighbors, i] .= true
