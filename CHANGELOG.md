@@ -4,6 +4,23 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-07-26 21:10 UTC (review corrections)
+
+**Summary**: Two corrections from a self-review of the prior changes.
+
+- **`supply_chain/standard` feasible-path sizing**: the deterministic combo
+  selection landed on target for `unknown` but the pre-existing K-nearest
+  coverage step added combos *on top* of the budget for `feasible`, inflating the
+  variable count up to ~2×. The K-nearest coverage combos are now reserved *out
+  of* the combo budget (with `K` capped so coverage fits), and the coverage step
+  no longer adds combos. Verified 1.00× across all statuses and sizes 50–1500.
+- **Test loadability**: `using HiGHS` at the top of `test/runtests.jl` made the
+  direct `julia --project=@. test/runtests.jl` command hard-error (HiGHS is an
+  `[extras]` dep, not resolvable outside `Pkg.test`). HiGHS is now loaded lazily
+  (`HAS_HIGHS` flag) so the direct command runs the solver-free testsets and
+  skips the two solver-based ones with an `@info` notice. Also switched the test
+  file to `JuMP.MOI` and dropped the redundant `MathOptInterface` extra.
+
 ## 2026-07-26 19:50 UTC (variable-count targeting + trivial-instance fixes)
 
 **Previous Commit**: `2cb557a`

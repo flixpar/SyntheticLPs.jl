@@ -18,14 +18,20 @@ This package is a standardized framework for generating synthetic linear program
 
 ### Testing
 
-Run the comprehensive test suite (uses HiGHS, now a test-only dependency, so it
-must run through `Pkg.test` to resolve the `[extras]` solver):
+The suite uses HiGHS (a test-only dependency in `[extras]`). Both commands work:
+
 ```bash
+# Full suite including the solver-based feasibility-contract testsets:
 julia --project=@. -e 'using Pkg; Pkg.test()'
+
+# Direct run: executes the solver-free testsets and skips the solver-based ones
+# (HiGHS is not resolvable outside the Pkg.test sandbox):
+julia --project=@. test/runtests.jl
 ```
 
-A solver-free subset still runs directly via `julia --project=@. test/runtests.jl`,
-but the feasibility-contract testsets require HiGHS and will error there.
+`test/runtests.jl` loads HiGHS lazily (`HAS_HIGHS` flag) so the direct command
+does not error — the two feasibility-verification testsets are simply skipped
+with an `@info` notice when HiGHS is unavailable.
 
 ### Problem Generation
 

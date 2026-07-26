@@ -1,13 +1,22 @@
 using Test
 using JuMP
-import MathOptInterface
-const MOI = MathOptInterface
+const MOI = JuMP.MOI
 using Random
 using Distributions
 using JSON
-using HiGHS
 
 using SyntheticLPs
+
+# HiGHS is a test-only dependency ([extras]/[targets]); it resolves inside
+# `Pkg.test()` but not when running this file directly with `julia --project=.`.
+# Load it lazily so the direct command still runs the solver-free testsets and
+# only skips the solver-based ones.
+const HAS_HIGHS = try
+    @eval using HiGHS
+    true
+catch
+    false
+end
 
 """
     test_problem_generator(ref)
@@ -343,6 +352,11 @@ end
         @test eprob.emission_intensity_target > 0
     end
 
+    # Solver-based testsets (require HiGHS, a test-only dep). Skipped when HiGHS is
+    # not resolvable, e.g. running this file directly with `julia --project=.`
+    # rather than via `Pkg.test()`.
+    if HAS_HIGHS
+
     # Project-level feasibility-contract verification via the `optimizer` kwarg.
     @testset "Feasibility Contract Verification" begin
         # Without an optimizer, behavior is unchanged (deterministic, no solving).
@@ -416,5 +430,9 @@ end
             set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
             @test termination_status(m) == MOI.OPTIMAL
         end
+    end
+
+    else
+        @info "HiGHS not available; skipping solver-based feasibility testsets (run via Pkg.test() to include them)."
     end
 end
