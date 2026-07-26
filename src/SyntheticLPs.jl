@@ -240,8 +240,92 @@ Each variant must implement this method.
 function build_model end
 
 """
+    _generate_problem_verified([ref_or_type], target_variables, feasibility_status, seed;
+                               relax_integer, bounds_to_constraints, optimizer,
+                               max_feasibility_retries)
+
+Internal builder used by [`generate_problem`](@ref). Constructs the problem and its
+JuMP model and applies the `relax_integer` / `bounds_to_constraints` transforms.
+
+When `optimizer` is supplied and `feasibility_status` is `feasible` or `infeasible`,
+the model is solved once to verify the feasibility contract — a `feasible` request
+must solve to `OPTIMAL`, an `infeasible` request must solve to `INFEASIBLE`. If the
+contract is violated the problem is rebuilt with a different seed and re-checked, up
+to `max_feasibility_retries` times. (Generators aim to honor the requested status by
+construction, but a few have heuristic feasibility logic that occasionally misses; this
+central check is the project-level backstop, so callers always receive a conforming
+model when an optimizer is provided.)
+
+Returns `(model, problem, resolved_seed)`. With `optimizer=nothing` (or status
+`unknown`) the model is built exactly once and `resolved_seed == seed`, so generation
+stays fully deterministic and seed-reproducible.
+"""
+function _generate_problem_verified(::Type{T}, target_variables::Int,
+                                    feasibility_status::FeasibilityStatus, seed::Int;
+                                    relax_integer::Bool=true,
+                                    bounds_to_constraints::Bool=false,
+                                    optimizer=nothing,
+                                    max_feasibility_retries::Int=10) where T <: ProblemGenerator
+    max_feasibility_retries >= 1 ||
+        error("max_feasibility_retries must be >= 1 (got $max_feasibility_retries).")
+    needs_check = optimizer !== nothing && feasibility_status !== unknown
+
+    current_seed = seed
+    model = nothing
+    problem = nothing
+    for _ in 1:max_feasibility_retries
+        problem = T(target_variables, feasibility_status, current_seed)
+        model = build_model(problem)
+        relax_integer && relax_integrality(model)
+        bounds_to_constraints && bounds_to_constraints!(model)
+        if !needs_check
+            return model, problem, current_seed
+        end
+        if _feasibility_contract_holds(model, optimizer, feasibility_status)
+            return model, problem, current_seed
+        end
+        # Contract violated — rebuild with a fresh seed.
+        current_seed += 1
+    end
+
+    @warn "Feasibility contract not satisfied for $T " *
+          "(target_variables=$target_variables, status=$feasibility_status) " *
+          "after $max_feasibility_retries attempts; returning the last model."
+    return model, problem, current_seed
+end
+
+# Ref-based overload delegating to the type-based builder above.
+function _generate_problem_verified(ref::ProblemVariant, target_variables::Int,
+                                    feasibility_status::FeasibilityStatus, seed::Int;
+                                    kwargs...)
+    return _generate_problem_verified(get_problem_type(ref), target_variables,
+                                      feasibility_status, seed; kwargs...)
+end
+
+# Solve `model` and check whether the result matches the requested `feasibility_status`.
+# Solves a structural copy so the caller's model is returned pristine (no optimizer
+# attached, no time limit set, not pre-solved).
+function _feasibility_contract_holds(model::Model, optimizer,
+                                     feasibility_status::FeasibilityStatus;
+                                     timeout::Float64=10.0)
+    check = copy(model)
+    set_optimizer(check, optimizer)
+    set_silent(check)
+    set_time_limit_sec(check, timeout)
+    optimize!(check)
+    ts = termination_status(check)
+    if feasibility_status == feasible
+        return ts == JuMP.MOI.OPTIMAL || ts == JuMP.MOI.ALMOST_OPTIMAL
+    elseif feasibility_status == infeasible
+        return ts == JuMP.MOI.INFEASIBLE || ts == JuMP.MOI.INFEASIBLE_OR_UNBOUNDED
+    end
+    return true
+end
+
+"""
     generate_problem(::Type{T}, target_variables, feasibility_status, seed;
-                     relax_integer=true, bounds_to_constraints=false)
+                     relax_integer=true, bounds_to_constraints=false,
+                     optimizer=nothing, max_feasibility_retries=10)
 
 Generate a linear programming problem from a generator type by constructing an
 instance and building its model.
@@ -251,6 +335,11 @@ nonnegativity) are reformulated as explicit affine constraints via
 [`bounds_to_constraints!`](@ref). This runs *after* integrality relaxation, so
 bounds introduced by relaxing integer/binary variables are converted too.
 
+When `optimizer` is supplied (e.g. `HiGHS.Optimizer`) and `feasibility_status` is
+`feasible` or `infeasible`, the model is solved to verify the feasibility contract
+and rebuilt with a new seed on violation (see [`_generate_problem_verified`](@ref)).
+With `optimizer=nothing` (the default) no solving is performed.
+
 # Returns
 - `model`: The JuMP model
 - `problem`: The problem generator instance containing all parameters
@@ -258,53 +347,59 @@ bounds introduced by relaxing integer/binary variables are converted too.
 function generate_problem(::Type{T}, target_variables::Int,
                           feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
                           relax_integer::Bool=true,
-                          bounds_to_constraints::Bool=false) where T <: ProblemGenerator
-    problem = T(target_variables, feasibility_status, seed)
-    model = build_model(problem)
-
-    if relax_integer
-        relax_integrality(model)
-    end
-
-    if bounds_to_constraints
-        bounds_to_constraints!(model)
-    end
-
+                          bounds_to_constraints::Bool=false,
+                          optimizer=nothing,
+                          max_feasibility_retries::Int=10) where T <: ProblemGenerator
+    model, problem, _ = _generate_problem_verified(T, target_variables,
+                                                   feasibility_status, seed;
+                                                   relax_integer=relax_integer,
+                                                   bounds_to_constraints=bounds_to_constraints,
+                                                   optimizer=optimizer,
+                                                   max_feasibility_retries=max_feasibility_retries)
     return model, problem
 end
 
 """
     generate_problem(ref::ProblemVariant, target_variables, feasibility_status, seed;
-                     relax_integer=true, bounds_to_constraints=false)
+                     relax_integer=true, bounds_to_constraints=false,
+                     optimizer=nothing, max_feasibility_retries=10)
 
 Generate a problem from a fully-qualified `category/variant` reference.
 """
 function generate_problem(ref::ProblemVariant, target_variables::Int,
                           feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
-                          relax_integer::Bool=true, bounds_to_constraints::Bool=false)
+                          relax_integer::Bool=true, bounds_to_constraints::Bool=false,
+                          optimizer=nothing, max_feasibility_retries::Int=10)
     return generate_problem(get_problem_type(ref), target_variables,
                             feasibility_status, seed; relax_integer=relax_integer,
-                            bounds_to_constraints=bounds_to_constraints)
+                            bounds_to_constraints=bounds_to_constraints,
+                            optimizer=optimizer,
+                            max_feasibility_retries=max_feasibility_retries)
 end
 
 """
     generate_problem(ref::AbstractString, target_variables, feasibility_status, seed;
-                     relax_integer=true, bounds_to_constraints=false)
+                     relax_integer=true, bounds_to_constraints=false,
+                     optimizer=nothing, max_feasibility_retries=10)
 
 Generate a problem from a `"category"` or `"category/variant"` string, parsed via
 [`ProblemVariant`](@ref).
 """
 function generate_problem(ref::AbstractString, target_variables::Int,
                           feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
-                          relax_integer::Bool=true, bounds_to_constraints::Bool=false)
+                          relax_integer::Bool=true, bounds_to_constraints::Bool=false,
+                          optimizer=nothing, max_feasibility_retries::Int=10)
     return generate_problem(ProblemVariant(ref), target_variables,
                             feasibility_status, seed; relax_integer=relax_integer,
-                            bounds_to_constraints=bounds_to_constraints)
+                            bounds_to_constraints=bounds_to_constraints,
+                            optimizer=optimizer,
+                            max_feasibility_retries=max_feasibility_retries)
 end
 
 """
     generate_problem(category::Symbol, target_variables, feasibility_status, seed;
-                     variant=nothing, relax_integer=true, bounds_to_constraints=false)
+                     variant=nothing, relax_integer=true, bounds_to_constraints=false,
+                     optimizer=nothing, max_feasibility_retries=10)
 
 Generate a problem for a category. With `variant=nothing` the category's default
 variant is used; pass `variant=:name` to select a specific variant.
@@ -318,6 +413,10 @@ variant is used; pass `variant=:name` to select a specific variant.
 - `relax_integer`: Relax integrality of the generated model
 - `bounds_to_constraints`: Reformulate variable bounds (other than `x ≥ 0`) as
   explicit affine constraints
+- `optimizer`: Optional solver used to verify the feasibility contract (see
+  [`_generate_problem_verified`](@ref)). `nothing` disables verification.
+- `max_feasibility_retries`: Maximum number of rebuild attempts when verification
+  fails.
 
 # Returns
 - `model`: The JuMP model
@@ -326,12 +425,15 @@ variant is used; pass `variant=:name` to select a specific variant.
 function generate_problem(category::Symbol, target_variables::Int,
                           feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
                           variant::Union{Symbol,Nothing}=nothing, relax_integer::Bool=true,
-                          bounds_to_constraints::Bool=false)
+                          bounds_to_constraints::Bool=false,
+                          optimizer=nothing, max_feasibility_retries::Int=10)
     ref = variant === nothing ? ProblemVariant(category) :
                                 ProblemVariant(category, variant)
     return generate_problem(ref, target_variables, feasibility_status, seed;
                             relax_integer=relax_integer,
-                            bounds_to_constraints=bounds_to_constraints)
+                            bounds_to_constraints=bounds_to_constraints,
+                            optimizer=optimizer,
+                            max_feasibility_retries=max_feasibility_retries)
 end
 
 # ---------------------------------------------------------------------------
@@ -407,11 +509,14 @@ end
 
 """
     generate_random_problem(target_variables; feasibility_status=unknown,
-                            relax_integer=true, bounds_to_constraints=false, seed=0)
+                            relax_integer=true, bounds_to_constraints=false, seed=0,
+                            optimizer=nothing, max_feasibility_retries=10)
 
 Generate a problem of a randomly selected variant targeting approximately the
 specified number of variables. Sampling is uniform over all registered
-`category/variant` pairs.
+`category/variant` pairs. When `optimizer` is supplied and `feasibility_status` is
+`feasible`/`infeasible`, the feasibility contract is verified (see
+[`generate_problem`](@ref)).
 
 # Returns
 - `model`: The JuMP model
@@ -421,7 +526,8 @@ specified number of variables. Sampling is uniform over all registered
 function generate_random_problem(target_variables::Int;
                                  feasibility_status::FeasibilityStatus=unknown,
                                  relax_integer::Bool=true,
-                                 bounds_to_constraints::Bool=false, seed::Int=0)
+                                 bounds_to_constraints::Bool=false, seed::Int=0,
+                                 optimizer=nothing, max_feasibility_retries::Int=10)
     Random.seed!(seed)
 
     problems = list_problems()
@@ -432,7 +538,9 @@ function generate_random_problem(target_variables::Int;
     ref = rand(problems)
     model, problem = generate_problem(ref, target_variables, feasibility_status, seed;
                                       relax_integer=relax_integer,
-                                      bounds_to_constraints=bounds_to_constraints)
+                                      bounds_to_constraints=bounds_to_constraints,
+                                      optimizer=optimizer,
+                                      max_feasibility_retries=max_feasibility_retries)
 
     return model, ref, problem
 end

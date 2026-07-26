@@ -475,9 +475,17 @@ function _attempt_candidate(rng::AbstractRNG,
                             verbose::Bool)
     problem_seed = rand(rng, 1:typemax(Int32))
     try
-        model, _ = generate_problem(ref, target_vars, feasibility,
+        # Build (and, when an optimizer is available and the requested status is
+        # feasible/infeasible, verify the feasibility contract). The resolved seed
+        # is recorded on the candidate so materialization reproduces the exact
+        # verified model: rebuilding with `resolved_seed` and no optimizer builds
+        # that model first-try (it already passed), keeping the size assertion below
+        # valid.
+        model, _, resolved_seed = _generate_problem_verified(ref, target_vars, feasibility,
                                     problem_seed; relax_integer = relax_integer,
-                                    bounds_to_constraints = bounds_to_constraints)
+                                    bounds_to_constraints = bounds_to_constraints,
+                                    optimizer = optimizer,
+                                    max_feasibility_retries = 10)
 
         iterations = -1
         stime = NaN
@@ -505,7 +513,7 @@ function _attempt_candidate(rng::AbstractRNG,
             target_vars,
             num_variables(model),
             num_constraints(model; count_variable_in_set_constraints = false),
-            problem_seed,
+            resolved_seed,
             iterations,
             stime,
         )
