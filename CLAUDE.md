@@ -18,10 +18,14 @@ This package is a standardized framework for generating synthetic linear program
 
 ### Testing
 
-Run the comprehensive test suite:
+Run the comprehensive test suite (uses HiGHS, now a test-only dependency, so it
+must run through `Pkg.test` to resolve the `[extras]` solver):
 ```bash
-julia --project=@. test/runtests.jl
+julia --project=@. -e 'using Pkg; Pkg.test()'
 ```
+
+A solver-free subset still runs directly via `julia --project=@. test/runtests.jl`,
+but the feasibility-contract testsets require HiGHS and will error there.
 
 ### Problem Generation
 
@@ -82,6 +86,7 @@ SyntheticLPs uses a type-based dispatch system for generating realistic linear p
 - `ProblemVariant`: identifier for a `category/variant` pair (the canonical reference used throughout); constructible from `(category, variant)` symbols, a bare category symbol (→ default variant), or a `"category"`/`"category/variant"` string; prints as `category/variant`
 - Two-level registry `LP_REGISTRY::Dict{Symbol,CategorySpec}` populated by `register_category()` and `register_variant()` (a single variant lazily creates its category)
 - Unified interface functions: `generate_problem()` (accepts a category symbol with optional `variant=` keyword, a `ProblemVariant`, or a generator type), `list_categories()`/`list_problem_types()` (alias), `list_variants()`, `list_problems()`, `problem_info()`
+- **Feasibility-contract verification**: every `generate_problem()`/`generate_random_problem()` overload accepts an optional `optimizer` (and `max_feasibility_retries=10`). When supplied and the requested status is `feasible`/`infeasible`, the built model is solved on a copy to confirm the status matches (`feasible`→`OPTIMAL`, `infeasible`→`INFEASIBLE`); on a mismatch the problem is rebuilt with a fresh seed and re-checked, up to `max_feasibility_retries` times. This is the project-level backstop for the few generators whose heuristic feasibility logic occasionally misses. Central in `generate_problem` (not per-variant); with `optimizer=nothing` (default) generation is unchanged and fully seed-deterministic. `generate_dataset` records the resolved seed per instance so materialization reproduces the exact verified model.
 - Random problem generation with `generate_random_problem()` (returns the selected `ProblemVariant`)
 - Base function `build_model(problem::ProblemGenerator)` that each variant implements
 

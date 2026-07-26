@@ -1,8 +1,11 @@
 using Test
 using JuMP
+import MathOptInterface
+const MOI = MathOptInterface
 using Random
 using Distributions
 using JSON
+using HiGHS
 
 using SyntheticLPs
 
@@ -321,5 +324,97 @@ end
         @test sum(i -> i.num_constraints, converted) > sum(i -> i.num_constraints, plain)
         manifest = JSON.parsefile(joinpath(tmp, "manifest.json"))
         @test manifest["config"]["bounds_to_constraints"] == true
+    end
+
+    # Generator robustness fixes (P1): edge sizes that used to crash during build.
+    @testset "Generator Robustness Fixes" begin
+        # portfolio/cvar used to crash with ArgumentError (Uniform a < b) for
+        # n_assets > 250 (target > ~1250) and for very small n_assets.
+        @test_nowarn generate_problem("portfolio/cvar", 2000, unknown, 1)
+        @test_nowarn generate_problem("portfolio/cvar", 1300, unknown, 1)
+        @test_nowarn generate_problem("portfolio/cvar", 3, unknown, 1)
+        # land_use used to crash with an empty-range rand when n_parcels == 2.
+        @test_nowarn generate_problem("land_use/standard", 3, unknown, 1)
+        @test_nowarn generate_problem("land_use/standard", 4, unknown, 1)
+        # energy now stores an emissions intensity target (the previous per-period
+        # emissions row was an algebraic tautology).
+        _, eprob = generate_problem("energy/standard", 120, unknown, 1)
+        @test hasproperty(eprob, :emission_intensity_target)
+        @test eprob.emission_intensity_target > 0
+    end
+
+    # Project-level feasibility-contract verification via the `optimizer` kwarg.
+    @testset "Feasibility Contract Verification" begin
+        # Without an optimizer, behavior is unchanged (deterministic, no solving).
+        m1, _ = generate_problem("transportation/standard", 80, unknown, 5)
+        @test num_variables(m1) > 0
+
+        # max_feasibility_retries must be >= 1.
+        @test_throws ErrorException generate_problem("transportation/standard", 80,
+                                                     unknown, 5; max_feasibility_retries = 0)
+
+        # The returned model is left pristine (no optimizer attached, not solved).
+        m2, _ = generate_problem("transportation/standard", 80, feasible, 5;
+                                 optimizer = HiGHS.Optimizer)
+        @test JuMP.mode(m2) == JuMP.AUTOMATIC
+
+        # crop_planning/standard infeasible-request: previously ~17% came back
+        # feasible (the "fallow-land" hole). With the optimizer guard every seed
+        # must now solve INFEASIBLE.
+        for s in 1:8
+            m, _ = generate_problem("crop_planning/standard", 120, infeasible, s;
+                                    optimizer = HiGHS.Optimizer)
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            @test termination_status(m) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
+        end
+
+        # energy/standard infeasible-request: previously failed at larger sizes
+        # because the infeasibility logic targeted a reserve constraint that is not
+        # in the model.
+        for s in 1:8
+            m, _ = generate_problem("energy/standard", 300, infeasible, s;
+                                    optimizer = HiGHS.Optimizer)
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            @test termination_status(m) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
+        end
+
+        # unit_commitment/standard feasible-request: previously ~8% came back
+        # infeasible (documented heuristic). The optimizer guard rejects those.
+        for s in 1:10
+            m, _ = generate_problem("unit_commitment/standard", 120, feasible, s;
+                                    optimizer = HiGHS.Optimizer)
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            @test termination_status(m) == MOI.OPTIMAL
+        end
+
+        # blending/feed_blending infeasible-request was heuristic (~8-17%);
+        # the guard now guarantees the contract.
+        for ref in ("blending/standard", "feed_blending/standard")
+            for s in 1:6
+                m, _ = generate_problem(ref, 300, infeasible, s;
+                                        optimizer = HiGHS.Optimizer)
+                set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+                @test termination_status(m) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
+            end
+        end
+    end
+
+    # Dataset generation honors the contract when an optimizer is supplied.
+    @testset "Dataset Feasibility Verification" begin
+        # feasible_only + optimizer: every emitted instance must actually be feasible.
+        insts = generate_dataset(num_problems = 8, var_mean = 120, var_std = 20,
+                                 var_min = 80, var_max = 200, seed = 31,
+                                 problem_types = [:unit_commitment, :crop_planning],
+                                 feasible_only = true, quality_filter = false,
+                                 optimizer = HiGHS.Optimizer,
+                                 max_candidate_multiplier = 3)
+        @test length(insts) == 8
+        for inst in insts
+            # Rebuild with the recorded (resolved) seed and confirm feasibility.
+            m, _ = generate_problem(ProblemVariant(inst.problem_type, inst.variant),
+                                    inst.target_variables, feasible, inst.seed)
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            @test termination_status(m) == MOI.OPTIMAL
+        end
     end
 end

@@ -122,6 +122,21 @@ model, problem = generate_problem(:diet_problem, 100, infeasible, 0)
 model, problem = generate_problem(:portfolio, 100, unknown, 0)
 ```
 
+Generators honor the requested status by construction, but a few use heuristic
+feasibility logic that occasionally misses. Pass an `optimizer` to **verify and
+guarantee** the contract — the model is solved on a copy and rebuilt with a new
+seed on mismatch (up to `max_feasibility_retries=10` times):
+
+```julia
+using HiGHS
+# Guaranteed to solve INFEASIBLE (regenerated with a different seed if not)
+model, problem = generate_problem(:energy, 300, infeasible, 1; optimizer=HiGHS.Optimizer)
+```
+
+With `optimizer` unset (the default) no solving is performed and generation stays
+fully seed-deterministic. `generate_dataset` records the resolved seed per instance
+so verified datasets remain reproducible.
+
 ### Bound Reformulation
 
 By default, variable bounds are emitted as JuMP/MOI variable bounds. Pass
