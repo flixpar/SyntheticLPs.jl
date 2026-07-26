@@ -5,29 +5,39 @@ using Distributions
 """
     LoadBalancingProblem <: ProblemGenerator
 
-Generator for load balancing problems in network traffic optimization.
+Generator for load balancing / traffic-engineering problems on a directed network.
 
 # Overview
-Models simplified traffic load balancing on a directed network. The decisions
-are aggregate flow on each link and a global maximum-utilization variable. The
-objective minimizes maximum utilization. Link constraints tie flow to capacity
-times utilization, and generated demand paths impose lower bounds on the links
-they use. The model does not choose paths or enforce full flow conservation.
+Models min-max-utilization routing. The decisions are an aggregate flow on each
+directed link plus a global maximum-utilization variable `u`. The objective
+minimizes the maximum link utilization `max_link(f / capacity)`. Link capacity
+rows tie flow to `u`, and **flow-conservation** rows balance in- and out-flow at
+every node against that node's net demand injection (supply at traffic sources,
+withdrawal at sinks). Conservation is what couples the links, so the model is a
+genuine routing LP rather than a collection of independent per-link bounds.
+
+Feasibility:
+- `feasible`: the network is connected and `u` is unbounded above, so any
+  routable demand is feasible; capacities are scaled so the optimum keeps `u`
+  modest (realistic utilization).
+- `infeasible`: a traffic source's outgoing link capacities are zeroed, so
+  flow conservation at that node cannot hold (it must push out more than the
+  zero available outgoing capacity) — a structural contradiction independent
+  of `u`.
 
 # Fields
 - `n_nodes::Int`: Number of nodes in the network
 - `links::Vector{Tuple{Int,Int}}`: List of directed links in the network
 - `capacities::Dict{Tuple{Int,Int},Float64}`: Capacity of each link
-- `demands::Dict{Tuple{Int,Int},Float64}`: Traffic demand between node pairs
-- `paths::Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}`: Path (sequence of links) for each demand
+- `demands::Dict{Tuple{Int,Int},Float64}`: Traffic demand `(source, target) => amount`
+- `net_injection::Vector{Float64}`: Per-node net supply (outflow minus inflow required)
 """
 struct LoadBalancingProblem <: ProblemGenerator
     n_nodes::Int
     links::Vector{Tuple{Int,Int}}
     capacities::Dict{Tuple{Int,Int},Float64}
     demands::Dict{Tuple{Int,Int},Float64}
-    paths::Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}
-    max_utilization::Union{Float64,Nothing}
+    net_injection::Vector{Float64}
 end
 
 """
@@ -36,233 +46,144 @@ end
 Construct a load balancing problem instance.
 
 # Arguments
-- `target_variables`: Target number of variables (1 + number of links)
+- `target_variables`: Target number of variables (`1 + n_links`)
 - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
 - `seed`: Random seed for reproducibility
 """
 function LoadBalancingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     Random.seed!(seed)
 
-    # Determine scale
+    # Scale-dependent magnitude ranges (capacities/demands only).
     if target_variables <= 250
-        # Small scale
-        base_nodes = round(Int, rand(Uniform(5, 20)))
-        density_dist = Uniform(0.4, 0.7)
-        capacity_mean = 500.0
-        capacity_std = 150.0
-        demand_mean = 50.0
-        demand_std = 20.0
-        max_path_length = rand(DiscreteUniform(2, 4))
+        capacity_mean = 500.0; capacity_std = 150.0
+        demand_mean = 50.0; demand_std = 20.0
     elseif target_variables <= 1000
-        # Medium scale
-        base_nodes = round(Int, rand(Uniform(20, 60)))
-        density_dist = Uniform(0.25, 0.5)
-        capacity_mean = 2000.0
-        capacity_std = 600.0
-        demand_mean = 150.0
-        demand_std = 60.0
-        max_path_length = rand(DiscreteUniform(3, 6))
+        capacity_mean = 2000.0; capacity_std = 600.0
+        demand_mean = 150.0; demand_std = 60.0
     else
-        # Large scale
-        base_nodes = round(Int, rand(Uniform(50, 150)))
-        density_dist = Uniform(0.15, 0.35)
-        capacity_mean = 8000.0
-        capacity_std = 2000.0
-        demand_mean = 500.0
-        demand_std = 200.0
-        max_path_length = rand(DiscreteUniform(4, 8))
+        capacity_mean = 8000.0; capacity_std = 2000.0
+        demand_mean = 500.0; demand_std = 200.0
     end
 
-    n_nodes = base_nodes
-    link_density = rand(density_dist)
+    # Variables = 1 (the utilization u) + n_links. Size n_nodes so the complete
+    # digraph has at least `target` links, then create exactly target-1 links.
+    n_nodes = max(4, ceil(Int, (1 + sqrt(1 + 4 * target_variables)) / 2))
+    n_links = max(1, target_variables - 1)
 
-    # Calculate target links
-    target_links = max(1, target_variables - 1)
-    n_links = target_links
-
-    # Generate network topology
+    # Build a strongly connected directed network: a bidirectional spanning tree
+    # (so every node can reach every other) plus random links up to n_links.
     possible_links = [(i, j) for i in 1:n_nodes for j in 1:n_nodes if i != j]
-
-    if n_links >= length(possible_links)
-        links = possible_links
-    else
-        links = []
-        # Ensure connectivity with spanning tree
-        connected_nodes = [1]
-        remaining_nodes = collect(2:n_nodes)
-
-        while !isempty(remaining_nodes)
-            from_node = rand(connected_nodes)
-            to_node_idx = rand(1:length(remaining_nodes))
-            to_node = remaining_nodes[to_node_idx]
-
-            push!(links, (from_node, to_node))
-            push!(links, (to_node, from_node))
-
-            push!(connected_nodes, to_node)
-            deleteat!(remaining_nodes, to_node_idx)
-        end
-
-        # Add random links up to n_links
-        remaining_links = setdiff(possible_links, links)
-        shuffle!(remaining_links)
-        additional_links = min(n_links - length(links), length(remaining_links))
-        append!(links, remaining_links[1:additional_links])
+    links = Tuple{Int,Int}[]
+    connected = [1]
+    remaining = collect(2:n_nodes)
+    while !isempty(remaining)
+        from = rand(connected)
+        idx = rand(1:length(remaining))
+        to = remaining[idx]
+        deleteat!(remaining, idx)
+        push!(links, (from, to))
+        push!(links, (to, from))
+        push!(connected, to)
     end
-
     links = unique(links)
-
-    # Generate capacities
-    capacities = Dict{Tuple{Int, Int}, Float64}()
-    min_capacity = max(10.0, rand(Truncated(Normal(capacity_mean * 0.3, capacity_std * 0.2), 10.0, capacity_mean)))
-    max_capacity = min_capacity + rand(Truncated(Normal(capacity_mean * 1.2, capacity_std), capacity_mean * 0.5, capacity_mean * 3.0))
-
-    capacity_dist = Truncated(Normal((min_capacity + max_capacity) / 2, (max_capacity - min_capacity) / 6), min_capacity, max_capacity)
-
-    for link in links
-        capacities[link] = rand(capacity_dist)
+    extras = shuffle!([a for a in possible_links if !(a in links)])
+    for a in extras
+        length(links) >= n_links && break
+        push!(links, a)
     end
 
-    # Generate demands
-    possible_demands = [(i, j) for i in 1:n_nodes for j in 1:n_nodes if i != j]
-    max_demands = n_nodes * (n_nodes - 1)
-    demand_ratio = rand(Uniform(0.3, 0.7))
-    n_demands = max(1, round(Int, max_demands * demand_ratio))
+    # Capacities (truncated normal).
+    min_cap = max(10.0, rand(truncated(Normal(capacity_mean * 0.3, capacity_std * 0.2), 10.0, capacity_mean)))
+    max_cap = min_cap + rand(truncated(Normal(capacity_mean * 1.2, capacity_std), capacity_mean * 0.5, capacity_mean * 3.0))
+    cap_dist = truncated(Normal((min_cap + max_cap) / 2, (max_cap - min_cap) / 6), min_cap, max_cap)
+    capacities = Dict(a => rand(cap_dist) for a in links)
 
-    if n_demands > length(possible_demands)
-        n_demands = length(possible_demands)
+    # Demands: a random set of (source, target) => amount pairs.
+    n_demands = max(1, round(Int, n_nodes * (n_nodes - 1) * rand(Uniform(0.3, 0.7))))
+    demand_pairs = unique([(rand(1:n_nodes), rand(1:n_nodes)) for _ in 1:n_demands])
+    filter!(p -> p[1] != p[2], demand_pairs)
+
+    dmin = max(1.0, rand(truncated(Normal(demand_mean * 0.2, demand_std * 0.1), 1.0, demand_mean * 0.5)))
+    dmax = dmin + rand(truncated(Normal(demand_mean * 0.8, demand_std), demand_mean * 0.3, demand_mean * 2.0))
+    dmean = (dmin + dmax) / 2
+    dscale = max((dmax - dmin) / 6, 1e-6)
+    dshape = max(dmean / dscale, 1.0)
+    demand_dist = truncated(Gamma(dshape, dscale), dmin, dmax)
+
+    demands = Dict{Tuple{Int,Int},Float64}()
+    for p in demand_pairs
+        demands[p] = rand(demand_dist)
     end
 
-    demand_pairs = sample(possible_demands, n_demands, replace=false)
-    demands = Dict{Tuple{Int, Int}, Float64}()
-
-    min_demand = max(1.0, rand(Truncated(Normal(demand_mean * 0.2, demand_std * 0.1), 1.0, demand_mean * 0.5)))
-    max_demand = min_demand + rand(Truncated(Normal(demand_mean * 0.8, demand_std), demand_mean * 0.3, demand_mean * 2.0))
-
-    demand_mean_calc = (min_demand + max_demand) / 2
-    demand_std_calc = (max_demand - min_demand) / 6
-    demand_scale = demand_std_calc^2 / demand_mean_calc
-    demand_shape = demand_mean_calc / demand_scale
-    demand_dist = Truncated(Gamma(demand_shape, demand_scale), min_demand, max_demand)
-
-    for demand_pair in demand_pairs
-        demands[demand_pair] = rand(demand_dist)
+    # Net injection per node (supply at sources, withdrawal at sinks).
+    net_injection = zeros(Float64, n_nodes)
+    for ((s, t), amount) in demands
+        net_injection[s] += amount
+        net_injection[t] -= amount
     end
 
-    # Generate paths for each demand
-    paths = Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}()
+    actual_status = feasibility_status == unknown ? (rand() < 0.7 ? feasible : infeasible) : feasibility_status
 
-    for demand_pair in keys(demands)
-        source, target = demand_pair
-
-        # Generate random path
-        current = source
-        path = []
-        visited = Set([source])
-        path_length = 0
-
-        while current != target && path_length < max_path_length
-            next_hops = [link[2] for link in links if link[1] == current]
-
-            unvisited_hops = setdiff(next_hops, visited)
-            if !isempty(unvisited_hops)
-                next_hop = rand(unvisited_hops)
-            elseif !isempty(next_hops)
-                next_hop = rand(next_hops)
-            else
-                break
-            end
-
-            push!(path, (current, next_hop))
-            path_length += 1
-
-            push!(visited, next_hop)
-            current = next_hop
-        end
-
-        if current == target
-            paths[demand_pair] = path
-        else
-            direct_link = (source, target)
-            if direct_link in links
-                paths[demand_pair] = [direct_link]
-            else
-                delete!(demands, demand_pair)
-            end
-        end
-    end
-
-    # Handle feasibility
-    max_utilization = nothing
-
-    actual_status = feasibility_status
-    if feasibility_status == unknown
-        actual_status = rand() < 0.7 ? feasible : infeasible
-    end
-
-    if actual_status == infeasible && !isempty(demands) && !isempty(paths)
-        # Calculate the minimum utilization required to satisfy all demands
-        # For each link, find the max demand that must flow through it
-        link_min_flow = Dict{Tuple{Int,Int}, Float64}()
-        for link in links
-            link_min_flow[link] = 0.0
-        end
-        for (demand_pair, demand_amount) in demands
-            if haskey(paths, demand_pair)
-                for link in paths[demand_pair]
-                    link_min_flow[link] = max(get(link_min_flow, link, 0.0), demand_amount)
+    if actual_status == feasible
+        # Keep the optimal utilization realistic: every net-source node's outgoing
+        # capacity should comfortably exceed the flow it must push out.
+        for n in 1:n_nodes
+            if net_injection[n] > 0
+                out_links = [a for a in links if a[1] == n]
+                isempty(out_links) && continue
+                out_cap = sum(capacities[a] for a in out_links)
+                needed = net_injection[n] * (1.5 + 0.5 * rand())
+                if out_cap < needed
+                    scale = needed / max(out_cap, 1e-6)
+                    for a in out_links
+                        capacities[a] *= scale
+                    end
                 end
             end
         end
-        # Minimum utilization = max over links of (required_flow / capacity)
-        min_u = maximum(link_min_flow[link] / capacities[link] for link in links if haskey(link_min_flow, link) && link_min_flow[link] > 0; init=0.0)
-        if min_u > 0
-            max_utilization = min_u * (0.5 + 0.3 * rand())
+    elseif actual_status == infeasible && any(>(0), net_injection)
+        # Structural infeasibility: zero a traffic source's outgoing capacities so
+        # flow conservation at that node is impossible (outflow is forced to 0 but
+        # the node must emit its net injection). Independent of u, so it cannot be
+        # "solved away" by growing utilization.
+        sources = [n for n in 1:n_nodes if net_injection[n] > 0]
+        n = rand(sources)
+        for a in links
+            if a[1] == n
+                capacities[a] = 0.0
+            end
         end
     end
 
-    return LoadBalancingProblem(n_nodes, links, capacities, demands, paths, max_utilization)
+    return LoadBalancingProblem(n_nodes, links, capacities, demands, net_injection)
 end
 
 """
     build_model(prob::LoadBalancingProblem)
 
-Build a JuMP model for the load balancing problem.
-
-# Arguments
-- `prob`: LoadBalancingProblem instance
-
-# Returns
-- `model`: The JuMP model
+Build a JuMP model for the load balancing problem. Deterministic — uses only data
+from the struct fields.
 """
 function build_model(prob::LoadBalancingProblem)
     model = Model()
 
-    # Variables
-    @variable(model, u >= 0)  # Maximum link utilization
-    @variable(model, f[prob.links] >= 0)  # Flow on each link
+    # Variables: one utilization variable plus a flow on each link.
+    @variable(model, u >= 0)
+    @variable(model, f[prob.links] >= 0)
 
-    # Objective: minimize maximum link utilization
+    # Objective: minimize the maximum link utilization.
     @objective(model, Min, u)
 
-    # Constraints: link utilization
-    for link in prob.links
-        @constraint(model, f[link] <= u * prob.capacities[link])
+    # Capacity coupling: flow on a link bounded by u times its capacity.
+    for a in prob.links
+        @constraint(model, f[a] <= u * prob.capacities[a])
     end
 
-    # Constraints: flow conservation
-    for (demand_pair, demand_amount) in prob.demands
-        if haskey(prob.paths, demand_pair)
-            path_links = prob.paths[demand_pair]
-            for link in path_links
-                @constraint(model, f[link] >= demand_amount)
-            end
-        end
-    end
-
-    # Maximum utilization constraint (for infeasibility)
-    if prob.max_utilization !== nothing
-        @constraint(model, u <= prob.max_utilization)
+    # Flow conservation at every node: outflow - inflow == net demand injection.
+    for node in 1:prob.n_nodes
+        inflow = isempty(prob.links) ? 0.0 : sum(f[a] for a in prob.links if a[2] == node; init = 0.0)
+        outflow = isempty(prob.links) ? 0.0 : sum(f[a] for a in prob.links if a[1] == node; init = 0.0)
+        @constraint(model, outflow - inflow == prob.net_injection[node])
     end
 
     return model
@@ -273,5 +194,5 @@ register_variant(
     :load_balancing,
     :standard,
     LoadBalancingProblem,
-    "Load balancing problem that minimizes maximum link utilization in a network while satisfying traffic demands",
+    "Load balancing / traffic-engineering problem that routes demand to minimize the maximum link utilization, with per-node flow conservation",
 )

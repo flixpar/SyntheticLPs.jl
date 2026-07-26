@@ -125,6 +125,14 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
         max_demand = base_demand * rand(Uniform(6.0, 20.0))
     end
 
+    # Ensure the (facility, customer, mode) candidate pool below is large enough to
+    # select ~target_variables combos from; otherwise small instances undershoot.
+    # Grow the customer count (cheap and structural) until the pool clears 2× target.
+    while n_facilities * n_customers * n_transport_modes < target_variables * 2 &&
+          n_customers < 5000
+        n_customers += max(1, round(Int, n_customers * 0.2))
+    end
+
     # Additional parameters
     capacity_factor = rand(Uniform(1.2, 2.2))
     mode_capacity_factor = rand(Uniform(0.25, 0.65))
@@ -233,37 +241,48 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
     transport_costs = Dict{Tuple{Int,Int,String}, Float64}()
     infrastructure = Dict{Tuple{Int,Int,String}, Bool}()
 
-    for f in 1:n_facilities
-        for c in 1:n_customers
-            distance = sqrt(
-                (facility_locs[f][1] - customer_locs[c][1])^2 +
-                (facility_locs[f][2] - customer_locs[c][2])^2
-            )
-
-            for mode in transport_modes
-                # Determine if this transport mode is available
-                prob_available = if mode == "truck"
-                    0.98
-                elseif mode == "rail"
-                    min(0.8, 0.3 + 0.5 * (distance / sqrt(grid_width^2 + grid_height^2)))
-                elseif mode == "ship"
-                    any(loc -> abs(loc[2]) < grid_height * 0.1, [facility_locs[f], customer_locs[c]]) ? 0.8 : 0.0
-                else  # air
-                    distance > sqrt(grid_width^2 + grid_height^2) * 0.3 ? 0.7 : 0.2
-                end
-
-                infrastructure[(f,c,mode)] = rand() < prob_available * infrastructure_density
-
-                if infrastructure[(f,c,mode)]
-                    base_cost = get(transport_base_costs, mode, 1.0)
-                    terrain_factor = rand(LogNormal(log(1.0), 0.15))
-                    volume_factor = 1.0 - 0.25 * (demands[c] / maximum(values(demands)))
-                    efficiency_factor = rand(Beta(3, 2)) * 0.4 + 0.8
-
-                    transport_costs[(f,c,mode)] = base_cost * distance * terrain_factor * volume_factor * efficiency_factor
-                end
+    # Score every (f,c,mode) candidate by a realistic per-mode availability, then
+    # select a deterministic number of them. The previous Bernoulli draw made the
+    # combo count (and thus the variable count) high-variance — it undershot badly
+    # whenever low-availability modes (ship with no waterway, short-haul air) were
+    # sampled. Ranking by availability preserves the "truck common, ship rare"
+    # structure while landing the variable count on target.
+    diag = sqrt(grid_width^2 + grid_height^2)
+    demands_max = maximum(values(demands))
+    candidates = Tuple{Float64,Int,Int,String}[]   # (score, f, c, mode)
+    for f in 1:n_facilities, c in 1:n_customers
+        dist = sqrt((facility_locs[f][1] - customer_locs[c][1])^2 +
+                    (facility_locs[f][2] - customer_locs[c][2])^2)
+        for mode in transport_modes
+            prob_available = if mode == "truck"
+                0.98
+            elseif mode == "rail"
+                min(0.8, 0.3 + 0.5 * (dist / diag))
+            elseif mode == "ship"
+                any(loc -> abs(loc[2]) < grid_height * 0.1, [facility_locs[f], customer_locs[c]]) ? 0.8 : 0.0
+            else  # air
+                dist > diag * 0.3 ? 0.7 : 0.2
             end
+            score = prob_available * infrastructure_density + rand() * 0.05
+            push!(candidates, (score, f, c, mode))
         end
+    end
+    sort!(candidates; rev=true)
+
+    # Variable count = n_facilities (the y binaries) + number of valid combos.
+    n_combos = clamp(target_variables - n_facilities,
+                     max(1, n_customers),              # keep every customer serviceable
+                     length(candidates))
+    for k in 1:n_combos
+        (_, f, c, mode) = candidates[k]
+        dist = sqrt((facility_locs[f][1] - customer_locs[c][1])^2 +
+                    (facility_locs[f][2] - customer_locs[c][2])^2)
+        infrastructure[(f, c, mode)] = true
+        base_cost = get(transport_base_costs, mode, 1.0)
+        terrain_factor = rand(LogNormal(log(1.0), 0.15))
+        volume_factor = 1.0 - 0.25 * (demands[c] / demands_max)
+        efficiency_factor = rand(Beta(3, 2)) * 0.4 + 0.8
+        transport_costs[(f, c, mode)] = base_cost * dist * terrain_factor * volume_factor * efficiency_factor
     end
 
     # Generate mode capacities

@@ -126,6 +126,10 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
         skill_based = rand() < 0.6
     end
 
+    # Variables = n_workers * n_shifts * n_days. n_shifts and n_days are picked
+    # above for realistic horizon structure; solve for n_workers to hit target.
+    n_workers = max(1, round(Int, target_variables / (n_shifts * n_days)))
+
     n_skills = skill_based ? (target_variables <= 250 ? round(Int, rand(Uniform(2, 3))) :
                               target_variables <= 1000 ? round(Int, rand(Uniform(3, 5))) :
                               round(Int, rand(Uniform(4, 8)))) : 0

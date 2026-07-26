@@ -39,7 +39,10 @@ function ProductionPlanningProblem(target_variables::Int, feasibility_status::Fe
 
     # Direct mapping: variables = products
     n_products = max(2, min(2000, target_variables))
-    n_resources = rand(1:50)
+    # Floor the resource count so the LP has real structure (with n_resources == 1
+    # the model is a single-constraint fractional-knapsack that solves trivially).
+    n_resources_hi = min(50, max(10, n_products ÷ 4))
+    n_resources = rand(5:n_resources_hi)
 
     # Determine profit and usage ranges based on scale
     profit_range = (10, 500)
