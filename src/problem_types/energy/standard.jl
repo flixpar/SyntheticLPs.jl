@@ -367,18 +367,28 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
     end
 
     # --- Model-consistent feasibility guard ---
-    # build_model bounds x[s,t] <= capacities[s] and requires sum(x[:,t]) >= demand[t]
-    # (there is no reserve constraint in the model), so the LP is infeasible iff some
-    # period's demand exceeds the total available capacity sum(capacities). The
-    # availability_factors / peak_demand / scenario adjustments above produce realistic
-    # demand and capacity profiles; this final guard guarantees the requested status
-    # against the constraints that are actually in the model.
+    # A feasible dispatch must satisfy total capacity, renewable-share, and
+    # emissions-intensity constraints simultaneously. First make demand attainable
+    # from the fleet, then ensure zero-emission capacity can meet the renewable floor.
+    # (The model classifies every zero-emission source, including nuclear, as renewable,
+    # so use that same definition here.)
     total_capacity = sum(values(capacities))
     max_demand = isempty(demands) ? 0.0 : maximum(demands)
     if actual_status == :feasible
         if max_demand > total_capacity * 0.9 && max_demand > 0
             scale_factor = (total_capacity * 0.9) / max_demand
             demands .= demands .* scale_factor
+            max_demand = maximum(demands)
+        end
+
+        clean_sources = [s for s in sources if iszero(emission_limits[s])]
+        clean_capacity = sum(capacities[s] for s in clean_sources)
+        required_clean_capacity = renewable_fraction * max_demand
+        if clean_capacity < required_clean_capacity && clean_capacity > 0
+            clean_scale = 1.05 * required_clean_capacity / clean_capacity
+            for source in clean_sources
+                capacities[source] *= clean_scale
+            end
         end
     else
         if max_demand <= total_capacity
@@ -388,11 +398,30 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
     end
 
     # Emissions intensity target: a fixed cap strictly below the dirtiest source's
-    # emission rate, so the per-period emissions constraint can actually bind. (The
-    # previous `<= max_emission * sum(x)` form was an algebraic tautology — a weighted
-    # average is always <= its maximum weight — and so could never constrain anything.)
+    # emission rate, so the per-period emissions constraint can actually bind. For a
+    # feasible request, derive the cap from the minimum-emission dispatch at peak
+    # demand. This makes the cap attainable without requiring solver-backed retries
+    # while retaining a nontrivial amount of slack above the cleanest dispatch.
+    # (The previous `<= max_emission * sum(x)` form was an algebraic tautology — a
+    # weighted average is always <= its maximum weight.)
     max_emission = isempty(emission_limits) ? 0.0 : maximum(values(emission_limits))
-    emission_intensity_target = iszero(max_emission) ? 1.0 : max_emission * rand(Uniform(0.7, 0.95))
+    emission_intensity_target = if iszero(max_emission)
+        1.0
+    elseif actual_status == :feasible && max_demand > 0
+        remaining_demand = max_demand
+        minimum_emissions = 0.0
+        for source in sort(sources; by=s -> emission_limits[s])
+            generation = min(capacities[source], remaining_demand)
+            minimum_emissions += emission_limits[source] * generation
+            remaining_demand -= generation
+            remaining_demand <= 0 && break
+        end
+        minimum_intensity = minimum_emissions / max_demand
+        slack_fraction = rand(Uniform(0.05, 0.25))
+        minimum_intensity + slack_fraction * (max_emission - minimum_intensity)
+    else
+        max_emission * rand(Uniform(0.7, 0.95))
+    end
 
     return EnergyProblem(n_sources, n_periods, sources, time_periods, generation_costs, capacities,
                         demands, emission_limits, renewable_fraction, emission_intensity_target)

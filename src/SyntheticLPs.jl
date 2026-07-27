@@ -253,8 +253,8 @@ must solve to `OPTIMAL`, an `infeasible` request must solve to `INFEASIBLE`. If 
 contract is violated the problem is rebuilt with a different seed and re-checked, up
 to `max_feasibility_retries` times. (Generators aim to honor the requested status by
 construction, but a few have heuristic feasibility logic that occasionally misses; this
-central check is the project-level backstop, so callers always receive a conforming
-model when an optimizer is provided.)
+central check is the project-level backstop, so callers receive a conforming model or
+an error when the retry budget is exhausted.)
 
 Returns `(model, problem, resolved_seed)`. With `optimizer=nothing` (or status
 `unknown`) the model is built exactly once and `resolved_seed == seed`, so generation
@@ -273,7 +273,7 @@ function _generate_problem_verified(::Type{T}, target_variables::Int,
     current_seed = seed
     model = nothing
     problem = nothing
-    for _ in 1:max_feasibility_retries
+    for attempt in 1:max_feasibility_retries
         problem = T(target_variables, feasibility_status, current_seed)
         model = build_model(problem)
         relax_integer && relax_integrality(model)
@@ -284,14 +284,14 @@ function _generate_problem_verified(::Type{T}, target_variables::Int,
         if _feasibility_contract_holds(model, optimizer, feasibility_status)
             return model, problem, current_seed
         end
-        # Contract violated — rebuild with a fresh seed.
-        current_seed += 1
+        # Contract violated — rebuild with a fresh seed if another attempt remains.
+        attempt < max_feasibility_retries && (current_seed += 1)
     end
 
-    @warn "Feasibility contract not satisfied for $T " *
+    error("Feasibility contract not satisfied for $T " *
           "(target_variables=$target_variables, status=$feasibility_status) " *
-          "after $max_feasibility_retries attempts; returning the last model."
-    return model, problem, current_seed
+          "after $max_feasibility_retries attempts " *
+          "(seeds $seed through $current_seed); no model was returned.")
 end
 
 # Ref-based overload delegating to the type-based builder above.

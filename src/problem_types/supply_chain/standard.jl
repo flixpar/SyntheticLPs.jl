@@ -345,14 +345,13 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
 
     # SOPHISTICATED FEASIBILITY ENFORCEMENT
     if feasibility_status == feasible
-        # K-NEAREST CONNECTIVITY: Select fallback mode and ensure connectivity to K nearest facilities
-        fallback_mode = ("truck" in transport_modes) ? "truck" : transport_modes[1]
-        K = min(max(3, ceil(Int, n_facilities ÷ 3)), n_facilities)
-
+        # K-NEAREST CONNECTIVITY: use the same budget-capped K_cov routes reserved
+        # above. Using the uncapped K here made capacity smoothing assume routes
+        # that were deliberately omitted at tiny variable budgets, so some
+        # requested-feasible instances remained infeasible.
         customers_linked_to_facility = [Int[] for _ in 1:n_facilities]
         for c in 1:n_customers
-            dvec = [dist_fc[f, c] for f in 1:n_facilities]
-            nearest_idxs = sortperm(dvec)[1:K]
+            nearest_idxs = sortperm(view(dist_fc, :, c))[1:K_cov]
             for f in nearest_idxs
                 # K-nearest coverage combos were already created during candidate
                 # selection (counted in the variable budget), so do not add more

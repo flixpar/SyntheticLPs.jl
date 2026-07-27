@@ -18,6 +18,25 @@ catch
     false
 end
 
+# A deliberately always-feasible generator used to exercise retry exhaustion.
+struct ContractViolationTestProblem <: ProblemGenerator
+    seed::Int
+end
+
+const CONTRACT_TEST_SEEDS = Int[]
+
+function ContractViolationTestProblem(::Int, ::FeasibilityStatus, seed::Int)
+    push!(CONTRACT_TEST_SEEDS, seed)
+    return ContractViolationTestProblem(seed)
+end
+
+function SyntheticLPs.build_model(::ContractViolationTestProblem)
+    model = Model()
+    @variable(model, x >= 0)
+    @objective(model, Min, x)
+    return model
+end
+
 """
     test_problem_generator(ref)
 
@@ -350,6 +369,29 @@ end
         _, eprob = generate_problem("energy/standard", 120, unknown, 1)
         @test hasproperty(eprob, :emission_intensity_target)
         @test eprob.emission_intensity_target > 0
+
+        # Feasible energy instances choose an emissions cap that is attainable at
+        # peak demand and provide enough zero-emission capacity for the renewable
+        # floor, even when no optimizer-backed retry guard is requested.
+        for target in (120, 300, 1200), seed in 1:10
+            _, prob = generate_problem("energy/standard", target, feasible, seed)
+            peak_demand = maximum(prob.demands)
+            clean_sources = [s for s in prob.sources if iszero(prob.emission_limits[s])]
+            @test sum(prob.capacities[s] for s in clean_sources) + 1e-8 >=
+                  prob.renewable_fraction * peak_demand
+
+            remaining_demand = peak_demand
+            minimum_emissions = 0.0
+            for source in sort(prob.sources; by=s -> prob.emission_limits[s])
+                generation = min(prob.capacities[source], remaining_demand)
+                minimum_emissions += prob.emission_limits[source] * generation
+                remaining_demand -= generation
+                remaining_demand <= 0 && break
+            end
+            @test remaining_demand <= 1e-8
+            @test minimum_emissions / peak_demand <=
+                  prob.emission_intensity_target + 1e-12
+        end
     end
 
     # Solver-based testsets (require HiGHS, a test-only dep). Skipped when HiGHS is
@@ -366,6 +408,23 @@ end
         # max_feasibility_retries must be >= 1.
         @test_throws ErrorException generate_problem("transportation/standard", 80,
                                                      unknown, 5; max_feasibility_retries = 0)
+
+        # Exhausting the retry budget is an error: never return a model known to
+        # violate the requested contract or a seed that does not reproduce it.
+        empty!(CONTRACT_TEST_SEEDS)
+        exhaustion_error = try
+            SyntheticLPs._generate_problem_verified(
+                ContractViolationTestProblem, 1, infeasible, 41;
+                optimizer = HiGHS.Optimizer, max_feasibility_retries = 3,
+            )
+            nothing
+        catch err
+            err
+        end
+        @test exhaustion_error isa ErrorException
+        @test CONTRACT_TEST_SEEDS == [41, 42, 43]
+        @test occursin("after 3 attempts", sprint(showerror, exhaustion_error))
+        @test occursin("seeds 41 through 43", sprint(showerror, exhaustion_error))
 
         # The returned model is left pristine (no optimizer attached, not solved).
         m2, _ = generate_problem("transportation/standard", 80, feasible, 5;
@@ -390,6 +449,24 @@ end
                                     optimizer = HiGHS.Optimizer)
             set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
             @test termination_status(m) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
+        end
+
+        # Feasible energy requests also honor their label by construction when the
+        # initial generation call does not use the optimizer-backed retry guard.
+        for s in 1:10
+            m, _ = generate_problem("energy/standard", 300, feasible, s)
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            @test termination_status(m) == MOI.OPTIMAL
+        end
+
+        # supply_chain/standard reserves fallback routes within its variable budget.
+        # Capacity smoothing must use that same capped coverage count; otherwise
+        # tiny requested-feasible instances can remain infeasible.
+        for s in 1:10
+            m, _ = generate_problem("supply_chain/standard", 50, feasible, s)
+            @test num_variables(m) == 50
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            @test termination_status(m) == MOI.OPTIMAL
         end
 
         # unit_commitment/standard feasible-request: previously ~8% came back
