@@ -242,7 +242,7 @@ function build_model end
 """
     _generate_problem_verified([ref_or_type], target_variables, feasibility_status, seed;
                                relax_integer, bounds_to_constraints, optimizer,
-                               max_feasibility_retries)
+                               max_feasibility_retries, feasibility_timeout)
 
 Internal builder used by [`generate_problem`](@ref). Constructs the problem and its
 JuMP model and applies the `relax_integer` / `bounds_to_constraints` transforms.
@@ -250,22 +250,29 @@ JuMP model and applies the `relax_integer` / `bounds_to_constraints` transforms.
 When `optimizer` is supplied and `feasibility_status` is `feasible` or `infeasible`,
 the model is solved once to verify the feasibility contract — a `feasible` request
 must solve to `OPTIMAL`, an `infeasible` request must solve to `INFEASIBLE`. If the
-contract is violated the problem is rebuilt with a different seed and re-checked, up
-to `max_feasibility_retries` times. (Generators aim to honor the requested status by
-construction, but a few have heuristic feasibility logic that occasionally misses; this
-central check is the project-level backstop, so callers receive a conforming model or
-an error when the retry budget is exhausted.)
+solve *disproves* the requested status the problem is rebuilt with the next seed and
+re-checked, up to `max_feasibility_retries` times. (Generators aim to honor the
+requested status by construction, but a few have heuristic feasibility logic that
+occasionally misses; this central check is the project-level backstop, so callers
+receive a conforming model or an error when the retry budget is exhausted.)
+
+If instead the solve *certifies nothing* — it hits `feasibility_timeout`, or returns a
+status that separates neither case — the retry budget is not spent: verification
+raises immediately, reporting the termination status. Unrelaxed MIPs are the usual
+cause; give them a larger `feasibility_timeout`.
 
 Returns `(model, problem, resolved_seed)`. With `optimizer=nothing` (or status
-`unknown`) the model is built exactly once and `resolved_seed == seed`, so generation
-stays fully deterministic and seed-reproducible.
+`unknown`) the model is built exactly once and `resolved_seed == seed`. Verification
+is itself deterministic — attempts walk `seed, seed+1, …` — so a given
+`(seed, optimizer)` pair always resolves to the same model.
 """
 function _generate_problem_verified(::Type{T}, target_variables::Int,
                                     feasibility_status::FeasibilityStatus, seed::Int;
                                     relax_integer::Bool=true,
                                     bounds_to_constraints::Bool=false,
                                     optimizer=nothing,
-                                    max_feasibility_retries::Int=10) where T <: ProblemGenerator
+                                    max_feasibility_retries::Int=10,
+                                    feasibility_timeout::Float64=10.0) where T <: ProblemGenerator
     max_feasibility_retries >= 1 ||
         error("max_feasibility_retries must be >= 1 (got $max_feasibility_retries).")
     needs_check = optimizer !== nothing && feasibility_status !== unknown
@@ -281,10 +288,22 @@ function _generate_problem_verified(::Type{T}, target_variables::Int,
         if !needs_check
             return model, problem, current_seed
         end
-        if _feasibility_contract_holds(model, optimizer, feasibility_status)
+        verdict, ts = _check_feasibility_contract(model, optimizer, feasibility_status;
+                                                  timeout=feasibility_timeout)
+        if verdict === :holds
             return model, problem, current_seed
+        elseif verdict === :inconclusive
+            # The solve certified nothing, so we have no evidence against this
+            # instance and rebuilding would just re-ask an unanswerable question.
+            # Report the real cause instead of charging it to the retry budget.
+            error("Feasibility contract could not be verified for $T " *
+                  "(target_variables=$target_variables, status=$feasibility_status, " *
+                  "seed=$current_seed): the verification solve returned $ts " *
+                  "after a $(feasibility_timeout)s limit. This is not evidence of a " *
+                  "contract violation. Raise `feasibility_timeout`, use a stronger " *
+                  "optimizer, or drop `optimizer` to skip verification.")
         end
-        # Contract violated — rebuild with a fresh seed if another attempt remains.
+        # Contract disproved — rebuild with a fresh seed if another attempt remains.
         attempt < max_feasibility_retries && (current_seed += 1)
     end
 
@@ -302,10 +321,48 @@ function _generate_problem_verified(ref::ProblemVariant, target_variables::Int,
                                       feasibility_status, seed; kwargs...)
 end
 
-# Solve `model` and check whether the result matches the requested `feasibility_status`.
-# Solves a structural copy so the caller's model is returned pristine (no optimizer
-# attached, no time limit set, not pre-solved).
-function _feasibility_contract_holds(model::Model, optimizer,
+# Classify a solver termination status against the requested `feasibility_status`.
+# Returns one of:
+# - `:holds`        — the status proves the requested feasibility.
+# - `:violated`     — the status disproves it. Retrying with a different seed is
+#                     meaningful, so the caller rebuilds.
+# - `:inconclusive` — the status proves nothing either way (the solve hit its time
+#                     limit, stopped short of its tolerances, or could not separate
+#                     infeasible from unbounded). Retrying would re-ask the same
+#                     unanswerable question, so the caller raises instead.
+#
+# Keeping `:violated` and `:inconclusive` distinct is the point of this function: a
+# MIP that exceeds the verification time limit is not evidence of a contract
+# violation, and treating it as one both wastes the retry budget and misreports the
+# failure. Pure (no solve) so the full status table is testable without a solver.
+function _classify_termination(ts, feasibility_status::FeasibilityStatus)
+    # A solver that cannot separate these two cases has certified neither. Never read
+    # it as proof of infeasibility: an unbounded model has a nonempty feasible region.
+    ts == JuMP.MOI.INFEASIBLE_OR_UNBOUNDED && return :inconclusive
+    # ALMOST_OPTIMAL means the solve stopped short of its tolerances, so it is not a
+    # trustworthy certificate in either direction.
+    ts == JuMP.MOI.ALMOST_OPTIMAL && return :inconclusive
+
+    if feasibility_status == feasible
+        ts == JuMP.MOI.OPTIMAL && return :holds
+        # INFEASIBLE disproves the request outright. DUAL_INFEASIBLE (MOI's encoding
+        # of primal-unbounded) means the model is feasible but has no optimum, which
+        # the `feasible` contract also excludes — a different seed may fix either.
+        (ts == JuMP.MOI.INFEASIBLE || ts == JuMP.MOI.DUAL_INFEASIBLE) && return :violated
+        return :inconclusive
+    elseif feasibility_status == infeasible
+        ts == JuMP.MOI.INFEASIBLE && return :holds
+        # Both of these exhibit a feasible point, disproving the request.
+        (ts == JuMP.MOI.OPTIMAL || ts == JuMP.MOI.DUAL_INFEASIBLE) && return :violated
+        return :inconclusive
+    end
+    return :holds
+end
+
+# Solve `model` and classify the result via `_classify_termination`, returning
+# `(verdict, termination_status)`. Solves a structural copy so the caller's model is
+# returned pristine (no optimizer attached, no time limit set, not pre-solved).
+function _check_feasibility_contract(model::Model, optimizer,
                                      feasibility_status::FeasibilityStatus;
                                      timeout::Float64=10.0)
     check = copy(model)
@@ -314,18 +371,14 @@ function _feasibility_contract_holds(model::Model, optimizer,
     set_time_limit_sec(check, timeout)
     optimize!(check)
     ts = termination_status(check)
-    if feasibility_status == feasible
-        return ts == JuMP.MOI.OPTIMAL || ts == JuMP.MOI.ALMOST_OPTIMAL
-    elseif feasibility_status == infeasible
-        return ts == JuMP.MOI.INFEASIBLE || ts == JuMP.MOI.INFEASIBLE_OR_UNBOUNDED
-    end
-    return true
+    return _classify_termination(ts, feasibility_status), ts
 end
 
 """
     generate_problem(::Type{T}, target_variables, feasibility_status, seed;
                      relax_integer=true, bounds_to_constraints=false,
-                     optimizer=nothing, max_feasibility_retries=10)
+                     optimizer=nothing, max_feasibility_retries=10,
+                     feasibility_timeout=10.0)
 
 Generate a linear programming problem from a generator type by constructing an
 instance and building its model.
@@ -338,6 +391,8 @@ bounds introduced by relaxing integer/binary variables are converted too.
 When `optimizer` is supplied (e.g. `HiGHS.Optimizer`) and `feasibility_status` is
 `feasible` or `infeasible`, the model is solved to verify the feasibility contract
 and rebuilt with a new seed on violation (see [`_generate_problem_verified`](@ref)).
+A verification solve that certifies nothing — it exceeds `feasibility_timeout`, or
+returns a status separating neither case — raises rather than counting as a violation.
 With `optimizer=nothing` (the default) no solving is performed.
 
 # Returns
@@ -349,38 +404,44 @@ function generate_problem(::Type{T}, target_variables::Int,
                           relax_integer::Bool=true,
                           bounds_to_constraints::Bool=false,
                           optimizer=nothing,
-                          max_feasibility_retries::Int=10) where T <: ProblemGenerator
+                          max_feasibility_retries::Int=10,
+                          feasibility_timeout::Float64=10.0) where T <: ProblemGenerator
     model, problem, _ = _generate_problem_verified(T, target_variables,
                                                    feasibility_status, seed;
                                                    relax_integer=relax_integer,
                                                    bounds_to_constraints=bounds_to_constraints,
                                                    optimizer=optimizer,
-                                                   max_feasibility_retries=max_feasibility_retries)
+                                                   max_feasibility_retries=max_feasibility_retries,
+                                                   feasibility_timeout=feasibility_timeout)
     return model, problem
 end
 
 """
     generate_problem(ref::ProblemVariant, target_variables, feasibility_status, seed;
                      relax_integer=true, bounds_to_constraints=false,
-                     optimizer=nothing, max_feasibility_retries=10)
+                     optimizer=nothing, max_feasibility_retries=10,
+                     feasibility_timeout=10.0)
 
 Generate a problem from a fully-qualified `category/variant` reference.
 """
 function generate_problem(ref::ProblemVariant, target_variables::Int,
                           feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
                           relax_integer::Bool=true, bounds_to_constraints::Bool=false,
-                          optimizer=nothing, max_feasibility_retries::Int=10)
+                          optimizer=nothing, max_feasibility_retries::Int=10,
+                          feasibility_timeout::Float64=10.0)
     return generate_problem(get_problem_type(ref), target_variables,
                             feasibility_status, seed; relax_integer=relax_integer,
                             bounds_to_constraints=bounds_to_constraints,
                             optimizer=optimizer,
-                            max_feasibility_retries=max_feasibility_retries)
+                            max_feasibility_retries=max_feasibility_retries,
+                            feasibility_timeout=feasibility_timeout)
 end
 
 """
     generate_problem(ref::AbstractString, target_variables, feasibility_status, seed;
                      relax_integer=true, bounds_to_constraints=false,
-                     optimizer=nothing, max_feasibility_retries=10)
+                     optimizer=nothing, max_feasibility_retries=10,
+                     feasibility_timeout=10.0)
 
 Generate a problem from a `"category"` or `"category/variant"` string, parsed via
 [`ProblemVariant`](@ref).
@@ -388,18 +449,21 @@ Generate a problem from a `"category"` or `"category/variant"` string, parsed vi
 function generate_problem(ref::AbstractString, target_variables::Int,
                           feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
                           relax_integer::Bool=true, bounds_to_constraints::Bool=false,
-                          optimizer=nothing, max_feasibility_retries::Int=10)
+                          optimizer=nothing, max_feasibility_retries::Int=10,
+                          feasibility_timeout::Float64=10.0)
     return generate_problem(ProblemVariant(ref), target_variables,
                             feasibility_status, seed; relax_integer=relax_integer,
                             bounds_to_constraints=bounds_to_constraints,
                             optimizer=optimizer,
-                            max_feasibility_retries=max_feasibility_retries)
+                            max_feasibility_retries=max_feasibility_retries,
+                            feasibility_timeout=feasibility_timeout)
 end
 
 """
     generate_problem(category::Symbol, target_variables, feasibility_status, seed;
                      variant=nothing, relax_integer=true, bounds_to_constraints=false,
-                     optimizer=nothing, max_feasibility_retries=10)
+                     optimizer=nothing, max_feasibility_retries=10,
+                     feasibility_timeout=10.0)
 
 Generate a problem for a category. With `variant=nothing` the category's default
 variant is used; pass `variant=:name` to select a specific variant.
@@ -416,7 +480,10 @@ variant is used; pass `variant=:name` to select a specific variant.
 - `optimizer`: Optional solver used to verify the feasibility contract (see
   [`_generate_problem_verified`](@ref)). `nothing` disables verification.
 - `max_feasibility_retries`: Maximum number of rebuild attempts when verification
-  fails.
+  disproves the requested status.
+- `feasibility_timeout`: Time limit (seconds) for each verification solve. Exceeding
+  it raises rather than consuming a retry; unrelaxed MIPs may need more than the
+  10s default.
 
 # Returns
 - `model`: The JuMP model
@@ -426,14 +493,16 @@ function generate_problem(category::Symbol, target_variables::Int,
                           feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
                           variant::Union{Symbol,Nothing}=nothing, relax_integer::Bool=true,
                           bounds_to_constraints::Bool=false,
-                          optimizer=nothing, max_feasibility_retries::Int=10)
+                          optimizer=nothing, max_feasibility_retries::Int=10,
+                          feasibility_timeout::Float64=10.0)
     ref = variant === nothing ? ProblemVariant(category) :
                                 ProblemVariant(category, variant)
     return generate_problem(ref, target_variables, feasibility_status, seed;
                             relax_integer=relax_integer,
                             bounds_to_constraints=bounds_to_constraints,
                             optimizer=optimizer,
-                            max_feasibility_retries=max_feasibility_retries)
+                            max_feasibility_retries=max_feasibility_retries,
+                            feasibility_timeout=feasibility_timeout)
 end
 
 # ---------------------------------------------------------------------------
@@ -510,7 +579,8 @@ end
 """
     generate_random_problem(target_variables; feasibility_status=unknown,
                             relax_integer=true, bounds_to_constraints=false, seed=0,
-                            optimizer=nothing, max_feasibility_retries=10)
+                            optimizer=nothing, max_feasibility_retries=10,
+                            feasibility_timeout=10.0)
 
 Generate a problem of a randomly selected variant targeting approximately the
 specified number of variables. Sampling is uniform over all registered
@@ -527,7 +597,8 @@ function generate_random_problem(target_variables::Int;
                                  feasibility_status::FeasibilityStatus=unknown,
                                  relax_integer::Bool=true,
                                  bounds_to_constraints::Bool=false, seed::Int=0,
-                                 optimizer=nothing, max_feasibility_retries::Int=10)
+                                 optimizer=nothing, max_feasibility_retries::Int=10,
+                                 feasibility_timeout::Float64=10.0)
     Random.seed!(seed)
 
     problems = list_problems()
@@ -540,7 +611,8 @@ function generate_random_problem(target_variables::Int;
                                       relax_integer=relax_integer,
                                       bounds_to_constraints=bounds_to_constraints,
                                       optimizer=optimizer,
-                                      max_feasibility_retries=max_feasibility_retries)
+                                      max_feasibility_retries=max_feasibility_retries,
+                                      feasibility_timeout=feasibility_timeout)
 
     return model, ref, problem
 end

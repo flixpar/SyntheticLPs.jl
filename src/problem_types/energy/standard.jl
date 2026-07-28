@@ -382,9 +382,24 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
         end
 
         clean_sources = [s for s in sources if iszero(emission_limits[s])]
-        clean_capacity = sum(capacities[s] for s in clean_sources)
+        clean_capacity = isempty(clean_sources) ? 0.0 :
+                         sum(capacities[s] for s in clean_sources)
         required_clean_capacity = renewable_fraction * max_demand
-        if clean_capacity < required_clean_capacity && clean_capacity > 0
+        if isempty(clean_sources)
+            # No zero-emission source exists, so any positive renewable floor is
+            # unsatisfiable no matter how capacity is scaled. Drop the floor rather
+            # than emitting a "feasible" instance that cannot be solved. (Source
+            # selection guarantees at least one renewable, so this is a safety net.)
+            renewable_fraction = 0.0
+        elseif clean_capacity <= 0
+            # Clean sources exist but carry no capacity: give them exactly enough to
+            # cover the floor. Scaling by a ratio cannot escape zero, which is why
+            # this case needs its own branch.
+            per_source = 1.05 * required_clean_capacity / length(clean_sources)
+            for source in clean_sources
+                capacities[source] = per_source
+            end
+        elseif clean_capacity < required_clean_capacity
             clean_scale = 1.05 * required_clean_capacity / clean_capacity
             for source in clean_sources
                 capacities[source] *= clean_scale

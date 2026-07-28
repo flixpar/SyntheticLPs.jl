@@ -4,6 +4,63 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-07-28 01:10 UTC (verification correctness + review cleanup)
+
+**Previous Commit**: `9dc7660`
+
+**Summary**: Fixed two soundness bugs in the feasibility-contract verifier, made the
+verification timeout configurable, removed the double solve in dataset generation,
+improved `supply_chain` network realism, closed a latent `energy` feasibility hole,
+and deleted the one-off `qa/` investigation scripts.
+
+**Details**:
+- **Verifier no longer conflates "uncertifiable" with "violated"** — the classifier
+  now returns a three-valued verdict (`:holds` / `:violated` / `:inconclusive`)
+  instead of a `Bool`. Previously any non-matching termination status counted as a
+  contract violation, so a solve that merely hit the time limit triggered a
+  rebuild-and-retry loop and eventually raised "Feasibility contract not satisfied".
+  Reproduced on `job_shop_scheduling/standard` at target 2000 with
+  `relax_integer=false`: the instance is not infeasible, HiGHS just needs longer than
+  the limit — the old code burned the retry budget (100s at the default 10 retries)
+  and then misdiagnosed it. `:inconclusive` now raises immediately, naming the
+  termination status and the limit that produced it (7s, one attempt).
+- **`INFEASIBLE_OR_UNBOUNDED` no longer satisfies an `infeasible` request.** The
+  status separates neither case, so accepting it could certify an *unbounded* — hence
+  feasible — model as infeasible. It is now `:inconclusive`. `ALMOST_OPTIMAL` (a solve
+  that stopped short of its tolerances) is likewise no longer accepted as proof of
+  feasibility. `DUAL_INFEASIBLE`, MOI's encoding of primal-unbounded, is now an
+  explicit `:violated` for both statuses: it exhibits a nonempty feasible region
+  (disproving `infeasible`) but has no optimum (disproving `feasible`).
+- **Classification extracted to a pure `_classify_termination(ts, status)`** so the
+  full status table is covered by a solver-free testset, including the `TIME_LIMIT`
+  path that no reasonably fast solver call can produce on demand.
+- **`feasibility_timeout` keyword** (default `10.0`) added to `generate_problem`,
+  `generate_random_problem`, and `_generate_problem_verified`; the limit was
+  previously hardcoded. Unrelaxed MIPs are the case that needs a larger value.
+- **`generate_dataset` no longer solves each candidate twice.** With
+  `feasible_only=true` and `quality_filter=true`, verification and `check_quality`
+  were both solving the same model to answer the same question. Verification is now
+  skipped when the quality filter is on — the filter already rejects anything not
+  matching `feasible_only`, and the candidate-pool loop supplies the retry. The
+  verification timeout is also tied to `QualityCriteria.solve_timeout` rather than the
+  hardcoded 10s.
+- **`supply_chain/standard` network shape** — the pool-growth step inflated
+  `n_customers` alone to reach the variable budget, skewing instances toward a handful
+  of facilities serving hundreds of customers (6 facilities / 115 customers at target
+  1000). It now grows facilities and customers together, preserving the
+  facility:customer ratio sampled per size band (11 / 66 at target 1000). Exact
+  variable-count targeting is unchanged.
+- **`energy/standard` zero-clean-capacity hole** — the renewable-floor guard was
+  `clean_capacity < required && clean_capacity > 0`, silently doing nothing in exactly
+  the case where the floor is least satisfiable. Now handled explicitly: no clean
+  source at all drops the renewable floor to 0 (it cannot be met by any scaling);
+  clean sources with zero capacity are assigned capacity outright, since scaling by a
+  ratio cannot escape zero. Latent rather than live — 0 of 160 sampled feasible
+  instances hit it — but the guard no longer depends on that.
+- **Removed `qa/`** — the eight investigation scripts and the point-in-time
+  `QA_REPORT.md` were one-off artifacts for this branch's audit, not reusable tooling.
+  Their durable findings live in this changelog and in the regression tests.
+
 ## 2026-07-26 21:10 UTC (review corrections)
 
 **Summary**: Two corrections from a self-review of the prior changes.

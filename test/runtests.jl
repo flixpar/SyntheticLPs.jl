@@ -394,6 +394,37 @@ end
         end
     end
 
+    # Termination-status classification is pure, so the whole table is testable
+    # without a solver. The distinction it encodes — disproved vs. uncertifiable —
+    # is what keeps a slow solve from being misreported as a contract violation.
+    @testset "Termination Status Classification" begin
+        classify = SyntheticLPs._classify_termination
+
+        # Proofs.
+        @test classify(MOI.OPTIMAL, feasible) === :holds
+        @test classify(MOI.INFEASIBLE, infeasible) === :holds
+
+        # Disproofs: each exhibits a certificate contradicting the request.
+        @test classify(MOI.INFEASIBLE, feasible) === :violated
+        @test classify(MOI.OPTIMAL, infeasible) === :violated
+        # Unbounded (MOI: DUAL_INFEASIBLE) implies a nonempty feasible region, so it
+        # disproves `infeasible`; it also fails `feasible`, which requires an optimum.
+        @test classify(MOI.DUAL_INFEASIBLE, infeasible) === :violated
+        @test classify(MOI.DUAL_INFEASIBLE, feasible) === :violated
+
+        # Uncertifiable: must never be reported as a violation or consume a retry.
+        for status in (MOI.TIME_LIMIT, MOI.INFEASIBLE_OR_UNBOUNDED, MOI.ALMOST_OPTIMAL,
+                       MOI.NUMERICAL_ERROR, MOI.ITERATION_LIMIT, MOI.OTHER_ERROR)
+            @test classify(status, feasible) === :inconclusive
+            @test classify(status, infeasible) === :inconclusive
+        end
+
+        # `unknown` requests are never verified, so every status passes.
+        for status in (MOI.OPTIMAL, MOI.INFEASIBLE, MOI.TIME_LIMIT)
+            @test classify(status, unknown) === :holds
+        end
+    end
+
     # Solver-based testsets (require HiGHS, a test-only dep). Skipped when HiGHS is
     # not resolvable, e.g. running this file directly with `julia --project=.`
     # rather than via `Pkg.test()`.
@@ -430,6 +461,26 @@ end
         m2, _ = generate_problem("transportation/standard", 80, feasible, 5;
                                  optimizer = HiGHS.Optimizer)
         @test JuMP.mode(m2) == JuMP.AUTOMATIC
+
+        # An unbounded model has a nonempty feasible region, so it must never satisfy
+        # an `infeasible` request, and it fails a `feasible` request too (the contract
+        # requires OPTIMAL). End-to-end through the solve path.
+        let unbounded = Model()
+            @variable(unbounded, z >= 0)
+            @objective(unbounded, Min, -z)
+            @test SyntheticLPs._check_feasibility_contract(unbounded, HiGHS.Optimizer,
+                                                           infeasible)[1] === :violated
+            @test SyntheticLPs._check_feasibility_contract(unbounded, HiGHS.Optimizer,
+                                                           feasible)[1] === :violated
+        end
+        let bounded = Model()
+            @variable(bounded, 0 <= z <= 1)
+            @objective(bounded, Min, z)
+            @test SyntheticLPs._check_feasibility_contract(bounded, HiGHS.Optimizer,
+                                                           feasible)[1] === :holds
+            @test SyntheticLPs._check_feasibility_contract(bounded, HiGHS.Optimizer,
+                                                           infeasible)[1] === :violated
+        end
 
         # crop_planning/standard infeasible-request: previously ~17% came back
         # feasible (the "fallow-land" hole). With the optimizer guard every seed

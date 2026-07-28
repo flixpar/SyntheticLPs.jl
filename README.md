@@ -133,9 +133,21 @@ using HiGHS
 model, problem = generate_problem(:energy, 300, infeasible, 1; optimizer=HiGHS.Optimizer)
 ```
 
-With `optimizer` unset (the default) no solving is performed and generation stays
-fully seed-deterministic. `generate_dataset` records the resolved seed per instance
-so verified datasets remain reproducible.
+With `optimizer` unset (the default) no solving is performed. Verification is itself
+deterministic — retries walk `seed, seed+1, …` — so a given `(seed, optimizer)` pair
+always resolves to the same model. `generate_dataset` records the resolved seed per
+instance so verified datasets can be rebuilt without re-solving.
+
+Each verification solve is bounded by `feasibility_timeout` (default 10s). A solve
+that certifies nothing — it exceeds that limit, or returns a status that separates
+neither case — raises rather than being counted as a contract violation, so a slow
+solve is never misreported as a bad instance. Unrelaxed MIPs are the usual cause:
+
+```julia
+model, problem = generate_problem(:job_shop_scheduling, 2000, feasible, 2;
+                                  relax_integer=false, optimizer=HiGHS.Optimizer,
+                                  feasibility_timeout=120.0)
+```
 
 ### Bound Reformulation
 

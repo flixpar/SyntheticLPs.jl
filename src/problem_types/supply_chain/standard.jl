@@ -127,10 +127,23 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
 
     # Ensure the (facility, customer, mode) candidate pool below is large enough to
     # select ~target_variables combos from; otherwise small instances undershoot.
-    # Grow the customer count (cheap and structural) until the pool clears 2× target.
-    while n_facilities * n_customers * n_transport_modes < target_variables * 2 &&
-          n_customers < 5000
-        n_customers += max(1, round(Int, n_customers * 0.2))
+    #
+    # Grow facilities and customers *together* so the facility:customer ratio sampled
+    # per size band above is preserved. Growing customers alone (an earlier approach)
+    # hit the pool size but skewed the network toward a handful of facilities serving
+    # hundreds of customers, which is not what the size bands describe.
+    pool_target = target_variables * 2
+    pool = n_facilities * n_customers * n_transport_modes
+    if pool < pool_target
+        growth = sqrt(pool_target / pool)
+        n_facilities = min(200, ceil(Int, n_facilities * growth))
+        n_customers = min(5000, ceil(Int, n_customers * growth))
+        # Rounding and the caps can leave the pool just short; top up on customers,
+        # the dimension that scales most cheaply.
+        while n_facilities * n_customers * n_transport_modes < pool_target &&
+              n_customers < 5000
+            n_customers += max(1, round(Int, n_customers * 0.2))
+        end
     end
 
     # Additional parameters
