@@ -62,18 +62,13 @@ function NetworkFlowProblem(target_variables::Int, feasibility_status::Feasibili
         cost_range = (1.0, 50.0)
     end
 
-    # Calculate appropriate number of nodes
-    n_nodes = min_nodes + 2
-    target_density = target_variables <= 100 ? 0.4 : target_variables <= 500 ? 0.2 : 0.1
-
-    # Iteratively find good n_nodes
-    for n in min_nodes:max_nodes
-        possible_arcs = n * (n - 1)
-        if round(Int, possible_arcs * target_density) >= target_variables * 0.9
-            n_nodes = n
-            break
-        end
-    end
+    # Variables = number of arcs. Size n_nodes so the complete digraph has at least
+    # `target_variables` distinct arcs (n*(n-1) >= target => n >= (1+sqrt(1+4t))/2),
+    # then generate exactly `target_variables` arcs below. (The previous loop left
+    # n_nodes at a tiny default whenever no node count in range met a density
+    # threshold, producing far fewer arcs than requested.)
+    n_nodes = max(min_nodes,
+                  min(max_nodes, ceil(Int, (1 + sqrt(1 + 4 * target_variables)) / 2)))
 
     source_node = 1
     sink_node = n_nodes

@@ -125,6 +125,27 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
         max_demand = base_demand * rand(Uniform(6.0, 20.0))
     end
 
+    # Ensure the (facility, customer, mode) candidate pool below is large enough to
+    # select ~target_variables combos from; otherwise small instances undershoot.
+    #
+    # Grow facilities and customers *together* so the facility:customer ratio sampled
+    # per size band above is preserved. Growing customers alone (an earlier approach)
+    # hit the pool size but skewed the network toward a handful of facilities serving
+    # hundreds of customers, which is not what the size bands describe.
+    pool_target = target_variables * 2
+    pool = n_facilities * n_customers * n_transport_modes
+    if pool < pool_target
+        growth = sqrt(pool_target / pool)
+        n_facilities = min(200, ceil(Int, n_facilities * growth))
+        n_customers = min(5000, ceil(Int, n_customers * growth))
+        # Rounding and the caps can leave the pool just short; top up on customers,
+        # the dimension that scales most cheaply.
+        while n_facilities * n_customers * n_transport_modes < pool_target &&
+              n_customers < 5000
+            n_customers += max(1, round(Int, n_customers * 0.2))
+        end
+    end
+
     # Additional parameters
     capacity_factor = rand(Uniform(1.2, 2.2))
     mode_capacity_factor = rand(Uniform(0.25, 0.65))
@@ -233,37 +254,85 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
     transport_costs = Dict{Tuple{Int,Int,String}, Float64}()
     infrastructure = Dict{Tuple{Int,Int,String}, Bool}()
 
-    for f in 1:n_facilities
+    # Score every (f,c,mode) candidate by a realistic per-mode availability, then
+    # select a deterministic number of them. The previous Bernoulli draw made the
+    # combo count (and thus the variable count) high-variance — it undershot badly
+    # whenever low-availability modes (ship with no waterway, short-haul air) were
+    # sampled. Ranking by availability preserves the "truck common, ship rare"
+    # structure while landing the variable count on target.
+    diag = sqrt(grid_width^2 + grid_height^2)
+    demands_max = maximum(values(demands))
+
+    # Precompute facility-customer distances (used for availability scoring and
+    # again for K-nearest coverage below).
+    dist_fc = [sqrt((facility_locs[f][1] - customer_locs[c][1])^2 +
+                    (facility_locs[f][2] - customer_locs[c][2])^2)
+               for f in 1:n_facilities, c in 1:n_customers]
+
+    # Score every (f,c,mode) candidate by a realistic per-mode availability.
+    candidates = Tuple{Float64,Int,Int,String}[]   # (score, f, c, mode)
+    for f in 1:n_facilities, c in 1:n_customers
+        d = dist_fc[f, c]
+        for mode in transport_modes
+            prob_available = if mode == "truck"
+                0.98
+            elseif mode == "rail"
+                min(0.8, 0.3 + 0.5 * (d / diag))
+            elseif mode == "ship"
+                any(loc -> abs(loc[2]) < grid_height * 0.1, [facility_locs[f], customer_locs[c]]) ? 0.8 : 0.0
+            else  # air
+                d > diag * 0.3 ? 0.7 : 0.2
+            end
+            push!(candidates, (prob_available * infrastructure_density + rand() * 0.05, f, c, mode))
+        end
+    end
+    sort!(candidates; rev=true)
+
+    # Total variables = n_facilities (the y binaries) + number of valid combos, so
+    # the combo budget is target_variables - n_facilities.
+    n_combos = clamp(target_variables - n_facilities,
+                     max(1, n_customers),
+                     length(candidates))
+
+    # For feasible instances, reserve K-nearest coverage combos (each customer
+    # reachable from its K nearest facilities via a fallback mode) OUT of n_combos,
+    # then fill the rest with the highest-availability candidates. Previously these
+    # coverage combos were added ON TOP of the budget by the feasibility step,
+    # inflating the variable count well past target (up to ~2x).
+    fallback_mode = ("truck" in transport_modes) ? "truck" : transport_modes[1]
+    # Cap K so K*n_customers fits inside the combo budget — otherwise tiny targets
+    # with few modes (many bumped customers) forced the coverage combos past the
+    # budget and overshot the variable count.
+    K_cov = min(max(3, ceil(Int, n_facilities ÷ 3)), n_facilities)
+    K_cov = min(K_cov, max(1, n_combos ÷ n_customers))
+    selected = Tuple{Int,Int,String}[]
+    seen = Set{Tuple{Int,Int,String}}()
+    if feasibility_status == feasible
         for c in 1:n_customers
-            distance = sqrt(
-                (facility_locs[f][1] - customer_locs[c][1])^2 +
-                (facility_locs[f][2] - customer_locs[c][2])^2
-            )
-
-            for mode in transport_modes
-                # Determine if this transport mode is available
-                prob_available = if mode == "truck"
-                    0.98
-                elseif mode == "rail"
-                    min(0.8, 0.3 + 0.5 * (distance / sqrt(grid_width^2 + grid_height^2)))
-                elseif mode == "ship"
-                    any(loc -> abs(loc[2]) < grid_height * 0.1, [facility_locs[f], customer_locs[c]]) ? 0.8 : 0.0
-                else  # air
-                    distance > sqrt(grid_width^2 + grid_height^2) * 0.3 ? 0.7 : 0.2
-                end
-
-                infrastructure[(f,c,mode)] = rand() < prob_available * infrastructure_density
-
-                if infrastructure[(f,c,mode)]
-                    base_cost = get(transport_base_costs, mode, 1.0)
-                    terrain_factor = rand(LogNormal(log(1.0), 0.15))
-                    volume_factor = 1.0 - 0.25 * (demands[c] / maximum(values(demands)))
-                    efficiency_factor = rand(Beta(3, 2)) * 0.4 + 0.8
-
-                    transport_costs[(f,c,mode)] = base_cost * distance * terrain_factor * volume_factor * efficiency_factor
+            for f in sortperm(view(dist_fc, :, c))[1:K_cov]
+                key = (f, c, fallback_mode)
+                if !(key in seen)
+                    push!(selected, key)
+                    push!(seen, key)
                 end
             end
         end
+    end
+    for (_, f, c, mode) in candidates
+        length(selected) >= n_combos && break
+        key = (f, c, mode)
+        !(key in seen) || continue
+        push!(selected, key)
+        push!(seen, key)
+    end
+
+    for (f, c, mode) in selected
+        infrastructure[(f, c, mode)] = true
+        base_cost = get(transport_base_costs, mode, 1.0)
+        terrain_factor = rand(LogNormal(log(1.0), 0.15))
+        volume_factor = 1.0 - 0.25 * (demands[c] / demands_max)
+        efficiency_factor = rand(Beta(3, 2)) * 0.4 + 0.8
+        transport_costs[(f, c, mode)] = base_cost * dist_fc[f, c] * terrain_factor * volume_factor * efficiency_factor
     end
 
     # Generate mode capacities
@@ -289,25 +358,17 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
 
     # SOPHISTICATED FEASIBILITY ENFORCEMENT
     if feasibility_status == feasible
-        # K-NEAREST CONNECTIVITY: Select fallback mode and ensure connectivity to K nearest facilities
-        fallback_mode = ("truck" in transport_modes) ? "truck" : transport_modes[1]
-        K = min(max(3, ceil(Int, n_facilities ÷ 3)), n_facilities)
-
+        # K-NEAREST CONNECTIVITY: use the same budget-capped K_cov routes reserved
+        # above. Using the uncapped K here made capacity smoothing assume routes
+        # that were deliberately omitted at tiny variable budgets, so some
+        # requested-feasible instances remained infeasible.
         customers_linked_to_facility = [Int[] for _ in 1:n_facilities]
         for c in 1:n_customers
-            dvec = [sqrt((facility_locs[f][1] - customer_locs[c][1])^2 +
-                        (facility_locs[f][2] - customer_locs[c][2])^2) for f in 1:n_facilities]
-            nearest_idxs = sortperm(dvec)[1:K]
+            nearest_idxs = sortperm(view(dist_fc, :, c))[1:K_cov]
             for f in nearest_idxs
-                if !haskey(transport_costs, (f, c, fallback_mode))
-                    distance = dvec[f]
-                    base_cost = get(transport_base_costs, fallback_mode, 1.0)
-                    terrain_factor = rand(LogNormal(log(1.0), 0.15))
-                    volume_factor = 1.0 - 0.25 * (demands[c] / maximum(values(demands)))
-                    efficiency_factor = rand(Beta(3, 2)) * 0.4 + 0.8
-                    infrastructure[(f, c, fallback_mode)] = true
-                    transport_costs[(f, c, fallback_mode)] = base_cost * distance * terrain_factor * volume_factor * efficiency_factor
-                end
+                # K-nearest coverage combos were already created during candidate
+                # selection (counted in the variable budget), so do not add more
+                # here — just record the linkage for capacity smoothing below.
                 push!(customers_linked_to_facility[f], c)
             end
         end

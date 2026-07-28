@@ -475,9 +475,26 @@ function _attempt_candidate(rng::AbstractRNG,
                             verbose::Bool)
     problem_seed = rand(rng, 1:typemax(Int32))
     try
-        model, _ = generate_problem(ref, target_vars, feasibility,
+        # Build (and, when an optimizer is available and the requested status is
+        # feasible/infeasible, verify the feasibility contract). The resolved seed
+        # is recorded on the candidate so materialization reproduces the exact
+        # verified model: rebuilding with `resolved_seed` and no optimizer builds
+        # that model first-try (it already passed), keeping the size assertion below
+        # valid.
+        #
+        # Skip verification when the quality filter is on: `check_quality` already
+        # solves this model and rejects anything not matching `feasible_only`, so
+        # verifying first would solve every candidate twice for the same answer. The
+        # filter discards a bad candidate where verification would retry it with a
+        # new seed, but the surrounding pool loop simply draws another candidate, so
+        # nothing is lost.
+        verify_optimizer = quality_filter ? nothing : optimizer
+        model, _, resolved_seed = _generate_problem_verified(ref, target_vars, feasibility,
                                     problem_seed; relax_integer = relax_integer,
-                                    bounds_to_constraints = bounds_to_constraints)
+                                    bounds_to_constraints = bounds_to_constraints,
+                                    optimizer = verify_optimizer,
+                                    max_feasibility_retries = 10,
+                                    feasibility_timeout = quality_criteria.solve_timeout)
 
         iterations = -1
         stime = NaN
@@ -505,7 +522,7 @@ function _attempt_candidate(rng::AbstractRNG,
             target_vars,
             num_variables(model),
             num_constraints(model; count_variable_in_set_constraints = false),
-            problem_seed,
+            resolved_seed,
             iterations,
             stime,
         )

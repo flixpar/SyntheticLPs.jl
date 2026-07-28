@@ -1,10 +1,41 @@
 using Test
 using JuMP
+const MOI = JuMP.MOI
 using Random
 using Distributions
 using JSON
 
 using SyntheticLPs
+
+# HiGHS is a test-only dependency ([extras]/[targets]); it resolves inside
+# `Pkg.test()` but not when running this file directly with `julia --project=.`.
+# Load it lazily so the direct command still runs the solver-free testsets and
+# only skips the solver-based ones.
+const HAS_HIGHS = try
+    @eval using HiGHS
+    true
+catch
+    false
+end
+
+# A deliberately always-feasible generator used to exercise retry exhaustion.
+struct ContractViolationTestProblem <: ProblemGenerator
+    seed::Int
+end
+
+const CONTRACT_TEST_SEEDS = Int[]
+
+function ContractViolationTestProblem(::Int, ::FeasibilityStatus, seed::Int)
+    push!(CONTRACT_TEST_SEEDS, seed)
+    return ContractViolationTestProblem(seed)
+end
+
+function SyntheticLPs.build_model(::ContractViolationTestProblem)
+    model = Model()
+    @variable(model, x >= 0)
+    @objective(model, Min, x)
+    return model
+end
 
 """
     test_problem_generator(ref)
@@ -321,5 +352,215 @@ end
         @test sum(i -> i.num_constraints, converted) > sum(i -> i.num_constraints, plain)
         manifest = JSON.parsefile(joinpath(tmp, "manifest.json"))
         @test manifest["config"]["bounds_to_constraints"] == true
+    end
+
+    # Generator robustness fixes (P1): edge sizes that used to crash during build.
+    @testset "Generator Robustness Fixes" begin
+        # portfolio/cvar used to crash with ArgumentError (Uniform a < b) for
+        # n_assets > 250 (target > ~1250) and for very small n_assets.
+        @test_nowarn generate_problem("portfolio/cvar", 2000, unknown, 1)
+        @test_nowarn generate_problem("portfolio/cvar", 1300, unknown, 1)
+        @test_nowarn generate_problem("portfolio/cvar", 3, unknown, 1)
+        # land_use used to crash with an empty-range rand when n_parcels == 2.
+        @test_nowarn generate_problem("land_use/standard", 3, unknown, 1)
+        @test_nowarn generate_problem("land_use/standard", 4, unknown, 1)
+        # energy now stores an emissions intensity target (the previous per-period
+        # emissions row was an algebraic tautology).
+        _, eprob = generate_problem("energy/standard", 120, unknown, 1)
+        @test hasproperty(eprob, :emission_intensity_target)
+        @test eprob.emission_intensity_target > 0
+
+        # Feasible energy instances choose an emissions cap that is attainable at
+        # peak demand and provide enough zero-emission capacity for the renewable
+        # floor, even when no optimizer-backed retry guard is requested.
+        for target in (120, 300, 1200), seed in 1:10
+            _, prob = generate_problem("energy/standard", target, feasible, seed)
+            peak_demand = maximum(prob.demands)
+            clean_sources = [s for s in prob.sources if iszero(prob.emission_limits[s])]
+            @test sum(prob.capacities[s] for s in clean_sources) + 1e-8 >=
+                  prob.renewable_fraction * peak_demand
+
+            remaining_demand = peak_demand
+            minimum_emissions = 0.0
+            for source in sort(prob.sources; by=s -> prob.emission_limits[s])
+                generation = min(prob.capacities[source], remaining_demand)
+                minimum_emissions += prob.emission_limits[source] * generation
+                remaining_demand -= generation
+                remaining_demand <= 0 && break
+            end
+            @test remaining_demand <= 1e-8
+            @test minimum_emissions / peak_demand <=
+                  prob.emission_intensity_target + 1e-12
+        end
+    end
+
+    # Termination-status classification is pure, so the whole table is testable
+    # without a solver. The distinction it encodes — disproved vs. uncertifiable —
+    # is what keeps a slow solve from being misreported as a contract violation.
+    @testset "Termination Status Classification" begin
+        classify = SyntheticLPs._classify_termination
+
+        # Proofs.
+        @test classify(MOI.OPTIMAL, feasible) === :holds
+        @test classify(MOI.INFEASIBLE, infeasible) === :holds
+
+        # Disproofs: each exhibits a certificate contradicting the request.
+        @test classify(MOI.INFEASIBLE, feasible) === :violated
+        @test classify(MOI.OPTIMAL, infeasible) === :violated
+        # Unbounded (MOI: DUAL_INFEASIBLE) implies a nonempty feasible region, so it
+        # disproves `infeasible`; it also fails `feasible`, which requires an optimum.
+        @test classify(MOI.DUAL_INFEASIBLE, infeasible) === :violated
+        @test classify(MOI.DUAL_INFEASIBLE, feasible) === :violated
+
+        # Uncertifiable: must never be reported as a violation or consume a retry.
+        for status in (MOI.TIME_LIMIT, MOI.INFEASIBLE_OR_UNBOUNDED, MOI.ALMOST_OPTIMAL,
+                       MOI.NUMERICAL_ERROR, MOI.ITERATION_LIMIT, MOI.OTHER_ERROR)
+            @test classify(status, feasible) === :inconclusive
+            @test classify(status, infeasible) === :inconclusive
+        end
+
+        # `unknown` requests are never verified, so every status passes.
+        for status in (MOI.OPTIMAL, MOI.INFEASIBLE, MOI.TIME_LIMIT)
+            @test classify(status, unknown) === :holds
+        end
+    end
+
+    # Solver-based testsets (require HiGHS, a test-only dep). Skipped when HiGHS is
+    # not resolvable, e.g. running this file directly with `julia --project=.`
+    # rather than via `Pkg.test()`.
+    if HAS_HIGHS
+
+    # Project-level feasibility-contract verification via the `optimizer` kwarg.
+    @testset "Feasibility Contract Verification" begin
+        # Without an optimizer, behavior is unchanged (deterministic, no solving).
+        m1, _ = generate_problem("transportation/standard", 80, unknown, 5)
+        @test num_variables(m1) > 0
+
+        # max_feasibility_retries must be >= 1.
+        @test_throws ErrorException generate_problem("transportation/standard", 80,
+                                                     unknown, 5; max_feasibility_retries = 0)
+
+        # Exhausting the retry budget is an error: never return a model known to
+        # violate the requested contract or a seed that does not reproduce it.
+        empty!(CONTRACT_TEST_SEEDS)
+        exhaustion_error = try
+            SyntheticLPs._generate_problem_verified(
+                ContractViolationTestProblem, 1, infeasible, 41;
+                optimizer = HiGHS.Optimizer, max_feasibility_retries = 3,
+            )
+            nothing
+        catch err
+            err
+        end
+        @test exhaustion_error isa ErrorException
+        @test CONTRACT_TEST_SEEDS == [41, 42, 43]
+        @test occursin("after 3 attempts", sprint(showerror, exhaustion_error))
+        @test occursin("seeds 41 through 43", sprint(showerror, exhaustion_error))
+
+        # The returned model is left pristine (no optimizer attached, not solved).
+        m2, _ = generate_problem("transportation/standard", 80, feasible, 5;
+                                 optimizer = HiGHS.Optimizer)
+        @test JuMP.mode(m2) == JuMP.AUTOMATIC
+
+        # An unbounded model has a nonempty feasible region, so it must never satisfy
+        # an `infeasible` request, and it fails a `feasible` request too (the contract
+        # requires OPTIMAL). End-to-end through the solve path.
+        let unbounded = Model()
+            @variable(unbounded, z >= 0)
+            @objective(unbounded, Min, -z)
+            @test SyntheticLPs._check_feasibility_contract(unbounded, HiGHS.Optimizer,
+                                                           infeasible)[1] === :violated
+            @test SyntheticLPs._check_feasibility_contract(unbounded, HiGHS.Optimizer,
+                                                           feasible)[1] === :violated
+        end
+        let bounded = Model()
+            @variable(bounded, 0 <= z <= 1)
+            @objective(bounded, Min, z)
+            @test SyntheticLPs._check_feasibility_contract(bounded, HiGHS.Optimizer,
+                                                           feasible)[1] === :holds
+            @test SyntheticLPs._check_feasibility_contract(bounded, HiGHS.Optimizer,
+                                                           infeasible)[1] === :violated
+        end
+
+        # crop_planning/standard infeasible-request: previously ~17% came back
+        # feasible (the "fallow-land" hole). With the optimizer guard every seed
+        # must now solve INFEASIBLE.
+        for s in 1:8
+            m, _ = generate_problem("crop_planning/standard", 120, infeasible, s;
+                                    optimizer = HiGHS.Optimizer)
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            @test termination_status(m) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
+        end
+
+        # energy/standard infeasible-request: previously failed at larger sizes
+        # because the infeasibility logic targeted a reserve constraint that is not
+        # in the model.
+        for s in 1:8
+            m, _ = generate_problem("energy/standard", 300, infeasible, s;
+                                    optimizer = HiGHS.Optimizer)
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            @test termination_status(m) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
+        end
+
+        # Feasible energy requests also honor their label by construction when the
+        # initial generation call does not use the optimizer-backed retry guard.
+        for s in 1:10
+            m, _ = generate_problem("energy/standard", 300, feasible, s)
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            @test termination_status(m) == MOI.OPTIMAL
+        end
+
+        # supply_chain/standard reserves fallback routes within its variable budget.
+        # Capacity smoothing must use that same capped coverage count; otherwise
+        # tiny requested-feasible instances can remain infeasible.
+        for s in 1:10
+            m, _ = generate_problem("supply_chain/standard", 50, feasible, s)
+            @test num_variables(m) == 50
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            @test termination_status(m) == MOI.OPTIMAL
+        end
+
+        # unit_commitment/standard feasible-request: previously ~8% came back
+        # infeasible (documented heuristic). The optimizer guard rejects those.
+        for s in 1:10
+            m, _ = generate_problem("unit_commitment/standard", 120, feasible, s;
+                                    optimizer = HiGHS.Optimizer)
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            @test termination_status(m) == MOI.OPTIMAL
+        end
+
+        # blending/feed_blending infeasible-request was heuristic (~8-17%);
+        # the guard now guarantees the contract.
+        for ref in ("blending/standard", "feed_blending/standard")
+            for s in 1:6
+                m, _ = generate_problem(ref, 300, infeasible, s;
+                                        optimizer = HiGHS.Optimizer)
+                set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+                @test termination_status(m) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
+            end
+        end
+    end
+
+    # Dataset generation honors the contract when an optimizer is supplied.
+    @testset "Dataset Feasibility Verification" begin
+        # feasible_only + optimizer: every emitted instance must actually be feasible.
+        insts = generate_dataset(num_problems = 8, var_mean = 120, var_std = 20,
+                                 var_min = 80, var_max = 200, seed = 31,
+                                 problem_types = [:unit_commitment, :crop_planning],
+                                 feasible_only = true, quality_filter = false,
+                                 optimizer = HiGHS.Optimizer,
+                                 max_candidate_multiplier = 3)
+        @test length(insts) == 8
+        for inst in insts
+            # Rebuild with the recorded (resolved) seed and confirm feasibility.
+            m, _ = generate_problem(ProblemVariant(inst.problem_type, inst.variant),
+                                    inst.target_variables, feasible, inst.seed)
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            @test termination_status(m) == MOI.OPTIMAL
+        end
+    end
+
+    else
+        @info "HiGHS not available; skipping solver-based feasibility testsets (run via Pkg.test() to include them)."
     end
 end

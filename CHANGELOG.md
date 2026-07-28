@@ -4,6 +4,190 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-07-28 01:10 UTC (verification correctness + review cleanup)
+
+**Previous Commit**: `9dc7660`
+
+**Summary**: Fixed two soundness bugs in the feasibility-contract verifier, made the
+verification timeout configurable, removed the double solve in dataset generation,
+improved `supply_chain` network realism, closed a latent `energy` feasibility hole,
+and deleted the one-off `qa/` investigation scripts.
+
+**Details**:
+- **Verifier no longer conflates "uncertifiable" with "violated"** — the classifier
+  now returns a three-valued verdict (`:holds` / `:violated` / `:inconclusive`)
+  instead of a `Bool`. Previously any non-matching termination status counted as a
+  contract violation, so a solve that merely hit the time limit triggered a
+  rebuild-and-retry loop and eventually raised "Feasibility contract not satisfied".
+  Reproduced on `job_shop_scheduling/standard` at target 2000 with
+  `relax_integer=false`: the instance is not infeasible, HiGHS just needs longer than
+  the limit — the old code burned the retry budget (100s at the default 10 retries)
+  and then misdiagnosed it. `:inconclusive` now raises immediately, naming the
+  termination status and the limit that produced it (7s, one attempt).
+- **`INFEASIBLE_OR_UNBOUNDED` no longer satisfies an `infeasible` request.** The
+  status separates neither case, so accepting it could certify an *unbounded* — hence
+  feasible — model as infeasible. It is now `:inconclusive`. `ALMOST_OPTIMAL` (a solve
+  that stopped short of its tolerances) is likewise no longer accepted as proof of
+  feasibility. `DUAL_INFEASIBLE`, MOI's encoding of primal-unbounded, is now an
+  explicit `:violated` for both statuses: it exhibits a nonempty feasible region
+  (disproving `infeasible`) but has no optimum (disproving `feasible`).
+- **Classification extracted to a pure `_classify_termination(ts, status)`** so the
+  full status table is covered by a solver-free testset, including the `TIME_LIMIT`
+  path that no reasonably fast solver call can produce on demand.
+- **`feasibility_timeout` keyword** (default `10.0`) added to `generate_problem`,
+  `generate_random_problem`, and `_generate_problem_verified`; the limit was
+  previously hardcoded. Unrelaxed MIPs are the case that needs a larger value.
+- **`generate_dataset` no longer solves each candidate twice.** With
+  `feasible_only=true` and `quality_filter=true`, verification and `check_quality`
+  were both solving the same model to answer the same question. Verification is now
+  skipped when the quality filter is on — the filter already rejects anything not
+  matching `feasible_only`, and the candidate-pool loop supplies the retry. The
+  verification timeout is also tied to `QualityCriteria.solve_timeout` rather than the
+  hardcoded 10s.
+- **`supply_chain/standard` network shape** — the pool-growth step inflated
+  `n_customers` alone to reach the variable budget, skewing instances toward a handful
+  of facilities serving hundreds of customers (6 facilities / 115 customers at target
+  1000). It now grows facilities and customers together, preserving the
+  facility:customer ratio sampled per size band (11 / 66 at target 1000). Exact
+  variable-count targeting is unchanged.
+- **`energy/standard` zero-clean-capacity hole** — the renewable-floor guard was
+  `clean_capacity < required && clean_capacity > 0`, silently doing nothing in exactly
+  the case where the floor is least satisfiable. Now handled explicitly: no clean
+  source at all drops the renewable floor to 0 (it cannot be met by any scaling);
+  clean sources with zero capacity are assigned capacity outright, since scaling by a
+  ratio cannot escape zero. Latent rather than live — 0 of 160 sampled feasible
+  instances hit it — but the guard no longer depends on that.
+- **Removed `qa/`** — the eight investigation scripts and the point-in-time
+  `QA_REPORT.md` were one-off artifacts for this branch's audit, not reusable tooling.
+  Their durable findings live in this changelog and in the regression tests.
+
+## 2026-07-26 21:10 UTC (review corrections)
+
+**Summary**: Two corrections from a self-review of the prior changes.
+
+- **`supply_chain/standard` feasible-path sizing**: the deterministic combo
+  selection landed on target for `unknown` but the pre-existing K-nearest
+  coverage step added combos *on top* of the budget for `feasible`, inflating the
+  variable count up to ~2×. The K-nearest coverage combos are now reserved *out
+  of* the combo budget (with `K` capped so coverage fits), and the coverage step
+  no longer adds combos. Verified 1.00× across all statuses and sizes 50–1500.
+- **Test loadability**: `using HiGHS` at the top of `test/runtests.jl` made the
+  direct `julia --project=@. test/runtests.jl` command hard-error (HiGHS is an
+  `[extras]` dep, not resolvable outside `Pkg.test`). HiGHS is now loaded lazily
+  (`HAS_HIGHS` flag) so the direct command runs the solver-free testsets and
+  skips the two solver-based ones with an `@info` notice. Also switched the test
+  file to `JuMP.MOI` and dropped the redundant `MathOptInterface` extra.
+
+## 2026-07-26 19:50 UTC (variable-count targeting + trivial-instance fixes)
+
+**Previous Commit**: `2cb557a`
+
+**Summary**: Fixed variable-count drift in six generators (the pre-existing
+size-targeting test failures) and eliminated structurally-trivial instances in
+two. Every registered variant now lands within the project's own ±25% size bar
+across small/medium/large targets, and the full test suite is green (2523/2523,
+previously 6 failures).
+
+**Details**:
+- **`network_flow/standard`** — the node-count search left `n_nodes` at a tiny
+  default whenever no node count in range met a density threshold, so the arc
+  count (the variable count) came back a small fraction of target. Now sizes
+  `n_nodes` from `target` so the complete digraph has ≥ target arcs, then emits
+  exactly `target` arcs.
+- **`scheduling/standard`** — picked `n_workers`, `n_shifts`, `n_days` all from
+  fixed bands, so their product (the variable count) wandered 0.4–1.8× of target.
+  Now keeps the horizon/shift bands for realism and solves `n_workers` from target.
+- **`airline_crew/standard`** — realized pairing count drifted at larger sizes.
+  Now sets `max_pairings = target` and keeps `num_flights` in `[target/2, 0.8*target]`
+  so the exact-cover partition stays below target and the fill reaches it.
+- **`cutting_stock/standard`** — the distinct-pattern pool stalled far below target
+  for small piece-type counts (0.02–0.32×). Now floors `n_piece_types` so the
+  pattern generator reaches target.
+- **`supply_chain/standard`** — the valid-combo count was a high-variance Bernoulli
+  draw that undershot badly when low-availability modes (inland ship, short-haul
+  air) were sampled. Now ranks candidates by realistic per-mode availability and
+  selects a deterministic count, landing the variable count on target while
+  preserving "truck common, ship rare" structure.
+- **`load_balancing/standard`** — rewritten to a genuine min-max-utilization
+  routing LP: the previous model had per-link lower bounds but **no flow
+  conservation**, so each link was independent and it solved in 0 simplex
+  iterations. Now balances in-/out-flow at every node against demand injections
+  (coupling the links). Sizing fixed (was ~0.4×). Feasibility is structural:
+  connected network ⇒ always feasible (`u` unbounded); zeroing a source's
+  outgoing capacity ⇒ provably infeasible via conservation. Also replaced six
+  deprecated `Truncated(…)` calls with `truncated(…)` (Distributions.jl).
+- **`production_planning/standard`** — raised the `n_resources` floor from
+  `rand(1:50)` so instances no longer degenerate to a single-constraint
+  (trivially solved) LP.
+
+## 2026-07-26 18:19 UTC (feasibility-contract verification + generator fixes)
+
+**Previous Commit**: `2cb557a`
+
+**Summary**: Added project-level feasibility-contract verification to the
+generation stack, and fixed five data-generation defects (four
+feasibility-contract violations plus two edge-case build crashes) surfaced by a
+solver-based QA sweep over every registered variant. The corpus now honors the
+requested `FeasibilityStatus` by construction in the previously-broken cases, and
+— when a caller supplies an `optimizer` — guarantees it by solving.
+
+**Details**:
+
+### Project-level feasibility verification (new)
+- **`optimizer` kwarg on `generate_problem`** (all four dispatch methods),
+  `generate_random_problem`, and the dataset candidate path. When supplied and
+  the requested status is `feasible`/`infeasible`, the model is solved once (on a
+  structural copy, so the returned model stays pristine) to verify the contract —
+  a `feasible` request must solve `OPTIMAL`, an `infeasible` request must solve
+  `INFEASIBLE`. On violation the problem is rebuilt with a fresh seed and
+  re-checked, up to `max_feasibility_retries` (default `10`) attempts. Central in
+  `generate_problem` (not per-variant), per the design that the package stays
+  solver-agnostic and the caller supplies the optimizer (e.g. `HiGHS.Optimizer`).
+- **`_generate_problem_verified` / `_feasibility_contract_holds`** — internal
+  helpers; the verified builder returns the resolved seed so dataset materializers
+  reproduce the exact verified model.
+- **`generate_dataset`** records the resolved seed per instance, so `feasible_only`
+  datasets with an optimizer are guaranteed feasible and remain reproducible.
+- With `optimizer=nothing` (the default) generation is byte-for-byte unchanged and
+  fully seed-deterministic.
+
+### Generator fixes
+- **`crop_planning/standard`** — the `infeasible` branch computed a lower bound on
+  resource usage assuming *all* land is planted, but the land constraint is
+  `sum(x) <= total_land` (an upper bound), so land can be left fallow and the true
+  minimum usage is far lower — occasionally yielding a feasible problem. Now uses
+  the true minimum `sum(req .* min_area)`, guarantees a non-empty mandatory set,
+  and sets the violated capacity strictly below that bound. (~17% → 0 violations.)
+- **`energy/standard`** — two fixes. (1) The infeasibility logic targeted a reserve
+  constraint that is **not in the model** (`build_model` only enforces `Σx ≥ demand`
+  and `x ≤ capacity`); it now guarantees `max(demand) > Σ capacities`, the
+  model-consistent infeasibility condition. (2) The per-period emissions row
+  `Σ em·x ≤ max_em·Σx` was an algebraic tautology (a weighted average never exceeds
+  its max weight); replaced with a fixed `emission_intensity_target < max_em` so it
+  can actually bind. (Size-dependent ~17% → 0 violations; feasible path unchanged.)
+- **`portfolio/cvar`** — the position-limit `Uniform(max(2/n, 0.02), min(0.3, 5/n))`
+  inverted (`a > b`) for `n_assets > 250` (target > ~1250) and for very small `n`,
+  crashing with `ArgumentError`. Now sampled directly in `[2/n, 5/n]`.
+- **`land_use/standard`** — `rand(2:min(4, n_parcels-1))` produced an empty range
+  (`collection must be non-empty`) when `n_parcels == 2`. Now clamped to
+  `max(1, min(n_parcels-1, rand(2:4)))`.
+- **`load_balancing/standard`** — replaced six deprecated `Truncated(d, l, u)`
+  calls with `truncated(d, l, u)` (Distributions.jl deprecation that surfaced as a
+  test failure under `Pkg.test`).
+
+### Tests / dev
+- `HiGHS` + `MathOptInterface` added as **test-only** dependencies (`[extras]`/`
+  [targets]`); the package runtime remains solver-agnostic. New testsets:
+  *Generator Robustness Fixes*, *Feasibility Contract Verification* (covers
+  crop_planning/energy infeasible and unit_commitment feasible, plus blending/
+  feed_blending), and *Dataset Feasibility Verification* (resolved-seed
+  reproducibility + guaranteed-feasible `feasible_only` datasets).
+- The canonical test command is now `julia --project=@. -e 'using Pkg; Pkg.test()'`
+  (so the HiGHS extra resolves). Six **pre-existing** size-targeting test failures
+  (`airline_crew`, `cutting_stock`, `network_flow`, `scheduling`, `supply_chain`)
+  remain unchanged on this branch — they are P2 variable-count drift, not
+  regressions from these changes.
+
 ## 2026-06-29 17:26 EDT (bounds-to-constraints reformulation)
 
 **Previous Commit**: `c617dd7`

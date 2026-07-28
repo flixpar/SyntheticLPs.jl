@@ -18,10 +18,20 @@ This package is a standardized framework for generating synthetic linear program
 
 ### Testing
 
-Run the comprehensive test suite:
+The suite uses HiGHS (a test-only dependency in `[extras]`). Both commands work:
+
 ```bash
+# Full suite including the solver-based feasibility-contract testsets:
+julia --project=@. -e 'using Pkg; Pkg.test()'
+
+# Direct run: executes the solver-free testsets and skips the solver-based ones
+# (HiGHS is not resolvable outside the Pkg.test sandbox):
 julia --project=@. test/runtests.jl
 ```
+
+`test/runtests.jl` loads HiGHS lazily (`HAS_HIGHS` flag) so the direct command
+does not error — the two feasibility-verification testsets are simply skipped
+with an `@info` notice when HiGHS is unavailable.
 
 ### Problem Generation
 
@@ -82,6 +92,12 @@ SyntheticLPs uses a type-based dispatch system for generating realistic linear p
 - `ProblemVariant`: identifier for a `category/variant` pair (the canonical reference used throughout); constructible from `(category, variant)` symbols, a bare category symbol (→ default variant), or a `"category"`/`"category/variant"` string; prints as `category/variant`
 - Two-level registry `LP_REGISTRY::Dict{Symbol,CategorySpec}` populated by `register_category()` and `register_variant()` (a single variant lazily creates its category)
 - Unified interface functions: `generate_problem()` (accepts a category symbol with optional `variant=` keyword, a `ProblemVariant`, or a generator type), `list_categories()`/`list_problem_types()` (alias), `list_variants()`, `list_problems()`, `problem_info()`
+- **Feasibility-contract verification**: every `generate_problem()`/`generate_random_problem()` overload accepts an optional `optimizer` (plus `max_feasibility_retries=10` and `feasibility_timeout=10.0`). When supplied and the requested status is `feasible`/`infeasible`, the built model is solved on a copy and the termination status is classified by the pure `_classify_termination(ts, status)` into one of three verdicts:
+  - `:holds` — proved; return the model.
+  - `:violated` — disproved (e.g. `INFEASIBLE` for a `feasible` request, or `OPTIMAL`/`DUAL_INFEASIBLE` for an `infeasible` one, both of which exhibit a feasible point). Rebuild with the next seed, up to `max_feasibility_retries` times.
+  - `:inconclusive` — certifies nothing: `TIME_LIMIT`, `ALMOST_OPTIMAL`, `INFEASIBLE_OR_UNBOUNDED` (separates neither case, so it must never certify infeasibility), or any other status. Raises immediately rather than spending the retry budget re-asking an unanswerable question. Unrelaxed MIPs are the common trigger — raise `feasibility_timeout`.
+
+  This is the project-level backstop for the few generators whose heuristic feasibility logic occasionally misses (~0.1% of requests corpus-wide). Central in `generate_problem` (not per-variant); with `optimizer=nothing` (default) generation is unchanged. Verification is deterministic — retries walk `seed, seed+1, …` — so a given `(seed, optimizer)` pair always resolves to the same model. `generate_dataset` records the resolved seed per instance so materialization reproduces it without re-solving, and skips verification when `quality_filter` is on (`check_quality` already solves the model and rejects anything not matching `feasible_only`, so verifying too would solve every candidate twice).
 - Random problem generation with `generate_random_problem()` (returns the selected `ProblemVariant`)
 - Base function `build_model(problem::ProblemGenerator)` that each variant implements
 

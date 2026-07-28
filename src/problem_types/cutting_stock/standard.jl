@@ -72,6 +72,12 @@ function CuttingStockProblem(target_variables::Int, feasibility_status::Feasibil
         waste_factor = rand(Uniform(0.02, 0.08))
     end
 
+    # Ensure enough piece-type diversity that generate_cutting_patterns can produce
+    # ~target_variables distinct patterns (the variable count). With only a handful
+    # of piece types the distinct-pattern pool stalls far below target, so the
+    # realized variable count was a small fraction of the request.
+    n_piece_types = max(n_piece_types, clamp(round(Int, target_variables / 4), 20, 200))
+
     # Generate realistic piece lengths (all must fit in stock)
     piece_lengths = Float64[]
     effective_max_length = min(stock_length * 0.95, stock_length - 0.1)

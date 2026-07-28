@@ -108,6 +108,17 @@ function AirlineCrewProblem(target_variables::Int, feasibility_status::Feasibili
         end
     end
 
+    # Drive the variable count (num_pairings = min(max_pairings, num_flights*2))
+    # onto target. max_pairings is set exactly to target, and num_flights is kept
+    # in [target/2, 0.8*target]: at least target/2 so the 2*num_flights cap does
+    # not bind below target, and at most 0.8*target so the feasible exact-cover
+    # partition (which must cover every flight) stays below target and the
+    # "additional pairings" fill reaches target precisely.
+    flights_lo = ceil(Int, target_variables / 2) + 5
+    flights_hi = max(flights_lo, round(Int, target_variables * 0.8))
+    num_flights = clamp(num_flights, flights_lo, flights_hi)
+    max_pairings = target_variables
+
     # Generate flight network
     base_locations = collect(1:num_bases)
     non_base_locations = collect((num_bases+1):num_airports)

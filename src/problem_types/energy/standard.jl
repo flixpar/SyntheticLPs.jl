@@ -36,6 +36,7 @@ struct EnergyProblem <: ProblemGenerator
     demands::Vector{Float64}
     emission_limits::Dict{String,Float64}
     renewable_fraction::Float64
+    emission_intensity_target::Float64
 end
 
 """
@@ -365,8 +366,80 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
         end
     end
 
+    # --- Model-consistent feasibility guard ---
+    # A feasible dispatch must satisfy total capacity, renewable-share, and
+    # emissions-intensity constraints simultaneously. First make demand attainable
+    # from the fleet, then ensure zero-emission capacity can meet the renewable floor.
+    # (The model classifies every zero-emission source, including nuclear, as renewable,
+    # so use that same definition here.)
+    total_capacity = sum(values(capacities))
+    max_demand = isempty(demands) ? 0.0 : maximum(demands)
+    if actual_status == :feasible
+        if max_demand > total_capacity * 0.9 && max_demand > 0
+            scale_factor = (total_capacity * 0.9) / max_demand
+            demands .= demands .* scale_factor
+            max_demand = maximum(demands)
+        end
+
+        clean_sources = [s for s in sources if iszero(emission_limits[s])]
+        clean_capacity = isempty(clean_sources) ? 0.0 :
+                         sum(capacities[s] for s in clean_sources)
+        required_clean_capacity = renewable_fraction * max_demand
+        if isempty(clean_sources)
+            # No zero-emission source exists, so any positive renewable floor is
+            # unsatisfiable no matter how capacity is scaled. Drop the floor rather
+            # than emitting a "feasible" instance that cannot be solved. (Source
+            # selection guarantees at least one renewable, so this is a safety net.)
+            renewable_fraction = 0.0
+        elseif clean_capacity <= 0
+            # Clean sources exist but carry no capacity: give them exactly enough to
+            # cover the floor. Scaling by a ratio cannot escape zero, which is why
+            # this case needs its own branch.
+            per_source = 1.05 * required_clean_capacity / length(clean_sources)
+            for source in clean_sources
+                capacities[source] = per_source
+            end
+        elseif clean_capacity < required_clean_capacity
+            clean_scale = 1.05 * required_clean_capacity / clean_capacity
+            for source in clean_sources
+                capacities[source] *= clean_scale
+            end
+        end
+    else
+        if max_demand <= total_capacity
+            scale_factor = (total_capacity * 1.10) / max(max_demand, 1e-9)
+            demands .= demands .* scale_factor
+        end
+    end
+
+    # Emissions intensity target: a fixed cap strictly below the dirtiest source's
+    # emission rate, so the per-period emissions constraint can actually bind. For a
+    # feasible request, derive the cap from the minimum-emission dispatch at peak
+    # demand. This makes the cap attainable without requiring solver-backed retries
+    # while retaining a nontrivial amount of slack above the cleanest dispatch.
+    # (The previous `<= max_emission * sum(x)` form was an algebraic tautology — a
+    # weighted average is always <= its maximum weight.)
+    max_emission = isempty(emission_limits) ? 0.0 : maximum(values(emission_limits))
+    emission_intensity_target = if iszero(max_emission)
+        1.0
+    elseif actual_status == :feasible && max_demand > 0
+        remaining_demand = max_demand
+        minimum_emissions = 0.0
+        for source in sort(sources; by=s -> emission_limits[s])
+            generation = min(capacities[source], remaining_demand)
+            minimum_emissions += emission_limits[source] * generation
+            remaining_demand -= generation
+            remaining_demand <= 0 && break
+        end
+        minimum_intensity = minimum_emissions / max_demand
+        slack_fraction = rand(Uniform(0.05, 0.25))
+        minimum_intensity + slack_fraction * (max_emission - minimum_intensity)
+    else
+        max_emission * rand(Uniform(0.7, 0.95))
+    end
+
     return EnergyProblem(n_sources, n_periods, sources, time_periods, generation_costs, capacities,
-                        demands, emission_limits, renewable_fraction)
+                        demands, emission_limits, renewable_fraction, emission_intensity_target)
 end
 
 """
@@ -396,12 +469,14 @@ function build_model(prob::EnergyProblem)
         @constraint(model, sum(x[s,t] for s in prob.sources) >= prob.demands[t])
     end
 
-    # Emissions
-    max_emission = maximum(values(prob.emission_limits))
+    # Emissions: cap the generation-weighted average emission intensity at a fixed
+    # target below the dirtiest source's rate, so the row can actually bind (a
+    # `<= max_rate * sum(x)` form would be a tautology — a weighted average never
+    # exceeds its largest weight).
     for t in prob.time_periods
         @constraint(model,
             sum(prob.emission_limits[s] * x[s,t] for s in prob.sources) <=
-            sum(x[s,t] for s in prob.sources) * max_emission
+            prob.emission_intensity_target * sum(x[s,t] for s in prob.sources)
         )
     end
 
