@@ -652,6 +652,7 @@ include("problem_types/stochastic_program/stochastic_program.jl")
 include("problem_types/supply_chain/supply_chain.jl")
 include("problem_types/telecom_network_design/telecom_network_design.jl")
 include("problem_types/transportation/transportation.jl")
+include("problem_types/tsp/tsp.jl")
 include("problem_types/unit_commitment/unit_commitment.jl")
 include("problem_types/vehicle_routing/vehicle_routing.jl")
 

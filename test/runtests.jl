@@ -394,6 +394,99 @@ end
         end
     end
 
+    # TSP feasibility-by-construction checks (solver-free): the infeasible and
+    # feasible constructions are certified by their data, independent of any
+    # optimizer.
+    @testset "TSP By-Construction" begin
+        # Number of undirected connected components of the available-arc graph.
+        function component_sizes(n, forbidden)
+            seen = falses(n)
+            sizes = Int[]
+            for start in 1:n
+                seen[start] && continue
+                stack = [start]
+                seen[start] = true
+                size = 0
+                while !isempty(stack)
+                    v = pop!(stack)
+                    size += 1
+                    for w in 1:n
+                        if !seen[w] && !((v, w) in forbidden) && !((w, v) in forbidden)
+                            seen[w] = true
+                            push!(stack, w)
+                        end
+                    end
+                end
+                push!(sizes, size)
+            end
+            return sizes
+        end
+
+        for seed in 1:3, target in (50, 100)
+            # Euclidean / asymmetric infeasible: the forbidden arcs form a
+            # bridge cut into two nonempty halves (west/east by x-coordinate),
+            # so the available-arc graph has exactly two connected components.
+            for ref in ("tsp/euclidean", "tsp/asymmetric")
+                _, prob = generate_problem(ref, target, infeasible, seed)
+                west, east = prob.partition
+                @test !isempty(west) && !isempty(east)
+                @test sort(vcat(west, east)) == collect(1:prob.n)
+                expected = Set{Tuple{Int,Int}}()
+                for i in west, j in east
+                    push!(expected, (i, j))
+                    push!(expected, (j, i))
+                end
+                @test prob.forbidden == expected
+                sizes = component_sizes(prob.n, prob.forbidden)
+                @test sort(sizes) == sort([length(west), length(east)])
+            end
+            _, ep = generate_problem("tsp/euclidean", target, feasible, seed)
+            @test isempty(ep.forbidden)
+
+            # Time windows feasible: the base tour must satisfy every window.
+            _, tp = generate_problem("tsp/time_windows", target, feasible, seed)
+            @test sort(tp.base_tour) == collect(1:tp.n)
+            @test tp.base_tour[1] == 1
+            @test tp.base_arrivals[1] == 0
+            for i in 2:tp.n
+                @test tp.early[i] <= tp.base_arrivals[i] <= tp.late[i]
+            end
+
+            # Time windows infeasible: two mutually exclusive jobs (long
+            # services, shared early deadline) certify infeasibility by
+            # construction — see the constructor docstring for the proof.
+            _, tp = generate_problem("tsp/time_windows", target, infeasible, seed)
+            A, B = tp.tw_pair
+            @test A in 2:tp.n && B in 2:tp.n
+            D = max(tp.costs[1, A], tp.costs[1, B]) + tp.n + 10
+            @test tp.services[A] == D
+            @test tp.services[B] == D
+            L = D + tp.costs[A, B] - tp.n - 5
+            @test tp.early[A] == 0 && tp.late[A] == L
+            @test tp.early[B] == 0 && tp.late[B] == L
+            @test L >= max(tp.costs[1, A], tp.costs[1, B]) + 1
+
+            # Assignment relaxation infeasible: one city is fully cut off.
+            _, ap = generate_problem("tsp/assignment_relaxation", target, infeasible, seed)
+            @test Set(ap.forbidden) ==
+                  Set((i, j) for i in 1:ap.n, j in 1:ap.n
+                      if i != j && (i == ap.n || j == ap.n))
+
+            # Exact variable-count formulas on unknown instances (guards
+            # against accidentally creating fixed depot variables).
+            n_e = max(3, round(Int, sqrt(target)))
+            m_e, _ = generate_problem("tsp/euclidean", target, unknown, seed)
+            @test num_variables(m_e) == n_e^2 - 1
+            m_t, _ = generate_problem("tsp/time_windows", target, unknown, seed)
+            @test num_variables(m_t) == n_e^2 + n_e - 2
+            m_a, _ = generate_problem("tsp/assignment_relaxation", target, unknown, seed)
+            @test num_variables(m_a) == n_e * (n_e - 1)
+            n_s = max(3, round(Int, sqrt(target / 2)))
+            m_s, _ = generate_problem("tsp/asymmetric", target, unknown, seed)
+            @test num_variables(m_s) == 2 * n_s * (n_s - 1)
+        end
+    end
+
     # Termination-status classification is pure, so the whole table is testable
     # without a solver. The distinction it encodes — disproved vs. uncertifiable —
     # is what keeps a slow solve from being misreported as a contract violation.
@@ -538,6 +631,51 @@ end
                 set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
                 @test termination_status(m) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
             end
+        end
+    end
+
+    # TSP MIP contracts. The infeasible constructions of tsp/euclidean and
+    # tsp/time_windows live at the integer level (their LP relaxations are
+    # feasible), so generation-time verification and the re-solve must keep
+    # integrality (relax_integer = false). tsp/time_windows infeasible is
+    # tested at target 50: at target 100 (n = 10 cities) HiGHS needs longer
+    # than the verification limit to prove the mutually-exclusive-windows
+    # infeasibility (TIME_LIMIT is raised as :inconclusive, not counted as a
+    # contract violation).
+    @testset "TSP Feasibility Contracts" begin
+        for ref in ("tsp/euclidean", "tsp/asymmetric", "tsp/assignment_relaxation")
+            for s in 1:6
+                m, _ = generate_problem(ref, 100, feasible, s;
+                                        optimizer = HiGHS.Optimizer,
+                                        relax_integer = false,
+                                        feasibility_timeout = 30.0)
+                set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+                @test termination_status(m) == MOI.OPTIMAL
+
+                m, _ = generate_problem(ref, 100, infeasible, s;
+                                        optimizer = HiGHS.Optimizer,
+                                        relax_integer = false,
+                                        feasibility_timeout = 30.0)
+                set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+                @test termination_status(m) == MOI.INFEASIBLE
+            end
+        end
+
+        # time_windows: feasible verified at target 100, infeasible at target 50.
+        for s in 1:6
+            m, _ = generate_problem("tsp/time_windows", 100, feasible, s;
+                                    optimizer = HiGHS.Optimizer,
+                                    relax_integer = false,
+                                    feasibility_timeout = 30.0)
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            @test termination_status(m) == MOI.OPTIMAL
+
+            m, _ = generate_problem("tsp/time_windows", 50, infeasible, s;
+                                    optimizer = HiGHS.Optimizer,
+                                    relax_integer = false,
+                                    feasibility_timeout = 30.0)
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            @test termination_status(m) == MOI.INFEASIBLE
         end
     end
 

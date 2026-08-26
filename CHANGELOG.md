@@ -4,6 +4,80 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-26 23:20 UTC (add tsp category: four TSP variants)
+
+**Previous Commit**: `73f8f54`
+
+**Summary**: Added a new `tsp` problem category with four variants spanning three
+formulations plus the LP-relaxation model class: `euclidean` (symmetric delivery
+routing, Miller-Tucker-Zemlin, the category default), `asymmetric` (ATSP on a
+one-way street grid with congestion-weighted shortest-path costs, Gavish-Graves
+single-commodity flow), `time_windows` (field-service routing with service
+durations and appointment windows, MTZ plus arrival times), and
+`assignment_relaxation` (the degree-only 2-matching LP relaxation). All three
+feasibility statuses are controlled by data construction, including two
+integer-level infeasibility mechanisms verified against HiGHS. Full suite:
+3054/3054 tests.
+
+**Details**:
+- **`tsp/euclidean`** — clustered planar city locations with rounded-Euclidean
+  costs; directed MTZ formulation with continuous position potentials
+  (`2 ≤ u ≤ n`, no depot potential variable — the model has exactly `n²-1`
+  variables). `infeasible` is a bridge closure: the map splits west/east by
+  x-coordinate and every crossing arc is forbidden, so no Hamiltonian tour
+  exists. The infeasibility is integer-level (the LP relaxation is feasible via
+  fractional within-half matchings), so feasibility-contract verification needs
+  `relax_integer = false` (stated in the docstring).
+- **`tsp/asymmetric`** — cities on an `S = 2n` street grid: rows one-way and
+  alternating by parity (even eastbound, odd westbound), avenues two-way, with
+  integer congestion weights `{1,2,3}`; costs are Dijkstra shortest paths, so
+  instances are genuinely asymmetric and metric. Rows alternating + two-way
+  columns makes the grid strongly connected by construction (an all-one-way
+  alternating design was not: odd side lengths leave a corner with out-degree
+  0). A post-generation guard errors loudly if any cost is `Inf`. Formulation:
+  single-commodity flow (Gavish-Graves) with `n-1` depot-rooted flow units. The
+  bridge-cut infeasibility survives even the LP relaxation (flow balance on the
+  depot-free side is unsatisfiable without crossing flow) — verified INFEASIBLE
+  with HiGHS.
+- **`tsp/time_windows`** — a nearest-neighbor base tour and its arrival times
+  are built first. `feasible` places windows around those arrivals with random
+  slack (certified by construction); `unknown` adds uniform noise to the base
+  arrivals (mostly feasible, occasionally not); `infeasible` makes two
+  far-apart jobs mutually exclusive: both get service
+  `D = max(c[1,A], c[1,B]) + n + 10` and deadline `L = D + c[A,B] - n - 5`, so
+  any tour's chained arrival at the later job is at least `L + 5` (Euclidean
+  triangle inequality with rounding slack `< n`), violating the shared window.
+  Time propagation uses per-arc big-Ms tightened from the window data
+  (`M[i,j] = max(0, l[i] + d[i] + c[i,j] - e[j])`) and appointment windows as
+  variable bounds. Verified INFEASIBLE with HiGHS at target 50 (n = 7) across
+  seeds; at target 100 (n = 10) the proof takes HiGHS ~71 s, beyond the default
+  10 s verification limit — raised as `:inconclusive` per the documented
+  behavior for hard unrelaxed MIPs, so the solver testset verifies this leg at
+  target 50.
+- **`tsp/assignment_relaxation`** — pure LP: continuous arcs with degree
+  constraints only, so optimal solutions decompose into subtours (the classic
+  branch-and-bound root relaxation). `infeasible` isolates one city (all its
+  arcs forbidden → its degree rows sum over the empty set); a bridge cut would
+  NOT work here since fractional matchings exist within each side.
+- **Shared data helpers** — `src/problem_types/tsp/utils.jl` holds the
+  clustered-point generator and rounded-Euclidean cost matrix. All category
+  files share one module namespace, so these helpers are defined exactly once
+  (a first shared-helper file for a category).
+- **Variable-count targeting** — `n` derives from the documented per-variant
+  formulas (`n²-1`, `2n(n-1)`, `n²+n-2`, `n(n-1)`), all within the ±25% test
+  tolerance at targets 50/100/500. Infeasible instances have fewer variables
+  because forbidden arcs are skipped entirely (documented in the docstrings).
+- **Tests** — the registry-driven loop covers the four variants automatically;
+  added a solver-free "TSP By-Construction" testset (bridge-cut structure,
+  base-tour window containment, mutual-exclusion inequalities, isolated-city
+  arc set, exact variable counts) and a HiGHS "TSP Feasibility Contracts"
+  testset (6 seeds × feasible/infeasible per variant, `relax_integer = false`,
+  `feasibility_timeout = 30`; 48 tests, ~8.5 s).
+- **Docs** — updated `README.md` and `CLAUDE.md` category listings (32 → 33
+  categories; the README count was stale at 29), the default-variant exception
+  list (`tsp` → `:euclidean`), and the model-class section (three new MIP
+  variants + one LP relaxation).
+
 ## 2026-07-28 01:10 UTC (verification correctness + review cleanup)
 
 **Previous Commit**: `9dc7660`
