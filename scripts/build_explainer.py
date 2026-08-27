@@ -41,6 +41,7 @@ FAMILIES = {
 
 # file stem -> dict(family, sense, vclass, tagline)
 META = {
+    "tsp":                   dict(family="network",   sense="Min",     vclass="Mixed",      tag="Tour routing, alternative relaxations, and operational variants"),
     "transportation":        dict(family="network",   sense="Min",     vclass="Continuous", tag="Min-cost shipping over supply/demand lanes"),
     "network_flow":          dict(family="network",   sense="Min/Max", vclass="Continuous", tag="Single-commodity max-flow or min-cost flow"),
     "multi_commodity_flow":  dict(family="network",   sense="Min",     vclass="Continuous", tag="Several commodities sharing arc capacities"),

@@ -4,10 +4,8 @@ using Random
 """
     TSPAssignmentRelaxationProblem <: ProblemGenerator
 
-Generator for the **degree (assignment) LP relaxation** of the symmetric
-travelling-salesman problem — the relaxation solved at the root of every
-classical TSP branch-and-bound / branch-and-cut code, delivered here as a
-standalone LP test instance.
+Generator for a **strengthened degree LP relaxation** of the symmetric
+travelling-salesman problem, delivered as a standalone LP test instance.
 
 # Overview
 This variant is an LP: the arc variables are continuous fractions
@@ -18,9 +16,9 @@ This variant is an LP: the arc variables are continuous fractions
 - **Degree constraints**: exactly one incoming and one outgoing arc at every
   node (a fractional cycle cover; the bipartite assignment relaxation of the
   tour);
-- **Pairwise subtour constraints** `x[i,j] + x[j,i] ≤ 1` on every unordered pair
-  (the 2-matching cuts), which already rule out the integer 2-cycles the pure
-  assignment relaxation degenerates into.
+- **Pairwise two-cycle cuts** `x[i,j] + x[j,i] ≤ 1` on every unordered pair,
+  which rule out the integer two-cycles admitted by the plain directed
+  assignment relaxation.
 
 Exponential subtour-elimination (DFJ) cuts are deliberately *not* included —
 they cannot be enumerated polynomially — so the polytope is genuinely weaker
@@ -51,7 +49,7 @@ end
 """
     TSPAssignmentRelaxationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
-Construct the degree (assignment) LP relaxation of a symmetric TSP.
+Construct the strengthened degree LP relaxation of a symmetric TSP.
 
 # Variable-count formula
 On a complete directed graph over `n` nodes with no self-loops there are
@@ -113,7 +111,7 @@ end
 """
     build_model(prob::TSPAssignmentRelaxationProblem)
 
-Build a JuMP model for the degree (assignment) LP relaxation of the symmetric
+Build a JuMP model for the strengthened degree LP relaxation of the symmetric
 TSP. Deterministic — uses only data from the struct fields.
 
 Node indexing: node `1` is the home base; nodes `2..n` are stops. An arc `(i,j)`
@@ -163,5 +161,5 @@ register_variant(
     :tsp,
     :assignment_relaxation,
     TSPAssignmentRelaxationProblem,
-    "Degree (assignment) LP relaxation of the travelling-salesman problem with pairwise subtour cuts; a pure LP whose solutions may be fractional and may contain subtours",
+    "Strengthened degree LP relaxation of the travelling-salesman problem with pairwise two-cycle cuts; a pure LP whose solutions may be fractional and may contain subtours",
 )

@@ -10,7 +10,7 @@ using Random
 
 # Category-level description (it groups several formulations).
 register_category(:tsp,
-    "Travelling-salesman / single-tour routing: MTZ, flow, time-window, and degree-relaxation formulations over one shared geography")
+    "Travelling-salesman routing: symmetric and one-way-street tours, alternative LP formulations, time windows, prize collection, multiple salespersons, and precedence constraints")
 
 # --- Shared data helpers -----------------------------------------------------
 # Used by every tsp variant; names live in the module's namespace, hence the
@@ -127,5 +127,8 @@ end
 include("assignment_relaxation.jl")
 include("asymmetric.jl")
 include("flow.jl")
+include("multiple_salespersons.jl")
+include("precedence.jl")
+include("prize_collecting.jl")
 include("standard.jl")
 include("time_windows.jl")

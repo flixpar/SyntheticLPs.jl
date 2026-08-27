@@ -13,8 +13,9 @@ Identical story to `tsp/standard` (a tour over delivery stops with symmetric
 road distances), and the *same data-generating process* via the shared
 `_tsp_stops`/`_tsp_distance` helpers. The variants therefore differ in
 formulation class, not in data distribution — though not in instance: the two
-formulations size `n` differently (`n ≈ sqrt(target+1)` here vs.
-`n ≈ sqrt(target/2)`), so equal `target`/`seed` pairs yield different draws.
+formulations size `n` differently (`n ≈ sqrt(target/2)` here vs.
+`n ≈ sqrt(target+1)` for `standard`), so equal `target`/`seed` pairs yield
+different draws.
 
 The formulation:
 - Binary arc variables `x[i,j] ∈ {0,1}` select which arcs are traversed.

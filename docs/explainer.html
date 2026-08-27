@@ -172,7 +172,7 @@ window.MathJax={
 <div class="scrim" id="scrim"></div>
 <div class="layout">
   <aside class="sidebar" id="sidebar">
-    <div class="brand"><b>SyntheticLPs</b><span>Generator Explainer · 24 problem types</span></div>
+    <div class="brand"><b>SyntheticLPs</b><span>Generator Explainer · 26 problem types</span></div>
     <input class="search" id="search" type="search" placeholder="Filter generators…" autocomplete="off">
     <nav id="nav">
       <a class="nav-top" href="#overview" data-target="overview">Overview</a>
@@ -182,6 +182,7 @@ window.MathJax={
 <a class="nav-item" href="#network_flow" data-target="network_flow" data-search="network flow single-commodity max-flow or min-cost flow">Network Flow</a>
 <a class="nav-item" href="#telecom_network_design" data-target="telecom_network_design" data-search="telecom network design install links + route traffic under a budget">Telecom Network Design</a>
 <a class="nav-item" href="#transportation" data-target="transportation" data-search="transportation min-cost shipping over supply/demand lanes">Transportation</a>
+<a class="nav-item" href="#tsp" data-target="tsp" data-search="traveling salesperson tour routing, alternative relaxations, and operational variants">Traveling Salesperson</a>
 </div>
 <div class="nav-group"><div class="nav-group-label">Facility &amp; Supply Chain</div>
 <a class="nav-item" href="#facility_location" data-target="facility_location" data-search="facility location open capacitated facilities, then serve demand">Facility Location</a>
@@ -290,6 +291,14 @@ window.MathJax={
   <div class="chips">
     <span class="chip chip-sense">Min</span>
     <span class="chip chip-continuous">Continuous</span>
+  </div>
+</a>
+<a class="card fam-border-network" href="#tsp" data-target="tsp" data-search="traveling salesperson the `tsp` category generates routing lps and mips over realistic clustered or street-network geography. its eight variants separate two kinds of diversity: alternative formulations of a single tour, and operational extensions found in delivery, field service, sales, and pickup-and-delivery planning. tour routing, alternative relaxations, and operational variants">
+  <div class="card-top"><span class="card-title">Traveling Salesperson</span></div>
+  <p class="card-tag">Tour routing, alternative relaxations, and operational variants</p>
+  <div class="chips">
+    <span class="chip chip-sense">Min</span>
+    <span class="chip chip-mixed">Mixed</span>
   </div>
 </a>
 </div></div>
@@ -785,6 +794,39 @@ sum_{i in I} x[i,j] &gt;= demands[j]     for each destination j</pre>
 </section><section class="doc-section">
   <h3><span class="sec-icon">✎</span>Practical Notes</h3>
   <div class="sec-body"><p>These instances are useful for testing LP solvers on highly structured network-like matrices with predictable row and column sparsity. The generator uses a complete lane set, so it does not model missing routes, lane capacities, or transshipment. Feasibility is controlled only through aggregate supply and demand, which is enough because every source can ship to every destination.</p></div>
+</section>
+</article>
+<article id="tsp" class="view article">
+  <a class="back" href="#overview" data-target="overview">← All generators</a>
+  <header class="art-head fam-border-network">
+    <div class="art-eyebrow"><span class="fam-dot fam-network"></span>Network &amp; Routing</div>
+    <h2>Traveling Salesperson</h2>
+    <p class="art-intro">The <code>tsp</code> category generates routing LPs and MIPs over realistic clustered or street-network geography. Its eight variants separate two kinds of diversity: alternative formulations of a single tour, and operational extensions found in delivery, field service, sales, and pickup-and-delivery planning.</p>
+    <div class="chips">
+      <span class="chip chip-sense">Objective: Min</span>
+      <span class="chip chip-mixed">Mixed variables</span>
+    </div>
+  </header>
+  <section class="doc-section">
+  <h3><span class="sec-icon">§</span>Variants</h3>
+  <div class="sec-body"><table><thead><tr><th>Variant</th><th>Application</th><th>Natural formulation</th></tr></thead><tbody><tr><td><code>standard</code></td><td>Symmetric courier tour</td><td>Lifted MTZ</td></tr><tr><td><code>asymmetric</code></td><td>Courier routing on one-way streets</td><td>Lifted MTZ with directed shortest-path times</td></tr><tr><td><code>flow</code></td><td>Symmetric courier tour</td><td>Single-commodity flow</td></tr><tr><td><code>assignment_relaxation</code></td><td>Fast lower bound / LP test instance</td><td>Continuous degree relaxation with pairwise two-cycle cuts</td></tr><tr><td><code>time_windows</code></td><td>Appointment delivery</td><td>Time propagation, route budget, shift return time</td></tr><tr><td><code>prize_collecting</code></td><td>Optional sales/service calls</td><td>Visit binaries, prize quota, omission penalties, single-commodity flow</td></tr><tr><td><code>multiple_salespersons</code></td><td>Balanced shared-depot fleet</td><td>Lifted route ordering with exact stop-count limits</td></tr><tr><td><code>precedence</code></td><td>Pickup-before-delivery or ordered service tasks</td><td>Lifted MTZ plus precedence rows</td></tr></tbody></table>
+<p>The default is <code>tsp/standard</code>. Select another formulation with, for example, <code>generate_problem(&quot;tsp/flow&quot;, 500, feasible, 1)</code>.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Geography and data</h3>
+  <div class="sec-body"><p>The symmetric variants share <code>_tsp_stops</code> and <code>_tsp_distance</code>. A depot is near the center of a scale-tiered service region; most customers are drawn from town clusters and roughly 20% are rural outliers. One per-instance road-circuity factor converts straight-line distance into a positive symmetric road metric.</p>
+<p><code>asymmetric</code> instead places stops on an explicit street grid. Odd horizontal streets run west, even streets run east, vertical avenues are two-way, and every street has a sampled congestion weight. Costs between stops are directed shortest-path times, so they satisfy the directed triangle inequality and model one-way detours without independent pairwise noise.</p>
+<p>Prize values are log-normal with correlated omission penalties. Precedence pairs form a sampled acyclic task graph in natural instances. Multiple- salesperson instances choose a modest fleet and balanced route-size limits.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Formulations and sizing</h3>
+  <div class="sec-body"><p>With <code>n</code> total stops, including the depot:</p>
+<table><thead><tr><th>Variant</th><th>Variable count</th></tr></thead><tbody><tr><td><code>standard</code>, <code>asymmetric</code>, <code>precedence</code>, <code>multiple_salespersons</code></td><td><code>n^2 - 1</code></td></tr><tr><td><code>flow</code></td><td><code>2n(n-1)</code></td></tr><tr><td><code>assignment_relaxation</code></td><td><code>n(n-1)</code></td></tr><tr><td><code>time_windows</code></td><td><code>n^2</code></td></tr><tr><td><code>prize_collecting</code></td><td><code>2n(n-1) + (n-1)</code></td></tr></tbody></table>
+<p>All natural MIP variants declare binary arc or visit variables. The package defaults to <code>relax_integer=true</code>, producing their LP relaxations. Only <code>assignment_relaxation</code> is continuous by construction even when integrality is not relaxed.</p>
+<p>The standard, asymmetric, and precedence variants use lifted MTZ rows. The flow and prize-collecting variants source one unit per selected stop from the depot, with <code>f[i,j] &lt;= (n-1)x[i,j]</code>. Time windows eliminate customer-only subtours by strictly increasing service times along selected arcs. Multiple salespersons anchor every route&#x27;s first order to one and use lifted rows that increment the order exactly on selected customer arcs; the returning stop&#x27;s order is therefore the route&#x27;s customer count.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Feasibility controls</h3>
+  <div class="sec-body"><p>Every requested status is valid for the model returned by the default relaxed API:</p>
+<ul><li><code>feasible</code> plants or exhibits an integer witness: a complete tour, a schedule<p>enclosed by its windows, full prize collection, an acyclic precedence order, or a balanced partition across the fleet.</p></li><li><code>infeasible</code> uses an algebraic certificate that survives relaxation. Core arc<p>formulations use a Hall-deficit access restriction: <code>k</code> blocked stops can receive arcs only from <code>k-1</code> gate nodes, contradicting the degree rows. Time windows use a travel budget below the sum of each node&#x27;s cheapest outgoing arc. Prize collection requests more than the total available prize. Multiple salespersons set aggregate fleet route capacity below the customer count. Precedence creates a directed three-task cycle.</p></li><li><code>unknown</code> samples natural operational settings without promising a status.</li></ul>
+<p>These constructions avoid empty degree rows and contradictory variable bounds, so infeasible instances retain meaningful routing structure for presolve and LP solver experiments.</p></div>
 </section>
 </article>
 <article id="facility_location" class="view article">

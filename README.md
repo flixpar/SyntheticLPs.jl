@@ -51,7 +51,7 @@ with more than one variant are annotated below.
 - Supply Chain — variants: `standard`, `single_source`, `carbon`, `multi_product`
 - Crop Planning
 - Telecom Network Design
-- TSP — variants: `standard` (symmetric, MTZ), `asymmetric` (travel-time ATSP), `flow` (single-commodity flow), `time_windows` (appointment delivery), `assignment_relaxation` (degree LP relaxation)
+- TSP — variants: `standard` (symmetric lifted MTZ), `asymmetric` (one-way-street ATSP), `flow` (single-commodity flow), `time_windows` (appointment delivery), `assignment_relaxation` (strengthened degree LP), `prize_collecting` (quota tour), `multiple_salespersons` (balanced fleet), `precedence` (ordered tasks)
 - Unit Commitment
 - Vehicle Routing — variants: `cvrp` (capacitated vehicle routing, single-commodity-flow formulation)
 

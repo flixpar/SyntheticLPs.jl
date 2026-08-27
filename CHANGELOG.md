@@ -4,6 +4,36 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-27 02:22 UTC (integrated TSP generator family)
+
+**Previous Commit**: `99db595`
+
+**Summary**: Expanded the `tsp` category from five to eight variants and
+integrated the strongest application, data-generation, formulation, testing,
+and documentation ideas from the four independently developed TSP branches.
+All feasibility mechanisms remain valid for the package's default continuous
+relaxation.
+
+**Details**:
+- Added `prize_collecting`, `multiple_salespersons`, and `precedence` variants,
+  refactored onto the category's shared clustered geography and metric-distance
+  helpers. Their infeasible modes use quota overflow, aggregate fleet-capacity
+  shortfall, and cyclic precedence respectively, all of which survive
+  integrality relaxation.
+- Replaced independent asymmetric pair perturbations with shortest-path travel
+  times on an explicit strongly connected street grid: alternating one-way
+  horizontal streets, two-way vertical avenues, and sampled street congestion.
+- Strengthened the `standard` and `asymmetric` MTZ formulations with lifted
+  reverse-arc terms. Corrected the multiple-salesperson port so depot departures
+  anchor order at one and selected customer arcs advance order exactly; return
+  order therefore enforces both minimum and maximum stops per route.
+- Clarified that `assignment_relaxation` is a strengthened degree LP with
+  pairwise two-cycle cuts, rather than the plain assignment relaxation, and
+  corrected the flow variant's sizing comparison.
+- Added `docs/tsp.md`, documentation index and explainer metadata, updated the
+  README/CLAUDE variant taxonomy, and expanded structural, sizing, edge-case,
+  and solver-backed feasibility tests to all eight variants.
+
 ## 2026-08-27 00:07 UTC (tsp generator family)
 
 **Previous Commit**: `73f8f54`

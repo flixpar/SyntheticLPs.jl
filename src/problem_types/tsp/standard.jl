@@ -15,7 +15,7 @@ and returns. The network is a complete directed graph over `n` nodes (no
 self-loops); road distances are symmetric, so opposite arcs cost the same. The
 objective minimizes total travel distance.
 
-The formulation is the classic polynomial-size MTZ model:
+The formulation is the lifted polynomial-size MTZ model:
 
 - Binary arc variables `x[i,j] ∈ {0,1}` select which arcs are traversed.
 - Continuous order variables `u[j] ∈ [1, n-1]` for stops `j = 2..n` record the
@@ -25,9 +25,10 @@ The formulation is the classic polynomial-size MTZ model:
 Key structural couplings:
 - **Degree constraints** force exactly one incoming and one outgoing arc at
   every node, including the home base.
-- **MTZ constraints** `u[i] - u[j] + n·x[i,j] ≤ n-1` over stop-to-stop arcs
-  eliminate subtours: around any depot-free cycle of integer arcs they would
-  force the `u` values to strictly decrease forever.
+- **Lifted MTZ constraints**
+  `u[i] - u[j] + (n-1)x[i,j] + (n-3)x[j,i] ≤ n-2` over stop-to-stop arcs
+  eliminate subtours and strengthen the continuous relaxation by using both
+  directions of each customer pair.
 
 The MTZ relaxation is much weaker than exponential subtour-elimination (DFJ)
 models, but it is a compact and structurally rich LP: dense degree rows plus an
@@ -167,10 +168,16 @@ function build_model(prob::TSPStandardProblem)
         @constraint(model, sum(x[j, k] for k in nodes if ok(j, k)) == 1)   # out
     end
 
-    # --- MTZ subtour elimination over stop-to-stop arcs ---
+    # --- Lifted MTZ subtour elimination over stop-to-stop arcs ---
     for i in stops, j in stops
         (i != j && ok(i, j)) || continue
-        @constraint(model, u[i] - u[j] + n * x[i, j] <= n - 1)
+        if ok(j, i)
+            @constraint(model,
+                u[i] - u[j] + (n - 1) * x[i, j] +
+                (n - 3) * x[j, i] <= n - 2)
+        else
+            @constraint(model, u[i] - u[j] + (n - 1) * x[i, j] <= n - 2)
+        end
     end
 
     return model
@@ -181,6 +188,6 @@ register_variant(
     :tsp,
     :standard,
     TSPStandardProblem,
-    "Symmetric travelling-salesman problem (courier tour over clustered delivery stops) with Miller-Tucker-Zemlin subtour elimination; a MIP whose continuous relaxation is a compact big-M tour relaxation",
+    "Symmetric travelling-salesman problem over clustered delivery stops with lifted Miller-Tucker-Zemlin subtour elimination",
     default = true,
 )

@@ -15,23 +15,20 @@ An urban courier must visit every stop exactly once and return to the home base
 **direction-dependent**: one-way streets and peak-period congestion make
 `time[i,j] ≠ time[j,i]` in general, so the natural data is a directed matrix.
 
-The travel-time matrix is built the way real road networks are used:
-- a symmetric base distance per pair (shared geography with the other tsp
-  variants),
-- a direction-dependent congestion factor `0.8..1.5` per directed arc
-  (counter-flow directions stay fast),
-- a Floyd–Warshall **metric closure**, i.e. every entry becomes the shortest
-  path through the perturbed network — this is exactly "route via side streets
-  when the direct road is congested", and it restores the triangle inequality
-  while preserving asymmetry.
+Travel times are shortest paths on an explicit urban street grid. Horizontal
+streets are one-way and alternate direction by row; vertical avenues are
+two-way. Each street has a sampled positive congestion weight. The resulting
+directed shortest-path matrix is strongly connected, satisfies the directed
+triangle inequality exactly, and is genuinely asymmetric rather than being an
+independent perturbation of every city pair.
 
 The formulation is the same MTZ model as `tsp/standard` (it applies verbatim to
 asymmetric costs):
 
 - Binary arc variables `x[i,j] ∈ {0,1}` select which arcs are traversed.
 - Continuous order variables `u[j] ∈ [1, n-1]` for stops `j = 2..n`.
-- Degree constraints (one in-arc, one out-arc per node) and MTZ constraints
-  `u[i] - u[j] + n·x[i,j] ≤ n-1` over stop-to-stop arcs.
+- Degree constraints (one in-arc, one out-arc per node) and lifted MTZ
+  constraints using both directions of each stop pair.
 
 This is a MIP whose continuous relaxation is a genuine tour relaxation: the
 relaxed model is a useful LP test instance, but a fractional `x` is not an
@@ -39,9 +36,12 @@ implementable tour.
 
 # Fields
 - `n_stops::Int`: Total node count `n` (node 1 = home base, nodes `2..n` = stops)
-- `locations::Vector{Tuple{Float64,Float64}}`: Node coordinates (index 1 = home base)
+- `locations::Vector{Tuple{Float64,Float64}}`: Street-grid coordinates (index 1 = home base)
+- `grid_side::Int`: Side length of the one-way street grid
+- `row_weight::Vector{Int}`: Congestion weight for each one-way horizontal street
+- `col_weight::Vector{Int}`: Congestion weight for each two-way vertical avenue
 - `dist::Matrix{Float64}`: Asymmetric travel-time matrix over nodes `1..n`
-  (minutes); `dist[i,i] = 0`, triangle-inequality-respecting up to rounding,
+  (minutes); `dist[i,i] = 0`, satisfies the directed triangle inequality exactly,
   generically `dist[i,j] ≠ dist[j,i]`
 - `arc_ok::Matrix{Bool}`: Allowed-arc mask; `arc_ok[i,j]` is true iff the model
   creates a variable for arc `(i,j)` (always false on the diagonal)
@@ -51,10 +51,61 @@ implementable tour.
 struct TSPAsymmetricProblem <: ProblemGenerator
     n_stops::Int
     locations::Vector{Tuple{Float64,Float64}}
+    grid_side::Int
+    row_weight::Vector{Int}
+    col_weight::Vector{Int}
     dist::Matrix{Float64}
     arc_ok::Matrix{Bool}
     blocked_set::Vector{Int}
     gate_set::Vector{Int}
+end
+
+"""Shortest paths from one vertex of the alternating one-way street grid."""
+function _tsp_street_shortest_paths(S::Int, row_weight::Vector{Int},
+                                    col_weight::Vector{Int}, source::Int)
+    n_vertices = S * S
+    infinity = typemax(Int)
+    distances = fill(infinity, n_vertices)
+    distances[source] = 0
+
+    # Positive weights are at most three, so a Dial bucket queue is simpler and
+    # faster than repeatedly scanning the full grid. A shortest simple path has
+    # at most n_vertices - 1 edges.
+    max_distance = 3 * (n_vertices - 1)
+    buckets = [Int[] for _ in 0:max_distance]
+    push!(buckets[1], source)
+
+    for distance in 0:max_distance
+        while !isempty(buckets[distance + 1])
+            vertex = pop!(buckets[distance + 1])
+            distances[vertex] == distance || continue
+            row = div(vertex - 1, S) + 1
+            col = rem(vertex - 1, S) + 1
+
+            # Odd rows run west, even rows east.
+            next_col = col + (iseven(row) ? 1 : -1)
+            if 1 <= next_col <= S
+                next_vertex = (row - 1) * S + next_col
+                candidate = distance + row_weight[row]
+                if candidate <= max_distance && candidate < distances[next_vertex]
+                    distances[next_vertex] = candidate
+                    push!(buckets[candidate + 1], next_vertex)
+                end
+            end
+
+            # Avenues are traversable in both directions.
+            for next_row in (row - 1, row + 1)
+                1 <= next_row <= S || continue
+                next_vertex = (next_row - 1) * S + col
+                candidate = distance + col_weight[col]
+                if candidate <= max_distance && candidate < distances[next_vertex]
+                    distances[next_vertex] = candidate
+                    push!(buckets[candidate + 1], next_vertex)
+                end
+            end
+        end
+    end
+    return distances
 end
 
 """
@@ -103,44 +154,56 @@ function TSPAsymmetricProblem(target_variables::Int, feasibility_status::Feasibi
         n = _tsp_pick_n(n0, target_variables, k, m -> m^2 - 1 - k * (m - k))
     end
 
-    # --- Geography ---
-    locations = _tsp_stops(n)
+    # --- Explicit one-way street geography ---
+    grid_side = 2 * n
+    depot_vertex = (div(grid_side, 2) - 1) * grid_side + div(grid_side, 2)
+    fixed_vertices = [depot_vertex, 1, grid_side]
+    remaining = [v for v in 1:(grid_side * grid_side) if !(v in fixed_vertices)]
+    city_vertices = vcat(fixed_vertices, shuffle(remaining)[1:(n - 3)])
+    city_coords = [
+        (div(v - 1, grid_side) + 1, rem(v - 1, grid_side) + 1)
+        for v in city_vertices
+    ]
+    locations = [(Float64(row), Float64(col)) for (row, col) in city_coords]
+    row_weight = rand(1:3, grid_side)
+    col_weight = rand(1:3, grid_side)
 
-    # --- Asymmetric travel times: symmetric base, per-direction congestion ---
-    base = _tsp_distance(locations)
+    # Directed shortest-path closure of the street network. The two fixed
+    # endpoints on row 1 make asymmetry deterministic; the central depot and
+    # remaining random stops retain realistic spatial variety.
     dist = zeros(n, n)
-    for i in 1:n, j in 1:n
-        if i != j
-            congestion = 0.8 + 0.7 * rand()          # 0.80 .. 1.50 per direction
-            dist[i, j] = base[i, j] * congestion
+    for i in 1:n
+        street_distances = _tsp_street_shortest_paths(
+            grid_side, row_weight, col_weight, city_vertices[i],
+        )
+        any(==(typemax(Int)), street_distances) &&
+            error("tsp/asymmetric street grid unexpectedly disconnected")
+        for j in 1:n
+            dist[i, j] = Float64(street_distances[city_vertices[j]])
         end
     end
-
-    # --- Metric closure: every entry becomes the shortest path through the
-    # perturbed network ("route around the traffic"), which restores the
-    # triangle inequality while keeping the matrix asymmetric. ---
-    for m in 1:n, i in 1:n, j in 1:n
-        through = dist[i, m] + dist[m, j]
-        through < dist[i, j] && (dist[i, j] = through)
-    end
-    dist = round.(dist, digits = 2)
+    @assert any(dist[i, j] != dist[j, i] for i in 1:n for j in i+1:n)
 
     # --- Resolve feasibility intent ---
     arc_ok = _tsp_full_support(n)
-    S = Int[]
-    T = Int[]
+    blocked_set = Int[]
+    gate_set = Int[]
     if feasibility_status == infeasible
-        arc_ok, S, T = _tsp_hall_block(n, k)
+        arc_ok, blocked_set, gate_set = _tsp_hall_block(n, k)
     end
 
-    return TSPAsymmetricProblem(n, locations, dist, arc_ok, S, T)
+    return TSPAsymmetricProblem(
+        n, locations, grid_side, row_weight, col_weight, dist, arc_ok,
+        blocked_set, gate_set,
+    )
 end
 
 """
     build_model(prob::TSPAsymmetricProblem)
 
-Build a JuMP model for the asymmetric TSP using the Miller–Tucker–Zemlin (MTZ)
-formulation. Deterministic — uses only data from the struct fields.
+Build a JuMP model for the asymmetric TSP using the lifted
+Miller–Tucker–Zemlin (MTZ) formulation. Deterministic — uses only data from the
+struct fields.
 
 Node indexing: node `1` is the home base; nodes `2..n` are stops. An arc `(i,j)`
 has a variable only where `arc_ok[i, j]` is true (the complete graph minus any
@@ -175,10 +238,16 @@ function build_model(prob::TSPAsymmetricProblem)
         @constraint(model, sum(x[j, k] for k in nodes if ok(j, k)) == 1)   # out
     end
 
-    # --- MTZ subtour elimination over stop-to-stop arcs ---
+    # --- Lifted MTZ subtour elimination over stop-to-stop arcs ---
     for i in stops, j in stops
         (i != j && ok(i, j)) || continue
-        @constraint(model, u[i] - u[j] + n * x[i, j] <= n - 1)
+        if ok(j, i)
+            @constraint(model,
+                u[i] - u[j] + (n - 1) * x[i, j] +
+                (n - 3) * x[j, i] <= n - 2)
+        else
+            @constraint(model, u[i] - u[j] + (n - 1) * x[i, j] <= n - 2)
+        end
     end
 
     return model
@@ -190,5 +259,5 @@ register_variant(
     :tsp,
     :asymmetric,
     TSPAsymmetricProblem,
-    "Asymmetric travelling-salesman problem with traffic-dependent travel times (metric closure of a congested road network) and MTZ subtour elimination; a MIP whose continuous relaxation is a compact big-M tour relaxation",
+    "Asymmetric travelling-salesman problem with shortest-path travel times on an alternating one-way street grid and lifted MTZ subtour elimination; a MIP whose continuous relaxation is a compact big-M tour relaxation",
 )
