@@ -172,6 +172,67 @@ end
         @test_throws ErrorException generate_problem(:transportation, 50, unknown, 0; variant=:nope)
     end
 
+    # TSP family: registry wiring, data contracts, variable-count formulas, and
+    # the Hall-deficit structure behind every infeasible branch.
+    @testset "TSP Variants" begin
+        @test list_variants(:tsp) ==
+              [:assignment_relaxation, :asymmetric, :flow, :standard, :time_windows]
+        @test problem_info(:tsp)[:default_variant] == :standard
+        @test ProblemVariant("tsp") == ProblemVariant(:tsp, :standard)
+
+        # Symmetric road metrics for the symmetric-data variants (the
+        # time-window variant stores it as travel_time); genuinely asymmetric
+        # travel times for the ATSP variant.
+        for v in (:standard, :flow, :time_windows, :assignment_relaxation)
+            _, p = generate_problem(ProblemVariant(:tsp, v), 100, unknown, 0)
+            mat = hasproperty(p, :dist) ? p.dist : p.travel_time
+            @test mat == mat'
+            @test all(iszero, mat[i, i] for i in axes(mat, 1))
+        end
+        _, p = generate_problem("tsp/asymmetric", 100, unknown, 0)
+        @test count(p.dist[i, j] != p.dist[j, i]
+                    for i in 1:p.n_stops, j in 1:p.n_stops if i != j) > 0
+
+        # Variable-count formulas, straight from each struct's n_stops.
+        m, p = generate_problem("tsp/standard", 100, unknown, 0)
+        @test num_variables(m) == p.n_stops^2 - 1
+        m, p = generate_problem("tsp/asymmetric", 100, unknown, 0)
+        @test num_variables(m) == p.n_stops^2 - 1
+        m, p = generate_problem("tsp/flow", 100, unknown, 0)
+        @test num_variables(m) == 2 * p.n_stops * (p.n_stops - 1)
+        m, p = generate_problem("tsp/time_windows", 100, unknown, 0)
+        @test num_variables(m) == p.n_stops^2
+        m, p = generate_problem("tsp/assignment_relaxation", 100, unknown, 0)
+        @test num_variables(m) == p.n_stops * (p.n_stops - 1)
+
+        # Hall block: every in-arc to the blocked set S originates in the gate
+        # set T, T is disjoint from S and one node short of it (the degree-row
+        # deficit that makes these instances infeasible even in the LP
+        # relaxation), and blocked stops keep at least one allowed in-arc.
+        for v in (:standard, :asymmetric, :flow, :assignment_relaxation)
+            for s in 1:3
+                _, p = generate_problem(ProblemVariant(:tsp, v), 120, infeasible, s)
+                @test length(p.gate_set) == length(p.blocked_set) - 1
+                @test isempty(intersect(p.blocked_set, p.gate_set))
+                for j in p.blocked_set, i in 1:p.n_stops
+                    (i in p.gate_set || i == j) && continue
+                    @test !p.arc_ok[i, j]
+                end
+                for j in p.blocked_set
+                    @test any(p.arc_ok[i, j] for i in 1:p.n_stops)
+                end
+            end
+        end
+
+        # Time-window data contract: nonempty windows, and the planted tour's
+        # travel time fits the route budget of a feasible instance.
+        _, p = generate_problem("tsp/time_windows", 100, feasible, 0)
+        @test all(p.window_start[j] <= p.window_end[j] for j in 2:p.n_stops)
+        tour_time = sum(p.travel_time[p.planted_tour[i-1], p.planted_tour[i]]
+                        for i in 2:length(p.planted_tour))
+        @test tour_time <= p.route_budget
+    end
+
     # Test individual problem generators (every registered variant)
     for ref in list_problems()
         test_problem_generator(ref)
@@ -364,6 +425,10 @@ end
         # land_use used to crash with an empty-range rand when n_parcels == 2.
         @test_nowarn generate_problem("land_use/standard", 3, unknown, 1)
         @test_nowarn generate_problem("land_use/standard", 4, unknown, 1)
+        # tsp variants clamp tiny targets to n = 5, where the Hall-block size
+        # must also fall back to k = 2.
+        @test_nowarn generate_problem("tsp/flow", 3, infeasible, 1)
+        @test_nowarn generate_problem("tsp/time_windows", 3, unknown, 1)
         # energy now stores an emissions intensity target (the previous per-period
         # emissions row was an algebraic tautology).
         _, eprob = generate_problem("energy/standard", 120, unknown, 1)
@@ -534,6 +599,23 @@ end
         for ref in ("blending/standard", "feed_blending/standard")
             for s in 1:6
                 m, _ = generate_problem(ref, 300, infeasible, s;
+                                        optimizer = HiGHS.Optimizer)
+                set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+                @test termination_status(m) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
+            end
+        end
+
+        # tsp variants: feasible requests deliver a relaxed-feasible model and
+        # infeasible requests a relaxed-infeasible one (Hall-deficit arc block
+        # / route-budget shortfall), by construction rather than heuristic repair.
+        for ref in ("tsp/standard", "tsp/asymmetric", "tsp/flow",
+                    "tsp/time_windows", "tsp/assignment_relaxation")
+            for s in 1:5
+                m, _ = generate_problem(ref, 120, feasible, s;
+                                        optimizer = HiGHS.Optimizer)
+                set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+                @test termination_status(m) == MOI.OPTIMAL
+                m, _ = generate_problem(ref, 120, infeasible, s;
                                         optimizer = HiGHS.Optimizer)
                 set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
                 @test termination_status(m) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)

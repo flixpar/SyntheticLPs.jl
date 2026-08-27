@@ -4,6 +4,108 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-27 00:07 UTC (tsp generator family)
+
+**Previous Commit**: `73f8f54`
+
+**Summary**: Added the `tsp` category — five travelling-salesman generators
+varying along both axes the corpus cares about (real-world data realism and LP
+formulation) over one shared geography, so structural differences between the
+delivered LPs are attributable to formulation class rather than a different
+data distribution. All feasibility claims are proven for the LP relaxation,
+since `generate_problem` verifies the contract on the *delivered* (by default
+relaxed) model.
+
+### Added
+
+- **New category `tsp`** with variants `standard` (default), `asymmetric`,
+  `flow`, `time_windows`, and `assignment_relaxation` (33 categories total).
+  Entry point `src/problem_types/tsp/tsp.jl` registers the category and hosts
+  the shared, RNG-consuming helpers `_tsp_stops` (tiered geography: depot near
+  the region centre, stops in 1–6 Gaussian town clusters plus ~20% uniform
+  rural scatter), `_tsp_distance` (symmetric road metric: Euclidean × one
+  per-instance circuity factor 1.15–1.45, floored at 0.5 so distinct stops are
+  never at distance zero — a true metric up to rounding, unlike the CVRP's
+  deliberate per-arc asymmetry), `_tsp_full_support`, `_tsp_hall_block`, and
+  `_tsp_pick_n`.
+- **`tsp/standard`** — symmetric courier-tour TSP with the polynomial-size
+  Miller–Tucker–Zemlin formulation: binary arc variables `x[i,j]` plus
+  continuous visit-order variables `u[j] ∈ [1, n-1]` coupled by
+  `u[i] - u[j] + n·x[i,j] ≤ n-1`. Variables `n²−1`, so
+  `n = max(5, round(Int, sqrt(target+1)))` (99 vars at target 100, 483 at 500).
+- **`tsp/asymmetric`** — urban ATSP with traffic-dependent travel times: the
+  shared symmetric base is perturbed by per-direction congestion factors
+  (0.8–1.5) and closed with Floyd–Warshall, i.e. every entry becomes the
+  shortest path through the congested network, which restores the triangle
+  inequality while keeping the matrix asymmetric (178 of 182 ordered pairs
+  differ in a spot check). Same MTZ model and sizing as `standard`.
+- **`tsp/flow`** — the same data-generating process as `standard` but the
+  single-commodity-flow (Gavish–Graves) formulation used by `vehicle_routing/cvrp`:
+  `x` binary plus supply `f ≥ 0` per arc, conservation (each stop consumes one
+  unit, the depot sources `n−1`), and `f ≤ (n−1)·x`. A markedly stronger LP
+  relaxation than MTZ's over the same kind of data. Variables `2n(n−1)`, so
+  `n = max(5, round(Int, sqrt(target/2)))`.
+- **`tsp/time_windows`** — appointment-delivery TSPTW: metric travel times,
+  service times, per-stop windows, an EV-style route budget
+  `Σ τ_ij x_ij ≤ F`, and a shift limit on the return time. Subtour elimination
+  comes free from time propagation (positive travel times force strictly
+  increasing arrivals around any depot-free cycle), so no MTZ block; per-arc
+  big-M values are clamped at 0 (`M = max(0, b_i + s_i + τ_ij − a_j)`), the
+  smallest non-binding choice. Variables `n²` for *all* statuses
+  (`n = round(sqrt(target))`).
+- **`tsp/assignment_relaxation`** — the degree (assignment) LP relaxation of
+  the TSP solved at the root of classical branch-and-bound: continuous arc
+  fractions `x ∈ [0,1]` (integrality never declared, so it is an LP even with
+  `relax_integer=false`), degree rows, and pairwise 2-matching cuts
+  `x[i,j] + x[j,i] ≤ 1`. Documented as a relaxation: optima can be fractional
+  and integer optima can decompose into subtours. Variables `n(n−1)`, so
+  `n = round((1 + sqrt(1+4·target))/2)`.
+
+### Feasibility scheme (shared, relaxation-proof)
+
+- `feasible`/`unknown`: complete arc support — any permutation is a tour, and
+  each docstring exhibits an explicit relaxed-feasible witness (`x = 1/(n−1)`
+  with equal `u`; star supply `f[1,j] = 1` under capacity `(n−1)·x = 1`).
+- `infeasible`: a Hall-deficit arc block (road closures cutting off a
+  district) — a set `S` of `k ∈ {2,3}` stops keeps only the in-arcs from `k−1`
+  gate nodes `T`, so the degree rows alone give
+  `k = Σ_{j∈S} indeg(j) ≤ Σ_{i∈T} outdeg(i) = k−1`: infeasible even in the LP
+  relaxation, identically for all four arc-based formulations. Blocked arcs are
+  simply not instantiated (filtered index sets), keeping the model tight under
+  `bounds_to_constraints!`. The plain-disconnection alternative was analysed
+  and rejected: depot-free components with ≥3 nodes admit fractional points
+  satisfying the relaxed degree *and* MTZ rows, so the relaxed model would stay
+  feasible. `tsp/time_windows` instead sets the route budget below the
+  degree-row lower bound on total travel time (`F = 0.85·Σ_i min_{j≠i} τ_ij`);
+  its feasible branch plants a concrete tour, centres window openings on the
+  no-wait schedule, and closes windows after a forward pass *with waiting*
+  (the ordering that keeps the planted schedule admissible).
+- Sizing on the infeasible branch targets the *delivered* variable count
+  (best of `n0−1, n0, n0+1` after the block deletes `k(n−k)` arcs), and the
+  block size `k` is drawn unconditionally so the RNG stream stays aligned
+  across statuses.
+
+### Tests and docs
+
+- `test/runtests.jl`: new solver-free `"TSP Variants"` testset (registry
+  wiring, matrix symmetry/asymmetry contracts, exact variable-count formulas,
+  Hall-block structure, planted-tour budget certificate); a HiGHS-gated
+  contract loop in `"Feasibility Contract Verification"` (5 variants × 5 seeds
+  × both statuses through the central verifier); two edge-size robustness
+  lines (target 3 exercises the `n → 5` clamp and `k → 2` fallback). The
+  auto-discovered `test_problem_generator` loop covers the new variants with
+  no further changes (37 assertions each; suite now 3201 passing under
+  `Pkg.test`).
+- Out-of-suite verification: 200/200 relaxed contract checks
+  (feasible→OPTIMAL, infeasible→INFEASIBLE over 5 variants × 2 statuses × 20
+  seeds), 20 unrelaxed MIP solves all OPTIMAL (≤3.1 s per 5-instance batch),
+  MPS write/read round-trips for all variants, and dataset generation via
+  `scripts/generate_lps.jl --problem-types tsp`.
+- README.md: TSP bullet with its five variants; the stale "29 categories"
+  count corrected to 33. CLAUDE.md: 33 categories, `tsp` in the category list,
+  and the Model-classes taxonomy (four MIP variants with genuine tour
+  relaxations; `assignment_relaxation` under LP relaxations of MIPs).
+
 ## 2026-07-28 01:10 UTC (verification correctness + review cleanup)
 
 **Previous Commit**: `9dc7660`
