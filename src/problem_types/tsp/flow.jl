@@ -13,9 +13,9 @@ Identical story to `tsp/standard` (a tour over delivery stops with symmetric
 road distances), and the *same data-generating process* via the shared
 `_tsp_stops`/`_tsp_distance` helpers. The variants therefore differ in
 formulation class, not in data distribution — though not in instance: the two
-formulations size `n` differently (`n ≈ sqrt(target/2)` here vs.
-`n ≈ sqrt(target+1)` for `standard`), so equal `target`/`seed` pairs yield
-different draws.
+formulations size `n` differently (`n = (1 + sqrt(1 + 2·target)) / 2` here
+vs. `n = sqrt(target + 1)` for `standard`), so equal `target`/`seed` pairs
+yield different draws.
 
 The formulation:
 - Binary arc variables `x[i,j] ∈ {0,1}` select which arcs are traversed.
@@ -66,8 +66,9 @@ On a complete directed graph over `n` nodes with no self-loops there are
 
     total = 2 * n * (n - 1)
 
-So `n = max(5, round(Int, sqrt(target_variables / 2)))`. For `target = 100`
-this gives `n = 7` (84 vars); for `target = 500`, `n = 16` (480 vars). The
+So `n = max(5, round(Int, (1 + sqrt(1 + 2 * target_variables)) / 2))` — the
+positive root of `2n(n-1) = target`. For `target = 100` this gives `n = 8`
+(112 vars); for `target = 500`, `n = 16` (480 vars). The
 infeasible branch deletes `2*k*(n-k)` variables (`x` and `f` on each blocked
 arc) and sizes `n` against the *delivered* count.
 
@@ -94,8 +95,9 @@ function TSPFlowProblem(target_variables::Int, feasibility_status::FeasibilitySt
     Random.seed!(seed)
 
     # --- Dimension sizing ---
-    # total = 2 * n * (n - 1)  ≈ 2 * n^2  =>  n ≈ sqrt(target / 2).
-    n0 = max(5, round(Int, sqrt(target_variables / 2)))
+    # total = 2 * n * (n - 1)  =>  solve 2n^2 - 2n - target = 0 for the positive
+    # root (dropping the linear term would bias n low by ~1/2).
+    n0 = max(5, round(Int, (1 + sqrt(1 + 2 * target_variables)) / 2))
 
     # Block size k is drawn unconditionally (RNG alignment across statuses);
     # the infeasible branch sizes n against the delivered count

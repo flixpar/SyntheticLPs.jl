@@ -4,6 +4,36 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-27 13:03 UTC (tsp/flow exact dimension sizing)
+
+**Previous Commit**: `aa98448`
+
+**Summary**: PR-review fix — `tsp/flow` sized its dimension `n` with the
+large-`n` approximation `n ≈ sqrt(target/2)`, dropping the linear `-2n` term of
+the actual count `2n(n-1)` and so biasing `n` low by ~1/2 a unit. Replaced with
+the exact positive root `n = (1 + sqrt(1 + 2·target)) / 2`, matching how the
+sibling variants already invert their counts (`assignment_relaxation` and
+`prize_collecting` use exact quadratic roots; `standard`'s `sqrt(target+1)` is
+exact for `n²−1`).
+
+**Details**:
+- `src/problem_types/tsp/flow.jl`: `n0 = round(sqrt(target/2))` →
+  `round((1 + sqrt(1 + 2·target))/2)` in the constructor, with the sizing
+  comment, the constructor-docstring formula/examples (`target = 100` now
+  yields `n = 8`, 112 vars, instead of `n = 7`, 84 vars — the closer match;
+  `target = 500` is unchanged at `n = 16`), and the overview docstring's
+  `n`-sizing comparison against `tsp/standard` updated to match.
+  The infeasible branch is unaffected in mechanism — it already re-centres `n`
+  against the exact delivered count via `_tsp_pick_n` — and its search window
+  now starts from the unbiased `n0`.
+- Only the feasible/unknown branches change behaviour for a given target
+  (instances for borderline targets shift by one dimension step, e.g.
+  `target = 210` now builds `n = 11` / 220 vars instead of `n = 10` / 180).
+  Per-seed reproducibility is unchanged.
+- `vehicle_routing/cvrp` (pre-dates this PR) uses the same
+  `round(sqrt(target/2))` approximation for its `2N(N+1)` count; left as is —
+  out of this PR's scope, noted as a possible follow-up.
+
 ## 2026-08-27 12:03 UTC (tsp review fixes)
 
 **Previous Commit**: `66b690c`
@@ -119,7 +149,8 @@ relaxed) model.
   `x` binary plus supply `f ≥ 0` per arc, conservation (each stop consumes one
   unit, the depot sources `n−1`), and `f ≤ (n−1)·x`. A markedly stronger LP
   relaxation than MTZ's over the same kind of data. Variables `2n(n−1)`, so
-  `n = max(5, round(Int, sqrt(target/2)))`.
+  `n = max(5, round(Int, (1 + sqrt(1 + 2·target)) / 2))` — the exact positive
+  root (112 vars at target 100, 480 at 500).
 - **`tsp/time_windows`** — appointment-delivery TSPTW: metric travel times,
   service times, per-stop windows, an EV-style route budget
   `Σ τ_ij x_ij ≤ F`, and a shift limit on the return time. Subtour elimination
