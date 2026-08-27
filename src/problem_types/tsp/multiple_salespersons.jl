@@ -8,6 +8,11 @@ Balanced multiple-salesperson TSP. A fixed fleet leaves and returns to one depot
 every stop is assigned to exactly one route, and every route contains between
 `min_stops` and `max_stops` customers. Anchored lifted order constraints make
 the per-route limits exact in integer solutions.
+
+Unrelaxed MIPs (`relax_integer=false`) grow hard quickly: around
+`target_variables >= 300` HiGHS may not prove optimality within the central
+verifier's default `feasibility_timeout` (10 s), so pass a larger timeout (the
+tests use 30 s at `target = 80`). The default relaxed LPs are unaffected.
 """
 struct TSPMultipleSalespersonsProblem <: ProblemGenerator
     n_stops::Int
@@ -61,7 +66,8 @@ function build_model(prob::TSPMultipleSalespersonsProblem)
     @objective(model, Min,
         sum(prob.dist[i, j] * x[i, j] for i in nodes, j in nodes if i != j))
 
-    @constraint(model, sum(x[1, j] for j in stops) == fleet)
+    depot_out = sum(x[1, j] for j in stops)
+    @constraint(model, depot_out == fleet)
     @constraint(model, sum(x[j, 1] for j in stops) == fleet)
     for j in stops
         @constraint(model, sum(x[i, j] for i in nodes if i != j) == 1)
@@ -90,7 +96,7 @@ function build_model(prob::TSPMultipleSalespersonsProblem)
 
     # This redundant-for-integers aggregate row materially strengthens the LP
     # and provides a direct relaxation-proof infeasibility certificate.
-    @constraint(model, n - 1 <= max_stops * sum(x[1, j] for j in stops))
+    @constraint(model, n - 1 <= max_stops * depot_out)
 
     return model
 end

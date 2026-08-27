@@ -60,19 +60,27 @@ struct TSPAsymmetricProblem <: ProblemGenerator
     gate_set::Vector{Int}
 end
 
-"""Shortest paths from one vertex of the alternating one-way street grid."""
+"""Shortest paths from one vertex of the alternating one-way street grid.
+
+`distances` and `buckets` are caller-owned scratch buffers, refilled on every
+call so one pair can be reused across the per-source calls of a single
+instance; the defaults allocate a fresh pair. Returning `distances` hands back
+the shared buffer, so copy out any values before the next call.
+"""
 function _tsp_street_shortest_paths(S::Int, row_weight::Vector{Int},
-                                    col_weight::Vector{Int}, source::Int)
-    n_vertices = S * S
+                                    col_weight::Vector{Int}, source::Int,
+                                    distances::Vector{Int} = fill(typemax(Int), S * S),
+                                    buckets::Vector{Vector{Int}} =
+                                        [Int[] for _ in 0:(3 * (S * S - 1))])
     infinity = typemax(Int)
-    distances = fill(infinity, n_vertices)
+    fill!(distances, infinity)
+    foreach(empty!, buckets)
     distances[source] = 0
 
     # Positive weights are at most three, so a Dial bucket queue is simpler and
     # faster than repeatedly scanning the full grid. A shortest simple path has
     # at most n_vertices - 1 edges.
-    max_distance = 3 * (n_vertices - 1)
-    buckets = [Int[] for _ in 0:max_distance]
+    max_distance = 3 * (S * S - 1)
     push!(buckets[1], source)
 
     for distance in 0:max_distance
@@ -145,14 +153,10 @@ function TSPAsymmetricProblem(target_variables::Int, feasibility_status::Feasibi
     # --- Dimension sizing (same law as tsp/standard) ---
     n0 = max(5, round(Int, sqrt(target_variables + 1)))
 
-    # Draw the Hall-block size unconditionally so the RNG stream stays aligned
-    # across statuses (ignored unless infeasible).
-    k = n0 >= 8 ? rand(2:3) : 2
-
-    n = n0
-    if feasibility_status == infeasible
-        n = _tsp_pick_n(n0, target_variables, k, m -> m^2 - 1 - k * (m - k))
-    end
+    # Block size k is drawn unconditionally (RNG alignment across statuses);
+    # the infeasible branch sizes n against the delivered count.
+    n, k = _tsp_plan_dimensions(n0, target_variables, feasibility_status,
+                                (m, kk) -> m^2 - 1 - kk * (m - kk))
 
     # --- Explicit one-way street geography ---
     grid_side = 2 * n
@@ -172,25 +176,25 @@ function TSPAsymmetricProblem(target_variables::Int, feasibility_status::Feasibi
     # endpoints on row 1 make asymmetry deterministic; the central depot and
     # remaining random stops retain realistic spatial variety.
     dist = zeros(n, n)
+    infinity = typemax(Int)
+    street_distances = fill(infinity, grid_side * grid_side)
+    buckets = [Int[] for _ in 0:(3 * (grid_side^2 - 1))]
     for i in 1:n
-        street_distances = _tsp_street_shortest_paths(
+        _tsp_street_shortest_paths(
             grid_side, row_weight, col_weight, city_vertices[i],
+            street_distances, buckets,
         )
-        any(==(typemax(Int)), street_distances) &&
-            error("tsp/asymmetric street grid unexpectedly disconnected")
         for j in 1:n
-            dist[i, j] = Float64(street_distances[city_vertices[j]])
+            d = street_distances[city_vertices[j]]
+            d == infinity &&
+                error("tsp/asymmetric street grid unexpectedly disconnected")
+            dist[i, j] = Float64(d)
         end
     end
     @assert any(dist[i, j] != dist[j, i] for i in 1:n for j in i+1:n)
 
     # --- Resolve feasibility intent ---
-    arc_ok = _tsp_full_support(n)
-    blocked_set = Int[]
-    gate_set = Int[]
-    if feasibility_status == infeasible
-        arc_ok, blocked_set, gate_set = _tsp_hall_block(n, k)
-    end
+    arc_ok, blocked_set, gate_set = _tsp_arc_support(n, k, feasibility_status)
 
     return TSPAsymmetricProblem(
         n, locations, grid_side, row_weight, col_weight, dist, arc_ok,

@@ -83,27 +83,18 @@ function TSPAssignmentRelaxationProblem(target_variables::Int, feasibility_statu
     # total = n^2 - n  =>  n = (1 + sqrt(1 + 4*target)) / 2.
     n0 = max(5, round(Int, (1 + sqrt(1 + 4 * target_variables)) / 2))
 
-    # Draw the Hall-block size unconditionally so the RNG stream stays aligned
-    # across statuses (ignored unless infeasible).
-    k = n0 >= 8 ? rand(2:3) : 2
-
-    n = n0
-    if feasibility_status == infeasible
-        # Delivered count: n^2 - n - k*(n - k) variables.
-        n = _tsp_pick_n(n0, target_variables, k, m -> m^2 - m - k * (m - k))
-    end
+    # Block size k is drawn unconditionally (RNG alignment across statuses);
+    # the infeasible branch sizes n against the delivered count
+    # n^2 - n - k*(n - k) variables.
+    n, k = _tsp_plan_dimensions(n0, target_variables, feasibility_status,
+                                (m, kk) -> m^2 - m - kk * (m - kk))
 
     # --- Geography and symmetric road distances (shared with tsp/standard) ---
     locations = _tsp_stops(n)
     dist = _tsp_distance(locations)
 
     # --- Resolve feasibility intent ---
-    arc_ok = _tsp_full_support(n)
-    S = Int[]
-    T = Int[]
-    if feasibility_status == infeasible
-        arc_ok, S, T = _tsp_hall_block(n, k)
-    end
+    arc_ok, S, T = _tsp_arc_support(n, k, feasibility_status)
 
     return TSPAssignmentRelaxationProblem(n, locations, dist, arc_ok, S, T)
 end

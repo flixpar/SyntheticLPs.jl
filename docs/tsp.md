@@ -35,8 +35,9 @@ shortest-path times, so they satisfy the directed triangle inequality and model
 one-way detours without independent pairwise noise.
 
 Prize values are log-normal with correlated omission penalties. Precedence
-pairs form a sampled acyclic task graph in natural instances. Multiple-
-salesperson instances choose a modest fleet and balanced route-size limits.
+pairs form a sampled acyclic task graph in natural instances.
+Multiple-salesperson instances choose a modest fleet and balanced route-size
+limits.
 
 ## Formulations and sizing
 
@@ -68,16 +69,8 @@ the route's customer count.
 Every requested status is valid for the model returned by the default relaxed
 API:
 
-- `feasible` plants or exhibits an integer witness: a complete tour, a schedule
-  enclosed by its windows, full prize collection, an acyclic precedence order,
-  or a balanced partition across the fleet.
-- `infeasible` uses an algebraic certificate that survives relaxation. Core arc
-  formulations use a Hall-deficit access restriction: `k` blocked stops can
-  receive arcs only from `k-1` gate nodes, contradicting the degree rows.
-  Time windows use a travel budget below the sum of each node's cheapest
-  outgoing arc. Prize collection requests more than the total available prize.
-  Multiple salespersons set aggregate fleet route capacity below the customer
-  count. Precedence creates a directed three-task cycle.
+- `feasible` plants or exhibits an integer witness: a complete tour, a schedule enclosed by its windows, full prize collection, an acyclic precedence order, or a balanced partition across the fleet.
+- `infeasible` uses an algebraic certificate that survives relaxation. Core arc formulations use a Hall-deficit access restriction: `k` blocked stops can receive arcs only from `k-1` gate nodes, contradicting the degree rows. Time windows use a travel budget below the sum of each node's cheapest outgoing arc. Prize collection requests more than the total available prize. Multiple salespersons set aggregate fleet route capacity below the customer count. Precedence creates a directed three-task cycle.
 - `unknown` samples natural operational settings without promising a status.
 
 These constructions avoid empty degree rows and contradictory variable bounds,

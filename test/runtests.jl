@@ -199,22 +199,35 @@ end
                   for i in 1:p.n_stops, j in 1:p.n_stops, k in 1:p.n_stops)
 
         # Variable-count formulas, straight from each struct's n_stops.
-        m, p = generate_problem("tsp/standard", 100, unknown, 0)
-        @test num_variables(m) == p.n_stops^2 - 1
-        m, p = generate_problem("tsp/asymmetric", 100, unknown, 0)
-        @test num_variables(m) == p.n_stops^2 - 1
-        m, p = generate_problem("tsp/flow", 100, unknown, 0)
-        @test num_variables(m) == 2 * p.n_stops * (p.n_stops - 1)
-        m, p = generate_problem("tsp/time_windows", 100, unknown, 0)
-        @test num_variables(m) == p.n_stops^2
-        m, p = generate_problem("tsp/assignment_relaxation", 100, unknown, 0)
-        @test num_variables(m) == p.n_stops * (p.n_stops - 1)
-        m, p = generate_problem("tsp/multiple_salespersons", 100, unknown, 0)
-        @test num_variables(m) == p.n_stops^2 - 1
-        m, p = generate_problem("tsp/precedence", 100, unknown, 0)
-        @test num_variables(m) == p.n_stops^2 - 1
-        m, p = generate_problem("tsp/prize_collecting", 100, unknown, 0)
-        @test num_variables(m) == 2 * p.n_stops * (p.n_stops - 1) + p.n_stops - 1
+        count_formulas = [
+            (:standard => (p -> p.n_stops^2 - 1)),
+            (:asymmetric => (p -> p.n_stops^2 - 1)),
+            (:flow => (p -> 2 * p.n_stops * (p.n_stops - 1))),
+            (:time_windows => (p -> p.n_stops^2)),
+            (:assignment_relaxation => (p -> p.n_stops * (p.n_stops - 1))),
+            (:multiple_salespersons => (p -> p.n_stops^2 - 1)),
+            (:precedence => (p -> p.n_stops^2 - 1)),
+            (:prize_collecting =>
+                (p -> 2 * p.n_stops * (p.n_stops - 1) + p.n_stops - 1)),
+        ]
+        for (v, f) in count_formulas
+            m, p = generate_problem(ProblemVariant(:tsp, v), 100, unknown, 0)
+            @test num_variables(m) == f(p)
+        end
+
+        # The infeasible branch sizes n against the *delivered* count after the
+        # Hall block deletes k*(n-k) arcs, via a per-variant delivered() lambda.
+        # These assertions tie those lambdas to the models actually built.
+        delivered_formulas = [
+            (:standard => ((n, k) -> n^2 - 1 - k * (n - k))),
+            (:asymmetric => ((n, k) -> n^2 - 1 - k * (n - k))),
+            (:flow => ((n, k) -> 2 * (n^2 - n) - 2 * k * (n - k))),
+            (:assignment_relaxation => ((n, k) -> n^2 - n - k * (n - k))),
+        ]
+        for (v, f) in delivered_formulas, s in 1:3
+            m, p = generate_problem(ProblemVariant(:tsp, v), 120, infeasible, s)
+            @test num_variables(m) == f(p.n_stops, length(p.blocked_set))
+        end
 
         # Hall block: every in-arc to the blocked set S originates in the gate
         # set T, T is disjoint from S and one node short of it (the degree-row
@@ -457,11 +470,14 @@ end
         @test_nowarn generate_problem("land_use/standard", 4, unknown, 1)
         # tsp variants clamp tiny targets to n = 5, where the Hall-block size
         # must also fall back to k = 2.
+        @test_nowarn generate_problem("tsp/standard", 3, infeasible, 1)
+        @test_nowarn generate_problem("tsp/asymmetric", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/flow", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/time_windows", 3, unknown, 1)
         @test_nowarn generate_problem("tsp/multiple_salespersons", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/precedence", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/prize_collecting", 3, infeasible, 1)
+        @test_nowarn generate_problem("tsp/assignment_relaxation", 3, infeasible, 1)
         # energy now stores an emissions intensity target (the previous per-period
         # emissions row was an algebraic tautology).
         _, eprob = generate_problem("energy/standard", 120, unknown, 1)

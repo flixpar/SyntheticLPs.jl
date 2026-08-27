@@ -4,6 +4,51 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-27 12:03 UTC (tsp review fixes)
+
+**Previous Commit**: `66b690c`
+
+**Summary**: Post-review corrections to the integrated TSP family — a wrong
+witness-proof in a docstring, explainer rendering artifacts in `docs/tsp.md`,
+missing test coverage for the infeasible-branch sizing lambdas and tiny-target
+paths, and two contained refactors (shared Hall-block constructor helpers,
+shortest-path buffer reuse) verified bit-identical on saved snapshots.
+
+**Details**:
+- `tsp/standard` constructor docstring: the relaxed-witness reduction quoted the
+  *unlifted* MTZ row (`n/(n-1) ≤ n-1`); the model actually builds the lifted row
+  `u[i]-u[j]+(n-1)x[i,j]+(n-3)x[j,i] ≤ n-2`, whose witness reduction is
+  `1 + (n-3)/(n-1) = (2n-4)/(n-1) ≤ n-2`. Docstring-only fix.
+- `docs/tsp.md`: reflowed the wrapped bullets in "Feasibility controls" to one
+  line each (matching every other doc page) and fixed the `Multiple-` line-break
+  hyphenation, then regenerated `docs/explainer.html`. The wrapped form made the
+  explainer renderer split the bullets mid-sentence into nested `<p>` blocks and
+  display "Multiple- salesperson".
+- Tests (`test/runtests.jl`): the eight unrolled variable-count assertions are
+  now a loop over `(variant, formula)` pairs; added infeasible-branch assertions
+  tying each variant's `delivered()` sizing lambda to the built model's actual
+  `num_variables` (previously only `unknown` instances were counted); added the
+  three missing tiny-target (`target = 3`) `@test_nowarn` lines for
+  `tsp/standard`, `tsp/asymmetric`, and `tsp/assignment_relaxation` so all eight
+  variants exercise the `n → 5` clamp.
+- `src/problem_types/tsp/tsp.jl`: new `_tsp_plan_dimensions` and
+  `_tsp_arc_support` helpers; the four Hall-block variant constructors
+  (`standard`, `asymmetric`, `flow`, `assignment_relaxation`) now share them
+  instead of copy-pasting the k-draw / `_tsp_pick_n` / arc-support block.
+  RNG-stream order is unchanged — verified by byte-identical snapshots of
+  `dist`, `arc_ok`, `blocked_set`, and `gate_set` across 4 variants × 3 statuses
+  × 10 seeds before and after.
+- `tsp/asymmetric`: `_tsp_street_shortest_paths` now takes caller-owned scratch
+  buffers (defaults preserve the old behavior), and the constructor reuses one
+  `distances`/`buckets` pair across its per-source calls instead of allocating
+  ~12n² bucket vectors per source; the connectivity check now tests only the
+  city-vertex entries actually read instead of rescanning all S² entries.
+  Distances verified bit-identical across 12 seeds.
+- `tsp/multiple_salespersons`: hoisted the duplicated `sum(x[1, j])` affine, and
+  the docstring now notes that unrelaxed MIPs at `target_variables ≥ ~300` can
+  exceed the central verifier's default `feasibility_timeout` (10 s) and need a
+  larger timeout.
+
 ## 2026-08-27 02:22 UTC (integrated TSP generator family)
 
 **Previous Commit**: `99db595`

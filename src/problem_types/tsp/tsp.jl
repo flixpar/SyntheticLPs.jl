@@ -124,6 +124,26 @@ function _tsp_pick_n(n0::Int, target::Int, k::Int, delivered::Function)
     return best
 end
 
+# Dimension plan shared by the Hall-block variants: draw the block size `k`
+# unconditionally so the RNG stream stays aligned across statuses (ignored
+# unless infeasible), and for an `infeasible` request size `n` against the
+# *delivered* variable count — `delivered(n, k)` is the variant's variable
+# count at dimension `n` once the block has deleted `k*(n-k)` arcs.
+function _tsp_plan_dimensions(n0::Int, target::Int,
+                              status::FeasibilityStatus, delivered::Function)
+    k = n0 >= 8 ? rand(2:3) : 2
+    n = status == infeasible ?
+        _tsp_pick_n(n0, target, k, m -> delivered(m, k)) : n0
+    return n, k
+end
+
+# Arc support for the requested status: complete support unless infeasible, in
+# which case the Hall-deficit block (see `_tsp_hall_block`).
+function _tsp_arc_support(n::Int, k::Int, status::FeasibilityStatus)
+    status == infeasible && return _tsp_hall_block(n, k)
+    return _tsp_full_support(n), Int[], Int[]
+end
+
 include("assignment_relaxation.jl")
 include("asymmetric.jl")
 include("flow.jl")

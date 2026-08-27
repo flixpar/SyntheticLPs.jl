@@ -81,9 +81,9 @@ against the *delivered* count.
 # Feasibility
 - `feasible`: complete arc support. Any permutation of the stops is a tour, and
   the relaxation is nonempty — an explicit witness is `x[i,j] = 1/(n-1)` on all
-  arcs with every `u ≡ 1` (each degree row sums to 1, and every MTZ row reduces
-  to `n/(n-1) ≤ n-1`, which holds for `n ≥ 3`) — so both the MIP and the
-  delivered relaxation are feasible.
+  arcs with every `u ≡ 1` (each degree row sums to 1, and every lifted MTZ row
+  reduces to `1 + (n-3)/(n-1) = (2n-4)/(n-1) ≤ n-2`, which holds for `n ≥ 3`)
+  — so both the MIP and the delivered relaxation are feasible.
 - `infeasible`: a Hall-deficit arc block stands in for road closures cutting off
   a district: a set `S` of `k` stops keeps only the in-arcs from `k-1` gate
   nodes `T`. The in-degree rows of `S` must sum to `k` yet can draw only on the
@@ -101,29 +101,19 @@ function TSPStandardProblem(target_variables::Int, feasibility_status::Feasibili
     # total = n^2 - 1  =>  n ≈ sqrt(target + 1).
     n0 = max(5, round(Int, sqrt(target_variables + 1)))
 
-    # Draw the Hall-block size unconditionally so the RNG stream stays aligned
-    # across statuses (ignored unless infeasible).
-    k = n0 >= 8 ? rand(2:3) : 2
-
-    n = n0
-    if feasibility_status == infeasible
-        # Size against the delivered count: n^2 - 1 - k*(n - k) variables,
-        # because the block deletes k*(n-k) arc variables.
-        n = _tsp_pick_n(n0, target_variables, k, m -> m^2 - 1 - k * (m - k))
-    end
+    # Block size k is drawn unconditionally (RNG alignment across statuses);
+    # the infeasible branch sizes n against the delivered count
+    # n^2 - 1 - k*(n - k), because the block deletes k*(n-k) arc variables.
+    n, k = _tsp_plan_dimensions(n0, target_variables, feasibility_status,
+                                (m, kk) -> m^2 - 1 - kk * (m - kk))
 
     # --- Geography and symmetric road distances ---
     locations = _tsp_stops(n)
     dist = _tsp_distance(locations)
 
     # --- Resolve feasibility intent ---
-    arc_ok = _tsp_full_support(n)
-    S = Int[]
-    T = Int[]
-    if feasibility_status == infeasible
-        arc_ok, S, T = _tsp_hall_block(n, k)
-    end
     # feasible / unknown: complete support — see constructor docstring.
+    arc_ok, S, T = _tsp_arc_support(n, k, feasibility_status)
 
     return TSPStandardProblem(n, locations, dist, arc_ok, S, T)
 end
