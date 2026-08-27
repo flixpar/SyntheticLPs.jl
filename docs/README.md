@@ -64,3 +64,4 @@ where relaxation changes the solved model.
 - [Supply Chain](supply_chain.md)
 - [Telecom Network Design](telecom_network_design.md)
 - [Transportation](transportation.md)
+- [Traveling Salesperson](tsp.md)

@@ -82,7 +82,7 @@ julia --project=@.
 
 ## Architecture
 
-SyntheticLPs uses a type-based dispatch system for generating realistic linear programming problems. Problems are organized as a two-level hierarchy: a **category** (a problem domain, e.g. `:transportation`) groups one or more **variants** (concrete generators with their own data generation and model formulation, e.g. `:standard`). There are 32 categories; most have a single variant, while several (transportation, energy, inventory, supply_chain, blending, cutting_stock, diet_problem, facility_location, knapsack, network_flow, assignment, portfolio, regression) carry multiple variants with distinct formulations. All generators follow a consistent pattern using Julia's multiple dispatch.
+SyntheticLPs uses a type-based dispatch system for generating realistic linear programming problems. Problems are organized as a two-level hierarchy: a **category** (a problem domain, e.g. `:transportation`) groups one or more **variants** (concrete generators with their own data generation and model formulation, e.g. `:standard`). There are 33 categories; most have a single variant, while several (transportation, energy, inventory, supply_chain, blending, cutting_stock, diet_problem, facility_location, knapsack, network_flow, assignment, portfolio, regression, tsp) carry multiple variants with distinct formulations. All generators follow a consistent pattern using Julia's multiple dispatch.
 
 ### Core Components
 
@@ -179,7 +179,7 @@ register_variant(:category, :standard, VariantStruct, "Description")
 
 ### Available Problem Categories
 
-The system includes 32 categories covering major LP/MIP problem classes. Each
+The system includes 33 categories covering major LP/MIP problem classes. Each
 category's default variant is `:standard` except `portfolio` (`:cvar`),
 `vehicle_routing` (`:cvrp`), and `regression` (`:lad`).
 Categories with multiple variants are listed with them below.
@@ -187,7 +187,7 @@ Categories with multiple variants are listed with them below.
 - Production Planning, Assignment (`standard`, `workload_balance`), Blending (`standard`, `equipment_batches`, `multi_product`), Facility Location (`standard`, `two_echelon`, `p_median`), Crop Planning
 - Airline Crew, Bin Packing, Cutting Stock (`standard`, `setup_cost`, `due_dates`), Energy (`standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`), Feed Blending, Inventory (`standard`, `lot_sizing`, `multi_item`, `multi_echelon`), Telecom Network Design
 - Job Shop Scheduling, Land Use, Load Balancing, Nurse Scheduling, Product Mix, Project Selection
-- Resource Allocation, Scheduling, Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`), Unit Commitment, Vehicle Routing (`cvrp`)
+- Resource Allocation, Scheduling, Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`), TSP (`standard`, `asymmetric`, `flow`, `time_windows`, `assignment_relaxation`, `prize_collecting`, `multiple_salespersons`, `precedence`), Unit Commitment, Vehicle Routing (`cvrp`)
 - Regression (`lad`, `quantile`, `chebyshev`; dense statistical LPs), Revenue Management (network DLP), Stochastic Program (two-stage with recourse)
 
 #### Model classes (LP / MIP / LP relaxation)
@@ -204,11 +204,19 @@ The corpus deliberately mixes three model classes; treat the names accordingly:
   `assignment/workload_balance` (binary min-makespan), and `vehicle_routing/cvrp`
   (binary arc selection with single-commodity-flow subtour elimination — its
   continuous relaxation is a genuine depot-anchored routing relaxation, not a
-  degenerate one). These are real mixed-integer formulations.
+  degenerate one). The `tsp` MIP variants `standard`/`asymmetric` (MTZ order
+  variables), `flow` and `prize_collecting` (single-commodity flow),
+  `time_windows` (big-M time propagation), `multiple_salespersons` (lifted
+  route-order variables), and `precedence` (lifted MTZ plus ordering rows)
+  likewise deliver genuine routing relaxations. These are real mixed-integer
+  formulations.
 - **LP relaxations of MIPs**: continuous relaxations of integer models, useful as
   LP-solver test instances but *not* directly implementable integer solutions —
-  notably `nurse_scheduling` (fractional rosters) and `unit_commitment`
-  (fractional commitment). Their docstrings state this explicitly.
+  notably `nurse_scheduling` (fractional rosters), `unit_commitment`
+  (fractional commitment), and `tsp/assignment_relaxation` (a strengthened
+  degree LP relaxation of the TSP — fractional arc covers that may contain
+  subtours).
+  Their docstrings state this explicitly.
 
 When generating an LP-only corpus, filter out the MIP variants (or relax them);
 when characterizing instances, do not present the relaxations as real-world

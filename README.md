@@ -15,7 +15,7 @@ This package provides:
 
 ## Problem Types
 
-The package includes generators for 29 common LP/MIP problem categories, all
+The package includes generators for 33 common LP/MIP problem categories, all
 unified with a standardized interface. Each category groups one or more
 **variants** — concrete formulations with their own data generation and model
 structure (see [Categories and Variants](#categories-and-variants)). Categories
@@ -51,6 +51,7 @@ with more than one variant are annotated below.
 - Supply Chain — variants: `standard`, `single_source`, `carbon`, `multi_product`
 - Crop Planning
 - Telecom Network Design
+- TSP — variants: `standard` (symmetric lifted MTZ), `asymmetric` (one-way-street ATSP), `flow` (single-commodity flow), `time_windows` (appointment delivery), `assignment_relaxation` (strengthened degree LP), `prize_collecting` (quota tour), `multiple_salespersons` (balanced fleet), `precedence` (ordered tasks)
 - Unit Commitment
 - Vehicle Routing — variants: `cvrp` (capacitated vehicle routing, single-commodity-flow formulation)
 
