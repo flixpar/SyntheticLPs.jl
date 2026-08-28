@@ -48,7 +48,7 @@ with more than one variant are annotated below.
 - Revenue Management (network deterministic LP / bid-price)
 - Scheduling
 - Stochastic Program (two-stage with recourse; dual block-angular structure)
-- Supply Chain — variants: `standard`, `single_source`, `carbon`, `multi_product`
+- Supply Chain — variants: `standard`, `single_source`, `carbon`, `multi_product`, `network_planning` (multi-period, multi-product LP with sparse lanes, specialized production, shared capacity, inventory carryover, and regional/seasonal/disruption profiles)
 - Crop Planning
 - Telecom Network Design
 - TSP — variants: `standard` (symmetric lifted MTZ), `asymmetric` (one-way-street ATSP), `flow` (single-commodity flow), `time_windows` (appointment delivery), `assignment_relaxation` (strengthened degree LP), `prize_collecting` (quota tour), `multiple_salespersons` (balanced fleet), `precedence` (ordered tasks)

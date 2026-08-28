@@ -4,6 +4,35 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-28 22:39 UTC (supply-chain network planning)
+
+**Previous Commit**: `e3f4736`
+
+**Summary**: Added `supply_chain/network_planning`, a multi-period,
+multi-product LP with sparse period-specific shipment lanes, plant inventory,
+specialized production, shared resource capacity, exact demand service, and
+materially different regional, seasonal-prebuild, and disruption profiles.
+
+**Details**:
+- A target-driven dimension and arc-budget search counts the production,
+  inventory, and open-arc shipment blocks actually created. Closed lanes have
+  no variables or fixed-zero rows.
+- Spatially correlated freight costs and capacities combine customer/plant
+  regions, distance, product specialization, time effects, and disruption
+  surcharges. Production and holding costs remain economically positive.
+- Feasible requests store a complete production/shipment/inventory witness.
+  Demand equalities prevent unmet service and over-shipment; inventory
+  equalities use `previous + production - shipment = ending inventory`.
+- Infeasible requests store a product/time cumulative cut certificate. Its
+  upper bound includes initial stock, every product and shared-resource
+  production bound, and all inbound lane limits, and is strictly below
+  cumulative demand.
+- Tests cover registration, target sizing from 50 to 5,000 variables, witness
+  arithmetic, certificate arithmetic, sparse topology, specialization and
+  profile behavior, exact same-seed data/model/MPS reproducibility,
+  different-seed diversity, repeated builds, and HiGHS-backed status checks
+  over multiple seeds.
+
 ## 2026-08-28 18:47 UTC (set_system clamp tiny targets)
 
 **Previous Commit**: `dec1c3f`

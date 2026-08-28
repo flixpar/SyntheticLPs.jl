@@ -276,6 +276,188 @@ end
         @test p.precedence_pairs[3][2] == p.precedence_pairs[1][1]
     end
 
+    @testset "Supply-chain network planning" begin
+        @test :network_planning in list_variants(:supply_chain)
+        info = problem_info(:supply_chain, :network_planning)
+        @test info[:variant] == :network_planning
+        @test occursin("Multi-period", info[:description])
+
+        # The dimension search counts exactly the production, inventory, and
+        # sparse shipment blocks across tiny, medium, and large requests.
+        for target in (50, 200, 1200, 5000), seed in 0:2
+            model, p = generate_problem(
+                "supply_chain/network_planning", target, unknown, seed
+            )
+            expected =
+                2 * p.n_plants * p.n_products * p.n_periods +
+                length(p.shipment_arcs)
+            @test num_variables(model) == expected
+            @test abs(num_variables(model) - target) <= 0.25 * target
+            @test p.n_products >= 2
+        end
+
+        # Validate the stored constructive witness without a solver.
+        for seed in 0:8
+            _, p = generate_problem(
+                "supply_chain/network_planning", 240, feasible, seed
+            )
+            for plant in 1:p.n_plants, product in 1:p.n_products,
+                period in 1:p.n_periods
+                outbound = sum(
+                    (p.witness_shipment[a] for a in p.shipment_arcs
+                     if a[1] == plant && a[3] == product && a[4] == period);
+                    init=0.0,
+                )
+                previous = period == 1 ? p.initial_inventory[plant, product] :
+                           p.witness_inventory[plant, product, period - 1]
+                @test isapprox(
+                    previous + p.witness_production[plant, product, period] -
+                    outbound,
+                    p.witness_inventory[plant, product, period];
+                    atol=1e-8,
+                )
+                @test p.witness_production[plant, product, period] <=
+                      p.production_capacity[plant, product, period] + 1e-8
+                @test p.witness_inventory[plant, product, period] <=
+                      p.inventory_capacity[plant, product] + 1e-8
+            end
+            for customer in 1:p.n_customers, product in 1:p.n_products,
+                period in 1:p.n_periods
+                delivered = sum(
+                    p.witness_shipment[a] for a in p.shipment_arcs
+                    if a[2] == customer && a[3] == product &&
+                       a[4] == period
+                )
+                @test isapprox(
+                    delivered, p.demand[customer, product, period]; atol=1e-8
+                )
+            end
+            for plant in 1:p.n_plants, period in 1:p.n_periods
+                used = sum(
+                    p.resource_use[plant, product] *
+                    p.witness_production[plant, product, period]
+                    for product in 1:p.n_products
+                )
+                @test used <= p.plant_capacity[plant, period] + 1e-8
+            end
+            @test all(
+                p.witness_shipment[a] <= p.lane_capacity[a] + 1e-8
+                for a in p.shipment_arcs
+            )
+        end
+
+        # The infeasibility metadata reproduces the valid cumulative product cut.
+        for seed in 0:8
+            _, p = generate_problem(
+                "supply_chain/network_planning", 240, infeasible, seed
+            )
+            k, tau = p.certificate_product, p.certificate_period
+            demand = sum(p.demand[:, k, 1:tau])
+            supply = sum(p.initial_inventory[:, k]) + sum(
+                min(
+                    p.production_capacity[plant, k, period],
+                    p.plant_capacity[plant, period] /
+                    p.resource_use[plant, k],
+                )
+                for plant in 1:p.n_plants, period in 1:tau
+            )
+            lanes = sum(
+                p.lane_capacity[a] for a in p.shipment_arcs
+                if a[3] == k && a[4] <= tau
+            )
+            @test p.certificate_demand == demand
+            @test p.certificate_supply_bound == supply
+            @test p.certificate_lane_bound == lanes
+            @test p.certificate_upper_bound == min(supply, lanes)
+            @test p.certificate_margin ==
+                  demand - p.certificate_upper_bound > 0
+        end
+
+        # Sparse topology, specialization, and profile-specific structure.
+        profiles = Set{Symbol}()
+        for seed in 0:2
+            _, p = generate_problem(
+                "supply_chain/network_planning", 500, feasible, seed
+            )
+            push!(profiles, p.profile)
+            @test length(p.shipment_arcs) == length(unique(p.shipment_arcs))
+            @test Set(keys(p.shipment_cost)) == Set(p.shipment_arcs)
+            @test Set(keys(p.lane_capacity)) == Set(p.shipment_arcs)
+            @test length(p.shipment_arcs) <
+                  p.n_plants * p.n_customers * p.n_products * p.n_periods
+            @test all(
+                any(a[2] == customer && a[3] == product &&
+                    a[4] == period for a in p.shipment_arcs)
+                for customer in 1:p.n_customers,
+                    product in 1:p.n_products, period in 1:p.n_periods
+            )
+            @test all(maximum(p.specialization[:, k]) > 1.2
+                      for k in 1:p.n_products)
+            if p.profile == :disruption
+                @test p.disruption_period > 0
+                @test all(
+                    !(a[1] == p.disrupted_plant &&
+                      a[4] == p.disruption_period) for a in p.shipment_arcs
+                )
+            elseif p.profile == :seasonal_prebuild
+                totals = [sum(p.demand[:, :, t]) for t in 1:p.n_periods]
+                @test maximum(totals) > 1.6 * minimum(totals)
+                prepeak = max(1, argmax(totals) - 1)
+                @test sum(p.witness_inventory[:, :, prepeak]) >
+                      sum(p.initial_inventory)
+            end
+        end
+        @test profiles == Set([:regional_stable, :seasonal_prebuild, :disruption])
+
+        # Local-RNG reproducibility covers all stored data and deterministic model
+        # construction; another seed of the same profile changes topology/data.
+        Random.seed!(9182)
+        expected_global_draw = rand()
+        Random.seed!(9182)
+        generate_problem("supply_chain/network_planning", 120, feasible, 7)
+        @test rand() == expected_global_draw
+
+        m1, p1 = generate_problem(
+            "supply_chain/network_planning", 360, feasible, 7
+        )
+        m2, p2 = generate_problem(
+            "supply_chain/network_planning", 360, feasible, 7
+        )
+        @test p1.profile == p2.profile
+        @test p1.plant_locations == p2.plant_locations
+        @test p1.specialization == p2.specialization
+        @test p1.demand == p2.demand
+        @test p1.production_capacity == p2.production_capacity
+        @test p1.shipment_arcs == p2.shipment_arcs
+        @test p1.shipment_cost == p2.shipment_cost
+        @test p1.witness_shipment == p2.witness_shipment
+        @test num_variables(m1) == num_variables(m2)
+        @test num_constraints(m1, count_variable_in_set_constraints=true) ==
+              num_constraints(m2, count_variable_in_set_constraints=true)
+
+        m3 = SyntheticLPs.build_model(p1)
+        @test num_variables(m1) == num_variables(m3)
+        @test num_constraints(m1, count_variable_in_set_constraints=true) ==
+              num_constraints(m3, count_variable_in_set_constraints=true)
+
+        _, p3 = generate_problem(
+            "supply_chain/network_planning", 360, feasible, 10
+        )
+        @test p1.profile == p3.profile
+        @test p1.plant_locations != p3.plant_locations
+        @test p1.demand != p3.demand
+        @test p1.shipment_cost != p3.shipment_cost
+
+        mktempdir() do dir
+            first_mps = joinpath(dir, "first.mps")
+            second_mps = joinpath(dir, "second.mps")
+            write_to_file(m1, first_mps)
+            write_to_file(m2, second_mps)
+            @test filesize(first_mps) > 0
+            @test read(first_mps, String) == read(second_mps, String)
+        end
+    end
+
     # Test individual problem generators (every registered variant)
     for ref in list_problems()
         test_problem_generator(ref)
@@ -697,6 +879,17 @@ end
             @test num_variables(m) == 50
             set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
             @test termination_status(m) == MOI.OPTIMAL
+        end
+
+        # The network-planning variant has a solver-independent planted plan for
+        # feasible requests and a cumulative product cut for infeasible requests.
+        for status in (feasible, infeasible), s in 0:5
+            m, _ = generate_problem(
+                "supply_chain/network_planning", 240, status, s
+            )
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            expected = status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE
+            @test termination_status(m) == expected
         end
 
         # unit_commitment/standard feasible-request: previously ~8% came back
