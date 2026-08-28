@@ -291,6 +291,30 @@ end
             @test num_variables(model) == target ==
                   length(problem.column_pools)
         end
+        # A target of one is below the structural floor needed to retain
+        # skill-period coverage and representative generated labor pools.
+        expected_minimums = Dict(1 => 8, 2 => 9, 4 => 6)
+        for (seed, expected) in expected_minimums
+            model, problem = generate_problem(ref, 1, feasible, seed)
+            @test num_variables(model) == expected ==
+                  length(problem.column_pools)
+            @test num_variables(model) > 1
+        end
+
+        # Every profile is also exercised above 1,000 variables. Contact-center
+        # and continuous-operations instances take their four-skill branches;
+        # retail intentionally has three profile-defined skills.
+        large_profiles = Dict{Symbol,Any}()
+        for seed in (1, 2, 4)
+            model, problem = generate_problem(ref, 1500, feasible, seed)
+            @test num_variables(model) == 1500
+            large_profiles[problem.profile] = problem
+        end
+        @test Set(keys(large_profiles)) ==
+              Set((:contact_center, :retail, :continuous_operations))
+        @test length(large_profiles[:contact_center].skill_names) == 4
+        @test length(large_profiles[:continuous_operations].skill_names) == 4
+        @test length(large_profiles[:retail].skill_names) == 3
 
         # Exact field and model reproducibility, including repeated builds and
         # deterministic MPS export.
@@ -308,6 +332,29 @@ end
               num_constraints(model2; count_variable_in_set_constraints=true) ==
               num_constraints(rebuilt1; count_variable_in_set_constraints=true) ==
               num_constraints(rebuilt2; count_variable_in_set_constraints=true)
+
+        # Exact model contract: one continuous nonnegative staffing block,
+        # minimization, and objective coefficients sourced without alteration
+        # from the stored data.
+        assigned_workers = model1[:assigned_workers]
+        variables = all_variables(model1)
+        @test length(assigned_workers) == length(problem1.staffing_costs)
+        @test Set(variables) == Set(assigned_workers)
+        @test all(!is_binary(variable) && !is_integer(variable)
+                  for variable in variables)
+        @test all(has_lower_bound(variable) && lower_bound(variable) == 0.0
+                  for variable in variables)
+        @test all(!has_upper_bound(variable) for variable in variables)
+        @test objective_sense(model1) == MOI.MIN_SENSE
+        objective = objective_function(model1)
+        @test objective isa JuMP.AffExpr
+        @test objective.constant == 0.0
+        @test all(
+            coefficient(objective, assigned_workers[column]) ==
+            problem1.staffing_costs[column]
+            for column in eachindex(problem1.staffing_costs)
+        )
+
         export_dir = mktempdir()
         path1 = joinpath(export_dir, "workforce_1.mps")
         path2 = joinpath(export_dir, "workforce_2.mps")
@@ -361,6 +408,41 @@ end
                       1.10 * minimum(problem.demand[:, skill])
                       for skill in 1:n_skills)
 
+            # Pattern metadata reconstructs each contiguous (possibly
+            # wraparound) start/span window exactly. A stored break is inside
+            # that window and is the sole excluded period.
+            supports = Tuple[]
+            for pattern in 1:n_patterns
+                start = problem.pattern_starts[pattern]
+                span = problem.pattern_span_periods[pattern]
+                break_period = problem.pattern_break_periods[pattern]
+                window = if problem.profile == :continuous_operations
+                    [mod1(start + offset, problem.n_periods)
+                     for offset in 0:(span - 1)]
+                else
+                    [start + offset for offset in 0:(span - 1)]
+                end
+                @test length(unique(window)) == span
+                @test all(period -> 1 <= period <= problem.n_periods, window)
+                expected_support = if break_period == 0
+                    copy(window)
+                else
+                    @test break_period in window
+                    @test !problem.pattern_coverage[break_period, pattern]
+                    [period for period in window if period != break_period]
+                end
+                actual_support = findall(problem.pattern_coverage[:, pattern])
+                @test sort(actual_support) == sort(expected_support)
+                @test length(actual_support) ==
+                      span - (break_period == 0 ? 0 : 1)
+                @test problem.pattern_wraps[pattern] ==
+                      (start + span - 1 > problem.n_periods)
+                push!(supports, Tuple(actual_support))
+            end
+            # `_workforce_patterns` drops duplicate supports even when
+            # different start/span/break samples would produce the same set.
+            @test length(unique(supports)) == n_patterns
+
             # Every selected column obeys qualification, availability, and
             # pattern eligibility. Every skill-period has nonempty row support.
             for column in eachindex(problem.column_pools)
@@ -403,13 +485,31 @@ end
         @test seed1.profile != seed2.profile
         @test seed1.demand != seed2.demand
         @test seed1.skill_names != seed2.skill_names
+        # Diversity also holds within each profile, rather than relying on
+        # profile selection alone.
+        for (first_seed, second_seed) in ((1, 3), (2, 5), (4, 7))
+            _, first_problem =
+                generate_problem(ref, 240, unknown, first_seed)
+            _, second_problem =
+                generate_problem(ref, 240, unknown, second_seed)
+            @test first_problem.profile == second_problem.profile
+            @test first_problem.demand != second_problem.demand
+            @test first_problem.pattern_coverage !=
+                  second_problem.pattern_coverage
+            @test first_problem.pool_qualifications !=
+                  second_problem.pool_qualifications
+        end
 
         # The planted staffing vector proves feasible requests directly.
         for seed in 1:6
             _, problem = generate_problem(ref, 260, feasible, seed)
+            @test problem.feasible_staffing !== nothing
+            @test problem.infeasible_skill === nothing
+            @test problem.infeasibility_capacity_bound === nothing
+            witness = something(problem.feasible_staffing)
             for pool in eachindex(problem.pool_names)
                 usage = sum(
-                    problem.reference_staffing[column]
+                    witness[column]
                     for column in eachindex(problem.column_pools)
                     if problem.column_pools[column] == pool
                 )
@@ -420,7 +520,7 @@ end
                 supplied = sum(
                     problem.pool_productivity[
                         problem.column_pools[column], skill,
-                    ] * problem.reference_staffing[column]
+                    ] * witness[column]
                     for column in eachindex(problem.column_pools)
                     if problem.column_skills[column] == skill &&
                        problem.pattern_coverage[
@@ -435,6 +535,9 @@ end
         # every requested-infeasible instance.
         for seed in 1:6
             _, problem = generate_problem(ref, 260, infeasible, seed)
+            @test problem.feasible_staffing === nothing
+            @test problem.infeasible_skill !== nothing
+            @test problem.infeasibility_capacity_bound !== nothing
             certified = false
             for skill in eachindex(problem.skill_names)
                 upper = 0.0
@@ -453,7 +556,48 @@ end
                 certified |= sum(problem.demand[:, skill]) > upper + 1e-6
             end
             @test certified
+            certificate_skill = something(problem.infeasible_skill)
+            expected_bound = 0.0
+            for pool in eachindex(problem.pool_names)
+                paid = [
+                    count(problem.pattern_coverage[:,
+                          problem.column_patterns[column]])
+                    for column in eachindex(problem.column_pools)
+                    if problem.column_pools[column] == pool &&
+                       problem.column_skills[column] == certificate_skill
+                ]
+                max_paid = isempty(paid) ? 0 : maximum(paid)
+                expected_bound += problem.pool_capacities[pool] *
+                                  problem.pool_productivity[
+                                      pool, certificate_skill,
+                                  ] * max_paid
+            end
+            @test something(problem.infeasibility_capacity_bound) ≈
+                  expected_bound
+            @test sum(problem.demand[:, certificate_skill]) >
+                  something(problem.infeasibility_capacity_bound)
         end
+
+        # Unknown mode starts from the same sampled structure as feasible mode
+        # but applies genuine labor and workload shocks. It exposes no witness
+        # or infeasibility certificate and makes no solver-status promise.
+        feasible_model, feasible_problem =
+            generate_problem(ref, 260, feasible, 23)
+        unknown_model, unknown_problem =
+            generate_problem(ref, 260, unknown, 23)
+        @test unknown_problem.profile == feasible_problem.profile
+        @test unknown_problem.pattern_coverage ==
+              feasible_problem.pattern_coverage
+        @test unknown_problem.column_pools == feasible_problem.column_pools
+        @test unknown_problem.column_patterns ==
+              feasible_problem.column_patterns
+        @test unknown_problem.column_skills == feasible_problem.column_skills
+        @test unknown_problem.pool_capacities !=
+              feasible_problem.pool_capacities
+        @test unknown_problem.demand != feasible_problem.demand
+        @test unknown_problem.feasible_staffing === nothing
+        @test unknown_problem.infeasible_skill === nothing
+        @test unknown_problem.infeasibility_capacity_bound === nothing
 
         if HAS_HIGHS
             for seed in 1:6, status in (feasible, infeasible)
@@ -464,6 +608,11 @@ end
                 expected = status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE
                 @test termination_status(model) == expected
             end
+            set_optimizer(unknown_model, HiGHS.Optimizer)
+            set_silent(unknown_model)
+            optimize!(unknown_model)
+            @test termination_status(unknown_model) in
+                  (MOI.OPTIMAL, MOI.INFEASIBLE)
         end
     end
 

@@ -18,11 +18,12 @@ length, skill names, demand curve, shift lengths, pool availability, and wage
 range. There are no undercoverage variables: unmet demand makes the LP
 infeasible rather than providing an always-feasible penalized escape.
 
-For a `feasible` request, `reference_staffing` is a planted feasible point and
-pool capacities are derived from its usage. For `infeasible`, one skill's
-period demands are scaled above an aggregate capacity upper bound valid for
-the continuous LP. For `unknown`, capacities and demand receive independent
-market/load shocks and no status is forced.
+For a `feasible` request, `feasible_staffing` stores a planted feasible point
+and pool capacities are derived from its usage. It is `nothing` for other
+statuses. For `infeasible`, `infeasible_skill` and
+`infeasibility_capacity_bound` identify the aggregate skill-capacity
+certificate; both are `nothing` otherwise. For `unknown`, capacities and
+demand receive independent market/load shocks and no status is forced.
 """
 struct WorkforceShiftCoveringProblem <: ProblemGenerator
     profile::Symbol
@@ -48,7 +49,9 @@ struct WorkforceShiftCoveringProblem <: ProblemGenerator
     column_skills::Vector{Int}
     staffing_costs::Vector{Float64}
     demand::Matrix{Float64}
-    reference_staffing::Vector{Float64}
+    feasible_staffing::Union{Nothing,Vector{Float64}}
+    infeasible_skill::Union{Nothing,Int}
+    infeasibility_capacity_bound::Union{Nothing,Float64}
 end
 
 const _WORKFORCE_PROFILES = (
@@ -428,7 +431,7 @@ end
 # Greedily construct a continuous staffing witness for the generated demand.
 # Each update closes the largest remaining gap and can only improve other
 # periods covered by the same shift.
-function _workforce_reference_staffing(
+function _workforce_construction_staffing(
     demand::Matrix{Float64},
     column_pools::Vector{Int},
     column_patterns::Vector{Int},
@@ -610,23 +613,28 @@ function WorkforceShiftCoveringProblem(
     demand = _workforce_demand(
         rng, profile, spec.n_periods, n_skills, target,
     )
-    reference_staffing = _workforce_reference_staffing(
+    construction_staffing = _workforce_construction_staffing(
         demand, column_pools, column_patterns, column_skills,
         pattern_coverage, pool_productivity, staffing_costs,
     )
-    reference_usage = zeros(Float64, n_pools)
-    for column in eachindex(reference_staffing)
-        reference_usage[column_pools[column]] += reference_staffing[column]
+    construction_usage = zeros(Float64, n_pools)
+    for column in eachindex(construction_staffing)
+        construction_usage[column_pools[column]] += construction_staffing[column]
     end
 
     pool_capacities = zeros(Float64, n_pools)
     for pool in 1:n_pools
-        reserve = max(0.35, reference_usage[pool] * (0.05 + 0.08 * rand(rng)))
+        reserve = max(0.35, construction_usage[pool] * (0.05 + 0.08 * rand(rng)))
         pool_capacities[pool] = round(
-            max(reference_usage[pool] + reserve, 0.75 + 1.75 * rand(rng)),
+            max(construction_usage[pool] + reserve, 0.75 + 1.75 * rand(rng)),
             digits=3,
         )
     end
+
+    feasible_staffing = feasibility_status == feasible ?
+                        construction_staffing : nothing
+    infeasible_skill = nothing
+    infeasibility_capacity_bound = nothing
 
     if feasibility_status == unknown
         # Independent labor-market and workload shocks deliberately make no
@@ -662,6 +670,8 @@ function WorkforceShiftCoveringProblem(
         ratios = [bounds[skill] / sum(demand[:, skill])
                   for skill in 1:n_skills]
         certificate_skill = argmin(ratios)
+        infeasible_skill = certificate_skill
+        infeasibility_capacity_bound = bounds[certificate_skill]
         required_total = bounds[certificate_skill] +
                          max(0.5, 0.03 * bounds[certificate_skill])
         scale = required_total / sum(demand[:, certificate_skill])
@@ -698,7 +708,9 @@ function WorkforceShiftCoveringProblem(
         column_skills,
         staffing_costs,
         demand,
-        reference_staffing,
+        feasible_staffing,
+        infeasible_skill,
+        infeasibility_capacity_bound,
     )
 end
 

@@ -4,6 +4,38 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-28 22:48 UTC (workforce covering review hardening)
+
+**Previous Commit**: `cdbf637`
+
+**Summary**: Followed up on PR #40's independent review with exact semantic,
+model-contract, profile-scaling, unknown-mode, and status-metadata tests. Made
+the staffing witness and infeasibility certificate status-aware so stored
+metadata cannot be misread after demand/capacity perturbations.
+
+**Details**:
+- Replaced the always-present `reference_staffing` with
+  `feasible_staffing::Union{Nothing,Vector{Float64}}`; only requested-feasible
+  instances expose the planted witness.
+- Added `infeasible_skill` and `infeasibility_capacity_bound` metadata only for
+  requested-infeasible instances. Unknown instances expose neither a witness
+  nor a certificate.
+- Reconstruct every pattern's start/span window in tests, including
+  wraparound, break exclusion, paid support length, wrap flags, and global
+  support deduplication.
+- Assert the exact JuMP contract: one continuous nonnegative variable block,
+  minimization, and objective coefficients equal to stored staffing costs.
+- Exercise every profile at 1,500 variables, both four-skill branches, the
+  profile-dependent structural floor at target 1, and different-seed diversity
+  within each profile.
+- Compare unknown generation with its same-seed feasible baseline, require
+  genuine demand/capacity perturbation, and accept either feasible or
+  infeasible HiGHS outcomes without assigning a label.
+- Verification: `julia --project=@. test/runtests.jl` — 8,048/8,048 passed
+  (solver-backed sets skipped outside the `Pkg.test` sandbox).
+- Verification: `julia --project=@. -e 'using Pkg; Pkg.test()'` —
+  8,262/8,262 passed, including all HiGHS-backed checks.
+
 ## 2026-08-28 22:36 UTC (workforce shift-pattern covering)
 
 **Previous Commit**: `e3f4736`

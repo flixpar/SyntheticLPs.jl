@@ -46,15 +46,19 @@ not emitted.
 
 ## Feasibility and sizing
 
-- `feasible`: demand is covered by the stored `reference_staffing` witness,
-  and pool capacities are set above that witness's usage.
+- `feasible`: demand is covered by the stored `feasible_staffing` witness,
+  and pool capacities are set above that witness's usage. This field is
+  `nothing` for `infeasible` and `unknown` instances.
 - `infeasible`: one skill's demand curve is scaled above an aggregate capacity
   certificate. For each pool, the certificate permits its entire capacity to
   use its longest eligible pattern, so violating this upper bound proves
-  infeasibility even for the continuous LP.
+  infeasibility even for the continuous LP. `infeasible_skill` and
+  `infeasibility_capacity_bound` store this certificate and are `nothing` for
+  the other statuses.
 - `unknown`: independently sampled workload and labor-market shocks are
-  applied without forcing either status.
+  applied without forcing either status; no witness or certificate is exposed.
 
 The only variables are selected staffing columns. Normal targets are therefore
 matched exactly, including targets above 1,000 variables; only very small
-targets may be raised to the minimum column cover for every skill-period.
+targets (including `target_variables=1`) are raised to the compact skill-period
+cover plus representative generated labor-pool columns.
