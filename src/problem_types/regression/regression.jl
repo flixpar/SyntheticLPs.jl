@@ -5,11 +5,11 @@
 # network and allocation generators, these produce *dense* data-matrix LPs, which
 # diversifies the numerical and structural profile of the test set.
 #
-# The three variants (least-absolute-deviations, quantile, and Chebyshev/minimax
-# regression) share the same underlying data — a design matrix, a response, box
-# bounds on the coefficients, and a coefficient side constraint — so the common
-# data generation lives here and each variant file only differs in its objective
-# (the loss being minimized).
+# The least-absolute-deviations, quantile, and Chebyshev/minimax variants share
+# the same underlying data — a design matrix, a response, box bounds on the
+# coefficients, and a coefficient side constraint — so their common data
+# generation lives here. Basis pursuit is a sparse-recovery formulation with
+# exact measurements and has its own profile-aware data generator.
 
 using Random
 using Distributions
@@ -73,3 +73,4 @@ end
 include("lad.jl")
 include("quantile.jl")
 include("chebyshev.jl")
+include("basis_pursuit.jl")
