@@ -55,7 +55,7 @@ with more than one variant are annotated below.
 - Scheduling
 - Set System — variants: `set_cover`, `set_packing`, `set_partitioning`, `combinatorial_auction`
 - Stochastic Program (two-stage with recourse; dual block-angular structure)
-- Supply Chain — variants: `standard`, `single_source`, `carbon`, `multi_product`
+- Supply Chain — variants: `standard`, `single_source`, `carbon`, `multi_product`, `network_planning` (multi-period, multi-product LP with sparse lanes, specialized production, shared capacity, inventory carryover, and regional/seasonal/disruption profiles)
 - Crop Planning
 - Telecom Network Design
 - TSP — variants: `standard` (symmetric lifted MTZ), `asymmetric` (one-way-street ATSP), `flow` (single-commodity flow), `time_windows` (appointment delivery), `assignment_relaxation` (strengthened degree LP), `prize_collecting` (quota tour), `multiple_salespersons` (balanced fleet), `precedence` (ordered tasks)
@@ -67,6 +67,15 @@ Several categories ship multiple variants — for example `energy` has `standard
 (generation mix) and `dc_opf` (DC optimal power flow), and `regression` has
 `lad`, `quantile`, `chebyshev`, and `basis_pursuit` — selectable via the
 `variant=` keyword or a `"category/variant"` reference (see below).
+
+`supply_chain/network_planning` accepts targets through 1,000,000 variables;
+larger requests raise `ArgumentError` before allocating the sparse arc data.
+Its status metadata is explicit: only feasible requests store a
+`feasible_witness`, only infeasible requests store an
+`infeasibility_certificate`, and unknown requests store a correlated
+`nominal_scenario`. Unknown scenarios preserve local lane service while varying
+network-wide production/resource conditions, so they naturally include both
+feasible and infeasible instances without acting as a hidden infeasible mode.
 
 ## Usage
 

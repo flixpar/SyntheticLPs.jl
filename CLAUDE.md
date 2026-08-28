@@ -121,6 +121,12 @@ SyntheticLPs uses a type-based dispatch system for generating realistic linear p
   - A `register_variant(:category, :variant, VariantStruct, "description")` call (which lazily creates the category if needed)
 - Structs store ALL data needed to build the model (costs, capacities, demands, etc.)
 - Constructors contain ALL randomness; `build_model` is completely deterministic
+- `supply_chain/network_planning` is capped at a documented 1,000,000-variable
+  target because each sparse shipment coordinate is represented in multiple
+  dictionaries and JuMP structures; larger targets raise `ArgumentError`
+  instead of silently undersizing. Its optional metadata fields are
+  status-specific (`feasible_witness`, `infeasibility_certificate`, or
+  `nominal_scenario`), while disruption metadata depends only on the profile.
 
 **Utility Scripts**:
 - `scripts/generate_problem.jl`: Command-line interface for problem generation
@@ -188,7 +194,7 @@ Categories with multiple variants are listed with them below.
 - Transportation (`standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`, `fixed_charge`), Diet Problem (`standard`, `nutrient_bounds`, `food_groups`), Knapsack (`standard`, `multidimensional`, `bounded`, `mixed_integer_set`), Portfolio (`cvar`, `tracking_error`), Network Flow (`standard`, `generalized_flow`)
 - Multi-Commodity Flow (`standard`, `binary_capacity`, `integer_flow`), Assignment (`standard`, `workload_balance`), Blending (`standard`, `equipment_batches`, `multi_product`), Container Loading (`standard`, `two_dimensional_bin_packing`), Facility Location (`standard`, `two_echelon`, `p_median`)
 - Cutting Stock (`standard`, `setup_cost`, `due_dates`, `integer_patterns`), Energy (`standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`, `optimal_transmission_switching`), Inventory (`standard`, `lot_sizing`, `multi_item`, `multi_echelon`), Load Balancing (`standard`, `discrete_placement`)
-- Graph Optimization (`independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`), Set System (`set_cover`, `set_packing`, `set_partitioning`, `combinatorial_auction`), Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`)
+- Graph Optimization (`independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`), Set System (`set_cover`, `set_packing`, `set_partitioning`, `combinatorial_auction`), Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`, `network_planning`)
 - TSP (`standard`, `asymmetric`, `flow`, `time_windows`, `assignment_relaxation`, `prize_collecting`, `multiple_salespersons`, `precedence`), Vehicle Routing (`cvrp`), Regression (`lad`, `quantile`, `chebyshev`, `basis_pursuit`), Workforce Shift Scheduling (`covering`)
 - Single-variant categories: Airline Crew, Bin Packing, Crop Planning, Feed Blending, Generic MILP, Job Shop Scheduling, Land Use, Maritime Inventory Routing, Neural Network Verification, Nurse Scheduling, Product Mix, Production Planning, Project Selection, Resilient Network Design, Resource Allocation, Revenue Management, Scheduling, Stochastic Program, Telecom Network Design, Unit Commitment
 
@@ -197,8 +203,9 @@ Categories with multiple variants are listed with them below.
 The corpus deliberately mixes three model classes; treat the names accordingly:
 - **Pure LPs**: continuous formulations (e.g. transportation variants, diet
   variants, blending variants, most energy variants, `network_flow/generalized_flow`,
-  both portfolio variants `cvar`/`tracking_error`, regression variants, revenue
-  management, stochastic program, and `workforce_shift_scheduling/covering`).
+  both portfolio variants `cvar`/`tracking_error`, `supply_chain/network_planning`
+  (multi-period, multi-product planning with inventory), regression variants,
+  revenue management, stochastic program, and `workforce_shift_scheduling/covering`).
 - **MIPs** (binary/integer variables): e.g. `facility_location` variants
   (including `p_median`), `cutting_stock/setup_cost`, `inventory/lot_sizing`,
   `bin_packing`, `job_shop_scheduling`, `supply_chain/single_source`,

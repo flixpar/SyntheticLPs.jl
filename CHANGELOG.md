@@ -20,6 +20,81 @@ nonzero column measured, including sparse width-one instances.
   certificate rows. Tests require nonempty rows and columns for every status,
   plus a 200-seed sparse infeasible sweep at target 20.
 
+## 2026-08-28 23:10 UTC (network-planning exhaustive formulation tests)
+
+**Previous Commit**: `d553526`
+
+**Summary**: Strengthened PR #41 tests so planted-plan nonnegativity, exact
+open-arc keysets, complete JuMP row support, and multi-seed profile contracts
+are regression-checked.
+
+**Details**:
+- Feasible-witness tests now require nonnegative production, inventory, and
+  shipment values, and require shipment keys to equal the open-arc set.
+- Inventory, demand, and shared-resource rows are checked exhaustively:
+  complete affine support, coefficients, RHS, and named constraint-family
+  counts, including that unrelated variables have coefficient zero.
+- Regional, seasonal-prebuild, and disruption profile invariants now run over
+  four seeds each rather than a single representative.
+
+## 2026-08-28 22:59 UTC (network-planning review hardening)
+
+**Previous Commit**: `465efbf`
+
+**Summary**: Addressed PR #41 review findings around large-target behavior,
+unknown-status sampling, status metadata, and exact formulation coverage.
+
+**Details**:
+- Requests above the documented 1,000,000-variable resource limit now raise
+  `ArgumentError` before allocating arc data. The analytical dimension search
+  reaches that supported boundary exactly and no longer has a hidden
+  5,000-customer clamp.
+- Unknown instances now use correlated network-wide supply and lane scenarios
+  with small plant/product/time effects. Every sparse demand node retains at
+  least 103% nominal inbound lane capacity, preventing the previous
+  almost-certain singleton-cut infeasibility while aggregate capacity remains
+  naturally uncertain.
+- Replaced witness, certificate, and disruption zero sentinels with optional
+  status-aware metadata records. A feasible witness is stored only for
+  feasible requests; unknown and infeasible post-perturbation baselines are no
+  longer presented as witnesses.
+- Named the inventory, demand, and shared-resource constraint blocks and added
+  exact JuMP coefficient/RHS/domain/bound/objective assertions.
+- Expanded durable coverage for tiny targets, a 100,000-variable construction,
+  the supported size boundary and rejection boundary, sparse degree/coordinate
+  invariants, profile economics and disruption effects, all-field
+  determinism, same-profile topology diversity, repeated MPS bytes, and a
+  solver-backed mixed-outcome unknown sample.
+
+## 2026-08-28 22:39 UTC (supply-chain network planning)
+
+**Previous Commit**: `e3f4736`
+
+**Summary**: Added `supply_chain/network_planning`, a multi-period,
+multi-product LP with sparse period-specific shipment lanes, plant inventory,
+specialized production, shared resource capacity, exact demand service, and
+materially different regional, seasonal-prebuild, and disruption profiles.
+
+**Details**:
+- A target-driven dimension and arc-budget search counts the production,
+  inventory, and open-arc shipment blocks actually created. Closed lanes have
+  no variables or fixed-zero rows.
+- Spatially correlated freight costs and capacities combine customer/plant
+  regions, distance, product specialization, time effects, and disruption
+  surcharges. Production and holding costs remain economically positive.
+- Feasible requests store a complete production/shipment/inventory witness.
+  Demand equalities prevent unmet service and over-shipment; inventory
+  equalities use `previous + production - shipment = ending inventory`.
+- Infeasible requests store a product/time cumulative cut certificate. Its
+  upper bound includes initial stock, every product and shared-resource
+  production bound, and all inbound lane limits, and is strictly below
+  cumulative demand.
+- Tests cover registration, target sizing from 50 to 5,000 variables, witness
+  arithmetic, certificate arithmetic, sparse topology, specialization and
+  profile behavior, exact same-seed data/model/MPS reproducibility,
+  different-seed diversity, repeated builds, and HiGHS-backed status checks
+  over multiple seeds.
+
 ## 2026-08-28 22:47 UTC (basis-pursuit review hardening)
 
 **Previous Commit**: `ce59087`
