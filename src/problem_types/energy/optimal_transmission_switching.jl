@@ -86,11 +86,15 @@ function OptimalTransmissionSwitchingProblem(
         parent_idx = rand(rng, 1:(idx - 1))
         _ots_add_line!(line_from, line_to, edge_set, order[parent_idx], order[idx])
     end
-    candidates = [(i, j) for i in 1:n_buses for j in (i + 1):n_buses]
-    shuffle!(rng, candidates)
-    for (i, j) in candidates
-        length(line_from) >= n_lines && break
-        _ots_add_line!(line_from, line_to, edge_set, i, j)
+    # Sample extra mesh lines by rejection rather than materializing the
+    # complete undirected edge set (Θ(n_buses²) pairs, of which only
+    # ~0.45–1.05 per bus are kept). Matches `energy/dc_opf`.
+    attempts = 0
+    max_attempts = 50 * n_lines
+    while length(line_from) < n_lines && attempts < max_attempts
+        attempts += 1
+        _ots_add_line!(line_from, line_to, edge_set,
+                       rand(rng, 1:n_buses), rand(rng, 1:n_buses))
     end
     n_lines = length(line_from)
 
