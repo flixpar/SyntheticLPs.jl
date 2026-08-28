@@ -14,7 +14,8 @@ knapsack and all-binary multidimensional variants.
 - `n_integer`, `n_continuous`: Sizes of the general-integer and continuous blocks.
 - `n_rows`: Number of packing/resource rows.
 - `integer_upper`, `continuous_upper`: Finite variable upper bounds.
-- `coefficients`: Row matrix over both variable blocks; structural zeros encode sparsity.
+- `row_indices`, `row_coefficients`: Sparse supports; only generated nonzeros
+  are stored, so mixed sparse/dense rows stay compact at large `n`.
 - `capacities`: Packing-row right-hand sides.
 - `profits`: Positive objective coefficients over both blocks.
 - `minimum_profit`: Optional verification floor. For infeasible instances it
@@ -29,13 +30,29 @@ struct MixedIntegerKnapsackSetProblem <: ProblemGenerator
     n_rows::Int
     integer_upper::Vector{Int}
     continuous_upper::Vector{Float64}
-    coefficients::Matrix{Float64}
+    row_indices::Vector{Vector{Int}}
+    row_coefficients::Vector{Vector{Float64}}
     capacities::Vector{Float64}
     profits::Vector{Float64}
     minimum_profit::Float64
     planted_integer::Vector{Int}
     planted_continuous::Vector{Float64}
     dense_rows::BitVector
+end
+
+# Sample `k` distinct columns. Sparse rows (k ≪ n) use a set; dense rows fall
+# back to a permutation prefix, which is cheaper once k is a large fraction of n.
+function _mik_sample_support(rng::AbstractRNG, n::Int, k::Int)
+    k >= n && return collect(1:n)
+    if 3k < n
+        picked = Set{Int}()
+        sizehint!(picked, k)
+        while length(picked) < k
+            push!(picked, rand(rng, 1:n))
+        end
+        return collect(picked)
+    end
+    return randperm(rng, n)[1:k]
 end
 
 """
@@ -79,7 +96,8 @@ function MixedIntegerKnapsackSetProblem(
     end
     planted = vcat(Float64.(planted_integer), planted_continuous)
 
-    coefficients = zeros(Float64, n_rows, n_variables)
+    row_indices = Vector{Vector{Int}}(undef, n_rows)
+    row_coefficients = Vector{Vector{Float64}}(undef, n_rows)
     capacities = zeros(Float64, n_rows)
     dense_rows = falses(n_rows)
 
@@ -91,15 +109,18 @@ function MixedIntegerKnapsackSetProblem(
         else
             clamp(round(Int, n_variables * (0.03 + 0.07 * rand(rng))), 1, n_variables)
         end
-        support = randperm(rng, n_variables)[1:support_size]
-        for column in support
+        support = _mik_sample_support(rng, n_variables, support_size)
+        coefs = Vector{Float64}(undef, length(support))
+        for j in eachindex(support)
             # Integer-valued resource coefficients dominate, with a small
             # continuous perturbation to retain the mixed numeric regime.
-            coefficients[row, column] = rand(rng, 1:50) * (0.9 + 0.2 * rand(rng))
+            coefs[j] = rand(rng, 1:50) * (0.9 + 0.2 * rand(rng))
         end
-        planted_activity = sum(coefficients[row, :] .* planted)
+        row_indices[row] = support
+        row_coefficients[row] = coefs
+        planted_activity = sum(coefs[j] * planted[support[j]] for j in eachindex(support); init=0.0)
         # Positive additive slack also handles a row whose planted support is zero.
-        row_scale = sum(coefficients[row, :])
+        row_scale = sum(coefs)
         capacities[row] = planted_activity * (1.05 + 0.25 * rand(rng)) +
                           max(1.0, 0.02 * row_scale)
     end
@@ -109,7 +130,7 @@ function MixedIntegerKnapsackSetProblem(
     profits = vcat(integer_profit, continuous_profit)
     planted_profit = sum(profits .* planted)
     box_upper = sum(profits[1:n_integer] .* integer_upper) +
-                sum(profits[n_integer + j] * continuous_upper[j] for j in 1:n_continuous)
+                sum(profits[n_integer + j] * continuous_upper[j] for j in 1:n_continuous; init=0.0)
 
     minimum_profit = if feasibility_status == feasible
         planted_profit * (0.70 + 0.20 * rand(rng))
@@ -127,7 +148,8 @@ function MixedIntegerKnapsackSetProblem(
         n_rows,
         integer_upper,
         continuous_upper,
-        coefficients,
+        row_indices,
+        row_coefficients,
         capacities,
         profits,
         minimum_profit,
@@ -157,22 +179,24 @@ function build_model(prob::MixedIntegerKnapsackSetProblem)
     )
 
     for row in 1:prob.n_rows
-        @constraint(
-            model,
-            sum(prob.coefficients[row, i] * integer_items[i] for i in 1:prob.n_integer) +
-            sum(
-                prob.coefficients[row, prob.n_integer + j] * continuous_items[j]
-                for j in 1:prob.n_continuous
-            ) <= prob.capacities[row],
-        )
+        expr = AffExpr()
+        for (column, coefficient) in zip(prob.row_indices[row], prob.row_coefficients[row])
+            if column <= prob.n_integer
+                add_to_expression!(expr, coefficient, integer_items[column])
+            else
+                add_to_expression!(expr, coefficient, continuous_items[column - prob.n_integer])
+            end
+        end
+        @constraint(model, expr <= prob.capacities[row])
     end
 
-    total_profit =
-        sum(prob.profits[i] * integer_items[i] for i in 1:prob.n_integer) +
-        sum(
-            prob.profits[prob.n_integer + j] * continuous_items[j]
-            for j in 1:prob.n_continuous
-        )
+    total_profit = AffExpr()
+    for i in 1:prob.n_integer
+        add_to_expression!(total_profit, prob.profits[i], integer_items[i])
+    end
+    for j in 1:prob.n_continuous
+        add_to_expression!(total_profit, prob.profits[prob.n_integer + j], continuous_items[j])
+    end
     @constraint(model, total_profit >= prob.minimum_profit)
     @objective(model, Max, total_profit)
 

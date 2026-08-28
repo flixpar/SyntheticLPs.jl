@@ -4,6 +4,27 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-28 18:13 UTC (knapsack/mixed_integer_set sparse rows)
+
+**Previous Commit**: `2ed76fe`
+
+**Summary**: PR-review fix — the mixed-integer knapsack-set constructor stored
+a dense `n_rows × n_variables` coefficient matrix even though most entries are
+structural zeros (`n_rows` is 60–90% of `n`). A 10,000-variable request used
+roughly 480–720 MB for that field, and `build_model` scanned every stored zero.
+Rows are now stored sparsely and assembled from their nonzeros.
+
+**Details**:
+- Replaced `coefficients::Matrix{Float64}` with parallel `row_indices` /
+  `row_coefficients` vectors. Capacities and the JuMP rows iterate only
+  generated nonzeros.
+- Sparse supports (3–10% density) are sampled with a set; dense rows still use
+  a permutation prefix, which is cheaper once the requested width is a large
+  fraction of `n`.
+- Empty continuous-block `sum`s use `init=0.0` so the documented `n = 1`
+  instance (no continuous variables) no longer throws.
+- Tests: `n = 1` generation plus sparse-support integrity checks at target 80.
+
 ## 2026-08-27 13:03 UTC (tsp/flow exact dimension sizing)
 
 **Previous Commit**: `aa98448`
