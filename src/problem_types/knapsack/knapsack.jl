@@ -9,3 +9,4 @@
 include("standard.jl")
 include("multidimensional.jl")
 include("bounded.jl")
+include("mixed_integer_set.jl")
