@@ -478,6 +478,12 @@ end
         @test_nowarn generate_problem("tsp/precedence", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/prize_collecting", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/assignment_relaxation", 3, infeasible, 1)
+        # generic_milp samples each row support in O(width) rather than
+        # permuting all n columns; keep a moderately large constructor cheap.
+        @test_nowarn generate_problem("generic_milp/standard", 3, unknown, 1)
+        _, gmilp = generate_problem("generic_milp/standard", 200, unknown, 1)
+        @test all(issorted(row.indices) && allunique(row.indices) for row in gmilp.rows)
+        @test all(1 <= length(row.indices) <= gmilp.n_variables for row in gmilp.rows)
         # energy now stores an emissions intensity target (the previous per-period
         # emissions row was an algebraic tautology).
         _, eprob = generate_problem("energy/standard", 120, unknown, 1)

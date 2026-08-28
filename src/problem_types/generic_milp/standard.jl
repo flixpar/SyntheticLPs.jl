@@ -91,11 +91,24 @@ function _generic_variable_layout(rng::AbstractRNG, n::Int)
     return domains, lower, upper, witness
 end
 
+# Draw `width` distinct column indices in expected O(width) time. A full
+# `randperm(n)` would be Θ(n) per row and therefore Θ(n²) across the Θ(n)
+# rows this generator creates.
+function _generic_sample_indices(rng::AbstractRNG, n::Int, width::Int)
+    width == n && return collect(1:n)
+    picked = Set{Int}()
+    sizehint!(picked, width)
+    while length(picked) < width
+        push!(picked, rand(rng, 1:n))
+    end
+    return sort!(collect(picked))
+end
+
 function _generic_sparse_support(rng::AbstractRNG, n::Int)
     # Square-root growth keeps rows sparse at large n without making small
     # instances singletons.
     width = clamp(round(Int, 2 + sqrt(n) * rand(rng, 0.5:0.1:1.2)), 2, n)
-    return sort!(randperm(rng, n)[1:width])
+    return _generic_sample_indices(rng, n, width)
 end
 
 function _generic_coefficients(rng::AbstractRNG, width::Int; nonnegative::Bool=false)
