@@ -316,6 +316,43 @@ end
         @test length(large_profiles[:continuous_operations].skill_names) == 4
         @test length(large_profiles[:retail].skill_names) == 3
 
+        # Validate one large four-skill instance end to end: the stored
+        # witness respects pool capacities, covers every row (including skill
+        # 4), and the named model row block has exactly the expected shape.
+        large_model, large_problem =
+            generate_problem(ref, 1500, feasible, 2)
+        @test large_problem.feasibility_status == feasible
+        @test length(large_problem.skill_names) == 4
+        large_witness = something(large_problem.feasible_staffing)
+        for pool in eachindex(large_problem.pool_names)
+            usage = sum(
+                large_witness[column]
+                for column in eachindex(large_problem.column_pools)
+                if large_problem.column_pools[column] == pool
+            )
+            @test usage <= large_problem.pool_capacities[pool] + 1e-8
+        end
+        large_coverage_rows = large_model[:skill_coverage]
+        @test size(large_coverage_rows) == (large_problem.n_periods, 4)
+        @test length(large_coverage_rows) == 4 * large_problem.n_periods
+        @test all(is_valid(large_model, large_coverage_rows[period, 4])
+                  for period in 1:large_problem.n_periods)
+        for period in 1:large_problem.n_periods, skill in 1:4
+            row = constraint_object(large_coverage_rows[period, skill])
+            @test row.set.lower == large_problem.demand[period, skill]
+            supplied = sum(
+                large_problem.pool_productivity[
+                    large_problem.column_pools[column], skill,
+                ] * large_witness[column]
+                for column in eachindex(large_problem.column_pools)
+                if large_problem.column_skills[column] == skill &&
+                   large_problem.pattern_coverage[
+                       period, large_problem.column_patterns[column],
+                   ]
+            )
+            @test supplied + 1e-8 >= large_problem.demand[period, skill]
+        end
+
         # Exact field and model reproducibility, including repeated builds and
         # deterministic MPS export.
         model1, problem1 = generate_problem(ref, 320, unknown, 12345)
@@ -503,6 +540,7 @@ end
         # The planted staffing vector proves feasible requests directly.
         for seed in 1:6
             _, problem = generate_problem(ref, 260, feasible, seed)
+            @test problem.feasibility_status == feasible
             @test problem.feasible_staffing !== nothing
             @test problem.infeasible_skill === nothing
             @test problem.infeasibility_capacity_bound === nothing
@@ -535,6 +573,7 @@ end
         # every requested-infeasible instance.
         for seed in 1:6
             _, problem = generate_problem(ref, 260, infeasible, seed)
+            @test problem.feasibility_status == infeasible
             @test problem.feasible_staffing === nothing
             @test problem.infeasible_skill !== nothing
             @test problem.infeasibility_capacity_bound !== nothing
@@ -585,6 +624,8 @@ end
             generate_problem(ref, 260, feasible, 23)
         unknown_model, unknown_problem =
             generate_problem(ref, 260, unknown, 23)
+        @test feasible_problem.feasibility_status == feasible
+        @test unknown_problem.feasibility_status == unknown
         @test unknown_problem.profile == feasible_problem.profile
         @test unknown_problem.pattern_coverage ==
               feasible_problem.pattern_coverage
@@ -613,6 +654,10 @@ end
             optimize!(unknown_model)
             @test termination_status(unknown_model) in
                   (MOI.OPTIMAL, MOI.INFEASIBLE)
+            set_optimizer(large_model, HiGHS.Optimizer)
+            set_silent(large_model)
+            optimize!(large_model)
+            @test termination_status(large_model) == MOI.OPTIMAL
         end
     end
 

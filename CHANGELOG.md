@@ -4,6 +4,25 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-28 22:57 UTC (workforce covering final review)
+
+**Previous Commit**: `61fe6ed`
+
+**Summary**: Applied PR #40's final documentation and test-review corrections.
+
+**Details**:
+- Clarified that the infeasibility certificate uses each pool's longest
+  **selected** pattern serving the certified skill.
+- Asserted stored `feasibility_status` coherence for feasible, infeasible, and
+  unknown constructions.
+- Added an end-to-end 1,500-variable, four-skill test covering the planted
+  witness, all named skill-period rows (explicitly including skill 4), and an
+  optimal HiGHS solve.
+- Verification: `julia --project=@. test/runtests.jl` — 8,270/8,270 passed
+  (solver-backed sets skipped outside the `Pkg.test` sandbox).
+- Verification: `julia --project=@. -e 'using Pkg; Pkg.test()'` —
+  8,485/8,485 passed, including the large four-skill solve.
+
 ## 2026-08-28 22:48 UTC (workforce covering review hardening)
 
 **Previous Commit**: `cdbf637`
