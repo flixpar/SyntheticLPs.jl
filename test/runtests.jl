@@ -172,6 +172,188 @@ end
         @test_throws ErrorException generate_problem(:transportation, 50, unknown, 0; variant=:nope)
     end
 
+    corpus_additions = (
+        "container_loading/standard",
+        "container_loading/two_dimensional_bin_packing",
+        "cutting_stock/integer_patterns",
+        "energy/optimal_transmission_switching",
+        "generic_milp/standard",
+        "graph_optimization/generalized_independent_set",
+        "graph_optimization/independent_set",
+        "graph_optimization/map_labeling",
+        "graph_optimization/quasi_clique",
+        "graph_optimization/vertex_coloring",
+        "graph_optimization/vertex_cover",
+        "knapsack/mixed_integer_set",
+        "load_balancing/discrete_placement",
+        "maritime_inventory_routing/standard",
+        "multi_commodity_flow/binary_capacity",
+        "multi_commodity_flow/integer_flow",
+        "neural_network_verification/relu_big_m",
+        "resilient_network_design/standard",
+        "set_system/combinatorial_auction",
+        "set_system/set_cover",
+        "set_system/set_packing",
+        "set_system/set_partitioning",
+        "transportation/fixed_charge",
+    )
+    registered_refs = Set(string.(list_problems()))
+    corpus_ready = all(ref -> ref in registered_refs, corpus_additions)
+
+    # This cross-family contract activates automatically once the prerequisite
+    # family PRs are present; the preset API itself is tested independently below.
+    if corpus_ready
+    @testset "Generic MILP and corpus preset" begin
+        @test list_variants(:generic_milp) == [:standard]
+        model, problem = generate_problem("generic_milp/standard", 100, feasible, 19;
+                                          relax_integer = false)
+        variables = all_variables(model)
+        @test num_variables(model) == 100
+        @test count(is_binary, variables) == 55
+        @test count(is_integer, variables) == 20
+        @test Set(row.sense for row in problem.rows) == Set((:le, :ge, :eq, :range))
+        @test any(!isfinite(problem.lower_bounds[i]) &&
+                  !isfinite(problem.upper_bounds[i]) for i in eachindex(problem.lower_bounds))
+        @test any(problem.lower_bounds[i] == problem.upper_bounds[i]
+                  for i in eachindex(problem.lower_bounds))
+
+        relaxed, _ = generate_problem("generic_milp/standard", 100, feasible, 19)
+        @test !any(is_binary, all_variables(relaxed))
+        @test !any(is_integer, all_variables(relaxed))
+
+        preset = corpus_matched_preset()
+        @test preset.name == :corpus_matched
+        @test preset.version == "2026-07-26.v1"
+        @test !preset.relax_integer
+        @test sum(pair.second for pair in preset.family_weights) == 39_870
+
+        mktempdir() do directory
+            instances = generate_dataset(
+                preset;
+                num_problems = 3,
+                size_distribution = Uniform(50, 55),
+                match_size_distribution = false,
+                output_dir = directory,
+                seed = 91,
+                optimizer = sin,  # non-JSON Julia object must be recorded textually
+            )
+            @test length(instances) == 3
+            @test all(inst.filename !== nothing for inst in instances)
+            manifest = JSON.parsefile(joinpath(directory, "manifest.json"))
+            @test manifest["config"]["preset"]["name"] == "corpus_matched"
+            @test manifest["config"]["preset"]["version"] == "2026-07-26.v1"
+            @test manifest["config"]["preset"]["integrality_policy"] == "preserved"
+            @test sum(values(manifest["config"]["preset"]["resolved_quotas"])) == 3
+            @test manifest["config"]["options"]["optimizer"] == "sin"
+            @test manifest["config"]["options"]["quality_filter"] == false
+            @test !isempty(manifest["config"]["preset"]["family_reports"])
+        end
+
+        mktempdir() do directory
+            generate_dataset(preset; num_problems = 0, output_dir = directory,
+                             size_distribution = nothing)
+            manifest = JSON.parsefile(joinpath(directory, "manifest.json"))
+            @test startswith(manifest["config"]["preset"]["size_distribution"],
+                             "truncated(Normal(500.0, 200.0)")
+        end
+
+        empty_preset = DatasetPreset(:bad, "v0", Pair{ProblemVariant,Float64}[],
+                                     Uniform(50, 60), false, "invalid")
+        duplicate_preset = DatasetPreset(
+            :bad, "v0",
+            [ProblemVariant(:generic_milp, :standard) => 1.0,
+             ProblemVariant(:generic_milp, :standard) => 2.0],
+            Uniform(50, 60), false, "invalid",
+        )
+        nonfinite_preset = DatasetPreset(
+            :bad, "v0", [ProblemVariant(:generic_milp, :standard) => Inf],
+            Uniform(50, 60), false, "invalid",
+        )
+        @test_throws ErrorException generate_dataset(empty_preset; num_problems = 0)
+        @test_throws ErrorException generate_dataset(duplicate_preset; num_problems = 1)
+        @test_throws ErrorException generate_dataset(nonfinite_preset; num_problems = 1)
+    end
+
+    @testset "Collected-corpus formulation domains" begin
+        expected_variants = Dict(
+            :container_loading => Set((:standard, :two_dimensional_bin_packing)),
+            :graph_optimization => Set((:independent_set, :generalized_independent_set,
+                                        :vertex_cover, :vertex_coloring, :map_labeling,
+                                        :quasi_clique)),
+            :set_system => Set((:set_cover, :set_packing, :set_partitioning,
+                                :combinatorial_auction)),
+        )
+        for (category, variants) in expected_variants
+            @test variants == Set(list_variants(category))
+        end
+
+        binary_refs = (
+            "energy/optimal_transmission_switching",
+            "load_balancing/discrete_placement",
+            "maritime_inventory_routing/standard",
+            "multi_commodity_flow/binary_capacity",
+            "neural_network_verification/relu_big_m",
+            "resilient_network_design/standard",
+            "transportation/fixed_charge",
+        )
+        for ref in binary_refs
+            model, _ = generate_problem(ref, 100, feasible, 7; relax_integer = false)
+            @test any(is_binary, all_variables(model))
+        end
+
+        integer_refs = (
+            "cutting_stock/integer_patterns",
+            "generic_milp/standard",
+            "knapsack/mixed_integer_set",
+            "multi_commodity_flow/integer_flow",
+        )
+        for ref in integer_refs
+            model, _ = generate_problem(ref, 100, feasible, 7; relax_integer = false)
+            @test any(is_integer, all_variables(model))
+        end
+    end
+    end
+
+    @testset "Dataset preset API" begin
+        preset = DatasetPreset(
+            :test_mixture,
+            "v1",
+            [ProblemVariant(:transportation, :standard) => 2.0,
+             ProblemVariant(:knapsack, :standard) => 1.0],
+            Uniform(50, 55),
+            false,
+            "Test mixture over baseline families",
+        )
+        mktempdir() do directory
+            instances = generate_dataset(
+                preset;
+                num_problems = 3,
+                match_size_distribution = false,
+                output_dir = directory,
+                seed = 91,
+                optimizer = sin,
+            )
+            @test length(instances) == 3
+            manifest = JSON.parsefile(joinpath(directory, "manifest.json"))
+            @test manifest["config"]["preset"]["name"] == "test_mixture"
+            @test manifest["config"]["preset"]["integrality_policy"] == "preserved"
+            @test sum(values(manifest["config"]["preset"]["resolved_quotas"])) == 3
+            @test manifest["config"]["options"]["optimizer"] == "sin"
+            @test !isempty(manifest["config"]["preset"]["family_reports"])
+        end
+
+        empty_preset = DatasetPreset(:bad, "v0", Pair{ProblemVariant,Float64}[],
+                                     Uniform(50, 60), false, "invalid")
+        duplicate_preset = DatasetPreset(
+            :bad, "v0",
+            [ProblemVariant(:transportation, :standard) => 1.0,
+             ProblemVariant(:transportation, :standard) => 2.0],
+            Uniform(50, 60), false, "invalid",
+        )
+        @test_throws ErrorException generate_dataset(empty_preset; num_problems = 0)
+        @test_throws ErrorException generate_dataset(duplicate_preset; num_problems = 1)
+    end
+
     # TSP family: registry wiring, data contracts, variable-count formulas, and
     # the Hall-deficit structure behind every infeasible branch.
     @testset "TSP Variants" begin
@@ -543,6 +725,20 @@ end
     # not resolvable, e.g. running this file directly with `julia --project=.`
     # rather than via `Pkg.test()`.
     if HAS_HIGHS
+
+    if corpus_ready
+    @testset "Collected-corpus feasibility contracts" begin
+        for ref in corpus_additions, relax in (true, false), status in (feasible, infeasible)
+            model, _ = generate_problem(ref, 50, status, 23; relax_integer = relax)
+            set_optimizer(model, HiGHS.Optimizer)
+            set_silent(model)
+            set_time_limit_sec(model, 30.0)
+            optimize!(model)
+            expected = status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE
+            @test termination_status(model) == expected
+        end
+    end
+    end
 
     # Project-level feasibility-contract verification via the `optimizer` kwarg.
     @testset "Feasibility Contract Verification" begin

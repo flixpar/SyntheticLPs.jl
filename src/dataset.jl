@@ -208,6 +208,195 @@ struct GeneratedInstance
 end
 
 """
+    DatasetPreset
+
+A versioned, inspectable recipe for a dataset mixture. `family_weights` are
+relative weights over concrete problem variants; they are normalized when the
+preset is generated. The size distribution and integrality policy are part of
+the preset's reproducibility contract.
+"""
+struct DatasetPreset
+    name::Symbol
+    version::String
+    family_weights::Vector{Pair{ProblemVariant,Float64}}
+    size_distribution::Any
+    relax_integer::Bool
+    description::String
+end
+
+"""
+    corpus_matched_preset() -> DatasetPreset
+
+Return the first version of the collected-corpus mixture. Its weights are based
+on distinct normalized hashes in the 2026-07-26 collected catalog for the
+first-wave families implemented by this package. It preserves integrality and
+uses a heavy-tailed size distribution instead of claiming exact per-family
+solver-difficulty calibration.
+"""
+function corpus_matched_preset()
+    counts = Pair{ProblemVariant,Float64}[
+        ProblemVariant(:generic_milp, :standard) => 10_100.0,
+        ProblemVariant(:graph_optimization, :generalized_independent_set) => 4_012.0,
+        ProblemVariant(:graph_optimization, :vertex_cover) => 4_000.0,
+        ProblemVariant(:graph_optimization, :independent_set) => 3_356.0,
+        ProblemVariant(:set_system, :set_cover) => 3_910.0,
+        ProblemVariant(:set_system, :combinatorial_auction) => 3_000.0,
+        ProblemVariant(:multi_commodity_flow, :binary_capacity) => 2_000.0,
+        ProblemVariant(:multi_commodity_flow, :integer_flow) => 2_000.0,
+        ProblemVariant(:neural_network_verification, :relu_big_m) => 3_692.0,
+        ProblemVariant(:energy, :optimal_transmission_switching) => 2_900.0,
+        ProblemVariant(:load_balancing, :discrete_placement) => 900.0,
+    ]
+    # Validate eagerly so a stale preset fails with the same useful registry
+    # errors as direct problem selection.
+    foreach(pair -> get_variant(pair.first), counts)
+    return DatasetPreset(
+        :corpus_matched,
+        "2026-07-26.v1",
+        counts,
+        # Deliberately stop below the extreme benchmark tail: several graph and
+        # verification formulations grow superlinearly in rows/nonzeros, so a
+        # 100-instance default must remain operationally bounded.
+        truncated(LogNormal(log(1_500.0), 1.0), 50.0, 20_000.0),
+        false,
+        "First-wave family mixture matched to distinct normalized hashes in the 2026-07-26 collected LP/MILP catalog",
+    )
+end
+
+function _preset_quotas(preset::DatasetPreset, num_problems::Int)
+    num_problems >= 0 || error("num_problems must be non-negative.")
+    isempty(preset.family_weights) &&
+        error("A DatasetPreset must contain at least one family weight.")
+    refs = first.(preset.family_weights)
+    length(unique(refs)) == length(refs) ||
+        error("Dataset preset family variants must be unique.")
+    foreach(get_variant, refs)
+    weights = [pair.second for pair in preset.family_weights]
+    all(weight -> isfinite(weight) && weight > 0, weights) ||
+        error("Dataset preset weights must all be finite and positive.")
+    normalized = weights ./ sum(weights)
+    raw = normalized .* num_problems
+    quotas = floor.(Int, raw)
+    remainder = num_problems - sum(quotas)
+    order = sortperm(collect(eachindex(raw));
+                     by = i -> (-(raw[i] - quotas[i]), i))
+    for i in order[1:remainder]
+        quotas[i] += 1
+    end
+    return quotas, normalized
+end
+
+"""
+    generate_dataset(preset::DatasetPreset; kwargs...)
+
+Generate a dataset from a versioned mixture. Family quotas use deterministic
+largest-remainder allocation. `size_distribution` and `relax_integer` may be
+overridden explicitly, but the resolved values and quotas are written to the
+combined manifest. `problem_types` is owned by the preset and cannot be passed
+through `kwargs`.
+"""
+function generate_dataset(preset::DatasetPreset;
+                          num_problems::Int = 100,
+                          output_dir = nothing,
+                          seed::Int = 0,
+                          write_manifest::Bool = true,
+                          size_distribution = preset.size_distribution,
+                          relax_integer::Bool = preset.relax_integer,
+                          kwargs...)
+    haskey(kwargs, :problem_types) &&
+        error("problem_types cannot be overridden when using a DatasetPreset.")
+
+    quotas, normalized = _preset_quotas(preset, num_problems)
+    rng = seed == 0 ? MersenneTwister() : MersenneTwister(seed)
+    combined = GeneratedInstance[]
+    resolved_quotas = Dict{String,Int}()
+    family_reports = Dict{String,Any}()
+
+    var_mean = get(kwargs, :var_mean, 500.0)
+    var_std = get(kwargs, :var_std, 200.0)
+    var_min = get(kwargs, :var_min, 50)
+    var_max = get(kwargs, :var_max, 2_000)
+    size_spec = _resolve_size_distribution(size_distribution, var_mean, var_std,
+                                           var_min, var_max)
+
+    for (index, pair) in enumerate(preset.family_weights)
+        quota = quotas[index]
+        ref = pair.first
+        resolved_quotas[string(ref)] = quota
+        quota == 0 && continue
+        group_seed = rand(rng, 1:typemax(Int32))
+        group_report = Dict{String,Any}()
+        group = generate_dataset(;
+            num_problems = quota,
+            size_distribution = size_distribution,
+            problem_types = [ref],
+            relax_integer = relax_integer,
+            output_dir = output_dir,
+            write_manifest = false,
+            seed = group_seed,
+            _report_sink = group_report,
+            kwargs...,
+        )
+        family_reports[string(ref)] = group_report
+        append!(combined, group)
+    end
+
+    shuffle!(rng, combined)
+    instances = GeneratedInstance[
+        GeneratedInstance(i, inst.problem_type, inst.variant,
+                          inst.target_variables, inst.num_variables,
+                          inst.num_constraints, inst.seed,
+                          inst.feasibility_status, inst.filename,
+                          inst.iterations, inst.solve_time)
+        for (i, inst) in enumerate(combined)
+    ]
+
+    if write_manifest && output_dir !== nothing
+        family_weights = Dict(string(preset.family_weights[i].first) => normalized[i]
+                              for i in eachindex(preset.family_weights))
+        generation_options = Dict{String,Any}(
+            "var_mean" => var_mean,
+            "var_std" => var_std,
+            "var_min" => var_min,
+            "var_max" => var_max,
+            "feasible_only" => get(kwargs, :feasible_only, false),
+            "bounds_to_constraints" => get(kwargs, :bounds_to_constraints, false),
+            "match_size_distribution" => get(kwargs, :match_size_distribution, true),
+            "match_size_by_type" => get(kwargs, :match_size_by_type, false),
+            "candidate_multiplier" => get(kwargs, :candidate_multiplier, 2),
+            "max_candidate_multiplier" => get(kwargs, :max_candidate_multiplier, 12),
+            "size_match_tolerance" => get(kwargs, :size_match_tolerance, 0.05),
+            "strict_size_match" => get(kwargs, :strict_size_match, false),
+            "file_extension" => get(kwargs, :file_extension, "mps"),
+            "quality_filter" => get(kwargs, :quality_filter, false),
+            "quality_criteria" => _jsonable(get(kwargs, :quality_criteria, QualityCriteria())),
+            "optimizer" => _jsonable(get(kwargs, :optimizer, nothing)),
+            "optimizer_attributes" => _jsonable(get(kwargs, :optimizer_attributes, ())),
+            "max_retries" => get(kwargs, :max_retries, 10),
+        )
+        _write_manifest(
+            output_dir,
+            instances,
+            [pair.first for pair in preset.family_weights];
+            preset = Dict(
+                "name" => string(preset.name),
+                "version" => preset.version,
+                "description" => preset.description,
+                "family_weights" => family_weights,
+                "resolved_quotas" => resolved_quotas,
+                "integrality_policy" => relax_integer ? "relaxed" : "preserved",
+                "size_distribution" => size_spec.description,
+                "family_reports" => family_reports,
+            ),
+            num_problems = num_problems,
+            seed = seed,
+            options = generation_options,
+        )
+    end
+    return instances
+end
+
+"""
     resolve_problem_types(problem_types) -> Vector{ProblemVariant}
 
 Normalize a user-supplied `problem_types` selection into a validated, de-duplicated
@@ -879,6 +1068,7 @@ function generate_dataset(;
         optimizer_attributes = (),
         max_retries::Int = 10,
         verbose::Bool = false,
+        _report_sink = nothing,
     )
 
     if quality_filter && optimizer === nothing
@@ -1032,6 +1222,16 @@ function generate_dataset(;
         "groups" => group_reports,
     )
 
+    if _report_sink !== nothing
+        empty!(_report_sink)
+        merge!(_report_sink, Dict{String,Any}(
+            "attempts" => stats.attempts,
+            "failed" => stats.failed,
+            "filter_counts" => copy(stats.filter_counts),
+            "size_match" => size_match_report,
+        ))
+    end
+
     if write_manifest && output_dir !== nothing
         _write_manifest(output_dir, instances, types; seed = seed,
                         var_mean = var_mean, var_std = var_std,
@@ -1095,9 +1295,14 @@ function _write_manifest(output_dir, instances, types; kwargs...)
     return nothing
 end
 
-# Make filter-count dicts and other values JSON-friendly.
-_jsonable(x) = x
+# Make filter-count dicts and other values JSON-friendly. Unknown option values
+# (notably optimizer factories) are recorded by their stable textual identity
+# instead of being handed to JSON.jl as unserializable Julia objects.
+_jsonable(x::Union{Nothing,Bool,Number,AbstractString}) = x
+_jsonable(x) = string(x)
 _jsonable(d::AbstractDict) = Dict(string(k) => _jsonable(v) for (k, v) in d)
+_jsonable(xs::Union{Tuple,AbstractVector}) = [_jsonable(x) for x in xs]
+_jsonable(p::Pair) = Dict("name" => string(first(p)), "value" => _jsonable(last(p)))
 _jsonable(c::QualityCriteria) = Dict(
     "solve_timeout" => c.solve_timeout,
     "min_constraints" => c.min_constraints,
