@@ -15,38 +15,45 @@ This package provides:
 
 ## Problem Types
 
-The package includes generators for 33 common LP/MIP problem categories, all
+The package includes generators for 41 common LP/MIP problem categories, all
 unified with a standardized interface. Each category groups one or more
 **variants** — concrete formulations with their own data generation and model
 structure (see [Categories and Variants](#categories-and-variants)). Categories
 with more than one variant are annotated below.
 
-- Transportation — variants: `standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`
+- Transportation — variants: `standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`, `fixed_charge`
 - Diet Problem — variants: `standard`, `nutrient_bounds`, `food_groups`
-- Knapsack — variants: `standard`, `multidimensional`, `bounded`
+- Knapsack — variants: `standard`, `multidimensional`, `bounded`, `mixed_integer_set`
 - Portfolio Optimization — variants: `cvar` (institutional CVaR), `tracking_error` (index tracking under a tracking-error budget)
 - Network Flow — variants: `standard`, `generalized_flow`
-- Multi-Commodity Flow
+- Multi-Commodity Flow — variants: `standard`, `binary_capacity`, `integer_flow`
 - Production Planning
 - Assignment — variants: `standard`, `workload_balance`
 - Blending — variants: `standard`, `equipment_batches`, `multi_product`
 - Airline Crew
 - Bin Packing
-- Cutting Stock — variants: `standard`, `setup_cost`, `due_dates`
-- Energy — variants: `standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`
+- Container Loading — variants: `standard`, `two_dimensional_bin_packing`
+- Cutting Stock — variants: `standard`, `setup_cost`, `due_dates`, `integer_patterns`
+- Energy — variants: `standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`, `optimal_transmission_switching`
 - Facility Location — variants: `standard`, `two_echelon`, `p_median`
 - Feed Blending
+- Generic MILP
+- Graph Optimization — variants: `independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`
 - Inventory — variants: `standard`, `lot_sizing`, `multi_item`, `multi_echelon`
 - Job Shop Scheduling
 - Land Use
-- Load Balancing
+- Load Balancing — variants: `standard`, `discrete_placement`
+- Maritime Inventory Routing
+- Neural Network Verification
 - Nurse Scheduling
 - Product Mix
 - Project Selection
 - Regression — variants: `lad`, `quantile`, `chebyshev`, `basis_pursuit` (weighted sparse recovery)
+- Resilient Network Design
 - Resource Allocation
 - Revenue Management (network deterministic LP / bid-price)
 - Scheduling
+- Set System — variants: `set_cover`, `set_packing`, `set_partitioning`, `combinatorial_auction`
 - Stochastic Program (two-stage with recourse; dual block-angular structure)
 - Supply Chain — variants: `standard`, `single_source`, `carbon`, `multi_product`
 - Crop Planning
@@ -54,6 +61,7 @@ with more than one variant are annotated below.
 - TSP — variants: `standard` (symmetric lifted MTZ), `asymmetric` (one-way-street ATSP), `flow` (single-commodity flow), `time_windows` (appointment delivery), `assignment_relaxation` (strengthened degree LP), `prize_collecting` (quota tour), `multiple_salespersons` (balanced fleet), `precedence` (ordered tasks)
 - Unit Commitment
 - Vehicle Routing — variants: `cvrp` (capacitated vehicle routing, single-commodity-flow formulation)
+- Workforce Shift Scheduling — variant: `covering` (multi-skill, profile-driven shift-pattern staffing LP)
 
 Several categories ship multiple variants — for example `energy` has `standard`
 (generation mix) and `dc_opf` (DC optimal power flow), and `regression` has

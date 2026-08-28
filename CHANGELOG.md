@@ -86,6 +86,102 @@ instances.
 - Updated the regression entry point, README category/usage documentation, and
   `CLAUDE.md` variant inventory.
 
+## 2026-08-28 22:57 UTC (workforce covering final review)
+
+**Previous Commit**: `61fe6ed`
+
+**Summary**: Applied PR #40's final documentation and test-review corrections.
+
+**Details**:
+- Clarified that the infeasibility certificate uses each pool's longest
+  **selected** pattern serving the certified skill.
+- Asserted stored `feasibility_status` coherence for feasible, infeasible, and
+  unknown constructions.
+- Added an end-to-end 1,500-variable, four-skill test covering the planted
+  witness, all named skill-period rows (explicitly including skill 4), and an
+  optimal HiGHS solve.
+- Verification: `julia --project=@. test/runtests.jl` — 8,270/8,270 passed
+  (solver-backed sets skipped outside the `Pkg.test` sandbox).
+- Verification: `julia --project=@. -e 'using Pkg; Pkg.test()'` —
+  8,485/8,485 passed, including the large four-skill solve.
+
+## 2026-08-28 22:48 UTC (workforce covering review hardening)
+
+**Previous Commit**: `cdbf637`
+
+**Summary**: Followed up on PR #40's independent review with exact semantic,
+model-contract, profile-scaling, unknown-mode, and status-metadata tests. Made
+the staffing witness and infeasibility certificate status-aware so stored
+metadata cannot be misread after demand/capacity perturbations.
+
+**Details**:
+- Replaced the always-present `reference_staffing` with
+  `feasible_staffing::Union{Nothing,Vector{Float64}}`; only requested-feasible
+  instances expose the planted witness.
+- Added `infeasible_skill` and `infeasibility_capacity_bound` metadata only for
+  requested-infeasible instances. Unknown instances expose neither a witness
+  nor a certificate.
+- Reconstruct every pattern's start/span window in tests, including
+  wraparound, break exclusion, paid support length, wrap flags, and global
+  support deduplication.
+- Assert the exact JuMP contract: one continuous nonnegative variable block,
+  minimization, and objective coefficients equal to stored staffing costs.
+- Exercise every profile at 1,500 variables, both four-skill branches, the
+  profile-dependent structural floor at target 1, and different-seed diversity
+  within each profile.
+- Compare unknown generation with its same-seed feasible baseline, require
+  genuine demand/capacity perturbation, and accept either feasible or
+  infeasible HiGHS outcomes without assigning a label.
+- Verification: `julia --project=@. test/runtests.jl` — 8,048/8,048 passed
+  (solver-backed sets skipped outside the `Pkg.test` sandbox).
+- Verification: `julia --project=@. -e 'using Pkg; Pkg.test()'` —
+  8,262/8,262 passed, including all HiGHS-backed checks.
+
+## 2026-08-28 22:36 UTC (workforce shift-pattern covering)
+
+**Previous Commit**: `e3f4736`
+
+**Summary**: Added `workforce_shift_scheduling/covering`, a continuous,
+profile-driven multi-skill staffing LP inspired by PR #20's shift-covering
+prototype and redesigned for realistic labor-pool differentiation, exact
+large-target sizing, deterministic local-RNG generation, and construction-level
+feasibility guarantees.
+
+**Details**:
+- Added contact-center, retail, and continuous-operations profiles. The stored
+  profile materially changes horizon resolution, skill taxonomy, demand peaks,
+  shift lengths, pool availability, and wage ranges. Shift catalogs contain
+  contiguous spans, unpaid breaks, and (for 24/7 operations) wraparound night
+  patterns.
+- Staffing columns are distinct `(pool, pattern, served skill)` combinations.
+  Qualifications, skill-specific productivity, availability-derived pattern
+  eligibility, wages, and capacities differ across pools; per-pool capacity
+  rows prevent cross-trained workers from being assigned to multiple patterns
+  or skills simultaneously.
+- Costs use worker assignments consistently and combine paid hours, hourly
+  wages, skill premiums, and undesirable-period premiums. No undercoverage
+  variables are present, so shortages cannot trivialize status claims.
+- Feasible instances store a staffing witness from which pool capacities are
+  derived. Infeasible instances scale one skill's full demand curve above a
+  continuous-LP aggregate capacity certificate, preserving the same variable
+  and row schema. Unknown instances receive independent workload and labor
+  shocks without a forced label.
+- The model has only the selected staffing-column variable block and normally
+  matches requested targets exactly, including 1,500- and 5,000-variable tests.
+  Pattern supports and staffing signatures are deduplicated.
+- Registered the new category in the main module; added formulation/profile
+  documentation; updated README and CLAUDE category inventories from 33 to the
+  current 41 categories.
+- Tests cover registry introspection, exact sizing from 10 to 5,000 variables,
+  field/model/export reproducibility, repeated builds, seed/profile diversity,
+  profile and pattern invariants, qualifications and eligibility, row support,
+  duplicate-column exclusion, planted witnesses, aggregate infeasibility
+  certificates, and HiGHS status checks over six seeds.
+- Verification: `julia --project=@. test/runtests.jl` — 6,840/6,840 passed
+  (solver-backed sets skipped because HiGHS is available only in `Pkg.test`).
+- Verification: `julia --project=@. -e 'using Pkg; Pkg.test()'` —
+  7,053/7,053 passed, including all HiGHS-backed status checks.
+
 ## 2026-08-28 18:47 UTC (set_system clamp tiny targets)
 
 **Previous Commit**: `dec1c3f`
