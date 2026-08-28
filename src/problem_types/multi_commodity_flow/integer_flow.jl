@@ -20,27 +20,6 @@ struct IntegerMultiCommodityFlowProblem <: ProblemGenerator
     costs::Matrix{Float64}
 end
 
-function _integer_mcf_topology(rng::AbstractRNG, n_nodes::Int, n_arcs::Int)
-    arcs = Tuple{Int,Int}[]
-    seen = Set{Tuple{Int,Int}}()
-    order = randperm(rng, n_nodes)
-
-    for idx in 1:n_nodes
-        arc = (order[idx], order[idx == n_nodes ? 1 : idx + 1])
-        push!(arcs, arc)
-        push!(seen, arc)
-    end
-    candidates = [(i, j) for i in 1:n_nodes for j in 1:n_nodes if i != j]
-    shuffle!(rng, candidates)
-    for arc in candidates
-        length(arcs) >= n_arcs && break
-        arc in seen && continue
-        push!(seen, arc)
-        push!(arcs, arc)
-    end
-    return arcs
-end
-
 function _integer_mcf_path(arcs::Vector{Tuple{Int,Int}}, n_nodes::Int,
                            source::Int, sink::Int)
     outgoing = [Int[] for _ in 1:n_nodes]
@@ -101,7 +80,7 @@ function IntegerMultiCommodityFlowProblem(
         n_nodes += 1
     end
 
-    arcs = _integer_mcf_topology(rng, n_nodes, n_arcs)
+    arcs = _discrete_mcf_topology(rng, n_nodes, n_arcs)
     n_arcs = length(arcs)
     sources = Vector{Int}(undef, n_commodities)
     sinks = Vector{Int}(undef, n_commodities)

@@ -478,6 +478,16 @@ end
         @test_nowarn generate_problem("tsp/precedence", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/prize_collecting", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/assignment_relaxation", 3, infeasible, 1)
+        # discrete MCF variants sample extra arcs by rejection instead of
+        # materializing every ordered node pair.
+        for ref in ("multi_commodity_flow/binary_capacity",
+                    "multi_commodity_flow/integer_flow")
+            @test_nowarn generate_problem(ref, 20, unknown, 1)
+            _, mcf = generate_problem(ref, 200, unknown, 1)
+            @test length(mcf.arcs) == mcf.n_arcs
+            @test length(unique(mcf.arcs)) == mcf.n_arcs
+            @test all(a[1] != a[2] for a in mcf.arcs)
+        end
         # energy now stores an emissions intensity target (the previous per-period
         # emissions row was an algebraic tautology).
         _, eprob = generate_problem("energy/standard", 120, unknown, 1)
