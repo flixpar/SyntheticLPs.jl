@@ -478,6 +478,20 @@ end
         @test_nowarn generate_problem("tsp/precedence", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/prize_collecting", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/assignment_relaxation", 3, infeasible, 1)
+        # set_system variants used to reject targets below 4; they now size
+        # a feasible planted partition down to 2 columns/bids.
+        for variant in ("set_cover", "set_packing", "set_partitioning",
+                        "combinatorial_auction")
+            ref = "set_system/$variant"
+            @test_nowarn generate_problem(ref, 2, unknown, 1)
+            @test_nowarn generate_problem(ref, 3, infeasible, 1)
+        end
+        tiny = generate_dataset(num_problems = 4,
+                                size_distribution = Uniform(2, 3),
+                                problem_types = [:set_system],
+                                seed = 1,
+                                max_candidate_multiplier = 3)
+        @test length(tiny) == 4
         # discrete MCF variants sample extra arcs by rejection instead of
         # materializing every ordered node pair.
         for ref in ("multi_commodity_flow/binary_capacity",
