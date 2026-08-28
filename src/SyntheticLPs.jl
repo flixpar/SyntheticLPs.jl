@@ -30,6 +30,7 @@ export problem_info
 export bounds_to_constraints!
 export generate_dataset
 export GeneratedInstance
+export DatasetPreset, corpus_matched_preset
 export QualityCriteria, QualityResult, check_quality
 
 # ---------------------------------------------------------------------------

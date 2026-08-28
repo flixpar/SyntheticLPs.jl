@@ -15,38 +15,45 @@ This package provides:
 
 ## Problem Types
 
-The package includes generators for 33 common LP/MIP problem categories, all
+The package includes generators for 40 common LP/MIP problem categories, all
 unified with a standardized interface. Each category groups one or more
 **variants** — concrete formulations with their own data generation and model
 structure (see [Categories and Variants](#categories-and-variants)). Categories
 with more than one variant are annotated below.
 
-- Transportation — variants: `standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`
+- Transportation — variants: `standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`, `fixed_charge`
 - Diet Problem — variants: `standard`, `nutrient_bounds`, `food_groups`
-- Knapsack — variants: `standard`, `multidimensional`, `bounded`
+- Knapsack — variants: `standard`, `multidimensional`, `bounded`, `mixed_integer_set`
 - Portfolio Optimization — variants: `cvar` (institutional CVaR), `tracking_error` (index tracking under a tracking-error budget)
 - Network Flow — variants: `standard`, `generalized_flow`
-- Multi-Commodity Flow
+- Multi-Commodity Flow — variants: `standard`, `binary_capacity`, `integer_flow`
 - Production Planning
 - Assignment — variants: `standard`, `workload_balance`
 - Blending — variants: `standard`, `equipment_batches`, `multi_product`
 - Airline Crew
 - Bin Packing
-- Cutting Stock — variants: `standard`, `setup_cost`, `due_dates`
-- Energy — variants: `standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`
+- Container Loading — variants: `standard`, `two_dimensional_bin_packing`
+- Cutting Stock — variants: `standard`, `setup_cost`, `due_dates`, `integer_patterns`
+- Energy — variants: `standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`, `optimal_transmission_switching`
 - Facility Location — variants: `standard`, `two_echelon`, `p_median`
 - Feed Blending
 - Inventory — variants: `standard`, `lot_sizing`, `multi_item`, `multi_echelon`
 - Job Shop Scheduling
+- Generic MILP (sparse mixed binary, general-integer, and continuous rows)
+- Graph Optimization — variants: `independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`
 - Land Use
-- Load Balancing
+- Load Balancing — variants: `standard`, `discrete_placement`
+- Maritime Inventory Routing
+- Neural Network Verification — variant: `relu_big_m`
 - Nurse Scheduling
 - Product Mix
 - Project Selection
 - Regression (dense statistical LPs: least-absolute-deviations, quantile, and Chebyshev/minimax)
+- Resilient Network Design
 - Resource Allocation
 - Revenue Management (network deterministic LP / bid-price)
 - Scheduling
+- Set System — variants: `set_cover`, `set_packing`, `set_partitioning`, `combinatorial_auction`
 - Stochastic Program (two-stage with recourse; dual block-angular structure)
 - Supply Chain — variants: `standard`, `single_source`, `carbon`, `multi_product`
 - Crop Planning
@@ -272,6 +279,30 @@ instances = generate_dataset(
 
 A single instance can also be evaluated directly with
 `check_quality(model, HiGHS.Optimizer)`.
+
+### Collected-corpus preset
+
+For a reproducible mixture based on the major families in the collected
+LP/MILP corpus, use the versioned `corpus_matched_preset`. Unlike the generic
+dataset defaults, this preset preserves integer domains and allocates exact
+family quotas by deterministic largest-remainder rounding.
+
+```julia
+preset = corpus_matched_preset()
+instances = generate_dataset(
+    preset;
+    num_problems = 1_000,
+    output_dir = "corpus_matched_dataset",
+    seed = 1234,
+)
+```
+
+The manifest records the preset name and version, normalized family weights,
+resolved quotas, size distribution, and integrality policy. The current preset
+matches family prevalence, not solver difficulty, and uses an operationally
+bounded heavy-tailed size distribution. See the
+[collected-corpus coverage analysis](docs/collected_corpus_coverage_gaps.md) for
+the evidence and limitations behind it.
 
 ## Extending with New Categories and Variants
 
