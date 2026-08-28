@@ -478,6 +478,16 @@ end
         @test_nowarn generate_problem("tsp/precedence", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/prize_collecting", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/assignment_relaxation", 3, infeasible, 1)
+        # graph_optimization/generalized_independent_set used to request more
+        # hard edges than leave n_soft unused pairs, throwing for targets 6–10.
+        for target in 6:10, status in (feasible, unknown, infeasible)
+            @test_nowarn generate_problem("graph_optimization/generalized_independent_set",
+                                          target, status, 1)
+        end
+        _, gis = generate_problem("graph_optimization/generalized_independent_set", 6, feasible, 1)
+        @test length(gis.soft_edges) == 6 - gis.n_vertices
+        @test length(gis.hard_edges) + length(gis.soft_edges) <=
+              gis.n_vertices * (gis.n_vertices - 1) ÷ 2
         # knapsack/mixed_integer_set stores sparse row supports instead of a
         # dense n_rows × n_variables coefficient matrix.
         @test_nowarn generate_problem("knapsack/mixed_integer_set", 1, unknown, 1)

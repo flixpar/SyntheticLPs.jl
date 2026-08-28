@@ -4,6 +4,27 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-28 18:37 UTC (GIS reserve soft-edge slots)
+
+**Previous Commit**: `8117dda`
+
+**Summary**: PR-review fix — `graph_optimization/generalized_independent_set`
+sized its hard-edge count without leaving room for the `n_soft` penalty
+variables. For targets 6–10 with `feasible`/`unknown`, every unused pair could
+be consumed as a hard conflict, so `_graph_sample_edges` threw
+`ArgumentError("not enough admissible graph edges")` for every seed.
+
+**Details**:
+- Cap `hard_count` by `max_edges - n_soft` (and at 0) so at least `n_soft`
+  distinct pairs remain after the hard graph is sampled. The planted
+  independent-set exclusion and the previous density cap `max(n-1, 2n)` are
+  unchanged.
+- Infeasible requests were already using a matching, so they did not hit this
+  throw; they still go through the same soft-edge sampler and are covered by
+  the new tests.
+- Tests: `@test_nowarn` for targets 6–10 × all three statuses, plus a
+  target-6 feasible assertion that hard+soft does not exceed the complete graph.
+
 ## 2026-08-28 18:13 UTC (knapsack/mixed_integer_set sparse rows)
 
 **Previous Commit**: `2ed76fe`
