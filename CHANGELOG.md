@@ -4,6 +4,51 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-28 22:36 UTC (workforce shift-pattern covering)
+
+**Previous Commit**: `e3f4736`
+
+**Summary**: Added `workforce_shift_scheduling/covering`, a continuous,
+profile-driven multi-skill staffing LP inspired by PR #20's shift-covering
+prototype and redesigned for realistic labor-pool differentiation, exact
+large-target sizing, deterministic local-RNG generation, and construction-level
+feasibility guarantees.
+
+**Details**:
+- Added contact-center, retail, and continuous-operations profiles. The stored
+  profile materially changes horizon resolution, skill taxonomy, demand peaks,
+  shift lengths, pool availability, and wage ranges. Shift catalogs contain
+  contiguous spans, unpaid breaks, and (for 24/7 operations) wraparound night
+  patterns.
+- Staffing columns are distinct `(pool, pattern, served skill)` combinations.
+  Qualifications, skill-specific productivity, availability-derived pattern
+  eligibility, wages, and capacities differ across pools; per-pool capacity
+  rows prevent cross-trained workers from being assigned to multiple patterns
+  or skills simultaneously.
+- Costs use worker assignments consistently and combine paid hours, hourly
+  wages, skill premiums, and undesirable-period premiums. No undercoverage
+  variables are present, so shortages cannot trivialize status claims.
+- Feasible instances store a staffing witness from which pool capacities are
+  derived. Infeasible instances scale one skill's full demand curve above a
+  continuous-LP aggregate capacity certificate, preserving the same variable
+  and row schema. Unknown instances receive independent workload and labor
+  shocks without a forced label.
+- The model has only the selected staffing-column variable block and normally
+  matches requested targets exactly, including 1,500- and 5,000-variable tests.
+  Pattern supports and staffing signatures are deduplicated.
+- Registered the new category in the main module; added formulation/profile
+  documentation; updated README and CLAUDE category inventories from 33 to the
+  current 41 categories.
+- Tests cover registry introspection, exact sizing from 10 to 5,000 variables,
+  field/model/export reproducibility, repeated builds, seed/profile diversity,
+  profile and pattern invariants, qualifications and eligibility, row support,
+  duplicate-column exclusion, planted witnesses, aggregate infeasibility
+  certificates, and HiGHS status checks over six seeds.
+- Verification: `julia --project=@. test/runtests.jl` — 6,840/6,840 passed
+  (solver-backed sets skipped because HiGHS is available only in `Pkg.test`).
+- Verification: `julia --project=@. -e 'using Pkg; Pkg.test()'` —
+  7,053/7,053 passed, including all HiGHS-backed status checks.
+
 ## 2026-08-28 18:47 UTC (set_system clamp tiny targets)
 
 **Previous Commit**: `dec1c3f`

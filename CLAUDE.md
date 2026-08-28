@@ -82,7 +82,7 @@ julia --project=@.
 
 ## Architecture
 
-SyntheticLPs uses a type-based dispatch system for generating realistic linear programming problems. Problems are organized as a two-level hierarchy: a **category** (a problem domain, e.g. `:transportation`) groups one or more **variants** (concrete generators with their own data generation and model formulation, e.g. `:standard`). There are 33 categories; most have a single variant, while several (transportation, energy, inventory, supply_chain, blending, cutting_stock, diet_problem, facility_location, knapsack, network_flow, assignment, portfolio, regression, tsp) carry multiple variants with distinct formulations. All generators follow a consistent pattern using Julia's multiple dispatch.
+SyntheticLPs uses a type-based dispatch system for generating realistic linear programming problems. Problems are organized as a two-level hierarchy: a **category** (a problem domain, e.g. `:transportation`) groups one or more **variants** (concrete generators with their own data generation and model formulation, e.g. `:standard`). There are 41 categories; most have a single variant, while several carry multiple variants with distinct formulations. All generators follow a consistent pattern using Julia's multiple dispatch.
 
 ### Core Components
 
@@ -147,10 +147,10 @@ struct VariantStruct <: ProblemGenerator
 end
 
 function VariantStruct(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Sample parameters based on target_variables
-    # Generate all deterministic data (costs, capacities, etc.)
+    # Generate all deterministic data using rand(rng, ...) calls
     # Handle feasibility status (feasible, infeasible, unknown)
 
     return VariantStruct(field1_value, field2_value, ...)
@@ -179,16 +179,18 @@ register_variant(:category, :standard, VariantStruct, "Description")
 
 ### Available Problem Categories
 
-The system includes 33 categories covering major LP/MIP problem classes. Each
-category's default variant is `:standard` except `portfolio` (`:cvar`),
-`vehicle_routing` (`:cvrp`), and `regression` (`:lad`).
+The system includes 41 categories covering major LP/MIP problem classes. Each
+category's default variant is `:standard` except `graph_optimization`
+(`:independent_set`), `neural_network_verification` (`:relu_big_m`), `portfolio`
+(`:cvar`), `regression` (`:lad`), `set_system` (`:set_cover`),
+`vehicle_routing` (`:cvrp`), and `workforce_shift_scheduling` (`:covering`).
 Categories with multiple variants are listed with them below.
-- Transportation (`standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`), Diet Problem (`standard`, `nutrient_bounds`, `food_groups`), Knapsack (`standard`, `multidimensional`, `bounded`), Portfolio (`cvar`, `tracking_error`), Network Flow (`standard`, `generalized_flow`), Multi-Commodity Flow
-- Production Planning, Assignment (`standard`, `workload_balance`), Blending (`standard`, `equipment_batches`, `multi_product`), Facility Location (`standard`, `two_echelon`, `p_median`), Crop Planning
-- Airline Crew, Bin Packing, Cutting Stock (`standard`, `setup_cost`, `due_dates`), Energy (`standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`), Feed Blending, Inventory (`standard`, `lot_sizing`, `multi_item`, `multi_echelon`), Telecom Network Design
-- Job Shop Scheduling, Land Use, Load Balancing, Nurse Scheduling, Product Mix, Project Selection
-- Resource Allocation, Scheduling, Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`), TSP (`standard`, `asymmetric`, `flow`, `time_windows`, `assignment_relaxation`, `prize_collecting`, `multiple_salespersons`, `precedence`), Unit Commitment, Vehicle Routing (`cvrp`)
-- Regression (`lad`, `quantile`, `chebyshev`; dense statistical LPs), Revenue Management (network DLP), Stochastic Program (two-stage with recourse)
+- Transportation (`standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`, `fixed_charge`), Diet Problem (`standard`, `nutrient_bounds`, `food_groups`), Knapsack (`standard`, `multidimensional`, `bounded`, `mixed_integer_set`), Portfolio (`cvar`, `tracking_error`), Network Flow (`standard`, `generalized_flow`)
+- Multi-Commodity Flow (`standard`, `binary_capacity`, `integer_flow`), Assignment (`standard`, `workload_balance`), Blending (`standard`, `equipment_batches`, `multi_product`), Container Loading (`standard`, `two_dimensional_bin_packing`), Facility Location (`standard`, `two_echelon`, `p_median`)
+- Cutting Stock (`standard`, `setup_cost`, `due_dates`, `integer_patterns`), Energy (`standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`, `optimal_transmission_switching`), Inventory (`standard`, `lot_sizing`, `multi_item`, `multi_echelon`), Load Balancing (`standard`, `discrete_placement`)
+- Graph Optimization (`independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`), Set System (`set_cover`, `set_packing`, `set_partitioning`, `combinatorial_auction`), Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`)
+- TSP (`standard`, `asymmetric`, `flow`, `time_windows`, `assignment_relaxation`, `prize_collecting`, `multiple_salespersons`, `precedence`), Vehicle Routing (`cvrp`), Regression (`lad`, `quantile`, `chebyshev`), Workforce Shift Scheduling (`covering`)
+- Single-variant categories: Airline Crew, Bin Packing, Crop Planning, Feed Blending, Generic MILP, Job Shop Scheduling, Land Use, Maritime Inventory Routing, Neural Network Verification, Nurse Scheduling, Product Mix, Production Planning, Project Selection, Resilient Network Design, Resource Allocation, Revenue Management, Scheduling, Stochastic Program, Telecom Network Design, Unit Commitment
 
 #### Model classes (LP / MIP / LP relaxation)
 
@@ -196,7 +198,7 @@ The corpus deliberately mixes three model classes; treat the names accordingly:
 - **Pure LPs**: continuous formulations (e.g. transportation variants, diet
   variants, blending variants, most energy variants, `network_flow/generalized_flow`,
   both portfolio variants `cvar`/`tracking_error`, regression variants, revenue
-  management, and stochastic program).
+  management, stochastic program, and `workforce_shift_scheduling/covering`).
 - **MIPs** (binary/integer variables): e.g. `facility_location` variants
   (including `p_median`), `cutting_stock/setup_cost`, `inventory/lot_sizing`,
   `bin_packing`, `job_shop_scheduling`, `supply_chain/single_source`,

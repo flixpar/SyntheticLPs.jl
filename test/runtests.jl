@@ -276,6 +276,197 @@ end
         @test p.precedence_pairs[3][2] == p.precedence_pairs[1][1]
     end
 
+    @testset "Workforce Shift Covering" begin
+        ref = ProblemVariant(:workforce_shift_scheduling, :covering)
+        @test :workforce_shift_scheduling in list_categories()
+        @test list_variants(:workforce_shift_scheduling) == [:covering]
+        @test problem_info(:workforce_shift_scheduling)[:default_variant] == :covering
+        @test problem_info(:workforce_shift_scheduling, :covering)[:type] <:
+              ProblemGenerator
+
+        # There is exactly one decision-variable block. Sizing is exact from
+        # small instances through scales above the source implementation's cap.
+        for target in (10, 50, 200, 1500, 5000)
+            model, problem = generate_problem(ref, target, feasible, 19)
+            @test num_variables(model) == target ==
+                  length(problem.column_pools)
+        end
+
+        # Exact field and model reproducibility, including repeated builds and
+        # deterministic MPS export.
+        model1, problem1 = generate_problem(ref, 320, unknown, 12345)
+        model2, problem2 = generate_problem(ref, 320, unknown, 12345)
+        @test all(
+            isequal(getfield(problem1, field), getfield(problem2, field))
+            for field in fieldnames(typeof(problem1))
+        )
+        rebuilt1 = SyntheticLPs.build_model(problem1)
+        rebuilt2 = SyntheticLPs.build_model(problem1)
+        @test num_variables(model1) == num_variables(model2) ==
+              num_variables(rebuilt1) == num_variables(rebuilt2)
+        @test num_constraints(model1; count_variable_in_set_constraints=true) ==
+              num_constraints(model2; count_variable_in_set_constraints=true) ==
+              num_constraints(rebuilt1; count_variable_in_set_constraints=true) ==
+              num_constraints(rebuilt2; count_variable_in_set_constraints=true)
+        export_dir = mktempdir()
+        path1 = joinpath(export_dir, "workforce_1.mps")
+        path2 = joinpath(export_dir, "workforce_2.mps")
+        write_to_file(rebuilt1, path1)
+        write_to_file(rebuilt2, path2)
+        @test filesize(path1) > 0
+        @test read(path1, String) == read(path2, String)
+
+        # Fixed seeds exercise all structural profiles and their distinct
+        # horizons, shift rules, demand curves, and availability regimes.
+        profiles = Dict{Symbol,Any}()
+        for seed in (1, 2, 4)
+            _, problem = generate_problem(ref, 240, unknown, seed)
+            profiles[problem.profile] = problem
+        end
+        @test Set(keys(profiles)) ==
+              Set((:contact_center, :retail, :continuous_operations))
+        @test (profiles[:contact_center].period_minutes,
+               profiles[:contact_center].n_periods) == (30, 24)
+        @test (profiles[:retail].period_minutes,
+               profiles[:retail].n_periods) == (60, 14)
+        @test (profiles[:continuous_operations].period_minutes,
+               profiles[:continuous_operations].n_periods) == (60, 24)
+        @test !any(profiles[:contact_center].pattern_wraps)
+        @test !any(profiles[:retail].pattern_wraps)
+        @test any(profiles[:continuous_operations].pattern_wraps)
+        @test all(profile -> any(profile.pattern_break_periods .> 0),
+                  values(profiles))
+        @test all(profile -> length(unique(profile.pattern_span_periods)) >= 3,
+                  values(profiles))
+
+        for problem in values(profiles)
+            n_pools = length(problem.pool_names)
+            n_skills = length(problem.skill_names)
+            n_patterns = size(problem.pattern_coverage, 2)
+            @test n_pools >= 4
+            @test n_skills >= 2
+            @test n_patterns > 0
+            @test all(sum(problem.pattern_coverage; dims=1) .> 0)
+            @test length(unique(Tuple(problem.pool_qualifications[q, :])
+                                for q in 1:n_pools)) > 1
+            @test length(unique(Tuple(problem.pool_availability[q, :])
+                                for q in 1:n_pools)) > 1
+            @test all(problem.pool_productivity[problem.pool_qualifications] .> 0)
+            @test all(problem.pool_productivity[.!problem.pool_qualifications] .== 0)
+            @test all(problem.hourly_wages .> 0)
+            @test all(problem.pool_capacities .> 0)
+            @test all(problem.staffing_costs .> 0)
+            @test all(problem.demand .> 0)
+            @test any(maximum(problem.demand[:, skill]) >
+                      1.10 * minimum(problem.demand[:, skill])
+                      for skill in 1:n_skills)
+
+            # Every selected column obeys qualification, availability, and
+            # pattern eligibility. Every skill-period has nonempty row support.
+            for column in eachindex(problem.column_pools)
+                pool = problem.column_pools[column]
+                pattern = problem.column_patterns[column]
+                skill = problem.column_skills[column]
+                @test problem.pool_qualifications[pool, skill]
+                @test problem.pattern_eligibility[pool, pattern]
+                @test all(
+                    !problem.pattern_coverage[period, pattern] ||
+                    problem.pool_availability[pool, period]
+                    for period in 1:problem.n_periods
+                )
+            end
+            @test all(
+                any(problem.column_skills[column] == skill &&
+                    problem.pattern_coverage[period,
+                                             problem.column_patterns[column]]
+                    for column in eachindex(problem.column_pools))
+                for period in 1:problem.n_periods, skill in 1:n_skills
+            )
+
+            # Coverage + pool-row signatures are unique; costs are not being
+            # used to disguise duplicate staffing columns.
+            signatures = [
+                (
+                    problem.column_pools[column],
+                    problem.column_skills[column],
+                    Tuple(findall(problem.pattern_coverage[:,
+                                      problem.column_patterns[column]])),
+                )
+                for column in eachindex(problem.column_pools)
+            ]
+            @test length(unique(signatures)) == length(signatures)
+        end
+
+        # Different seeds alter profile and numerical/structural data.
+        _, seed1 = generate_problem(ref, 240, unknown, 1)
+        _, seed2 = generate_problem(ref, 240, unknown, 2)
+        @test seed1.profile != seed2.profile
+        @test seed1.demand != seed2.demand
+        @test seed1.skill_names != seed2.skill_names
+
+        # The planted staffing vector proves feasible requests directly.
+        for seed in 1:6
+            _, problem = generate_problem(ref, 260, feasible, seed)
+            for pool in eachindex(problem.pool_names)
+                usage = sum(
+                    problem.reference_staffing[column]
+                    for column in eachindex(problem.column_pools)
+                    if problem.column_pools[column] == pool
+                )
+                @test usage <= problem.pool_capacities[pool] + 1e-8
+            end
+            for period in 1:problem.n_periods,
+                skill in eachindex(problem.skill_names)
+                supplied = sum(
+                    problem.pool_productivity[
+                        problem.column_pools[column], skill,
+                    ] * problem.reference_staffing[column]
+                    for column in eachindex(problem.column_pools)
+                    if problem.column_skills[column] == skill &&
+                       problem.pattern_coverage[
+                           period, problem.column_patterns[column],
+                       ]
+                )
+                @test supplied + 1e-8 >= problem.demand[period, skill]
+            end
+        end
+
+        # At least one skill violates a valid aggregate capacity upper bound in
+        # every requested-infeasible instance.
+        for seed in 1:6
+            _, problem = generate_problem(ref, 260, infeasible, seed)
+            certified = false
+            for skill in eachindex(problem.skill_names)
+                upper = 0.0
+                for pool in eachindex(problem.pool_names)
+                    paid = [
+                        count(problem.pattern_coverage[:,
+                              problem.column_patterns[column]])
+                        for column in eachindex(problem.column_pools)
+                        if problem.column_pools[column] == pool &&
+                           problem.column_skills[column] == skill
+                    ]
+                    max_paid = isempty(paid) ? 0 : maximum(paid)
+                    upper += problem.pool_capacities[pool] *
+                             problem.pool_productivity[pool, skill] * max_paid
+                end
+                certified |= sum(problem.demand[:, skill]) > upper + 1e-6
+            end
+            @test certified
+        end
+
+        if HAS_HIGHS
+            for seed in 1:6, status in (feasible, infeasible)
+                model, _ = generate_problem(ref, 260, status, seed)
+                set_optimizer(model, HiGHS.Optimizer)
+                set_silent(model)
+                optimize!(model)
+                expected = status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE
+                @test termination_status(model) == expected
+            end
+        end
+    end
+
     # Test individual problem generators (every registered variant)
     for ref in list_problems()
         test_problem_generator(ref)
