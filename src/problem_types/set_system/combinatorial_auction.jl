@@ -19,11 +19,8 @@ function CombinatorialAuctionProblem(
     feasibility_status::FeasibilityStatus,
     seed::Int,
 )
-    target_variables >= 4 ||
-        throw(ArgumentError("combinatorial auction needs at least 4 variables"))
     rng = MersenneTwister(seed)
-    n_bids = target_variables
-    n_items = max(4, round(Int, 0.35 * n_bids))
+    n_bids, n_items = _set_system_size(target_variables, 0.35)
     bundles, n_planted = _set_columns_with_partition(
         rng, n_items, n_bids; max_size=max(2, min(8, n_items)),
     )

@@ -1,5 +1,14 @@
 using Random
 
+# Public APIs accept sizes down to 2. Keep `n_elements <= n_columns` so a
+# planted partition (at worst all singletons) always fits; for n >= 4 this is
+# the original `max(4, round(fraction * n))` rule.
+function _set_system_size(target_variables::Int, element_fraction::Float64)
+    n_columns = max(2, target_variables)
+    n_elements = max(min(4, n_columns), round(Int, element_fraction * n_columns))
+    return n_columns, n_elements
+end
+
 function _set_random_column(
     rng::AbstractRNG,
     n_elements::Int;

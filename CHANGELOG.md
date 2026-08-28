@@ -4,6 +4,27 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-28 18:47 UTC (set_system clamp tiny targets)
+
+**Previous Commit**: `dec1c3f`
+
+**Summary**: PR-review fix — all four `set_system` variants rejected
+`target_variables < 4`. `generate_dataset` treats sizes down to 2 as valid, so
+a request such as `Uniform(2, 3)` with `problem_types=[:set_system]` exhausted
+retries and errored. Each constructor now builds the requested size (clamped
+only at 2) with `n_elements <= n_columns` so the planted partition still fits.
+
+**Details**:
+- Shared `_set_system_size` returns `n_columns = max(2, target)` and
+  `n_elements = max(min(4, n_columns), round(fraction * n_columns))`. For
+  targets ≥ 4 this is identical to the previous `max(4, round(fraction * n))`
+  rule; below 4 it shrinks the universe so a singleton partition cannot
+  demand more columns than exist.
+- `set_cover`, `set_packing`, `set_partitioning`, and `combinatorial_auction`
+  drop the `>= 4` throw and use that helper.
+- Tests: tiny-target generation for every variant, plus a 4-instance
+  `generate_dataset` with `Uniform(2, 3)` restricted to `:set_system`.
+
 ## 2026-08-27 13:03 UTC (tsp/flow exact dimension sizing)
 
 **Previous Commit**: `aa98448`

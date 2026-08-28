@@ -19,10 +19,8 @@ function SetCoverProblem(
     feasibility_status::FeasibilityStatus,
     seed::Int,
 )
-    target_variables >= 4 || throw(ArgumentError("set cover needs at least 4 variables"))
     rng = MersenneTwister(seed)
-    n_columns = target_variables
-    n_elements = max(4, round(Int, 0.35 * n_columns))
+    n_columns, n_elements = _set_system_size(target_variables, 0.35)
     max_size = max(2, min(n_elements, round(Int, sqrt(n_elements)) + 2))
     columns, n_planted = _set_columns_with_partition(
         rng, n_elements, n_columns; max_size=max_size,
