@@ -43,8 +43,12 @@ function GeneralizedIndependentSetProblem(
     else
         planted_size = max(2, round(Int, 0.15 * n))
         planted = Set(randperm(rng, n)[1:planted_size])
+        # Leave at least `n_soft` unused pairs for the penalty variables;
+        # otherwise tiny targets (6–10) request more soft edges than remain.
         hard_count = min(max_edges - planted_size * (planted_size - 1) ÷ 2,
+                         max_edges - n_soft,
                          max(n - 1, 2n))
+        hard_count = max(0, hard_count)
         hard_edges = _graph_sample_edges(
             rng, n, hard_count; planted_independent=planted,
         )

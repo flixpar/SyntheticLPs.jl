@@ -478,6 +478,16 @@ end
         @test_nowarn generate_problem("tsp/precedence", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/prize_collecting", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/assignment_relaxation", 3, infeasible, 1)
+        # graph_optimization/generalized_independent_set used to request more
+        # hard edges than leave n_soft unused pairs, throwing for targets 6–10.
+        for target in 6:10, status in (feasible, unknown, infeasible)
+            @test_nowarn generate_problem("graph_optimization/generalized_independent_set",
+                                          target, status, 1)
+        end
+        _, gis = generate_problem("graph_optimization/generalized_independent_set", 6, feasible, 1)
+        @test length(gis.soft_edges) == 6 - gis.n_vertices
+        @test length(gis.hard_edges) + length(gis.soft_edges) <=
+              gis.n_vertices * (gis.n_vertices - 1) ÷ 2
         # energy now stores an emissions intensity target (the previous per-period
         # emissions row was an algebraic tautology).
         _, eprob = generate_problem("energy/standard", 120, unknown, 1)
