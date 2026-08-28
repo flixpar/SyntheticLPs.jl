@@ -9,3 +9,4 @@
 include("standard.jl")
 include("setup_cost.jl")
 include("due_dates.jl")
+include("integer_patterns.jl")

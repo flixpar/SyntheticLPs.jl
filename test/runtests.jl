@@ -492,6 +492,57 @@ end
                                 seed = 1,
                                 max_candidate_multiplier = 3)
         @test length(tiny) == 4
+        # discrete MCF variants sample extra arcs by rejection instead of
+        # materializing every ordered node pair.
+        for ref in ("multi_commodity_flow/binary_capacity",
+                    "multi_commodity_flow/integer_flow")
+            @test_nowarn generate_problem(ref, 20, unknown, 1)
+            _, mcf = generate_problem(ref, 200, unknown, 1)
+            @test length(mcf.arcs) == mcf.n_arcs
+            @test length(unique(mcf.arcs)) == mcf.n_arcs
+            @test all(a[1] != a[2] for a in mcf.arcs)
+        end
+        # graph_optimization/generalized_independent_set used to request more
+        # hard edges than leave n_soft unused pairs, throwing for targets 6–10.
+        for target in 6:10, status in (feasible, unknown, infeasible)
+            @test_nowarn generate_problem("graph_optimization/generalized_independent_set",
+                                          target, status, 1)
+        end
+        _, gis = generate_problem("graph_optimization/generalized_independent_set", 6, feasible, 1)
+        @test length(gis.soft_edges) == 6 - gis.n_vertices
+        @test length(gis.hard_edges) + length(gis.soft_edges) <=
+              gis.n_vertices * (gis.n_vertices - 1) ÷ 2
+        # knapsack/mixed_integer_set stores sparse row supports instead of a
+        # dense n_rows × n_variables coefficient matrix.
+        @test_nowarn generate_problem("knapsack/mixed_integer_set", 1, unknown, 1)
+        _, mik = generate_problem("knapsack/mixed_integer_set", 80, unknown, 1)
+        @test length(mik.row_indices) == mik.n_rows
+        @test all(length(mik.row_indices[r]) == length(mik.row_coefficients[r])
+                  for r in 1:mik.n_rows)
+        @test all(allunique(mik.row_indices[r]) &&
+                  all(1 <= i <= mik.n_integer + mik.n_continuous for i in mik.row_indices[r])
+                  for r in 1:mik.n_rows)
+        # generic_milp samples each row support in O(width) rather than
+        # permuting all n columns; keep a moderately large constructor cheap.
+        @test_nowarn generate_problem("generic_milp/standard", 3, unknown, 1)
+        _, gmilp = generate_problem("generic_milp/standard", 200, unknown, 1)
+        @test all(issorted(row.indices) && allunique(row.indices) for row in gmilp.rows)
+        @test all(1 <= length(row.indices) <= gmilp.n_variables for row in gmilp.rows)
+        # container_loading used to reject targets below 12 (standard) / 30
+        # (2-D packing); both now clamp to their smallest formulation.
+        @test_nowarn generate_problem("container_loading/standard", 2, unknown, 1)
+        @test_nowarn generate_problem("container_loading/standard", 11, feasible, 1)
+        @test_nowarn generate_problem("container_loading/two_dimensional_bin_packing", 2, unknown, 1)
+        @test_nowarn generate_problem("container_loading/two_dimensional_bin_packing", 29, infeasible, 1)
+        # energy/optimal_transmission_switching samples extra lines by rejection
+        # instead of materializing the complete undirected edge set.
+        @test_nowarn generate_problem("energy/optimal_transmission_switching", 3, unknown, 1)
+        _, ots = generate_problem("energy/optimal_transmission_switching", 500, unknown, 1)
+        @test ots.n_lines >= ots.n_buses - 1
+        @test length(unique(ots.line_from[k] < ots.line_to[k] ?
+                            (ots.line_from[k], ots.line_to[k]) :
+                            (ots.line_to[k], ots.line_from[k])
+                            for k in 1:ots.n_lines)) == ots.n_lines
         # energy now stores an emissions intensity target (the previous per-period
         # emissions row was an algebraic tautology).
         _, eprob = generate_problem("energy/standard", 120, unknown, 1)

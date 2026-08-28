@@ -25,6 +25,126 @@ only at 2) with `n_elements <= n_columns` so the planted partition still fits.
 - Tests: tiny-target generation for every variant, plus a 4-instance
   `generate_dataset` with `Uniform(2, 3)` restricted to `:set_system`.
 
+## 2026-08-28 18:39 UTC (discrete MCF sparse topology)
+
+**Previous Commit**: `a334314`
+
+**Summary**: PR-review fix — both discrete multicommodity-flow variants
+materialized every ordered node pair, then shuffled, to add a linear number of
+extra arcs. A million-variable request therefore allocated hundreds of millions
+of tuples. Extra arcs are now sampled by rejection from a directed Hamilton
+cycle, matching the sparse OTS/dc_opf pattern.
+
+**Details**:
+- New shared `_discrete_mcf_topology` in the category entry point; both
+  `binary_capacity` and `integer_flow` use it. The cycle prefix is unchanged
+  (every source-sink pair remains reachable). Extra arcs are random unused
+  ordered pairs, capped at `50 * n_arcs` attempts.
+- Seed-identical instances change because extra-arc sampling (and the
+  downstream RNG stream) changed.
+- Tests: uniqueness / no-self-loop checks for both variants at target 200.
+
+## 2026-08-28 18:37 UTC (GIS reserve soft-edge slots)
+
+**Previous Commit**: `8117dda`
+
+**Summary**: PR-review fix — `graph_optimization/generalized_independent_set`
+sized its hard-edge count without leaving room for the `n_soft` penalty
+variables. For targets 6–10 with `feasible`/`unknown`, every unused pair could
+be consumed as a hard conflict, so `_graph_sample_edges` threw
+`ArgumentError("not enough admissible graph edges")` for every seed.
+
+**Details**:
+- Cap `hard_count` by `max_edges - n_soft` (and at 0) so at least `n_soft`
+  distinct pairs remain after the hard graph is sampled. The planted
+  independent-set exclusion and the previous density cap `max(n-1, 2n)` are
+  unchanged.
+- Infeasible requests were already using a matching, so they did not hit this
+  throw; they still go through the same soft-edge sampler and are covered by
+  the new tests.
+- Tests: `@test_nowarn` for targets 6–10 × all three statuses, plus a
+  target-6 feasible assertion that hard+soft does not exceed the complete graph.
+
+## 2026-08-28 18:13 UTC (knapsack/mixed_integer_set sparse rows)
+
+**Previous Commit**: `2ed76fe`
+
+**Summary**: PR-review fix — the mixed-integer knapsack-set constructor stored
+a dense `n_rows × n_variables` coefficient matrix even though most entries are
+structural zeros (`n_rows` is 60–90% of `n`). A 10,000-variable request used
+roughly 480–720 MB for that field, and `build_model` scanned every stored zero.
+Rows are now stored sparsely and assembled from their nonzeros.
+
+**Details**:
+- Replaced `coefficients::Matrix{Float64}` with parallel `row_indices` /
+  `row_coefficients` vectors. Capacities and the JuMP rows iterate only
+  generated nonzeros.
+- Sparse supports (3–10% density) are sampled with a set; dense rows still use
+  a permutation prefix, which is cheaper once the requested width is a large
+  fraction of `n`.
+- Empty continuous-block `sum`s use `init=0.0` so the documented `n = 1`
+  instance (no continuous variables) no longer throws.
+- Tests: `n = 1` generation plus sparse-support integrity checks at target 80.
+
+## 2026-08-28 18:10 UTC (generic_milp sparse support sampling)
+
+**Previous Commit**: `8ce8ccb`
+
+**Summary**: PR-review fix — each generic MILP row drew its sparse support as
+the prefix of a full `n`-element permutation, and the constructor builds Θ(n)
+rows. Support generation was therefore Θ(n²) time and allocation (about three
+billion indices at `n = 100_000`). Supports are now sampled without replacement
+in work proportional to the requested width.
+
+**Details**:
+- New `_generic_sample_indices` draws `width` distinct columns via a set
+  (expected O(width) while `width ≪ n`, which is the advertised
+  `width ~ √n` regime) and sorts them. `_generic_sparse_support` uses it in
+  place of `randperm(n)[1:width]`. The one-shot `randperm` in the variable
+  layout is unchanged.
+- Seed-identical instances change because the support RNG stream is shorter.
+- Tests: tiny-target generation plus sorted/unique support checks at target 200.
+
+## 2026-08-28 17:41 UTC (OTS sparse extra-line sampling)
+
+**Previous Commit**: `42b1bdf`
+
+**Summary**: PR-review fix — `energy/optimal_transmission_switching`
+materialized every undirected pair among `n_buses` buses, then shuffled and
+kept only ~1.45–2.05 lines per bus. A ~100,000-variable request therefore
+allocated hundreds of millions of tuples. Extra mesh lines are now sampled
+by rejection, matching `energy/dc_opf`.
+
+**Details**:
+- Replaced the `candidates = [(i, j) for i in 1:n_buses for j in (i+1):n_buses];
+  shuffle!` loop with random endpoint-pair attempts until `n_lines` is reached
+  (capped at `50 * n_lines` attempts). The spanning-tree prefix is unchanged.
+- The delivered graph remains simple and at least a tree; typical sizing is
+  sparse, so the attempt cap is not binding. Seed-identical instances change
+  because extra-line sampling (and thus the downstream RNG stream) changed.
+- Tests: tiny-target generation plus a uniqueness / tree-size check at
+  target 500.
+
+## 2026-08-28 17:36 UTC (container_loading clamp tiny targets)
+
+**Previous Commit**: `6078534`
+
+**Summary**: PR-review fix — both `container_loading` constructors rejected
+targets below a hard floor (`standard` at 12, `two_dimensional_bin_packing` at
+30). `generate_random_problem` and `generate_dataset` accept sizes down to 2,
+so those calls could throw or exhaust candidates. Both now clamp to their
+smallest formulation instead.
+
+**Details**:
+- `container_loading/standard`: drop the `target_variables >= 12` throw; clamp
+  to 6 (two items × two containers + two use-indicators) and keep the existing
+  dimension search. Targets ≥ 12 are unchanged.
+- `container_loading/two_dimensional_bin_packing`: drop the
+  `target_variables >= 30` throw; clamp to 26 (`n=3`, `b=2`, the search's
+  existing lower corner). Targets ≥ 30 are unchanged.
+- Tests: tiny-target `@test_nowarn` coverage for both variants in the
+  generator-robustness testset.
+
 ## 2026-08-27 13:03 UTC (tsp/flow exact dimension sizing)
 
 **Previous Commit**: `aa98448`
