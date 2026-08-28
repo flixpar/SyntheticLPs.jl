@@ -4,6 +4,25 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-28 18:39 UTC (discrete MCF sparse topology)
+
+**Previous Commit**: `a334314`
+
+**Summary**: PR-review fix — both discrete multicommodity-flow variants
+materialized every ordered node pair, then shuffled, to add a linear number of
+extra arcs. A million-variable request therefore allocated hundreds of millions
+of tuples. Extra arcs are now sampled by rejection from a directed Hamilton
+cycle, matching the sparse OTS/dc_opf pattern.
+
+**Details**:
+- New shared `_discrete_mcf_topology` in the category entry point; both
+  `binary_capacity` and `integer_flow` use it. The cycle prefix is unchanged
+  (every source-sink pair remains reachable). Extra arcs are random unused
+  ordered pairs, capped at `50 * n_arcs` attempts.
+- Seed-identical instances change because extra-arc sampling (and the
+  downstream RNG stream) changed.
+- Tests: uniqueness / no-self-loop checks for both variants at target 200.
+
 ## 2026-08-28 18:37 UTC (GIS reserve soft-edge slots)
 
 **Previous Commit**: `8117dda`
