@@ -65,3 +65,4 @@ where relaxation changes the solved model.
 - [Telecom Network Design](telecom_network_design.md)
 - [Transportation](transportation.md)
 - [Traveling Salesperson](tsp.md)
+- [Workforce Shift Scheduling](workforce_shift_scheduling.md)

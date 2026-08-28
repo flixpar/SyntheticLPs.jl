@@ -4,6 +4,7 @@ const MOI = JuMP.MOI
 using Random
 using Distributions
 using JSON
+using LinearAlgebra
 
 using SyntheticLPs
 
@@ -738,6 +739,391 @@ end
         end
     end
 
+    @testset "Workforce Shift Covering" begin
+        ref = ProblemVariant(:workforce_shift_scheduling, :covering)
+        @test :workforce_shift_scheduling in list_categories()
+        @test list_variants(:workforce_shift_scheduling) == [:covering]
+        @test problem_info(:workforce_shift_scheduling)[:default_variant] == :covering
+        @test problem_info(:workforce_shift_scheduling, :covering)[:type] <:
+              ProblemGenerator
+
+        # There is exactly one decision-variable block. Sizing is exact from
+        # small instances through scales above the source implementation's cap.
+        for target in (10, 50, 200, 1500, 5000)
+            model, problem = generate_problem(ref, target, feasible, 19)
+            @test num_variables(model) == target ==
+                  length(problem.column_pools)
+        end
+        # A target of one is below the structural floor needed to retain
+        # skill-period coverage and representative generated labor pools.
+        expected_minimums = Dict(1 => 8, 2 => 9, 4 => 6)
+        for (seed, expected) in expected_minimums
+            model, problem = generate_problem(ref, 1, feasible, seed)
+            @test num_variables(model) == expected ==
+                  length(problem.column_pools)
+            @test num_variables(model) > 1
+        end
+
+        # Every profile is also exercised above 1,000 variables. Contact-center
+        # and continuous-operations instances take their four-skill branches;
+        # retail intentionally has three profile-defined skills.
+        large_profiles = Dict{Symbol,Any}()
+        for seed in (1, 2, 4)
+            model, problem = generate_problem(ref, 1500, feasible, seed)
+            @test num_variables(model) == 1500
+            large_profiles[problem.profile] = problem
+        end
+        @test Set(keys(large_profiles)) ==
+              Set((:contact_center, :retail, :continuous_operations))
+        @test length(large_profiles[:contact_center].skill_names) == 4
+        @test length(large_profiles[:continuous_operations].skill_names) == 4
+        @test length(large_profiles[:retail].skill_names) == 3
+
+        # Validate one large four-skill instance end to end: the stored
+        # witness respects pool capacities, covers every row (including skill
+        # 4), and the named model row block has exactly the expected shape.
+        large_model, large_problem =
+            generate_problem(ref, 1500, feasible, 2)
+        @test large_problem.feasibility_status == feasible
+        @test length(large_problem.skill_names) == 4
+        large_witness = something(large_problem.feasible_staffing)
+        for pool in eachindex(large_problem.pool_names)
+            usage = sum(
+                large_witness[column]
+                for column in eachindex(large_problem.column_pools)
+                if large_problem.column_pools[column] == pool
+            )
+            @test usage <= large_problem.pool_capacities[pool] + 1e-8
+        end
+        large_coverage_rows = large_model[:skill_coverage]
+        @test size(large_coverage_rows) == (large_problem.n_periods, 4)
+        @test length(large_coverage_rows) == 4 * large_problem.n_periods
+        @test all(is_valid(large_model, large_coverage_rows[period, 4])
+                  for period in 1:large_problem.n_periods)
+        for period in 1:large_problem.n_periods, skill in 1:4
+            row = constraint_object(large_coverage_rows[period, skill])
+            @test row.set.lower == large_problem.demand[period, skill]
+            supplied = sum(
+                large_problem.pool_productivity[
+                    large_problem.column_pools[column], skill,
+                ] * large_witness[column]
+                for column in eachindex(large_problem.column_pools)
+                if large_problem.column_skills[column] == skill &&
+                   large_problem.pattern_coverage[
+                       period, large_problem.column_patterns[column],
+                   ]
+            )
+            @test supplied + 1e-8 >= large_problem.demand[period, skill]
+        end
+
+        # Exact field and model reproducibility, including repeated builds and
+        # deterministic MPS export.
+        model1, problem1 = generate_problem(ref, 320, unknown, 12345)
+        model2, problem2 = generate_problem(ref, 320, unknown, 12345)
+        @test all(
+            isequal(getfield(problem1, field), getfield(problem2, field))
+            for field in fieldnames(typeof(problem1))
+        )
+        rebuilt1 = SyntheticLPs.build_model(problem1)
+        rebuilt2 = SyntheticLPs.build_model(problem1)
+        @test num_variables(model1) == num_variables(model2) ==
+              num_variables(rebuilt1) == num_variables(rebuilt2)
+        @test num_constraints(model1; count_variable_in_set_constraints=true) ==
+              num_constraints(model2; count_variable_in_set_constraints=true) ==
+              num_constraints(rebuilt1; count_variable_in_set_constraints=true) ==
+              num_constraints(rebuilt2; count_variable_in_set_constraints=true)
+
+        # Exact model contract: one continuous nonnegative staffing block,
+        # minimization, and objective coefficients sourced without alteration
+        # from the stored data.
+        assigned_workers = model1[:assigned_workers]
+        variables = all_variables(model1)
+        @test length(assigned_workers) == length(problem1.staffing_costs)
+        @test Set(variables) == Set(assigned_workers)
+        @test all(!is_binary(variable) && !is_integer(variable)
+                  for variable in variables)
+        @test all(has_lower_bound(variable) && lower_bound(variable) == 0.0
+                  for variable in variables)
+        @test all(!has_upper_bound(variable) for variable in variables)
+        @test objective_sense(model1) == MOI.MIN_SENSE
+        objective = objective_function(model1)
+        @test objective isa JuMP.AffExpr
+        @test objective.constant == 0.0
+        @test all(
+            coefficient(objective, assigned_workers[column]) ==
+            problem1.staffing_costs[column]
+            for column in eachindex(problem1.staffing_costs)
+        )
+
+        export_dir = mktempdir()
+        path1 = joinpath(export_dir, "workforce_1.mps")
+        path2 = joinpath(export_dir, "workforce_2.mps")
+        write_to_file(rebuilt1, path1)
+        write_to_file(rebuilt2, path2)
+        @test filesize(path1) > 0
+        @test read(path1, String) == read(path2, String)
+
+        # Fixed seeds exercise all structural profiles and their distinct
+        # horizons, shift rules, demand curves, and availability regimes.
+        profiles = Dict{Symbol,Any}()
+        for seed in (1, 2, 4)
+            _, problem = generate_problem(ref, 240, unknown, seed)
+            profiles[problem.profile] = problem
+        end
+        @test Set(keys(profiles)) ==
+              Set((:contact_center, :retail, :continuous_operations))
+        @test (profiles[:contact_center].period_minutes,
+               profiles[:contact_center].n_periods) == (30, 24)
+        @test (profiles[:retail].period_minutes,
+               profiles[:retail].n_periods) == (60, 14)
+        @test (profiles[:continuous_operations].period_minutes,
+               profiles[:continuous_operations].n_periods) == (60, 24)
+        @test !any(profiles[:contact_center].pattern_wraps)
+        @test !any(profiles[:retail].pattern_wraps)
+        @test any(profiles[:continuous_operations].pattern_wraps)
+        @test all(profile -> any(profile.pattern_break_periods .> 0),
+                  values(profiles))
+        @test all(profile -> length(unique(profile.pattern_span_periods)) >= 3,
+                  values(profiles))
+
+        for problem in values(profiles)
+            n_pools = length(problem.pool_names)
+            n_skills = length(problem.skill_names)
+            n_patterns = size(problem.pattern_coverage, 2)
+            @test n_pools >= 4
+            @test n_skills >= 2
+            @test n_patterns > 0
+            @test all(sum(problem.pattern_coverage; dims=1) .> 0)
+            @test length(unique(Tuple(problem.pool_qualifications[q, :])
+                                for q in 1:n_pools)) > 1
+            @test length(unique(Tuple(problem.pool_availability[q, :])
+                                for q in 1:n_pools)) > 1
+            @test all(problem.pool_productivity[problem.pool_qualifications] .> 0)
+            @test all(problem.pool_productivity[.!problem.pool_qualifications] .== 0)
+            @test all(problem.hourly_wages .> 0)
+            @test all(problem.pool_capacities .> 0)
+            @test all(problem.staffing_costs .> 0)
+            @test all(problem.demand .> 0)
+            @test any(maximum(problem.demand[:, skill]) >
+                      1.10 * minimum(problem.demand[:, skill])
+                      for skill in 1:n_skills)
+
+            # Pattern metadata reconstructs each contiguous (possibly
+            # wraparound) start/span window exactly. A stored break is inside
+            # that window and is the sole excluded period.
+            supports = Tuple[]
+            for pattern in 1:n_patterns
+                start = problem.pattern_starts[pattern]
+                span = problem.pattern_span_periods[pattern]
+                break_period = problem.pattern_break_periods[pattern]
+                window = if problem.profile == :continuous_operations
+                    [mod1(start + offset, problem.n_periods)
+                     for offset in 0:(span - 1)]
+                else
+                    [start + offset for offset in 0:(span - 1)]
+                end
+                @test length(unique(window)) == span
+                @test all(period -> 1 <= period <= problem.n_periods, window)
+                expected_support = if break_period == 0
+                    copy(window)
+                else
+                    @test break_period in window
+                    @test !problem.pattern_coverage[break_period, pattern]
+                    [period for period in window if period != break_period]
+                end
+                actual_support = findall(problem.pattern_coverage[:, pattern])
+                @test sort(actual_support) == sort(expected_support)
+                @test length(actual_support) ==
+                      span - (break_period == 0 ? 0 : 1)
+                @test problem.pattern_wraps[pattern] ==
+                      (start + span - 1 > problem.n_periods)
+                push!(supports, Tuple(actual_support))
+            end
+            # `_workforce_patterns` drops duplicate supports even when
+            # different start/span/break samples would produce the same set.
+            @test length(unique(supports)) == n_patterns
+
+            # Every selected column obeys qualification, availability, and
+            # pattern eligibility. Every skill-period has nonempty row support.
+            for column in eachindex(problem.column_pools)
+                pool = problem.column_pools[column]
+                pattern = problem.column_patterns[column]
+                skill = problem.column_skills[column]
+                @test problem.pool_qualifications[pool, skill]
+                @test problem.pattern_eligibility[pool, pattern]
+                @test all(
+                    !problem.pattern_coverage[period, pattern] ||
+                    problem.pool_availability[pool, period]
+                    for period in 1:problem.n_periods
+                )
+            end
+            @test all(
+                any(problem.column_skills[column] == skill &&
+                    problem.pattern_coverage[period,
+                                             problem.column_patterns[column]]
+                    for column in eachindex(problem.column_pools))
+                for period in 1:problem.n_periods, skill in 1:n_skills
+            )
+
+            # Coverage + pool-row signatures are unique; costs are not being
+            # used to disguise duplicate staffing columns.
+            signatures = [
+                (
+                    problem.column_pools[column],
+                    problem.column_skills[column],
+                    Tuple(findall(problem.pattern_coverage[:,
+                                      problem.column_patterns[column]])),
+                )
+                for column in eachindex(problem.column_pools)
+            ]
+            @test length(unique(signatures)) == length(signatures)
+        end
+
+        # Different seeds alter profile and numerical/structural data.
+        _, seed1 = generate_problem(ref, 240, unknown, 1)
+        _, seed2 = generate_problem(ref, 240, unknown, 2)
+        @test seed1.profile != seed2.profile
+        @test seed1.demand != seed2.demand
+        @test seed1.skill_names != seed2.skill_names
+        # Diversity also holds within each profile, rather than relying on
+        # profile selection alone.
+        for (first_seed, second_seed) in ((1, 3), (2, 5), (4, 7))
+            _, first_problem =
+                generate_problem(ref, 240, unknown, first_seed)
+            _, second_problem =
+                generate_problem(ref, 240, unknown, second_seed)
+            @test first_problem.profile == second_problem.profile
+            @test first_problem.demand != second_problem.demand
+            @test first_problem.pattern_coverage !=
+                  second_problem.pattern_coverage
+            @test first_problem.pool_qualifications !=
+                  second_problem.pool_qualifications
+        end
+
+        # The planted staffing vector proves feasible requests directly.
+        for seed in 1:6
+            _, problem = generate_problem(ref, 260, feasible, seed)
+            @test problem.feasibility_status == feasible
+            @test problem.feasible_staffing !== nothing
+            @test problem.infeasible_skill === nothing
+            @test problem.infeasibility_capacity_bound === nothing
+            witness = something(problem.feasible_staffing)
+            for pool in eachindex(problem.pool_names)
+                usage = sum(
+                    witness[column]
+                    for column in eachindex(problem.column_pools)
+                    if problem.column_pools[column] == pool
+                )
+                @test usage <= problem.pool_capacities[pool] + 1e-8
+            end
+            for period in 1:problem.n_periods,
+                skill in eachindex(problem.skill_names)
+                supplied = sum(
+                    problem.pool_productivity[
+                        problem.column_pools[column], skill,
+                    ] * witness[column]
+                    for column in eachindex(problem.column_pools)
+                    if problem.column_skills[column] == skill &&
+                       problem.pattern_coverage[
+                           period, problem.column_patterns[column],
+                       ]
+                )
+                @test supplied + 1e-8 >= problem.demand[period, skill]
+            end
+        end
+
+        # At least one skill violates a valid aggregate capacity upper bound in
+        # every requested-infeasible instance.
+        for seed in 1:6
+            _, problem = generate_problem(ref, 260, infeasible, seed)
+            @test problem.feasibility_status == infeasible
+            @test problem.feasible_staffing === nothing
+            @test problem.infeasible_skill !== nothing
+            @test problem.infeasibility_capacity_bound !== nothing
+            certified = false
+            for skill in eachindex(problem.skill_names)
+                upper = 0.0
+                for pool in eachindex(problem.pool_names)
+                    paid = [
+                        count(problem.pattern_coverage[:,
+                              problem.column_patterns[column]])
+                        for column in eachindex(problem.column_pools)
+                        if problem.column_pools[column] == pool &&
+                           problem.column_skills[column] == skill
+                    ]
+                    max_paid = isempty(paid) ? 0 : maximum(paid)
+                    upper += problem.pool_capacities[pool] *
+                             problem.pool_productivity[pool, skill] * max_paid
+                end
+                certified |= sum(problem.demand[:, skill]) > upper + 1e-6
+            end
+            @test certified
+            certificate_skill = something(problem.infeasible_skill)
+            expected_bound = 0.0
+            for pool in eachindex(problem.pool_names)
+                paid = [
+                    count(problem.pattern_coverage[:,
+                          problem.column_patterns[column]])
+                    for column in eachindex(problem.column_pools)
+                    if problem.column_pools[column] == pool &&
+                       problem.column_skills[column] == certificate_skill
+                ]
+                max_paid = isempty(paid) ? 0 : maximum(paid)
+                expected_bound += problem.pool_capacities[pool] *
+                                  problem.pool_productivity[
+                                      pool, certificate_skill,
+                                  ] * max_paid
+            end
+            @test something(problem.infeasibility_capacity_bound) ≈
+                  expected_bound
+            @test sum(problem.demand[:, certificate_skill]) >
+                  something(problem.infeasibility_capacity_bound)
+        end
+
+        # Unknown mode starts from the same sampled structure as feasible mode
+        # but applies genuine labor and workload shocks. It exposes no witness
+        # or infeasibility certificate and makes no solver-status promise.
+        feasible_model, feasible_problem =
+            generate_problem(ref, 260, feasible, 23)
+        unknown_model, unknown_problem =
+            generate_problem(ref, 260, unknown, 23)
+        @test feasible_problem.feasibility_status == feasible
+        @test unknown_problem.feasibility_status == unknown
+        @test unknown_problem.profile == feasible_problem.profile
+        @test unknown_problem.pattern_coverage ==
+              feasible_problem.pattern_coverage
+        @test unknown_problem.column_pools == feasible_problem.column_pools
+        @test unknown_problem.column_patterns ==
+              feasible_problem.column_patterns
+        @test unknown_problem.column_skills == feasible_problem.column_skills
+        @test unknown_problem.pool_capacities !=
+              feasible_problem.pool_capacities
+        @test unknown_problem.demand != feasible_problem.demand
+        @test unknown_problem.feasible_staffing === nothing
+        @test unknown_problem.infeasible_skill === nothing
+        @test unknown_problem.infeasibility_capacity_bound === nothing
+
+        if HAS_HIGHS
+            for seed in 1:6, status in (feasible, infeasible)
+                model, _ = generate_problem(ref, 260, status, seed)
+                set_optimizer(model, HiGHS.Optimizer)
+                set_silent(model)
+                optimize!(model)
+                expected = status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE
+                @test termination_status(model) == expected
+            end
+            set_optimizer(unknown_model, HiGHS.Optimizer)
+            set_silent(unknown_model)
+            optimize!(unknown_model)
+            @test termination_status(unknown_model) in
+                  (MOI.OPTIMAL, MOI.INFEASIBLE)
+            set_optimizer(large_model, HiGHS.Optimizer)
+            set_silent(large_model)
+            optimize!(large_model)
+            @test termination_status(large_model) == MOI.OPTIMAL
+        end
+    end
+
     # Test individual problem generators (every registered variant)
     for ref in list_problems()
         test_problem_generator(ref)
@@ -920,6 +1306,282 @@ end
         @test manifest["config"]["bounds_to_constraints"] == true
     end
 
+    @testset "Regression Basis Pursuit" begin
+        @test :basis_pursuit in list_variants(:regression)
+        info = problem_info(:regression, :basis_pursuit)
+        @test occursin("basis-pursuit", lowercase(info[:description]))
+        @test ProblemVariant("regression/basis_pursuit") ==
+              ProblemVariant(:regression, :basis_pursuit)
+
+        profiles = (
+            :gaussian_well_conditioned,
+            :correlated_columns,
+            :sparse_measurements,
+        )
+        profile_seeds = Dict(profile => Int[] for profile in profiles)
+        for seed in 1:100
+            _, prob = generate_problem("regression/basis_pursuit", 150, feasible, seed)
+            length(profile_seeds[prob.profile]) < 3 &&
+                push!(profile_seeds[prob.profile], seed)
+        end
+        @test all(length(profile_seeds[profile]) == 3 for profile in profiles)
+
+        check_status_data = function(prob)
+            @test (prob.certificate !== nothing) ==
+                  (prob.resolved_status == infeasible)
+            @test all(any(!iszero, @view prob.A[i, :])
+                      for i in 1:prob.n_measurements)
+            @test all(any(!iszero, @view prob.A[:, j])
+                      for j in 1:prob.n_features)
+            if prob.resolved_status == feasible
+                @test prob.certificate === nothing
+                @test prob.A * prob.source_signal ≈ prob.b
+            else
+                certificate = prob.certificate
+                @test certificate isa SyntheticLPs.BasisPursuitCertificate
+                if certificate !== nothing
+                    r1, r2 = certificate.rows
+                    @test 1 <= r1 <= prob.n_measurements
+                    @test 1 <= r2 <= prob.n_measurements
+                    @test r1 != r2
+                    @test prob.A[r2, :] ==
+                          certificate.multiplier .* prob.A[r1, :]
+                    @test prob.b[r2] ≈
+                          certificate.multiplier * prob.b[r1] +
+                          certificate.rhs_gap
+                    @test !iszero(certificate.rhs_gap)
+                    @test !(prob.A * prob.source_signal ≈ prob.b)
+                end
+            end
+        end
+
+        # Positive/negative splitting makes the count intrinsically even: even
+        # targets are exact, odd targets round up one, and two is the minimum.
+        for target in (1, 2, 3, 4, 5, 50, 501, 2000)
+            model, prob = generate_problem(
+                "regression/basis_pursuit",
+                target,
+                feasible,
+                17,
+            )
+            expected = 2 * max(1, cld(max(target, 1), 2))
+            @test num_variables(model) == expected == 2 * prob.n_features
+            @test size(prob.A) == (prob.n_measurements, prob.n_features)
+            @test length(prob.b) == prob.n_measurements
+            @test length(prob.weights) == prob.n_features
+            @test length(prob.source_signal) == prob.n_features
+        end
+
+        # Deterministic data, repeated builds, and MPS export for every profile
+        # under both resolved statuses.
+        mktempdir() do tmp
+            for profile in profiles, status in (feasible, infeasible)
+                seed = first(profile_seeds[profile])
+                model1, prob1 =
+                    generate_problem("regression/basis_pursuit", 150, status, seed)
+                model2, prob2 =
+                    generate_problem("regression/basis_pursuit", 150, status, seed)
+                @test prob1.profile == prob2.profile == profile
+                for field in fieldnames(typeof(prob1))
+                    @test getfield(prob1, field) == getfield(prob2, field)
+                end
+                rebuilt = SyntheticLPs.build_model(prob1)
+                @test num_variables(model1) == num_variables(model2) ==
+                      num_variables(rebuilt)
+                @test num_constraints(model1; count_variable_in_set_constraints=true) ==
+                      num_constraints(model2; count_variable_in_set_constraints=true) ==
+                      num_constraints(rebuilt; count_variable_in_set_constraints=true)
+
+                prefix = "$(profile)_$(status)"
+                paths = [joinpath(tmp, "$(prefix)_$copy.mps") for copy in 1:3]
+                write_to_file(model1, paths[1])
+                write_to_file(model2, paths[2])
+                write_to_file(rebuilt, paths[3])
+                @test read(paths[1], String) == read(paths[2], String) ==
+                      read(paths[3], String)
+            end
+        end
+
+        # The constructor owns a local RNG and does not perturb Random.default_rng().
+        Random.seed!(8801)
+        expected_draws = rand(4)
+        Random.seed!(8801)
+        SyntheticLPs.BasisPursuitProblem(100, feasible, 9)
+        @test rand(4) == expected_draws
+
+        # A deterministic seed sample covers both natural unknown outcomes, and
+        # each outcome carries exactly its matching witness/certificate data.
+        unknown_statuses = Set{FeasibilityStatus}()
+        varied = Any[]
+        for seed in 1:60
+            _, feasible_prob =
+                generate_problem("regression/basis_pursuit", 120, feasible, seed)
+            _, unknown_prob =
+                generate_problem("regression/basis_pursuit", 120, unknown, seed)
+            push!(unknown_statuses, unknown_prob.resolved_status)
+            check_status_data(unknown_prob)
+            seed <= 12 && push!(varied, feasible_prob)
+        end
+        @test unknown_statuses == Set((feasible, infeasible))
+        @test length(unique(p.profile for p in varied)) > 1
+        @test length(unique(Tuple(p.support) for p in varied)) > 1
+        @test any(p.A != varied[1].A for p in varied[2:end])
+
+        # Profile statistics are checked on multiple seeds, including a
+        # large-instance regression against coherence decay.
+        for profile in profiles, seed in profile_seeds[profile]
+            _, prob = generate_problem("regression/basis_pursuit", 150, feasible, seed)
+            @test prob.resolved_status == feasible
+            @test issorted(prob.support)
+            @test allunique(prob.support)
+            @test all(1 <= j <= prob.n_features for j in prob.support)
+            @test findall(!iszero, prob.source_signal) == prob.support
+            @test all(>(0.0), prob.weights)
+            @test norm(prob.A * prob.source_signal - prob.b, Inf) <= 1.0e-10
+            @test norm(prob.b, Inf) > 1.0e-8
+            @test prob.certificate === nothing
+
+            if profile == :gaussian_well_conditioned
+                identity_rows = Matrix{Float64}(
+                    I,
+                    prob.n_measurements,
+                    prob.n_measurements,
+                )
+                @test norm(prob.A * transpose(prob.A) - identity_rows, Inf) <=
+                      1.0e-10
+            elseif profile == :correlated_columns
+                normalized = prob.A ./ sqrt.(sum(abs2, prob.A; dims=1))
+                gram = transpose(normalized) * normalized
+                identity_columns = Matrix{Float64}(
+                    I,
+                    prob.n_features,
+                    prob.n_features,
+                )
+                @test maximum(abs.(gram - identity_columns)) >= 0.985
+            else
+                density = count(!iszero, prob.A) / length(prob.A)
+                @test density <= 0.2
+                @test all(any(!iszero, @view prob.A[i, :])
+                          for i in 1:prob.n_measurements)
+                @test all(any(!iszero, @view prob.A[:, j])
+                          for j in 1:prob.n_features)
+            end
+        end
+
+        for seed in profile_seeds[:correlated_columns]
+            _, prob =
+                generate_problem("regression/basis_pursuit", 2000, feasible, seed)
+            normalized = prob.A ./ sqrt.(sum(abs2, prob.A; dims=1))
+            sample_width = min(200, prob.n_features)
+            sample = @view normalized[:, 1:sample_width]
+            gram = transpose(sample) * sample
+            identity_columns = Matrix{Float64}(I, sample_width, sample_width)
+            @test maximum(abs.(gram - identity_columns)) >= 0.985
+        end
+
+        # Feasible instances retain their source signal as an exact witness;
+        # infeasible instances carry only the inspectable algebraic certificate.
+        for seed in 1:12
+            _, feasible_prob =
+                generate_problem("regression/basis_pursuit", 100, feasible, seed)
+            @test feasible_prob.resolved_status == feasible
+            check_status_data(feasible_prob)
+
+            _, infeasible_prob =
+                generate_problem("regression/basis_pursuit", 100, infeasible, seed)
+            @test infeasible_prob.resolved_status == infeasible
+            check_status_data(infeasible_prob)
+        end
+
+        # Certificate injection must not erase sparse columns whose only
+        # nonzero sat in the replaced row. Target 20 has measurement width 1.
+        sparse_infeasible = 0
+        for seed in 0:199
+            _, prob = generate_problem(
+                "regression/basis_pursuit", 20, infeasible, seed
+            )
+            prob.profile == :sparse_measurements || continue
+            sparse_infeasible += 1
+            check_status_data(prob)
+        end
+        @test sparse_infeasible >= 20
+
+        # Every profile also constructs correctly at the one-feature minimum,
+        # under both statuses. Gaussian rows cannot both be orthonormal in this
+        # 2×1 geometry, so its feasible matrix is normalized as one column.
+        tiny_profile_seeds = Dict{Symbol,Int}()
+        for seed in 1:60
+            _, prob = generate_problem("regression/basis_pursuit", 1, feasible, seed)
+            get!(tiny_profile_seeds, prob.profile, seed)
+        end
+        @test Set(keys(tiny_profile_seeds)) == Set(profiles)
+        for profile in profiles, target in (1, 2, 3), status in (feasible, infeasible)
+            model, prob = generate_problem(
+                "regression/basis_pursuit",
+                target,
+                status,
+                tiny_profile_seeds[profile],
+            )
+            @test prob.profile == profile
+            @test num_variables(model) == (target <= 2 ? 2 : 4)
+            @test prob.n_measurements == 2
+            check_status_data(prob)
+        end
+        _, tiny_gaussian = generate_problem(
+            "regression/basis_pursuit",
+            1,
+            feasible,
+            tiny_profile_seeds[:gaussian_well_conditioned],
+        )
+        @test size(tiny_gaussian.A) == (2, 1)
+        @test norm(tiny_gaussian.A) ≈ 1.0
+
+        # Coherent and sparse profiles vary numerically between same-profile
+        # seeds, not merely through their profile labels.
+        for profile in (:correlated_columns, :sparse_measurements)
+            matrices = [
+                last(generate_problem("regression/basis_pursuit", 150, feasible, seed)).A
+                for seed in profile_seeds[profile]
+            ]
+            @test all(matrices[i] != matrices[j]
+                      for (i, j) in ((1, 2), (1, 3), (2, 3)))
+        end
+
+        # Assert the complete JuMP formulation, not only variable domains/counts.
+        domain_model, domain_prob =
+            generate_problem("regression/basis_pursuit", 80, feasible, 4)
+        @test objective_sense(domain_model) == MOI.MIN_SENSE
+        @test num_constraints(
+            domain_model,
+            AffExpr,
+            MOI.EqualTo{Float64},
+        ) == domain_prob.n_measurements
+        for variable in all_variables(domain_model)
+            @test !is_binary(variable)
+            @test !is_integer(variable)
+            @test has_lower_bound(variable)
+            @test lower_bound(variable) == 0.0
+            @test !has_upper_bound(variable)
+        end
+        objective = objective_function(domain_model)
+        for j in 1:domain_prob.n_features
+            @test coefficient(objective, domain_model[:x_pos][j]) ==
+                  domain_prob.weights[j]
+            @test coefficient(objective, domain_model[:x_neg][j]) ==
+                  domain_prob.weights[j]
+        end
+        for i in 1:domain_prob.n_measurements
+            row = domain_model[:measurements][i]
+            @test normalized_rhs(row) == domain_prob.b[i]
+            for j in 1:domain_prob.n_features
+                @test normalized_coefficient(row, domain_model[:x_pos][j]) ==
+                      domain_prob.A[i, j]
+                @test normalized_coefficient(row, domain_model[:x_neg][j]) ==
+                      -domain_prob.A[i, j]
+            end
+        end
+    end
+
     # Generator robustness fixes (P1): edge sizes that used to crash during build.
     @testset "Generator Robustness Fixes" begin
         # portfolio/cvar used to crash with ArgumentError (Uniform a < b) for
@@ -1070,6 +1732,98 @@ end
     # not resolvable, e.g. running this file directly with `julia --project=.`
     # rather than via `Pkg.test()`.
     if HAS_HIGHS
+
+    @testset "Basis Pursuit Feasibility Contracts" begin
+        # Exercise three seeds per profile under both labels. Passing the
+        # optimizer invokes the package-level contract check before returning
+        # the pristine model.
+        profiles = (
+            :gaussian_well_conditioned,
+            :correlated_columns,
+            :sparse_measurements,
+        )
+        profile_seeds = Dict(profile => Int[] for profile in profiles)
+        for seed in 1:100
+            _, prob = generate_problem("regression/basis_pursuit", 120, feasible, seed)
+            length(profile_seeds[prob.profile]) < 3 &&
+                push!(profile_seeds[prob.profile], seed)
+        end
+        @test all(length(profile_seeds[profile]) == 3 for profile in profiles)
+
+        for profile in profiles, seed in profile_seeds[profile]
+            feasible_model, feasible_prob = generate_problem(
+                "regression/basis_pursuit",
+                120,
+                feasible,
+                seed;
+                optimizer=HiGHS.Optimizer,
+            )
+            set_optimizer(feasible_model, HiGHS.Optimizer)
+            set_silent(feasible_model)
+            optimize!(feasible_model)
+            @test termination_status(feasible_model) == MOI.OPTIMAL
+            @test objective_value(feasible_model) > 1.0e-8
+            @test feasible_prob.profile == profile
+            @test feasible_prob.certificate === nothing
+            @test norm(
+                feasible_prob.A * feasible_prob.source_signal - feasible_prob.b,
+                Inf,
+            ) <= 1.0e-10
+
+            infeasible_model, infeasible_prob = generate_problem(
+                "regression/basis_pursuit",
+                120,
+                infeasible,
+                seed;
+                optimizer=HiGHS.Optimizer,
+            )
+            set_optimizer(infeasible_model, HiGHS.Optimizer)
+            set_silent(infeasible_model)
+            optimize!(infeasible_model)
+            @test termination_status(infeasible_model) in
+                  (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
+            @test infeasible_prob.profile == profile
+            @test infeasible_prob.resolved_status == infeasible
+            @test infeasible_prob.certificate !== nothing
+        end
+
+        # Unknown requests skip package-level verification, so solve both
+        # resolved labels directly and require metadata and solver status to
+        # agree. Two seeds per label avoid a single representative special case.
+        unknown_seeds = Dict(feasible => Int[], infeasible => Int[])
+        for seed in 1:100
+            _, prob = generate_problem("regression/basis_pursuit", 120, unknown, seed)
+            seeds = unknown_seeds[prob.resolved_status]
+            length(seeds) < 2 && push!(seeds, seed)
+        end
+        @test all(length(unknown_seeds[status]) == 2
+                  for status in (feasible, infeasible))
+        for status in (feasible, infeasible), seed in unknown_seeds[status]
+            model, prob =
+                generate_problem("regression/basis_pursuit", 120, unknown, seed)
+            @test prob.resolved_status == status
+            @test (prob.certificate !== nothing) == (status == infeasible)
+            if status == feasible
+                @test prob.A * prob.source_signal ≈ prob.b
+            else
+                certificate = prob.certificate
+                @test certificate !== nothing
+                if certificate !== nothing
+                    r1, r2 = certificate.rows
+                    @test prob.A[r2, :] ==
+                          certificate.multiplier .* prob.A[r1, :]
+                    @test prob.b[r2] ≈
+                          certificate.multiplier * prob.b[r1] +
+                          certificate.rhs_gap
+                end
+            end
+            set_optimizer(model, HiGHS.Optimizer)
+            set_silent(model)
+            optimize!(model)
+            expected = status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE
+            @test termination_status(model) == expected
+        end
+    end
 
     # Project-level feasibility-contract verification via the `optimizer` kwarg.
     @testset "Feasibility Contract Verification" begin

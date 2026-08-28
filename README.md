@@ -15,38 +15,45 @@ This package provides:
 
 ## Problem Types
 
-The package includes generators for 33 common LP/MIP problem categories, all
+The package includes generators for 41 common LP/MIP problem categories, all
 unified with a standardized interface. Each category groups one or more
 **variants** — concrete formulations with their own data generation and model
 structure (see [Categories and Variants](#categories-and-variants)). Categories
 with more than one variant are annotated below.
 
-- Transportation — variants: `standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`
+- Transportation — variants: `standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`, `fixed_charge`
 - Diet Problem — variants: `standard`, `nutrient_bounds`, `food_groups`
-- Knapsack — variants: `standard`, `multidimensional`, `bounded`
+- Knapsack — variants: `standard`, `multidimensional`, `bounded`, `mixed_integer_set`
 - Portfolio Optimization — variants: `cvar` (institutional CVaR), `tracking_error` (index tracking under a tracking-error budget)
 - Network Flow — variants: `standard`, `generalized_flow`
-- Multi-Commodity Flow
+- Multi-Commodity Flow — variants: `standard`, `binary_capacity`, `integer_flow`
 - Production Planning
 - Assignment — variants: `standard`, `workload_balance`
 - Blending — variants: `standard`, `equipment_batches`, `multi_product`
 - Airline Crew
 - Bin Packing
-- Cutting Stock — variants: `standard`, `setup_cost`, `due_dates`
-- Energy — variants: `standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`
+- Container Loading — variants: `standard`, `two_dimensional_bin_packing`
+- Cutting Stock — variants: `standard`, `setup_cost`, `due_dates`, `integer_patterns`
+- Energy — variants: `standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`, `optimal_transmission_switching`
 - Facility Location — variants: `standard`, `two_echelon`, `p_median`
 - Feed Blending
+- Generic MILP
+- Graph Optimization — variants: `independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`
 - Inventory — variants: `standard`, `lot_sizing`, `multi_item`, `multi_echelon`
 - Job Shop Scheduling
 - Land Use
-- Load Balancing
+- Load Balancing — variants: `standard`, `discrete_placement`
+- Maritime Inventory Routing
+- Neural Network Verification
 - Nurse Scheduling
 - Product Mix
 - Project Selection
-- Regression (dense statistical LPs: least-absolute-deviations, quantile, and Chebyshev/minimax)
+- Regression — variants: `lad`, `quantile`, `chebyshev`, `basis_pursuit` (weighted sparse recovery)
+- Resilient Network Design
 - Resource Allocation
 - Revenue Management (network deterministic LP / bid-price)
 - Scheduling
+- Set System — variants: `set_cover`, `set_packing`, `set_partitioning`, `combinatorial_auction`
 - Stochastic Program (two-stage with recourse; dual block-angular structure)
 - Supply Chain — variants: `standard`, `single_source`, `carbon`, `multi_product`, `network_planning` (multi-period, multi-product LP with sparse lanes, specialized production, shared capacity, inventory carryover, and regional/seasonal/disruption profiles)
 - Crop Planning
@@ -54,11 +61,12 @@ with more than one variant are annotated below.
 - TSP — variants: `standard` (symmetric lifted MTZ), `asymmetric` (one-way-street ATSP), `flow` (single-commodity flow), `time_windows` (appointment delivery), `assignment_relaxation` (strengthened degree LP), `prize_collecting` (quota tour), `multiple_salespersons` (balanced fleet), `precedence` (ordered tasks)
 - Unit Commitment
 - Vehicle Routing — variants: `cvrp` (capacitated vehicle routing, single-commodity-flow formulation)
+- Workforce Shift Scheduling — variant: `covering` (multi-skill, profile-driven shift-pattern staffing LP)
 
 Several categories ship multiple variants — for example `energy` has `standard`
 (generation mix) and `dc_opf` (DC optimal power flow), and `regression` has
-`lad`, `quantile`, and `chebyshev` — selectable via the `variant=` keyword or a
-`"category/variant"` reference (see below).
+`lad`, `quantile`, `chebyshev`, and `basis_pursuit` — selectable via the
+`variant=` keyword or a `"category/variant"` reference (see below).
 
 `supply_chain/network_planning` accepts targets through 1,000,000 variables;
 larger requests raise `ArgumentError` before allocating the sparse arc data.
@@ -118,6 +126,17 @@ model, problem = generate_problem(ProblemVariant("portfolio/cvar"), 100, unknown
 # Variant-level metadata
 problem_info(:portfolio, :cvar)         # Dict with :description, :type, ...
 ```
+
+`regression/basis_pursuit` builds the weighted LP
+`min Σⱼ wⱼ|xⱼ|` subject to exact measurements `Ax = b`, using nonnegative
+positive/negative splits. Its stored `profile` selects a whitened Gaussian,
+coherent-column, or sparse measurement matrix. The stored `source_signal`
+generates the RHS before status handling and is an explicit witness only when
+`resolved_status == feasible`. Infeasible instances instead carry a
+`BasisPursuitCertificate` describing their contradictory proportional
+measurement rows and inconsistent RHS. Because each feature requires two split
+variables, even targets of at least two are exact, odd targets round up by one,
+and smaller targets produce two variables.
 
 ### Feasibility Control
 

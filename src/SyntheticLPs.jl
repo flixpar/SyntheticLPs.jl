@@ -662,6 +662,7 @@ include("problem_types/tsp/tsp.jl")
 include("problem_types/transportation/transportation.jl")
 include("problem_types/unit_commitment/unit_commitment.jl")
 include("problem_types/vehicle_routing/vehicle_routing.jl")
+include("problem_types/workforce_shift_scheduling/workforce_shift_scheduling.jl")
 
 # Batch dataset generation (uses the interface functions defined above)
 include("dataset.jl")
