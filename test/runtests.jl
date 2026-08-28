@@ -4,6 +4,7 @@ const MOI = JuMP.MOI
 using Random
 using Distributions
 using JSON
+using LinearAlgebra
 
 using SyntheticLPs
 
@@ -458,6 +459,166 @@ end
         @test manifest["config"]["bounds_to_constraints"] == true
     end
 
+    @testset "Regression Basis Pursuit" begin
+        @test :basis_pursuit in list_variants(:regression)
+        info = problem_info(:regression, :basis_pursuit)
+        @test occursin("basis-pursuit", lowercase(info[:description]))
+        @test ProblemVariant("regression/basis_pursuit") ==
+              ProblemVariant(:regression, :basis_pursuit)
+
+        # Positive/negative splitting makes the count intrinsically even: even
+        # targets are exact, odd targets round up one, and two is the minimum.
+        for target in (1, 2, 3, 4, 5, 50, 501, 2000)
+            model, prob = generate_problem(
+                "regression/basis_pursuit",
+                target,
+                feasible,
+                17,
+            )
+            expected = 2 * max(1, cld(max(target, 1), 2))
+            @test num_variables(model) == expected == 2 * prob.n_features
+            @test size(prob.A) == (prob.n_measurements, prob.n_features)
+            @test length(prob.b) == prob.n_measurements
+            @test length(prob.weights) == prob.n_features
+            @test length(prob.planted_signal) == prob.n_features
+        end
+
+        # Same seed means identical stored data and serialized model; rebuilding
+        # one stored problem is deterministic as well.
+        model1, prob1 = generate_problem("regression/basis_pursuit", 150, unknown, 12345)
+        model2, prob2 = generate_problem("regression/basis_pursuit", 150, unknown, 12345)
+        for field in fieldnames(typeof(prob1))
+            @test getfield(prob1, field) == getfield(prob2, field)
+        end
+        rebuilt = SyntheticLPs.build_model(prob1)
+        @test num_variables(model1) == num_variables(model2) == num_variables(rebuilt)
+        @test num_constraints(model1; count_variable_in_set_constraints=true) ==
+              num_constraints(model2; count_variable_in_set_constraints=true) ==
+              num_constraints(rebuilt; count_variable_in_set_constraints=true)
+        mktempdir() do tmp
+            paths = joinpath.(Ref(tmp), ("first.mps", "second.mps", "rebuilt.mps"))
+            write_to_file(model1, paths[1])
+            write_to_file(model2, paths[2])
+            write_to_file(rebuilt, paths[3])
+            @test read(paths[1], String) == read(paths[2], String) ==
+                  read(paths[3], String)
+        end
+
+        # The constructor owns a local RNG and does not perturb Random.default_rng().
+        Random.seed!(8801)
+        expected_draws = rand(4)
+        Random.seed!(8801)
+        SyntheticLPs.BasisPursuitProblem(100, feasible, 9)
+        @test rand(4) == expected_draws
+
+        # A deterministic seed sample covers all stored matrix profiles and both
+        # natural outcomes of an unknown request.
+        profile_instances = Dict{Symbol,Any}()
+        unknown_statuses = Set{FeasibilityStatus}()
+        varied = Any[]
+        for seed in 1:60
+            _, feasible_prob =
+                generate_problem("regression/basis_pursuit", 120, feasible, seed)
+            get!(profile_instances, feasible_prob.profile, feasible_prob)
+            _, unknown_prob =
+                generate_problem("regression/basis_pursuit", 120, unknown, seed)
+            push!(unknown_statuses, unknown_prob.resolved_status)
+            seed <= 12 && push!(varied, feasible_prob)
+        end
+        @test Set(keys(profile_instances)) ==
+              Set((:gaussian_well_conditioned, :correlated_columns,
+                   :sparse_measurements))
+        @test unknown_statuses == Set((feasible, infeasible))
+        @test length(unique(p.profile for p in varied)) > 1
+        @test length(unique(Tuple(p.support) for p in varied)) > 1
+        @test any(p.A != varied[1].A for p in varied[2:end])
+
+        for (profile, prob) in profile_instances
+            @test prob.resolved_status == feasible
+            @test issorted(prob.support)
+            @test allunique(prob.support)
+            @test all(1 <= j <= prob.n_features for j in prob.support)
+            @test findall(!iszero, prob.planted_signal) == prob.support
+            @test all(>(0.0), prob.weights)
+            @test norm(prob.A * prob.planted_signal - prob.b, Inf) <= 1.0e-10
+            @test norm(prob.b, Inf) > 1.0e-8
+            @test prob.certificate_rows == (0, 0)
+
+            if profile == :gaussian_well_conditioned
+                identity_rows = Matrix{Float64}(
+                    I,
+                    prob.n_measurements,
+                    prob.n_measurements,
+                )
+                @test norm(prob.A * transpose(prob.A) - identity_rows, Inf) <=
+                      1.0e-10
+            elseif profile == :correlated_columns
+                normalized = prob.A ./ sqrt.(sum(abs2, prob.A; dims=1))
+                gram = transpose(normalized) * normalized
+                identity_columns = Matrix{Float64}(
+                    I,
+                    prob.n_features,
+                    prob.n_features,
+                )
+                @test maximum(abs.(gram - identity_columns)) >= 0.95
+            else
+                density = count(!iszero, prob.A) / length(prob.A)
+                @test density <= 0.2
+                @test all(any(!iszero, @view prob.A[i, :])
+                          for i in 1:prob.n_measurements)
+                @test all(any(!iszero, @view prob.A[:, j])
+                          for j in 1:prob.n_features)
+            end
+        end
+
+        # The requested infeasibility is an inspectable algebraic certificate,
+        # while feasible instances retain their exact planted witness.
+        for seed in 1:12
+            _, feasible_prob =
+                generate_problem("regression/basis_pursuit", 100, feasible, seed)
+            @test feasible_prob.resolved_status == feasible
+            @test feasible_prob.certificate_rows == (0, 0)
+            @test feasible_prob.A * feasible_prob.planted_signal ≈ feasible_prob.b
+
+            _, infeasible_prob =
+                generate_problem("regression/basis_pursuit", 100, infeasible, seed)
+            @test infeasible_prob.resolved_status == infeasible
+            r1, r2 = infeasible_prob.certificate_rows
+            λ = infeasible_prob.certificate_multiplier
+            @test 1 <= r1 <= infeasible_prob.n_measurements
+            @test 1 <= r2 <= infeasible_prob.n_measurements
+            @test r1 != r2
+            @test infeasible_prob.A[r2, :] == λ .* infeasible_prob.A[r1, :]
+            @test infeasible_prob.b[r2] ≈
+                  λ * infeasible_prob.b[r1] + infeasible_prob.certificate_rhs_gap
+            @test !iszero(infeasible_prob.certificate_rhs_gap)
+        end
+
+        # The model contains exactly two continuous, nonnegative, unbounded-above
+        # blocks and one equality per measurement, with the intended weights.
+        domain_model, domain_prob =
+            generate_problem("regression/basis_pursuit", 80, feasible, 4)
+        @test num_constraints(
+            domain_model,
+            AffExpr,
+            MOI.EqualTo{Float64},
+        ) == domain_prob.n_measurements
+        for variable in all_variables(domain_model)
+            @test !is_binary(variable)
+            @test !is_integer(variable)
+            @test has_lower_bound(variable)
+            @test lower_bound(variable) == 0.0
+            @test !has_upper_bound(variable)
+        end
+        objective = objective_function(domain_model)
+        for j in 1:domain_prob.n_features
+            @test coefficient(objective, domain_model[:x_pos][j]) ==
+                  domain_prob.weights[j]
+            @test coefficient(objective, domain_model[:x_neg][j]) ==
+                  domain_prob.weights[j]
+        end
+    end
+
     # Generator robustness fixes (P1): edge sizes that used to crash during build.
     @testset "Generator Robustness Fixes" begin
         # portfolio/cvar used to crash with ArgumentError (Uniform a < b) for
@@ -608,6 +769,52 @@ end
     # not resolvable, e.g. running this file directly with `julia --project=.`
     # rather than via `Pkg.test()`.
     if HAS_HIGHS
+
+    @testset "Basis Pursuit Feasibility Contracts" begin
+        # Exercise every profile under both labels. Passing the optimizer invokes
+        # the package-level contract check before returning the pristine model.
+        profile_seeds = Dict{Symbol,Int}()
+        for seed in 1:60
+            _, prob = generate_problem("regression/basis_pursuit", 120, feasible, seed)
+            get!(profile_seeds, prob.profile, seed)
+        end
+        @test Set(keys(profile_seeds)) ==
+              Set((:gaussian_well_conditioned, :correlated_columns,
+                   :sparse_measurements))
+
+        for seed in values(profile_seeds)
+            feasible_model, feasible_prob = generate_problem(
+                "regression/basis_pursuit",
+                120,
+                feasible,
+                seed;
+                optimizer=HiGHS.Optimizer,
+            )
+            set_optimizer(feasible_model, HiGHS.Optimizer)
+            set_silent(feasible_model)
+            optimize!(feasible_model)
+            @test termination_status(feasible_model) == MOI.OPTIMAL
+            @test objective_value(feasible_model) > 1.0e-8
+            @test norm(
+                feasible_prob.A * feasible_prob.planted_signal - feasible_prob.b,
+                Inf,
+            ) <= 1.0e-10
+
+            infeasible_model, infeasible_prob = generate_problem(
+                "regression/basis_pursuit",
+                120,
+                infeasible,
+                seed;
+                optimizer=HiGHS.Optimizer,
+            )
+            set_optimizer(infeasible_model, HiGHS.Optimizer)
+            set_silent(infeasible_model)
+            optimize!(infeasible_model)
+            @test termination_status(infeasible_model) in
+                  (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
+            @test infeasible_prob.resolved_status == infeasible
+        end
+    end
 
     # Project-level feasibility-contract verification via the `optimizer` kwarg.
     @testset "Feasibility Contract Verification" begin
