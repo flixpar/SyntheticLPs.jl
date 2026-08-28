@@ -4,6 +4,35 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-28 22:59 UTC (network-planning review hardening)
+
+**Previous Commit**: `465efbf`
+
+**Summary**: Addressed PR #41 review findings around large-target behavior,
+unknown-status sampling, status metadata, and exact formulation coverage.
+
+**Details**:
+- Requests above the documented 1,000,000-variable resource limit now raise
+  `ArgumentError` before allocating arc data. The analytical dimension search
+  reaches that supported boundary exactly and no longer has a hidden
+  5,000-customer clamp.
+- Unknown instances now use correlated network-wide supply and lane scenarios
+  with small plant/product/time effects. Every sparse demand node retains at
+  least 103% nominal inbound lane capacity, preventing the previous
+  almost-certain singleton-cut infeasibility while aggregate capacity remains
+  naturally uncertain.
+- Replaced witness, certificate, and disruption zero sentinels with optional
+  status-aware metadata records. A feasible witness is stored only for
+  feasible requests; unknown and infeasible post-perturbation baselines are no
+  longer presented as witnesses.
+- Named the inventory, demand, and shared-resource constraint blocks and added
+  exact JuMP coefficient/RHS/domain/bound/objective assertions.
+- Expanded durable coverage for tiny targets, a 100,000-variable construction,
+  the supported size boundary and rejection boundary, sparse degree/coordinate
+  invariants, profile economics and disruption effects, all-field
+  determinism, same-profile topology diversity, repeated MPS bytes, and a
+  solver-backed mixed-outcome unknown sample.
+
 ## 2026-08-28 22:39 UTC (supply-chain network planning)
 
 **Previous Commit**: `e3f4736`

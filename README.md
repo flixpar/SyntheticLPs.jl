@@ -60,6 +60,15 @@ Several categories ship multiple variants — for example `energy` has `standard
 `lad`, `quantile`, and `chebyshev` — selectable via the `variant=` keyword or a
 `"category/variant"` reference (see below).
 
+`supply_chain/network_planning` accepts targets through 1,000,000 variables;
+larger requests raise `ArgumentError` before allocating the sparse arc data.
+Its status metadata is explicit: only feasible requests store a
+`feasible_witness`, only infeasible requests store an
+`infeasibility_certificate`, and unknown requests store a correlated
+`nominal_scenario`. Unknown scenarios preserve local lane service while varying
+network-wide production/resource conditions, so they naturally include both
+feasible and infeasible instances without acting as a hidden infeasible mode.
+
 ## Usage
 
 ### Basic Usage

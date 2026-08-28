@@ -121,6 +121,12 @@ SyntheticLPs uses a type-based dispatch system for generating realistic linear p
   - A `register_variant(:category, :variant, VariantStruct, "description")` call (which lazily creates the category if needed)
 - Structs store ALL data needed to build the model (costs, capacities, demands, etc.)
 - Constructors contain ALL randomness; `build_model` is completely deterministic
+- `supply_chain/network_planning` is capped at a documented 1,000,000-variable
+  target because each sparse shipment coordinate is represented in multiple
+  dictionaries and JuMP structures; larger targets raise `ArgumentError`
+  instead of silently undersizing. Its optional metadata fields are
+  status-specific (`feasible_witness`, `infeasibility_certificate`, or
+  `nominal_scenario`), while disruption metadata depends only on the profile.
 
 **Utility Scripts**:
 - `scripts/generate_problem.jl`: Command-line interface for problem generation

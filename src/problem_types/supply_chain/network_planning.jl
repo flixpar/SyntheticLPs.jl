@@ -6,6 +6,46 @@ const _NETWORK_PLANNING_PROFILES =
     (:regional_stable, :seasonal_prebuild, :disruption)
 
 """
+Maximum accepted variable target for `supply_chain/network_planning`.
+
+Each shipment coordinate is stored in an arc vector, two coefficient
+dictionaries, JuMP's variable store, and several row expressions. Targets above
+one million therefore require multi-gigabyte working sets in realistic Julia
+sessions. Reject them before allocating rather than silently returning a much
+smaller model.
+"""
+const MAX_NETWORK_PLANNING_VARIABLES = 1_000_000
+
+struct NetworkPlanningWitness
+    production::Array{Float64,3}
+    inventory::Array{Float64,3}
+    shipment::Dict{NTuple{4,Int},Float64}
+end
+
+struct NetworkPlanningInfeasibilityCertificate
+    product::Int
+    period::Int
+    demand::Float64
+    supply_bound::Float64
+    lane_bound::Float64
+    upper_bound::Float64
+    margin::Float64
+end
+
+struct NetworkPlanningDisruption
+    period::Int
+    plant::Int
+    production_factor::Float64
+    shipment_surcharge::Float64
+end
+
+struct NetworkPlanningNominalScenario
+    supply_factor::Float64
+    lane_factor::Float64
+    minimum_local_service::Float64
+end
+
+"""
     SupplyChainNetworkPlanningProblem <: ProblemGenerator
 
 Multi-period, multi-product supply-chain network-planning LP. Plants produce
@@ -14,20 +54,27 @@ periods, and ship on a sparse, period-specific plant/customer network.
 
 Demand is an equality: there are no unmet-demand or backlog variables. This
 prevents a nominally feasible request from being satisfied by service
-shortfalls and prevents profitable over-shipment or disposal. Every generated
-datum, including the feasible reference plan and infeasibility certificate, is
-stored in the problem; `build_model` is deterministic.
+shortfalls and prevents profitable over-shipment or disposal. `feasible_witness`
+is populated only for a requested-feasible instance;
+`infeasibility_certificate` only for a requested-infeasible instance; and
+`nominal_scenario` only for an unknown-status sample. `build_model` is
+deterministic.
 
 The structural `profile` is one of:
 - `:regional_stable`: regionally clustered lanes and comparatively stable demand;
 - `:seasonal_prebuild`: a late demand peak, cheaper early production, and
-  inventory prebuild in the stored feasible plan;
+  inventory prebuild in the construction plan (stored only for feasible requests);
 - `:disruption`: a plant outage in one period, sparser alternate lanes, and
   reduced/surcharged capacity around the disruption.
 
 Only open `(plant, customer, product, period)` arcs have shipment variables.
 Thus the exact variable count is
 `2 * n_plants * n_products * n_periods + length(shipment_arcs)`.
+Targets through `MAX_NETWORK_PLANNING_VARIABLES` are supported; larger targets
+raise `ArgumentError` before arc allocation. Unknown-status instances apply a
+correlated network-wide supply scenario and preserve local inbound lane
+capacity, leaving aggregate feasibility naturally unspecified without creating
+systematic singleton demand cuts.
 """
 struct SupplyChainNetworkPlanningProblem <: ProblemGenerator
     profile::Symbol
@@ -51,18 +98,12 @@ struct SupplyChainNetworkPlanningProblem <: ProblemGenerator
     shipment_arcs::Vector{NTuple{4,Int}}
     shipment_cost::Dict{NTuple{4,Int},Float64}
     lane_capacity::Dict{NTuple{4,Int},Float64}
-    witness_production::Array{Float64,3}
-    witness_inventory::Array{Float64,3}
-    witness_shipment::Dict{NTuple{4,Int},Float64}
-    disruption_period::Int
-    disrupted_plant::Int
-    certificate_product::Int
-    certificate_period::Int
-    certificate_demand::Float64
-    certificate_supply_bound::Float64
-    certificate_lane_bound::Float64
-    certificate_upper_bound::Float64
-    certificate_margin::Float64
+    feasible_witness::Union{Nothing,NetworkPlanningWitness}
+    infeasibility_certificate::Union{
+        Nothing,NetworkPlanningInfeasibilityCertificate
+    }
+    disruption::Union{Nothing,NetworkPlanningDisruption}
+    nominal_scenario::Union{Nothing,NetworkPlanningNominalScenario}
 end
 
 _network_profile(seed::Int) =
@@ -87,6 +128,12 @@ be created. Customer candidates are computed analytically, avoiding a scan
 whose size grows with the requested target.
 """
 function _choose_network_planning_dimensions(target_variables::Int, profile::Symbol)
+    target_variables <= MAX_NETWORK_PLANNING_VARIABLES ||
+        throw(ArgumentError(
+            "supply_chain/network_planning supports target_variables <= " *
+            "$(MAX_NETWORK_PLANNING_VARIABLES); requested $target_variables. " *
+            "Larger sparse-arc models require a multi-gigabyte working set.",
+        ))
     target = max(target_variables, 1)
     density_lo, density_hi = _network_density(profile)
     density_mid = (density_lo + density_hi) / 2
@@ -103,7 +150,7 @@ function _choose_network_planning_dimensions(target_variables::Int, profile::Sym
             estimate = (target - dense_vars) / (n_products * n_periods * degree)
             for delta in -2:2
                 push!(customer_candidates,
-                      clamp(round(Int, estimate) + delta, 2, 5000))
+                      max(2, round(Int, estimate) + delta))
             end
         end
 
@@ -359,6 +406,10 @@ function SupplyChainNetworkPlanningProblem(
     disruption_period =
         profile == :disruption ? clamp(ceil(Int, 0.55 * n_periods), 2, n_periods) : 0
     disrupted_plant = profile == :disruption ? rand(rng, 1:n_plants) : 0
+    disruption = profile == :disruption ?
+        NetworkPlanningDisruption(
+            disruption_period, disrupted_plant, 0.35, 1.55
+        ) : nothing
     plant_locations, customer_locations, plant_regions, customer_regions =
         _network_locations(rng, n_plants, n_customers)
     specialization, resource_use =
@@ -400,7 +451,9 @@ function SupplyChainNetworkPlanningProblem(
         distance = _network_distance(plant_locations[p], customer_locations[c])
         regional_factor = plant_regions[p] == customer_regions[c] ? 0.88 : 1.16
         disruption_factor =
-            profile == :disruption && abs(t - disruption_period) <= 1 ? 1.35 : 1.0
+            profile == :disruption && t == disruption_period ? 1.55 :
+            profile == :disruption && abs(t - disruption_period) == 1 ? 1.12 :
+            1.0
         shipment_cost[arc] =
             (2.5 + distance * rand(rng, Uniform(0.32, 0.52))) *
             regional_factor * disruption_factor *
@@ -434,7 +487,7 @@ function SupplyChainNetworkPlanningProblem(
            p == disrupted_plant
             # The disrupted plant has no lanes in this period, but retains a
             # small production crew that may rebuild inventory.
-            plant_capacity[p, t] *= 0.35
+            plant_capacity[p, t] *= disruption.production_factor
             plant_capacity[p, t] =
                 max(plant_capacity[p, t], 1.04 * used)
         end
@@ -449,24 +502,65 @@ function SupplyChainNetworkPlanningProblem(
         )
     end
 
+    nominal_scenario = nothing
     if feasibility_status == unknown
-        # Natural uncertainty: forecasts and nominal capacities are not repaired
-        # to the reference plan, so feasibility is intentionally unspecified.
-        production_capacity .*= rand(rng, Uniform(0.72, 1.30),
-                                     size(production_capacity))
-        plant_capacity .*= rand(rng, Uniform(0.78, 1.28), size(plant_capacity))
-        for arc in shipment_arcs
-            lane_capacity[arc] *= rand(rng, Uniform(0.74, 1.34))
+        # Draw a coherent network-wide supply condition, then add small
+        # plant/product/time effects. This creates natural aggregate tightness
+        # without independently damaging every sparse coordinate.
+        supply_factor = rand(rng, Uniform(0.65, 1.20))
+        lane_factor = rand(rng, Uniform(0.92, 1.14))
+        plant_effect = rand(rng, Uniform(0.95, 1.05), n_plants)
+        product_effect = rand(rng, Uniform(0.95, 1.05), n_products)
+        period_effect = rand(rng, Uniform(0.96, 1.04), n_periods)
+        for p in 1:n_plants, k in 1:n_products, t in 1:n_periods
+            production_capacity[p, k, t] *=
+                supply_factor * plant_effect[p] * product_effect[k] *
+                period_effect[t]
         end
+        for p in 1:n_plants, t in 1:n_periods
+            plant_capacity[p, t] *=
+                supply_factor * plant_effect[p] * period_effect[t]
+        end
+
+        lane_plant_effect = rand(rng, Uniform(0.96, 1.04), n_plants)
+        lane_period_effect = rand(rng, Uniform(0.97, 1.03), n_periods)
+        for arc in shipment_arcs
+            p, _, _, t = arc
+            lane_capacity[arc] *=
+                lane_factor * lane_plant_effect[p] * lane_period_effect[t]
+        end
+
+        # Sparse lanes must not turn `unknown` into a hidden singleton-cut
+        # generator. Preserve a modest, randomized local service margin at every
+        # customer/product/period node; aggregate production/resource conditions
+        # still determine whether the complete instance is feasible.
+        inbound = Dict{Tuple{Int,Int,Int},Vector{NTuple{4,Int}}}()
+        for arc in shipment_arcs
+            _, c, k, t = arc
+            push!(get!(inbound, (c, k, t), NTuple{4,Int}[]), arc)
+        end
+        minimum_local_service = Inf
+        for c in 1:n_customers, k in 1:n_products, t in 1:n_periods
+            node_arcs = inbound[(c, k, t)]
+            service_ratio = rand(rng, Uniform(1.03, 1.16))
+            required = service_ratio * demand[c, k, t]
+            available = sum(lane_capacity[a] for a in node_arcs)
+            if available < required
+                multiplier = required / available
+                for arc in node_arcs
+                    lane_capacity[arc] *= multiplier
+                end
+                available = required
+            end
+            minimum_local_service =
+                min(minimum_local_service, available / demand[c, k, t])
+        end
+        nominal_scenario = NetworkPlanningNominalScenario(
+            supply_factor, lane_factor, minimum_local_service
+        )
     end
 
-    certificate_product = 0
-    certificate_period = 0
-    certificate_demand = 0.0
-    certificate_supply_bound = 0.0
-    certificate_lane_bound = 0.0
-    certificate_upper_bound = 0.0
-    certificate_margin = 0.0
+    infeasibility_certificate = nothing
 
     if feasibility_status == infeasible
         certificate_product = rand(rng, 1:n_products)
@@ -512,7 +606,17 @@ function SupplyChainNetworkPlanningProblem(
             min(certificate_supply_bound, certificate_lane_bound)
         certificate_margin = certificate_demand - certificate_upper_bound
         @assert certificate_margin > 1e-8
+        infeasibility_certificate = NetworkPlanningInfeasibilityCertificate(
+            certificate_product, certificate_period, certificate_demand,
+            certificate_supply_bound, certificate_lane_bound,
+            certificate_upper_bound, certificate_margin,
+        )
     end
+
+    feasible_witness = feasibility_status == feasible ?
+        NetworkPlanningWitness(
+            witness_production, witness_inventory, witness_shipment
+        ) : nothing
 
     return SupplyChainNetworkPlanningProblem(
         profile, n_plants, n_customers, n_products, n_periods,
@@ -520,10 +624,8 @@ function SupplyChainNetworkPlanningProblem(
         specialization, resource_use, production_cost, holding_cost, demand,
         initial_inventory, production_capacity, plant_capacity,
         inventory_capacity, shipment_arcs, shipment_cost, lane_capacity,
-        witness_production, witness_inventory, witness_shipment,
-        disruption_period, disrupted_plant, certificate_product,
-        certificate_period, certificate_demand, certificate_supply_bound,
-        certificate_lane_bound, certificate_upper_bound, certificate_margin,
+        feasible_witness, infeasibility_certificate, disruption,
+        nominal_scenario,
     )
 end
 
@@ -563,34 +665,30 @@ function build_model(prob::SupplyChainNetworkPlanningProblem)
         push!(get!(incoming, (c, k, t), NTuple{4,Int}[]), arc)
     end
 
-    for p in 1:P, k in 1:K, t in 1:T
-        previous = t == 1 ? prob.initial_inventory[p, k] :
-                   inventory[p, k, t - 1]
-        period_arcs = get(outgoing, (p, k, t), NTuple{4,Int}[])
-        @constraint(
-            model,
-            previous + produce[p, k, t] -
-            sum((ship[a] for a in period_arcs); init=0.0) ==
-            inventory[p, k, t]
-        )
-    end
+    @constraint(
+        model,
+        inventory_balance[p=1:P, k=1:K, t=1:T],
+        (t == 1 ? prob.initial_inventory[p, k] : inventory[p, k, t - 1]) +
+        produce[p, k, t] -
+        sum((ship[a] for a in
+             get(outgoing, (p, k, t), NTuple{4,Int}[])); init=0.0) ==
+        inventory[p, k, t]
+    )
 
     # Equality prevents both service shortfall and cost-free dumping at customers.
-    for c in 1:C, k in 1:K, t in 1:T
-        period_arcs = incoming[(c, k, t)]
-        @constraint(
-            model,
-            sum(ship[a] for a in period_arcs) == prob.demand[c, k, t]
-        )
-    end
+    @constraint(
+        model,
+        demand_balance[c=1:C, k=1:K, t=1:T],
+        sum(ship[a] for a in incoming[(c, k, t)]) ==
+        prob.demand[c, k, t]
+    )
 
-    for p in 1:P, t in 1:T
-        @constraint(
-            model,
-            sum(prob.resource_use[p, k] * produce[p, k, t] for k in 1:K) <=
-            prob.plant_capacity[p, t]
-        )
-    end
+    @constraint(
+        model,
+        resource_capacity[p=1:P, t=1:T],
+        sum(prob.resource_use[p, k] * produce[p, k, t] for k in 1:K) <=
+        prob.plant_capacity[p, t]
+    )
     return model
 end
 
