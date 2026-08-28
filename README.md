@@ -113,9 +113,11 @@ problem_info(:portfolio, :cvar)         # Dict with :description, :type, ...
 `regression/basis_pursuit` builds the weighted LP
 `min Σⱼ wⱼ|xⱼ|` subject to exact measurements `Ax = b`, using nonnegative
 positive/negative splits. Its stored `profile` selects a whitened Gaussian,
-coherent-column, or sparse measurement matrix, and `planted_signal` provides an
-explicit feasible witness. Infeasible requests store a contradictory pair of
-proportional measurement rows. Because each feature requires two split
+coherent-column, or sparse measurement matrix. The stored `source_signal`
+generates the RHS before status handling and is an explicit witness only when
+`resolved_status == feasible`. Infeasible instances instead carry a
+`BasisPursuitCertificate` describing their contradictory proportional
+measurement rows and inconsistent RHS. Because each feature requires two split
 variables, even targets of at least two are exact, odd targets round up by one,
 and smaller targets produce two variables.
 

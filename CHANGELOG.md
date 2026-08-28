@@ -4,6 +4,36 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-28 22:47 UTC (basis-pursuit review hardening)
+
+**Previous Commit**: `ce59087`
+
+**Summary**: Hardened `regression/basis_pursuit` after independent review:
+large coherent-column instances now retain their intended profile, infeasibility
+metadata is status-safe, and tests inspect every coefficient of the JuMP
+formulation and broader solver behavior.
+
+**Details**:
+- Correlated-column perturbations now have a fixed norm relative to their unit
+  prototype instead of a fixed per-entry scale. Their magnitude no longer grows
+  with the square root of the measurement count; a multi-seed target-2000
+  regression test requires high measured coherence.
+- Renamed `planted_signal` to `source_signal`: it generates the pre-certificate
+  RHS and is documented/tested as a feasible witness only for resolved-feasible
+  instances.
+- Replaced three sentinel certificate fields with
+  `Union{Nothing,BasisPursuitCertificate}`. Certificate presence now exactly
+  matches resolved infeasibility, and its row indices, multiplier, and nonzero
+  RHS gap are checked algebraically.
+- Added exact formulation checks for minimization sense, every measurement RHS,
+  all positive/negative split coefficients, and all objective weights.
+- Solver-backed tests now cover three seeds per matrix profile under both
+  requested statuses, plus multiple naturally resolved unknown instances of
+  each label. Repeated deterministic MPS export covers every profile/status
+  combination.
+- Added feasible/infeasible construction and certificate checks for all profiles
+  at targets 1–3, including the normalized two-row/one-column Gaussian geometry.
+
 ## 2026-08-28 22:35 UTC (regression/basis_pursuit)
 
 **Previous Commit**: `e3f4736`
@@ -16,12 +46,12 @@ instances.
 
 **Details**:
 - Added `BasisPursuitProblem`, storing the complete matrix, right-hand side,
-  positive objective weights, planted sparse signal and support, selected
+  positive objective weights, source sparse signal and support, selected
   profile, resolved feasibility status, and optional contradiction certificate.
 - Data generation uses a local seeded RNG. Profiles cover whitened dense
   Gaussian measurements, shuffled groups of highly coherent dense columns, and
   shuffled sparse signed measurements with no empty row or column.
-- Feasible instances set `b = A * planted_signal`. Infeasible instances replace
+- Feasible instances set `b = A * source_signal`. Infeasible instances replace
   one measurement row by a proportional copy and shift its RHS, producing a
   deterministic contradiction that remains valid regardless of integrality.
   Unknown requests resolve naturally to one of those stored outcomes.

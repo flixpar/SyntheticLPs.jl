@@ -9,6 +9,20 @@ const BASIS_PURSUIT_PROFILES = (
 )
 
 """
+    BasisPursuitCertificate
+
+Algebraic proof that a basis-pursuit instance is infeasible. For
+`rows == (r1, r2)`, the stored data satisfy
+`A[r2, :] == multiplier * A[r1, :]` and
+`b[r2] == multiplier * b[r1] + rhs_gap`, where `rhs_gap != 0`.
+"""
+struct BasisPursuitCertificate
+    rows::Tuple{Int,Int}
+    multiplier::Float64
+    rhs_gap::Float64
+end
+
+"""
     BasisPursuitProblem <: ProblemGenerator
 
 Weighted basis pursuit:
@@ -18,8 +32,10 @@ Weighted basis pursuit:
 ```
 
 The model uses nonnegative positive/negative splits `x = x_pos - x_neg`.
-Every instance stores its matrix profile, planted sparse signal, resolved
-feasibility status, and (when infeasible) a two-row contradiction certificate.
+Every instance stores its matrix profile, source sparse signal, resolved
+feasibility status, and (exactly when infeasible) a two-row contradiction
+certificate. `source_signal` generated the RHS before certificate injection; it
+is a feasible witness only when `resolved_status == feasible`.
 
 The three matrix profiles have materially different structure:
 - `gaussian_well_conditioned`: a dense Gaussian matrix whitened to have
@@ -40,11 +56,9 @@ struct BasisPursuitProblem <: ProblemGenerator
     A::Matrix{Float64}
     b::Vector{Float64}
     weights::Vector{Float64}
-    planted_signal::Vector{Float64}
+    source_signal::Vector{Float64}
     support::Vector{Int}
-    certificate_rows::Tuple{Int,Int}
-    certificate_multiplier::Float64
-    certificate_rhs_gap::Float64
+    certificate::Union{Nothing,BasisPursuitCertificate}
 end
 
 function _basis_pursuit_gaussian_matrix(
@@ -83,7 +97,14 @@ function _basis_pursuit_correlated_matrix(
     shuffle!(rng, assignments)
     A = Matrix{Float64}(undef, n_measurements, n_features)
     for j in 1:n_features
-        column = prototypes[:, assignments[j]] + 0.03 * randn(rng, n_measurements)
+        prototype = @view prototypes[:, assignments[j]]
+        perturbation = randn(rng, n_measurements)
+        # Give every perturbation a fixed norm relative to its prototype. A
+        # fixed per-entry scale would grow as sqrt(n_measurements), silently
+        # destroying column coherence in large instances.
+        perturbation -= dot(perturbation, prototype) .* prototype
+        perturbation ./= norm(perturbation)
+        column = prototype + 0.08 * perturbation
         column ./= norm(column)
         A[:, j] = (0.75 + 0.5 * rand(rng)) * column
     end
@@ -143,9 +164,11 @@ end
     BasisPursuitProblem(target_variables, feasibility_status, seed)
 
 Construct a reproducible weighted basis-pursuit instance with a local RNG.
-Feasible instances use `b = A * planted_signal`. Infeasible instances replace
-one measurement row by a proportional copy of another while shifting its right
-hand side, yielding the explicit contradiction
+The stored `source_signal` first generates `b = A * source_signal`. For feasible
+instances it remains an exact witness. Infeasible instances then replace one
+measurement row by a proportional copy of another while shifting its right hand
+side, so `source_signal` is no longer a witness and the stored certificate gives
+the explicit contradiction
 `A[r₂, :] = λA[r₁, :]` but `b[r₂] != λb[r₁]`.
 
 An `unknown` request naturally resolves to a planted feasible instance with
@@ -175,38 +198,36 @@ function BasisPursuitProblem(
         max_support,
     )
     support = sort(randperm(rng, n_features)[1:support_size])
-    planted_signal = zeros(Float64, n_features)
+    source_signal = zeros(Float64, n_features)
     for j in support
-        planted_signal[j] =
+        source_signal[j] =
             (rand(rng, Bool) ? 1.0 : -1.0) * (0.75 + 2.25 * rand(rng))
     end
-    b = A * planted_signal
+    b = A * source_signal
 
     # Numerical cancellation is extraordinarily unlikely, but preserving a
     # nonzero RHS guarantees that every feasible optimum has positive cost.
     if norm(b) <= 1.0e-10
         support = [first(support)]
-        fill!(planted_signal, 0.0)
-        planted_signal[first(support)] = 1.0 + rand(rng)
-        b = A * planted_signal
+        fill!(source_signal, 0.0)
+        source_signal[first(support)] = 1.0 + rand(rng)
+        b = A * source_signal
     end
 
     weights = 0.5 .+ 1.5 .* rand(rng, n_features)
     resolved_status = feasibility_status == unknown ?
         (rand(rng) < 0.8 ? feasible : infeasible) : feasibility_status
 
-    certificate_rows = (0, 0)
-    certificate_multiplier = 0.0
-    certificate_rhs_gap = 0.0
+    certificate = nothing
     if resolved_status == infeasible
         row_order = randperm(rng, n_measurements)
         r1, r2 = row_order[1], row_order[2]
         multipliers = (-2.0, -1.0, -0.5, 0.5, 1.0, 2.0)
-        certificate_multiplier = multipliers[rand(rng, eachindex(multipliers))]
-        certificate_rhs_gap = (rand(rng, Bool) ? 1.0 : -1.0) * (0.5 + 2.5 * rand(rng))
-        A[r2, :] = certificate_multiplier .* A[r1, :]
-        b[r2] = certificate_multiplier * b[r1] + certificate_rhs_gap
-        certificate_rows = (r1, r2)
+        multiplier = multipliers[rand(rng, eachindex(multipliers))]
+        rhs_gap = (rand(rng, Bool) ? 1.0 : -1.0) * (0.5 + 2.5 * rand(rng))
+        A[r2, :] = multiplier .* A[r1, :]
+        b[r2] = multiplier * b[r1] + rhs_gap
+        certificate = BasisPursuitCertificate((r1, r2), multiplier, rhs_gap)
     end
 
     return BasisPursuitProblem(
@@ -217,11 +238,9 @@ function BasisPursuitProblem(
         A,
         b,
         weights,
-        planted_signal,
+        source_signal,
         support,
-        certificate_rows,
-        certificate_multiplier,
-        certificate_rhs_gap,
+        certificate,
     )
 end
 
