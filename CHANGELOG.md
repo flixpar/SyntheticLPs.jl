@@ -4,6 +4,25 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-28 18:10 UTC (generic_milp sparse support sampling)
+
+**Previous Commit**: `8ce8ccb`
+
+**Summary**: PR-review fix — each generic MILP row drew its sparse support as
+the prefix of a full `n`-element permutation, and the constructor builds Θ(n)
+rows. Support generation was therefore Θ(n²) time and allocation (about three
+billion indices at `n = 100_000`). Supports are now sampled without replacement
+in work proportional to the requested width.
+
+**Details**:
+- New `_generic_sample_indices` draws `width` distinct columns via a set
+  (expected O(width) while `width ≪ n`, which is the advertised
+  `width ~ √n` regime) and sorts them. `_generic_sparse_support` uses it in
+  place of `randperm(n)[1:width]`. The one-shot `randperm` in the variable
+  layout is unchanged.
+- Seed-identical instances change because the support RNG stream is shorter.
+- Tests: tiny-target generation plus sorted/unique support checks at target 200.
+
 ## 2026-08-28 17:41 UTC (OTS sparse extra-line sampling)
 
 **Previous Commit**: `42b1bdf`
