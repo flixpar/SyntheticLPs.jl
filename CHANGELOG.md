@@ -25,6 +25,65 @@ Rows are now stored sparsely and assembled from their nonzeros.
   instance (no continuous variables) no longer throws.
 - Tests: `n = 1` generation plus sparse-support integrity checks at target 80.
 
+## 2026-08-28 18:10 UTC (generic_milp sparse support sampling)
+
+**Previous Commit**: `8ce8ccb`
+
+**Summary**: PR-review fix — each generic MILP row drew its sparse support as
+the prefix of a full `n`-element permutation, and the constructor builds Θ(n)
+rows. Support generation was therefore Θ(n²) time and allocation (about three
+billion indices at `n = 100_000`). Supports are now sampled without replacement
+in work proportional to the requested width.
+
+**Details**:
+- New `_generic_sample_indices` draws `width` distinct columns via a set
+  (expected O(width) while `width ≪ n`, which is the advertised
+  `width ~ √n` regime) and sorts them. `_generic_sparse_support` uses it in
+  place of `randperm(n)[1:width]`. The one-shot `randperm` in the variable
+  layout is unchanged.
+- Seed-identical instances change because the support RNG stream is shorter.
+- Tests: tiny-target generation plus sorted/unique support checks at target 200.
+
+## 2026-08-28 17:41 UTC (OTS sparse extra-line sampling)
+
+**Previous Commit**: `42b1bdf`
+
+**Summary**: PR-review fix — `energy/optimal_transmission_switching`
+materialized every undirected pair among `n_buses` buses, then shuffled and
+kept only ~1.45–2.05 lines per bus. A ~100,000-variable request therefore
+allocated hundreds of millions of tuples. Extra mesh lines are now sampled
+by rejection, matching `energy/dc_opf`.
+
+**Details**:
+- Replaced the `candidates = [(i, j) for i in 1:n_buses for j in (i+1):n_buses];
+  shuffle!` loop with random endpoint-pair attempts until `n_lines` is reached
+  (capped at `50 * n_lines` attempts). The spanning-tree prefix is unchanged.
+- The delivered graph remains simple and at least a tree; typical sizing is
+  sparse, so the attempt cap is not binding. Seed-identical instances change
+  because extra-line sampling (and thus the downstream RNG stream) changed.
+- Tests: tiny-target generation plus a uniqueness / tree-size check at
+  target 500.
+
+## 2026-08-28 17:36 UTC (container_loading clamp tiny targets)
+
+**Previous Commit**: `6078534`
+
+**Summary**: PR-review fix — both `container_loading` constructors rejected
+targets below a hard floor (`standard` at 12, `two_dimensional_bin_packing` at
+30). `generate_random_problem` and `generate_dataset` accept sizes down to 2,
+so those calls could throw or exhaust candidates. Both now clamp to their
+smallest formulation instead.
+
+**Details**:
+- `container_loading/standard`: drop the `target_variables >= 12` throw; clamp
+  to 6 (two items × two containers + two use-indicators) and keep the existing
+  dimension search. Targets ≥ 12 are unchanged.
+- `container_loading/two_dimensional_bin_packing`: drop the
+  `target_variables >= 30` throw; clamp to 26 (`n=3`, `b=2`, the search's
+  existing lower corner). Targets ≥ 30 are unchanged.
+- Tests: tiny-target `@test_nowarn` coverage for both variants in the
+  generator-robustness testset.
+
 ## 2026-08-27 13:03 UTC (tsp/flow exact dimension sizing)
 
 **Previous Commit**: `aa98448`
