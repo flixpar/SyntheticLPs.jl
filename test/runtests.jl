@@ -482,6 +482,10 @@ end
         check_status_data = function(prob)
             @test (prob.certificate !== nothing) ==
                   (prob.resolved_status == infeasible)
+            @test all(any(!iszero, @view prob.A[i, :])
+                      for i in 1:prob.n_measurements)
+            @test all(any(!iszero, @view prob.A[:, j])
+                      for j in 1:prob.n_features)
             if prob.resolved_status == feasible
                 @test prob.certificate === nothing
                 @test prob.A * prob.source_signal ≈ prob.b
@@ -641,6 +645,19 @@ end
             @test infeasible_prob.resolved_status == infeasible
             check_status_data(infeasible_prob)
         end
+
+        # Certificate injection must not erase sparse columns whose only
+        # nonzero sat in the replaced row. Target 20 has measurement width 1.
+        sparse_infeasible = 0
+        for seed in 0:199
+            _, prob = generate_problem(
+                "regression/basis_pursuit", 20, infeasible, seed
+            )
+            prob.profile == :sparse_measurements || continue
+            sparse_infeasible += 1
+            check_status_data(prob)
+        end
+        @test sparse_infeasible >= 20
 
         # Every profile also constructs correctly at the one-feature minimum,
         # under both statuses. Gaussian rows cannot both be orthonormal in this

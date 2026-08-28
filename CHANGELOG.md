@@ -4,6 +4,22 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-28 23:18 UTC (basis-pursuit sparse certificate coverage)
+
+**Previous Commit**: `842580f`
+
+**Summary**: Infeasible basis-pursuit certificates now keep every previously
+nonzero column measured, including sparse width-one instances.
+
+**Details**:
+- Certificate injection forms a proportional row pair from the union of the two
+  original supports instead of overwriting one row. Entries unique to the
+  replaced row are mapped onto both rows as `(v/λ, v)`, so columns whose only
+  nonzero sat there are not zeroed out.
+- A residual repair still restores any remaining empty column on both
+  certificate rows. Tests require nonempty rows and columns for every status,
+  plus a 200-seed sparse infeasible sweep at target 20.
+
 ## 2026-08-28 22:47 UTC (basis-pursuit review hardening)
 
 **Previous Commit**: `ce59087`

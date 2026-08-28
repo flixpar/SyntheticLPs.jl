@@ -161,15 +161,70 @@ function _basis_pursuit_matrix(
 end
 
 """
+    _inject_basis_pursuit_certificate!(A, b, rng)
+
+Replace two measurement rows with a proportional pair that proves infeasibility
+while preserving every previously nonzero column.
+
+A naive overwrite `A[r2, :] = λ A[r1, :]` would drop any column whose only
+nonzero sat in `r2`. That is common for the sparse profile when each column has
+width one. Instead the pair is formed from the union of the two original
+supports: entries already on `r1` are kept, and entries unique to `r2` are
+mapped onto both rows as `(v/λ, v)`. The RHS of `r2` is then shifted by a
+nonzero gap so `A[r2, :] = λ A[r1, :]` but `b[r2] ≠ λ b[r1]`.
+"""
+function _inject_basis_pursuit_certificate!(
+    A::Matrix{Float64},
+    b::Vector{Float64},
+    rng::AbstractRNG,
+)
+    n_measurements, n_features = size(A)
+    row_order = randperm(rng, n_measurements)
+    r1, r2 = row_order[1], row_order[2]
+    multipliers = (-2.0, -1.0, -0.5, 0.5, 1.0, 2.0)
+    λ = multipliers[rand(rng, eachindex(multipliers))]
+    rhs_gap = (rand(rng, Bool) ? 1.0 : -1.0) * (0.5 + 2.5 * rand(rng))
+
+    original_r1 = copy(@view A[r1, :])
+    original_r2 = copy(@view A[r2, :])
+    for j in 1:n_features
+        if !iszero(original_r1[j])
+            A[r1, j] = original_r1[j]
+            A[r2, j] = λ * original_r1[j]
+        elseif !iszero(original_r2[j])
+            A[r1, j] = original_r2[j] / λ
+            A[r2, j] = original_r2[j]
+        else
+            A[r1, j] = 0.0
+            A[r2, j] = 0.0
+        end
+    end
+    # Columns that were already empty, or that lost their only remaining
+    # nonzero, are restored on both certificate rows so the split variables
+    # stay measured.
+    for j in 1:n_features
+        if all(iszero, @view A[:, j])
+            value = (rand(rng, Bool) ? 1.0 : -1.0) * (0.5 + rand(rng))
+            A[r1, j] = value
+            A[r2, j] = λ * value
+        end
+    end
+
+    b[r2] = λ * b[r1] + rhs_gap
+    return BasisPursuitCertificate((r1, r2), λ, rhs_gap)
+end
+
+"""
     BasisPursuitProblem(target_variables, feasibility_status, seed)
 
 Construct a reproducible weighted basis-pursuit instance with a local RNG.
 The stored `source_signal` first generates `b = A * source_signal`. For feasible
-instances it remains an exact witness. Infeasible instances then replace one
-measurement row by a proportional copy of another while shifting its right hand
-side, so `source_signal` is no longer a witness and the stored certificate gives
-the explicit contradiction
-`A[r₂, :] = λA[r₁, :]` but `b[r₂] != λb[r₁]`.
+instances it remains an exact witness. Infeasible instances then replace two
+measurement rows by a proportional pair formed from the union of their original
+supports, then shift one right-hand side, so `source_signal` is no longer a
+witness and the stored certificate gives the explicit contradiction
+`A[r₂, :] = λA[r₁, :]` but `b[r₂] != λb[r₁]`. Columns measured only on the
+replaced row remain measured.
 
 An `unknown` request naturally resolves to a planted feasible instance with
 probability 0.8 and a certified infeasible instance otherwise; the result is
@@ -220,14 +275,7 @@ function BasisPursuitProblem(
 
     certificate = nothing
     if resolved_status == infeasible
-        row_order = randperm(rng, n_measurements)
-        r1, r2 = row_order[1], row_order[2]
-        multipliers = (-2.0, -1.0, -0.5, 0.5, 1.0, 2.0)
-        multiplier = multipliers[rand(rng, eachindex(multipliers))]
-        rhs_gap = (rand(rng, Bool) ? 1.0 : -1.0) * (0.5 + 2.5 * rand(rng))
-        A[r2, :] = multiplier .* A[r1, :]
-        b[r2] = multiplier * b[r1] + rhs_gap
-        certificate = BasisPursuitCertificate((r1, r2), multiplier, rhs_gap)
+        certificate = _inject_basis_pursuit_certificate!(A, b, rng)
     end
 
     return BasisPursuitProblem(
