@@ -478,6 +478,16 @@ end
         @test_nowarn generate_problem("tsp/precedence", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/prize_collecting", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/assignment_relaxation", 3, infeasible, 1)
+        # knapsack/mixed_integer_set stores sparse row supports instead of a
+        # dense n_rows × n_variables coefficient matrix.
+        @test_nowarn generate_problem("knapsack/mixed_integer_set", 1, unknown, 1)
+        _, mik = generate_problem("knapsack/mixed_integer_set", 80, unknown, 1)
+        @test length(mik.row_indices) == mik.n_rows
+        @test all(length(mik.row_indices[r]) == length(mik.row_coefficients[r])
+                  for r in 1:mik.n_rows)
+        @test all(allunique(mik.row_indices[r]) &&
+                  all(1 <= i <= mik.n_integer + mik.n_continuous for i in mik.row_indices[r])
+                  for r in 1:mik.n_rows)
         # generic_milp samples each row support in O(width) rather than
         # permuting all n columns; keep a moderately large constructor cheap.
         @test_nowarn generate_problem("generic_milp/standard", 3, unknown, 1)
