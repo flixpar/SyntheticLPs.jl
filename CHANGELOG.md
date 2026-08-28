@@ -4,6 +4,88 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-28 23:18 UTC (basis-pursuit sparse certificate coverage)
+
+**Previous Commit**: `842580f`
+
+**Summary**: Infeasible basis-pursuit certificates now keep every previously
+nonzero column measured, including sparse width-one instances.
+
+**Details**:
+- Certificate injection forms a proportional row pair from the union of the two
+  original supports instead of overwriting one row. Entries unique to the
+  replaced row are mapped onto both rows as `(v/λ, v)`, so columns whose only
+  nonzero sat there are not zeroed out.
+- A residual repair still restores any remaining empty column on both
+  certificate rows. Tests require nonempty rows and columns for every status,
+  plus a 200-seed sparse infeasible sweep at target 20.
+
+## 2026-08-28 22:47 UTC (basis-pursuit review hardening)
+
+**Previous Commit**: `ce59087`
+
+**Summary**: Hardened `regression/basis_pursuit` after independent review:
+large coherent-column instances now retain their intended profile, infeasibility
+metadata is status-safe, and tests inspect every coefficient of the JuMP
+formulation and broader solver behavior.
+
+**Details**:
+- Correlated-column perturbations now have a fixed norm relative to their unit
+  prototype instead of a fixed per-entry scale. Their magnitude no longer grows
+  with the square root of the measurement count; a multi-seed target-2000
+  regression test requires high measured coherence.
+- Renamed `planted_signal` to `source_signal`: it generates the pre-certificate
+  RHS and is documented/tested as a feasible witness only for resolved-feasible
+  instances.
+- Replaced three sentinel certificate fields with
+  `Union{Nothing,BasisPursuitCertificate}`. Certificate presence now exactly
+  matches resolved infeasibility, and its row indices, multiplier, and nonzero
+  RHS gap are checked algebraically.
+- Added exact formulation checks for minimization sense, every measurement RHS,
+  all positive/negative split coefficients, and all objective weights.
+- Solver-backed tests now cover three seeds per matrix profile under both
+  requested statuses, plus multiple naturally resolved unknown instances of
+  each label. Repeated deterministic MPS export covers every profile/status
+  combination.
+- Added feasible/infeasible construction and certificate checks for all profiles
+  at targets 1–3, including the normalized two-row/one-column Gaussian geometry.
+
+## 2026-08-28 22:35 UTC (regression/basis_pursuit)
+
+**Previous Commit**: `e3f4736`
+
+**Summary**: Added a production-quality weighted basis-pursuit variant to the
+`regression` category. The generator models exact sparse recovery with
+positive/negative variable splits, three materially different measurement
+profiles, explicit feasible witnesses, and algebraically certified infeasible
+instances.
+
+**Details**:
+- Added `BasisPursuitProblem`, storing the complete matrix, right-hand side,
+  positive objective weights, source sparse signal and support, selected
+  profile, resolved feasibility status, and optional contradiction certificate.
+- Data generation uses a local seeded RNG. Profiles cover whitened dense
+  Gaussian measurements, shuffled groups of highly coherent dense columns, and
+  shuffled sparse signed measurements with no empty row or column.
+- Feasible instances set `b = A * source_signal`. Infeasible instances replace
+  one measurement row by a proportional copy and shift its RHS, producing a
+  deterministic contradiction that remains valid regardless of integrality.
+  Unknown requests resolve naturally to one of those stored outcomes.
+- The canonical LP minimizes `sum(w[j] * (x_pos[j] + x_neg[j]))`, with
+  `A * (x_pos - x_neg) == b` and both split blocks continuous and nonnegative.
+  Strictly positive weights bound every feasible objective below, while the
+  nonzero planted measurement makes feasible objectives nontrivial.
+- Variable sizing reflects the unavoidable parity of split variables: even
+  targets of at least two are exact, odd targets round up by one, and smaller
+  targets use the two-variable minimum.
+- Added focused tests for registry metadata, tiny/normal/large sizing,
+  deterministic data and MPS export, local-RNG isolation, cross-seed diversity,
+  profile statistics and coverage, witness/certificate invariants, variable
+  domains and objective coefficients, repeated builds, and HiGHS-backed
+  feasible/infeasible contracts for every profile.
+- Updated the regression entry point, README category/usage documentation, and
+  `CLAUDE.md` variant inventory.
+
 ## 2026-08-28 18:47 UTC (set_system clamp tiny targets)
 
 **Previous Commit**: `dec1c3f`

@@ -188,7 +188,7 @@ Categories with multiple variants are listed with them below.
 - Airline Crew, Bin Packing, Cutting Stock (`standard`, `setup_cost`, `due_dates`), Energy (`standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`), Feed Blending, Inventory (`standard`, `lot_sizing`, `multi_item`, `multi_echelon`), Telecom Network Design
 - Job Shop Scheduling, Land Use, Load Balancing, Nurse Scheduling, Product Mix, Project Selection
 - Resource Allocation, Scheduling, Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`), TSP (`standard`, `asymmetric`, `flow`, `time_windows`, `assignment_relaxation`, `prize_collecting`, `multiple_salespersons`, `precedence`), Unit Commitment, Vehicle Routing (`cvrp`)
-- Regression (`lad`, `quantile`, `chebyshev`; dense statistical LPs), Revenue Management (network DLP), Stochastic Program (two-stage with recourse)
+- Regression (`lad`, `quantile`, `chebyshev`, `basis_pursuit`; dense statistical and weighted sparse-recovery LPs), Revenue Management (network DLP), Stochastic Program (two-stage with recourse)
 
 #### Model classes (LP / MIP / LP relaxation)
 
