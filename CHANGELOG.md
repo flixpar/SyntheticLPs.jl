@@ -4,6 +4,26 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-28 17:41 UTC (OTS sparse extra-line sampling)
+
+**Previous Commit**: `42b1bdf`
+
+**Summary**: PR-review fix — `energy/optimal_transmission_switching`
+materialized every undirected pair among `n_buses` buses, then shuffled and
+kept only ~1.45–2.05 lines per bus. A ~100,000-variable request therefore
+allocated hundreds of millions of tuples. Extra mesh lines are now sampled
+by rejection, matching `energy/dc_opf`.
+
+**Details**:
+- Replaced the `candidates = [(i, j) for i in 1:n_buses for j in (i+1):n_buses];
+  shuffle!` loop with random endpoint-pair attempts until `n_lines` is reached
+  (capped at `50 * n_lines` attempts). The spanning-tree prefix is unchanged.
+- The delivered graph remains simple and at least a tree; typical sizing is
+  sparse, so the attempt cap is not binding. Seed-identical instances change
+  because extra-line sampling (and thus the downstream RNG stream) changed.
+- Tests: tiny-target generation plus a uniqueness / tree-size check at
+  target 500.
+
 ## 2026-08-27 13:03 UTC (tsp/flow exact dimension sizing)
 
 **Previous Commit**: `aa98448`
