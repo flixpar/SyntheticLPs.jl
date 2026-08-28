@@ -237,3 +237,8 @@ pathologies, or solver hardness against held-out MIPLIB/Netlib instances. The
 preset likewise matches family prevalence rather than joint size, sparsity, or
 runtime distributions. Those are measurement and calibration tasks, not claims
 made by this implementation.
+
+See
+[`new_generator_quality_assessment_and_roadmap.md`](new_generator_quality_assessment_and_roadmap.md)
+for a generator-by-generator quality assessment, corpus-fidelity limitations,
+and a staged calibration roadmap with explicit exit gates.
