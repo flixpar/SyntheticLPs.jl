@@ -4,6 +4,26 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-28 17:36 UTC (container_loading clamp tiny targets)
+
+**Previous Commit**: `6078534`
+
+**Summary**: PR-review fix — both `container_loading` constructors rejected
+targets below a hard floor (`standard` at 12, `two_dimensional_bin_packing` at
+30). `generate_random_problem` and `generate_dataset` accept sizes down to 2,
+so those calls could throw or exhaust candidates. Both now clamp to their
+smallest formulation instead.
+
+**Details**:
+- `container_loading/standard`: drop the `target_variables >= 12` throw; clamp
+  to 6 (two items × two containers + two use-indicators) and keep the existing
+  dimension search. Targets ≥ 12 are unchanged.
+- `container_loading/two_dimensional_bin_packing`: drop the
+  `target_variables >= 30` throw; clamp to 26 (`n=3`, `b=2`, the search's
+  existing lower corner). Targets ≥ 30 are unchanged.
+- Tests: tiny-target `@test_nowarn` coverage for both variants in the
+  generator-robustness testset.
+
 ## 2026-08-27 13:03 UTC (tsp/flow exact dimension sizing)
 
 **Previous Commit**: `aa98448`

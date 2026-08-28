@@ -19,14 +19,16 @@ function ContainerLoadingProblem(
     feasibility_status::FeasibilityStatus,
     seed::Int,
 )
-    target_variables >= 12 ||
-        throw(ArgumentError("container loading needs at least 12 variables"))
     rng = MersenneTwister(seed)
+    # Variable count is n_items * n_containers + n_containers. The smallest
+    # formulation keeps at least two items and two containers (6 variables);
+    # public APIs accept sizes down to 2, so clamp rather than reject.
+    target = max(target_variables, 6)
 
     best = (typemax(Int), 0, 0)
-    for b in 2:min(20, target_variables ÷ 3)
-        n = max(b, round(Int, (target_variables - b) / b))
-        error = abs(n * b + b - target_variables)
+    for b in 2:max(2, min(20, target ÷ 3))
+        n = max(b, round(Int, (target - b) / b))
+        error = abs(n * b + b - target)
         error < best[1] && (best = (error, n, b))
     end
     _, n_items, n_containers = best

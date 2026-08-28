@@ -478,6 +478,12 @@ end
         @test_nowarn generate_problem("tsp/precedence", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/prize_collecting", 3, infeasible, 1)
         @test_nowarn generate_problem("tsp/assignment_relaxation", 3, infeasible, 1)
+        # container_loading used to reject targets below 12 (standard) / 30
+        # (2-D packing); both now clamp to their smallest formulation.
+        @test_nowarn generate_problem("container_loading/standard", 2, unknown, 1)
+        @test_nowarn generate_problem("container_loading/standard", 11, feasible, 1)
+        @test_nowarn generate_problem("container_loading/two_dimensional_bin_packing", 2, unknown, 1)
+        @test_nowarn generate_problem("container_loading/two_dimensional_bin_packing", 29, infeasible, 1)
         # energy now stores an emissions intensity target (the previous per-period
         # emissions row was an algebraic tautology).
         _, eprob = generate_problem("energy/standard", 120, unknown, 1)

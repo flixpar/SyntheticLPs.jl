@@ -22,17 +22,18 @@ function TwoDimensionalBinPackingProblem(
     feasibility_status::FeasibilityStatus,
     seed::Int,
 )
-    target_variables >= 30 ||
-        throw(ArgumentError("two-dimensional bin packing needs at least 30 variables"))
     rng = MersenneTwister(seed)
-
     # Variables are assignments, bin-use indicators, two coordinates per item,
-    # and four relative-position binaries per item pair.
+    # and four relative-position binaries per item pair. The smallest search
+    # point (n=3, b=2) already yields 26 variables; clamp the target so public
+    # APIs that accept sizes down to 2 still produce that formulation.
+    target = max(target_variables, 26)
+
     best = (typemax(Int), 0, 0)
-    for n in 3:max(3, ceil(Int, sqrt(target_variables)))
+    for n in 3:max(3, ceil(Int, sqrt(target)))
         for b in 2:min(8, n)
             total = n * b + b + 2n + 4 * (n * (n - 1) ÷ 2)
-            error = abs(total - target_variables)
+            error = abs(total - target)
             error < best[1] && (best = (error, n, b))
         end
     end
