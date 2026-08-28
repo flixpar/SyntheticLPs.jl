@@ -4,6 +4,23 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-28 23:10 UTC (network-planning exhaustive formulation tests)
+
+**Previous Commit**: `d553526`
+
+**Summary**: Strengthened PR #41 tests so planted-plan nonnegativity, exact
+open-arc keysets, complete JuMP row support, and multi-seed profile contracts
+are regression-checked.
+
+**Details**:
+- Feasible-witness tests now require nonnegative production, inventory, and
+  shipment values, and require shipment keys to equal the open-arc set.
+- Inventory, demand, and shared-resource rows are checked exhaustively:
+  complete affine support, coefficients, RHS, and named constraint-family
+  counts, including that unrelated variables have coefficient zero.
+- Regional, seasonal-prebuild, and disruption profile invariants now run over
+  four seeds each rather than a single representative.
+
 ## 2026-08-28 22:59 UTC (network-planning review hardening)
 
 **Previous Commit**: `465efbf`

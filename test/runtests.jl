@@ -414,6 +414,10 @@ end
             end
             @test all(witness.shipment[a] <= p.lane_capacity[a] + 1e-8
                       for a in p.shipment_arcs)
+            @test all(>=(0), witness.production)
+            @test all(>=(0), witness.inventory)
+            @test all(value >= -1e-12 for value in values(witness.shipment))
+            @test Set(keys(witness.shipment)) == Set(p.shipment_arcs)
         end
 
         # Status-aware metadata has no ambiguous zero-valued witness,
@@ -482,103 +486,139 @@ end
         @test profiles == Set([:regional_stable, :seasonal_prebuild, :disruption])
 
         # Profile labels correspond to materially different coefficients and
-        # structure.
-        _, regional = generate_problem(
-            "supply_chain/network_planning", 500, feasible, 0
-        )
-        regional_totals =
-            [sum(regional.demand[:, :, t]) for t in 1:regional.n_periods]
-        regional_share = count(
-            a -> regional.plant_regions[a[1]] ==
-                 regional.customer_regions[a[2]],
-            regional.shipment_arcs,
-        ) / length(regional.shipment_arcs)
-        @test maximum(regional_totals) < 1.30 * minimum(regional_totals)
-        @test regional_share > 0.55
-
-        _, seasonal = generate_problem(
-            "supply_chain/network_planning", 500, feasible, 1
-        )
-        seasonal_totals =
-            [sum(seasonal.demand[:, :, t]) for t in 1:seasonal.n_periods]
-        @test maximum(seasonal_totals) > 1.6 * minimum(seasonal_totals)
-        @test sum(seasonal.production_cost[:, :, 1]) <
-              sum(seasonal.production_cost[:, :, end])
-        prepeak = max(1, argmax(seasonal_totals) - 1)
-        @test sum(seasonal.feasible_witness.inventory[:, :, prepeak]) >
-              sum(seasonal.initial_inventory)
-
-        _, disrupted = generate_problem(
-            "supply_chain/network_planning", 500, feasible, 2
-        )
-        event = disrupted.disruption
-        @test event.production_factor == 0.35
-        @test event.shipment_surcharge == 1.55
-        @test all(!(a[1] == event.plant && a[4] == event.period)
-                  for a in disrupted.shipment_arcs)
-        @test disrupted.plant_capacity[event.plant, event.period] <
-              minimum(disrupted.plant_capacity[event.plant,
-                      setdiff(1:disrupted.n_periods, [event.period])])
-        disruption_arcs =
-            [a for a in disrupted.shipment_arcs if a[4] == event.period]
-        ordinary_arcs =
-            [a for a in disrupted.shipment_arcs if a[4] != event.period]
-        @test sum(disrupted.shipment_cost[a] for a in disruption_arcs) /
-              length(disruption_arcs) >
-              1.15 * sum(disrupted.shipment_cost[a] for a in ordinary_arcs) /
-              length(ordinary_arcs)
-        @test all(any(a[2] == c && a[3] == k && a[4] == event.period
-                      for a in disrupted.shipment_arcs)
-                  for c in 1:disrupted.n_customers,
-                      k in 1:disrupted.n_products)
+        # structure. Apply the contracts across several seeds of each profile.
+        function check_regional_profile(p)
+            @test p.profile == :regional_stable
+            totals = [sum(p.demand[:, :, t]) for t in 1:p.n_periods]
+            share = count(
+                a -> p.plant_regions[a[1]] == p.customer_regions[a[2]],
+                p.shipment_arcs,
+            ) / length(p.shipment_arcs)
+            @test maximum(totals) < 1.30 * minimum(totals)
+            @test share > 0.55
+        end
+        function check_seasonal_profile(p)
+            @test p.profile == :seasonal_prebuild
+            totals = [sum(p.demand[:, :, t]) for t in 1:p.n_periods]
+            @test maximum(totals) > 1.6 * minimum(totals)
+            @test sum(p.production_cost[:, :, 1]) <
+                  sum(p.production_cost[:, :, end])
+            prepeak = max(1, argmax(totals) - 1)
+            @test sum(p.feasible_witness.inventory[:, :, prepeak]) >
+                  sum(p.initial_inventory)
+        end
+        function check_disruption_profile(p)
+            @test p.profile == :disruption
+            event = p.disruption
+            @test event.production_factor == 0.35
+            @test event.shipment_surcharge == 1.55
+            @test all(!(a[1] == event.plant && a[4] == event.period)
+                      for a in p.shipment_arcs)
+            @test p.plant_capacity[event.plant, event.period] <
+                  minimum(p.plant_capacity[event.plant,
+                          setdiff(1:p.n_periods, [event.period])])
+            disruption_arcs =
+                [a for a in p.shipment_arcs if a[4] == event.period]
+            ordinary_arcs =
+                [a for a in p.shipment_arcs if a[4] != event.period]
+            @test sum(p.shipment_cost[a] for a in disruption_arcs) /
+                  length(disruption_arcs) >
+                  1.15 * sum(p.shipment_cost[a] for a in ordinary_arcs) /
+                  length(ordinary_arcs)
+            @test all(any(a[2] == c && a[3] == k && a[4] == event.period
+                          for a in p.shipment_arcs)
+                      for c in 1:p.n_customers, k in 1:p.n_products)
+        end
+        for seed in 0:3:9
+            _, p = generate_problem(
+                "supply_chain/network_planning", 500, feasible, seed
+            )
+            check_regional_profile(p)
+        end
+        for seed in 1:3:10
+            _, p = generate_problem(
+                "supply_chain/network_planning", 500, feasible, seed
+            )
+            check_seasonal_profile(p)
+        end
+        for seed in 2:3:11
+            _, p = generate_problem(
+                "supply_chain/network_planning", 500, feasible, seed
+            )
+            check_disruption_profile(p)
+        end
 
         # Exact JuMP algebra, domains, bounds, sparse shipment axes, and
-        # objective coefficients.
+        # objective coefficients. Every named constraint family is checked in
+        # full, including absent coefficients.
         algebra_model, algebra = generate_problem(
             "supply_chain/network_planning", 120, feasible, 2
         )
         produce = algebra_model[:produce]
         inventory = algebra_model[:inventory]
         ship = algebra_model[:ship]
-        p, k = 1, 1
-        first_balance = algebra_model[:inventory_balance][p, k, 1]
-        @test normalized_rhs(first_balance) == -algebra.initial_inventory[p, k]
-        @test normalized_coefficient(first_balance, produce[p, k, 1]) == 1
-        @test normalized_coefficient(first_balance, inventory[p, k, 1]) == -1
-        for arc in algebra.shipment_arcs
-            arc[1] == p && arc[3] == k && arc[4] == 1 || continue
-            @test normalized_coefficient(first_balance, ship[arc]) == -1
-        end
-        later_balance = algebra_model[:inventory_balance][p, k, 2]
-        @test normalized_rhs(later_balance) == 0
-        @test normalized_coefficient(
-            later_balance, inventory[p, k, 1]
-        ) == 1
-        @test normalized_coefficient(
-            later_balance, produce[p, k, 2]
-        ) == 1
-        @test normalized_coefficient(
-            later_balance, inventory[p, k, 2]
-        ) == -1
-        for arc in algebra.shipment_arcs
-            arc[1] == p && arc[3] == k && arc[4] == 2 || continue
-            @test normalized_coefficient(later_balance, ship[arc]) == -1
-        end
+        balances = algebra_model[:inventory_balance]
+        demands = algebra_model[:demand_balance]
+        resources = algebra_model[:resource_capacity]
+        @test length(balances) ==
+              algebra.n_plants * algebra.n_products * algebra.n_periods
+        @test length(demands) ==
+              algebra.n_customers * algebra.n_products * algebra.n_periods
+        @test length(resources) == algebra.n_plants * algebra.n_periods
 
-        sample_arc = first(algebra.shipment_arcs)
-        _, c, k, t = sample_arc
-        demand_row = algebra_model[:demand_balance][c, k, t]
-        @test normalized_rhs(demand_row) == algebra.demand[c, k, t]
-        for arc in algebra.shipment_arcs
-            arc[2] == c && arc[3] == k && arc[4] == t || continue
-            @test normalized_coefficient(demand_row, ship[arc]) == 1
+        function expected_inventory_coefficient(var, plant, product, period)
+            var == produce[plant, product, period] && return 1.0
+            var == inventory[plant, product, period] && return -1.0
+            if period > 1 && var == inventory[plant, product, period - 1]
+                return 1.0
+            end
+            for arc in algebra.shipment_arcs
+                arc[1] == plant && arc[3] == product &&
+                    arc[4] == period || continue
+                var == ship[arc] && return -1.0
+            end
+            return 0.0
         end
-        p, t = 1, 1
-        resource_row = algebra_model[:resource_capacity][p, t]
-        @test normalized_rhs(resource_row) == algebra.plant_capacity[p, t]
-        for k in 1:algebra.n_products
-            @test normalized_coefficient(resource_row, produce[p, k, t]) ==
-                  algebra.resource_use[p, k]
+        for plant in 1:algebra.n_plants, product in 1:algebra.n_products,
+            period in 1:algebra.n_periods
+            row = balances[plant, product, period]
+            @test normalized_rhs(row) ==
+                  (period == 1 ? -algebra.initial_inventory[plant, product] : 0.0)
+            for var in all_variables(algebra_model)
+                @test normalized_coefficient(row, var) ==
+                      expected_inventory_coefficient(var, plant, product, period)
+            end
+        end
+        for customer in 1:algebra.n_customers, product in 1:algebra.n_products,
+            period in 1:algebra.n_periods
+            row = demands[customer, product, period]
+            @test normalized_rhs(row) == algebra.demand[customer, product, period]
+            for var in all_variables(algebra_model)
+                expected = 0.0
+                for arc in algebra.shipment_arcs
+                    arc[2] == customer && arc[3] == product &&
+                        arc[4] == period || continue
+                    if var == ship[arc]
+                        expected = 1.0
+                        break
+                    end
+                end
+                @test normalized_coefficient(row, var) == expected
+            end
+        end
+        for plant in 1:algebra.n_plants, period in 1:algebra.n_periods
+            row = resources[plant, period]
+            @test normalized_rhs(row) == algebra.plant_capacity[plant, period]
+            for var in all_variables(algebra_model)
+                expected = 0.0
+                for product in 1:algebra.n_products
+                    if var == produce[plant, product, period]
+                        expected = algebra.resource_use[plant, product]
+                        break
+                    end
+                end
+                @test normalized_coefficient(row, var) == expected
+            end
         end
 
         @test objective_sense(algebra_model) == MOI.MIN_SENSE
