@@ -27,7 +27,9 @@ loading generator.
   the final surgery day.
 - Added sparse `master_surgical_schedule`: compatible block columns, quotas,
   daily concentration, cyclical but separate expected ICU/ward profiles, full
-  witnesses, and compatible-room-day quota certificates.
+  witnesses, and compatible-room-day quota certificates. Post-ICU ward arrivals
+  follow the discrete ICU discharge distribution, and complete LOS tails are
+  periodized across the repeating cycle without double-counting cohorts.
 - Added sparse `robust_elective` using the Bertsimas--Sim dual counterpart, one
   uncertainty auxiliary per admissible triple, deviations calibrated from
   fitted empirical duration distributions, and witnesses sized against the

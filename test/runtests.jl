@@ -1277,6 +1277,33 @@ end
 
         # Tactical MSS: sparse compatible variables, cyclic ICU/ward profiles,
         # and a quota witness/certificate.
+        for specialty in SyntheticLPs._ORSCHED_SPECIALTIES, days in (5, 10)
+            components = SyntheticLPs._mss_profile_components(specialty, days)
+            cases_per_block = 480.0 / (specialty.aggregate_mean + 25.0)
+            los_values = collect(specialty.ward_los[1]:specialty.ward_los[2])
+            direct_mean_los = sum(los_values) / length(los_values)
+            post_icu_mean_los = sum(max(1, los) for los in los_values) /
+                                length(los_values)
+
+            # Periodizing the profile must preserve expected bed-days per
+            # block, including the complete tail from the prior cycle.
+            @test isapprox(sum(components.icu),
+                           cases_per_block * specialty.icu * 1.5)
+            @test isapprox(sum(components.direct_ward),
+                           cases_per_block * (1 - specialty.icu) *
+                           (1 - specialty.day_case) * direct_mean_los)
+            @test isapprox(sum(components.post_icu_ward),
+                           cases_per_block * specialty.icu * post_icu_mean_los)
+        end
+        for specialty in SyntheticLPs._ORSCHED_SPECIALTIES
+            components = SyntheticLPs._mss_profile_components(specialty, 10)
+            cases_per_block = 480.0 / (specialty.aggregate_mean + 25.0)
+            half_icu_cohort = 0.5 * cases_per_block * specialty.icu
+            @test components.post_icu_ward[1] == 0
+            @test isapprox(components.icu[2], half_icu_cohort)
+            @test isapprox(components.post_icu_ward[2], half_icu_cohort)
+            @test components.icu[3] == 0
+        end
         for seed in 0:3, target in (100, 500)
             model, p = generate_problem(mss_ref, target, feasible, seed)
             @test num_variables(model) == length(p.admissible_blocks) +

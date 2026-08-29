@@ -72,9 +72,12 @@ are not attributed to the benchmark.
 Only compatible `(specialty, room, day)` columns are created. Room exclusivity,
 minimum/maximum service quotas, and daily room ceilings define the block plan.
 Separate expected ICU and post-ICU ward profiles are cyclically convolved with
-the repeating schedule. Feasible instances store the complete planted block
-array. Infeasible instances require one specialty to receive more blocks than
-all of its compatible room-days, an LP-level certificate.
+the repeating schedule. ICU stays use the same discrete 1--2 day distribution
+as weekly planning; each cohort enters the ward only on its ICU discharge day,
+and LOS tails from prior cycles are periodized into the current cycle. Feasible
+instances store the complete planted block array. Infeasible instances require
+one specialty to receive more blocks than all of its compatible room-days, an
+LP-level certificate.
 
 ### Elective and robust assignment
 
