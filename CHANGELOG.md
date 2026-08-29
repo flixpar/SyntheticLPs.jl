@@ -4,6 +4,37 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-29 22:33 UTC (crop-planning quality pass)
+
+**Previous Commit**: `6313980`
+
+**Summary**: Reworked the legacy crop-planning generator around interpretable
+crop-management options, dimensionally correct market rows, and independently
+checkable feasibility metadata. Direct feasible requests now have a complete
+witness, including the diversity rows that previously caused a reproducible
+false feasible label.
+
+**Details**:
+- Replaced the fixed first-25/anonymous-`Crop_i` scheme with shuffled blocks of
+  25 named crops and four correlated management systems (`rainfed`, `irrigated`,
+  `low_input`, and `intensive`). Management choices jointly affect yield,
+  production cost, irrigation, and labor.
+- Changed market limits from acreage proxies to tonnes and changed the JuMP
+  rows to `yield[i] * area[i] <= demand_tonnes[i]`, so yield now has the correct
+  economic and dimensional role.
+- Added typed crop-group requirements, a complete feasible acreage witness, and
+  a typed water/labor lower-bound certificate for infeasible requests. Diversity
+  floors for feasible instances are derived from the witness with strict slack;
+  the former 95%-satisfaction loophole is gone.
+- Isolated all constructor randomness in a local `MersenneTwister`, named every
+  formulation row family, and rewrote the category documentation to match the
+  implementation and units.
+- Added per-category test loading plus crop-planning tests for data contracts,
+  exact witness/certificate arithmetic, global-RNG isolation, field-level
+  determinism, market-row coefficients, the former target-300/seed-4 regression,
+  and multi-scale HiGHS status sweeps. A 20-seed standalone sweep passed at
+  targets 30, 300, and 1,200 for both requested statuses.
+
 ## 2026-08-29 14:01 UTC (operating room scheduling refinement and combination)
 
 **Previous Commit**: `49a6bc3`

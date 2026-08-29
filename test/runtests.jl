@@ -1408,6 +1408,16 @@ end
         end
     end
 
+    # Focused per-category quality contracts live in separate files so a
+    # generator's source, documentation, and regression coverage can evolve as
+    # one reviewable unit.
+    problem_type_test_dir = joinpath(@__DIR__, "problem_types")
+    if isdir(problem_type_test_dir)
+        for test_file in sort(readdir(problem_type_test_dir; join = true))
+            endswith(test_file, ".jl") && include(test_file)
+        end
+    end
+
     # Test individual problem generators (every registered variant)
     for ref in list_problems()
         test_problem_generator(ref)
