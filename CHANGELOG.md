@@ -4,6 +4,36 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-29 23:13 UTC (quality-pass documentation integration)
+
+**Previous Commit**: `15fa540`
+
+**Summary**: Synchronized the project-level catalogs and offline explainer with
+the six upgraded generator categories and made future Markdown/HTML drift fail
+fast during explainer generation.
+
+**Details**:
+- Updated the README and contributor architecture guide for the new
+  `bin_packing/heterogeneous` and
+  `revenue_management/stochastic_overbooking` variants, the auditable status
+  artifacts introduced across six legacy categories, and unit commitment's
+  natural binary formulation versus the API's default LP relaxation.
+- Corrected the contributor catalog's previously incomplete operating-room
+  variant list and removed bin packing and revenue management from the
+  single-variant inventory.
+- Expanded the documentation index with bin packing, revenue management, and
+  unit commitment, clarified that it covers the documented subset of the 42
+  categories, and recorded the required offline-explainer rebuild workflow.
+- Added explainer metadata for those three categories plus the already
+  documented operating-room and workforce-shift generators. The builder now
+  excludes the historical branch review, verifies exact parity between
+  Markdown pages and configured metadata, and reports the number of rendered
+  articles rather than every Markdown file.
+- Marked the branch-variant review as a historical June 2026 snapshot and
+  regenerated the self-contained HTML. Its 30 article IDs now exactly match the
+  metadata catalog, and stale feed-blending, crop-planning, and land-use claims
+  were replaced by their current documentation.
+
 ## 2026-08-29 23:01 UTC (bin-packing quality pass)
 
 **Previous Commit**: `bb5b219`

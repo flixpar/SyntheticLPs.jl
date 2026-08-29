@@ -194,9 +194,9 @@ Categories with multiple variants are listed with them below.
 - Transportation (`standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`, `fixed_charge`), Diet Problem (`standard`, `nutrient_bounds`, `food_groups`), Knapsack (`standard`, `multidimensional`, `bounded`, `mixed_integer_set`), Portfolio (`cvar`, `tracking_error`), Network Flow (`standard`, `generalized_flow`)
 - Multi-Commodity Flow (`standard`, `binary_capacity`, `integer_flow`), Assignment (`standard`, `workload_balance`), Blending (`standard`, `equipment_batches`, `multi_product`), Container Loading (`standard`, `two_dimensional_bin_packing`), Facility Location (`standard`, `two_echelon`, `p_median`)
 - Cutting Stock (`standard`, `setup_cost`, `due_dates`, `integer_patterns`), Energy (`standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`, `optimal_transmission_switching`), Inventory (`standard`, `lot_sizing`, `multi_item`, `multi_echelon`), Load Balancing (`standard`, `discrete_placement`)
-- Graph Optimization (`independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`), Set System (`set_cover`, `set_packing`, `set_partitioning`, `combinatorial_auction`), Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`, `network_planning`), Operating Room Scheduling (`elective_assignment`, `case_sequencing`, `weekly_planning`)
-- TSP (`standard`, `asymmetric`, `flow`, `time_windows`, `assignment_relaxation`, `prize_collecting`, `multiple_salespersons`, `precedence`), Vehicle Routing (`cvrp`), Regression (`lad`, `quantile`, `chebyshev`, `basis_pursuit`), Workforce Shift Scheduling (`covering`)
-- Single-variant categories: Airline Crew, Bin Packing, Crop Planning, Feed Blending, Generic MILP, Job Shop Scheduling, Land Use, Maritime Inventory Routing, Neural Network Verification, Nurse Scheduling, Product Mix, Production Planning, Project Selection, Resilient Network Design, Resource Allocation, Revenue Management, Scheduling, Stochastic Program, Telecom Network Design, Unit Commitment
+- Graph Optimization (`independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`), Set System (`set_cover`, `set_packing`, `set_partitioning`, `combinatorial_auction`), Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`, `network_planning`), Operating Room Scheduling (`elective_assignment`, `case_sequencing`, `weekly_planning`, `master_surgical_schedule`, `robust_elective`, `benchmark_loading`)
+- TSP (`standard`, `asymmetric`, `flow`, `time_windows`, `assignment_relaxation`, `prize_collecting`, `multiple_salespersons`, `precedence`), Vehicle Routing (`cvrp`), Regression (`lad`, `quantile`, `chebyshev`, `basis_pursuit`), Workforce Shift Scheduling (`covering`), Bin Packing (`standard`, `heterogeneous`), Revenue Management (`standard`, `stochastic_overbooking`)
+- Single-variant categories: Airline Crew, Crop Planning, Feed Blending, Generic MILP, Job Shop Scheduling, Land Use, Maritime Inventory Routing, Neural Network Verification, Nurse Scheduling, Product Mix, Production Planning, Project Selection, Resilient Network Design, Resource Allocation, Scheduling, Stochastic Program, Telecom Network Design, Unit Commitment
 
 #### Model classes (LP / MIP / LP relaxation)
 
@@ -209,6 +209,7 @@ The corpus deliberately mixes three model classes; treat the names accordingly:
 - **MIPs** (binary/integer variables): e.g. `facility_location` variants
   (including `p_median`), `cutting_stock/setup_cost`, `inventory/lot_sizing`,
   `bin_packing`, `job_shop_scheduling`, `supply_chain/single_source`,
+  `unit_commitment` (binary commitment/startup/shutdown in its natural model),
   `knapsack/multidimensional` (binary) and `knapsack/bounded` (integer),
   `assignment/workload_balance` (binary min-makespan), and `vehicle_routing/cvrp`
   (binary arc selection with single-commodity-flow subtour elimination — its
@@ -226,13 +227,16 @@ The corpus deliberately mixes three model classes; treat the names accordingly:
   `robust_elective` (a sparse budgeted-uncertainty counterpart), and
   `benchmark_loading` (empirically calibrated OR-day assignment). These are
   real mixed-integer formulations.
-- **LP relaxations of MIPs**: continuous relaxations of integer models, useful as
+- **Purpose-built LP relaxations of MIPs**: continuous relaxations useful as
   LP-solver test instances but *not* directly implementable integer solutions —
-  notably `nurse_scheduling` (fractional rosters), `unit_commitment`
-  (fractional commitment), and `tsp/assignment_relaxation` (a strengthened
+  notably `nurse_scheduling` (fractional rosters) and
+  `tsp/assignment_relaxation` (a strengthened
   degree LP relaxation of the TSP — fractional arc covers that may contain
   subtours).
-  Their docstrings state this explicitly.
+  Their docstrings state this explicitly. In addition, the public generation API
+  defaults to `relax_integer=true`, so every natural MIP above—including unit
+  commitment and both bin-packing variants—is returned as an LP relaxation
+  unless the caller opts out.
 
 When generating an LP-only corpus, filter out the MIP variants (or relax them);
 when characterizing instances, do not present the relaxations as real-world

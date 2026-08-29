@@ -57,13 +57,18 @@ META = {
     "resource_allocation":   dict(family="production",sense="Max",     vclass="Continuous", tag="Allocate scarce resources among activities"),
     "inventory":             dict(family="production",sense="Min",     vclass="Continuous", tag="Single-item lot sizing over a horizon"),
     "energy":                dict(family="production",sense="Min",     vclass="Continuous", tag="Dispatch generators over time to meet demand"),
+    "unit_commitment":       dict(family="production",sense="Min",     vclass="Mixed",      tag="Commit and dispatch generators across time"),
     "assignment":            dict(family="scheduling",sense="Min",     vclass="Binary",     tag="Worker-task matching with compatibility"),
+    "bin_packing":           dict(family="scheduling",sense="Min",     vclass="Binary",     tag="Pack items into identical or heterogeneous fleets"),
+    "operating_room_scheduling":dict(family="scheduling",sense="Min",  vclass="Mixed",      tag="Assign and sequence surgeries under clinical capacity"),
     "scheduling":            dict(family="scheduling",sense="Min",     vclass="Binary",     tag="Workforce shift scheduling with coverage"),
+    "workforce_shift_scheduling":dict(family="scheduling",sense="Min", vclass="Continuous", tag="Multi-skill shift-pattern staffing coverage"),
     "airline_crew":          dict(family="scheduling",sense="Min",     vclass="Binary",     tag="Set-partitioning crew pairing"),
     "cutting_stock":         dict(family="scheduling",sense="Min",     vclass="Integer",    tag="One-dimensional pattern cutting"),
     "knapsack":              dict(family="selection", sense="Max",     vclass="Continuous", tag="Fractional knapsack under a capacity"),
     "project_selection":     dict(family="selection", sense="Max",     vclass="Binary",     tag="Pick projects under budget/risk/dependency"),
     "portfolio":             dict(family="selection", sense="Max",     vclass="Continuous", tag="CVaR portfolio with policy constraints"),
+    "revenue_management":    dict(family="selection", sense="Max",     vclass="Continuous", tag="Network capacity allocation and stochastic overbooking"),
     "land_use":              dict(family="land",      sense="Max",     vclass="Binary",     tag="Assign parcels to zoning types"),
     "crop_planning":         dict(family="land",      sense="Max",     vclass="Continuous", tag="Allocate acreage across crops"),
 }
@@ -264,9 +269,19 @@ def build():
     docs = {}
     for path in sorted(glob.glob(os.path.join(DOCS, "*.md"))):
         stem = os.path.splitext(os.path.basename(path))[0]
-        if stem == "README":
+        if stem in {"README", "variant_branch_review"}:
             continue
         docs[stem] = parse_doc(path)
+
+    documented = set(docs)
+    configured = set(META)
+    if documented != configured:
+        missing_metadata = sorted(documented - configured)
+        missing_docs = sorted(configured - documented)
+        raise RuntimeError(
+            "Explainer metadata/docs mismatch: "
+            f"missing META entries={missing_metadata}, missing docs={missing_docs}"
+        )
 
     # sidebar nav
     nav = ['<a class="nav-top" href="#overview" data-target="overview">Overview</a>']
@@ -343,11 +358,11 @@ def build():
         articles=articles_html,
         css=CSS,
         mathjax=mathjax_js,
-        count=len(docs),
+        count=len(META),
     )
     with open(OUT, "w") as f:
         f.write(page)
-    print(f"Wrote {OUT} ({len(page)/1024:.0f} KB, {len(docs)} generators)")
+    print(f"Wrote {OUT} ({len(page)/1024:.0f} KB, {len(META)} generators)")
 
 
 CSS = r"""
@@ -541,7 +556,7 @@ window.MathJax={{
         <h1>A Guide to SyntheticLPs.jl</h1>
         <p class="lede">Each generator turns three knobs — a target variable count, a feasibility status, and a
           random seed — into a realistic, reproducible linear program. This page pairs a high-level map of the
-          families with the precise formulation, sizing rules, and feasibility tricks behind every generator.</p>
+          families with the precise formulation, sizing rules, and feasibility evidence behind every documented generator.</p>
 
         <div class="contract">
           <div class="c"><h4>The shared contract</h4>

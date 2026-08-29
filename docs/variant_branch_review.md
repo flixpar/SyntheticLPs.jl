@@ -1,5 +1,10 @@
 # Variant Branch Review — Ported and Deferred Variants
 _Generated 2026-06-20. Reviews old branches that predate the category/variant system (`claude/*` and `codex/*`), evaluating each variant for real formulation, correctness, and realistic/diverse data, then porting the highest-quality ones into the new system._
+
+This is a historical June 2026 snapshot, not the current registry; use
+`list_variants`, the top-level README, and the category documentation for later
+reimplementations and additions.
+
 ## Method
 Each variant on every old branch was reviewed independently against the quality bar set by `transportation/standard.jl` and `portfolio/cvar.jl`. Criteria: a real, mathematically sound OR formulation; substantive distinctiveness vs. the `standard` variant and siblings; realistic, diverse, size-scaled data; all randomness in the constructor with a deterministic `build_model`; correct `target_variables` scaling; and reliable feasible/infeasible/unknown handling. No variant met the bar with zero issues (`port_as_is`); the strongest were `port_with_fixes` (score 7-8).
 ## Ported (25 variants)

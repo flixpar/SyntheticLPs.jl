@@ -172,7 +172,7 @@ window.MathJax={
 <div class="scrim" id="scrim"></div>
 <div class="layout">
   <aside class="sidebar" id="sidebar">
-    <div class="brand"><b>SyntheticLPs</b><span>Generator Explainer · 26 problem types</span></div>
+    <div class="brand"><b>SyntheticLPs</b><span>Generator Explainer · 30 problem types</span></div>
     <input class="search" id="search" type="search" placeholder="Filter generators…" autocomplete="off">
     <nav id="nav">
       <a class="nav-top" href="#overview" data-target="overview">Overview</a>
@@ -199,17 +199,22 @@ window.MathJax={
 <a class="nav-item" href="#product_mix" data-target="product_mix" data-search="product mix profit-max with market lower/upper bounds">Product Mix</a>
 <a class="nav-item" href="#production_planning" data-target="production_planning" data-search="production planning profit-max under shared resource capacities">Production Planning</a>
 <a class="nav-item" href="#resource_allocation" data-target="resource_allocation" data-search="resource allocation allocate scarce resources among activities">Resource Allocation</a>
+<a class="nav-item" href="#unit_commitment" data-target="unit_commitment" data-search="unit commitment commit and dispatch generators across time">Unit Commitment</a>
 </div>
 <div class="nav-group"><div class="nav-group-label">Assignment &amp; Scheduling</div>
 <a class="nav-item" href="#airline_crew" data-target="airline_crew" data-search="airline crew set-partitioning crew pairing">Airline Crew</a>
 <a class="nav-item" href="#assignment" data-target="assignment" data-search="assignment worker-task matching with compatibility">Assignment</a>
+<a class="nav-item" href="#bin_packing" data-target="bin_packing" data-search="bin packing pack items into identical or heterogeneous fleets">Bin Packing</a>
 <a class="nav-item" href="#cutting_stock" data-target="cutting_stock" data-search="cutting stock one-dimensional pattern cutting">Cutting Stock</a>
+<a class="nav-item" href="#operating_room_scheduling" data-target="operating_room_scheduling" data-search="operating room scheduling assign and sequence surgeries under clinical capacity">Operating Room Scheduling</a>
 <a class="nav-item" href="#scheduling" data-target="scheduling" data-search="scheduling workforce shift scheduling with coverage">Scheduling</a>
+<a class="nav-item" href="#workforce_shift_scheduling" data-target="workforce_shift_scheduling" data-search="workforce shift scheduling multi-skill shift-pattern staffing coverage">Workforce Shift Scheduling</a>
 </div>
 <div class="nav-group"><div class="nav-group-label">Selection &amp; Finance</div>
 <a class="nav-item" href="#knapsack" data-target="knapsack" data-search="knapsack fractional knapsack under a capacity">Knapsack</a>
 <a class="nav-item" href="#portfolio" data-target="portfolio" data-search="portfolio cvar portfolio with policy constraints">Portfolio</a>
 <a class="nav-item" href="#project_selection" data-target="project_selection" data-search="project selection pick projects under budget/risk/dependency">Project Selection</a>
+<a class="nav-item" href="#revenue_management" data-target="revenue_management" data-search="revenue management network capacity allocation and stochastic overbooking">Revenue Management</a>
 </div>
 <div class="nav-group"><div class="nav-group-label">Land &amp; Agriculture</div>
 <a class="nav-item" href="#crop_planning" data-target="crop_planning" data-search="crop planning allocate acreage across crops">Crop Planning</a>
@@ -226,7 +231,7 @@ window.MathJax={
         <h1>A Guide to SyntheticLPs.jl</h1>
         <p class="lede">Each generator turns three knobs — a target variable count, a feasibility status, and a
           random seed — into a realistic, reproducible linear program. This page pairs a high-level map of the
-          families with the precise formulation, sizing rules, and feasibility tricks behind every generator.</p>
+          families with the precise formulation, sizing rules, and feasibility evidence behind every documented generator.</p>
 
         <div class="contract">
           <div class="c"><h4>The shared contract</h4>
@@ -341,7 +346,7 @@ window.MathJax={
     <span class="chip chip-continuous">Continuous</span>
   </div>
 </a>
-<a class="card fam-border-blending" href="#feed_blending" data-target="feed_blending" data-search="feed blending `feedblendingproblem` generates a continuous least-cost diet model that mixes ingredients to meet a required batch size, nutrient requirements, ingredient availabilities, and optional nutrient-ratio limits. feed formulation with nutrient floors/caps">
+<a class="card fam-border-blending" href="#feed_blending" data-target="feed_blending" data-search="feed blending `feed_blending/standard` generates a continuous least-cost feed formulation with a fixed batch mass, role-correlated ingredient data, nutrient floors and caps, ingredient availability, and typed average-content constraints. feed formulation with nutrient floors/caps">
   <div class="card-top"><span class="card-title">Feed Blending</span></div>
   <p class="card-tag">Feed formulation with nutrient floors/caps</p>
   <div class="chips">
@@ -393,6 +398,14 @@ window.MathJax={
     <span class="chip chip-continuous">Continuous</span>
   </div>
 </a>
+<a class="card fam-border-production" href="#unit_commitment" data-target="unit_commitment" data-search="unit commitment `unit_commitment/standard` generates multi-period power-system scheduling milps with heterogeneous generators, time-varying availability, ramping, spinning reserve, startup and shutdown decisions, and minimum up/down times. commit and dispatch generators across time">
+  <div class="card-top"><span class="card-title">Unit Commitment</span></div>
+  <p class="card-tag">Commit and dispatch generators across time</p>
+  <div class="chips">
+    <span class="chip chip-sense">Min</span>
+    <span class="chip chip-mixed">Mixed</span>
+  </div>
+</a>
 </div></div>
 <div class="fam-block" data-family="scheduling">
 <div class="fam-head"><span class="fam-dot fam-scheduling"></span><h3>Assignment &amp; Scheduling</h3><p>Match discrete entities to tasks, shifts, or patterns.</p></div>
@@ -413,6 +426,14 @@ window.MathJax={
     <span class="chip chip-binary">Binary</span>
   </div>
 </a>
+<a class="card fam-border-scheduling" href="#bin_packing" data-target="bin_packing" data-search="bin packing the `bin_packing` category models one-dimensional packing with operational handling categories. it provides two formulations: - `standard` (default): identical bins, minimizing the number used. - `heterogeneous`: a finite fleet of bin types with different capacities, fixed costs, availability, and category eligibility. these models pack a scalar item size. they are distinct from `container_loading`, which models multiple capacity dimensions or geometric two-dimensional non-overlap. pack items into identical or heterogeneous fleets">
+  <div class="card-top"><span class="card-title">Bin Packing</span></div>
+  <p class="card-tag">Pack items into identical or heterogeneous fleets</p>
+  <div class="chips">
+    <span class="chip chip-sense">Min</span>
+    <span class="chip chip-binary">Binary</span>
+  </div>
+</a>
 <a class="card fam-border-scheduling" href="#cutting_stock" data-target="cutting_stock" data-search="cutting stock `cuttingstockproblem` generates a cutting-pattern model that minimizes the number of stock pieces used to satisfy demand for required piece lengths. one-dimensional pattern cutting">
   <div class="card-top"><span class="card-title">Cutting Stock</span></div>
   <p class="card-tag">One-dimensional pattern cutting</p>
@@ -421,12 +442,28 @@ window.MathJax={
     <span class="chip chip-integer">Integer</span>
   </div>
 </a>
+<a class="card fam-border-scheduling" href="#operating_room_scheduling" data-target="operating_room_scheduling" data-search="operating room scheduling this category contains six complementary milp generators rather than several names for the same formulation: | variant | planning level | main decisions | |---|---|---| | `master_surgical_schedule` | tactical, repeating 5/10-day cycle | assign specialty blocks to compatible rooms and level expected icu/ward beds | | `elective_assignment` | advance, finite horizon | assign waiting-list cases to mss blocks or postpone them | | `robust_elective` | robust advance scheduling | elective assignment protected against duration overruns with a γ budget | | `weekly_planning` | advance, aggregate or capacity | assign cases to days and constrain their sequential icu-to-ward paths | | `case_sequencing` | operational, one day | assign rooms/surgeons and sequence every shared-resource pair | | `benchmark_loading` | empirical benchmark abstraction | load empirical surgery types across identical 480-minute or-days | all constructors use a local rng. calling a generator does not reseed or consume julia&#x27;s global rng, and `build_model` does no sampling. assign and sequence surgeries under clinical capacity">
+  <div class="card-top"><span class="card-title">Operating Room Scheduling</span></div>
+  <p class="card-tag">Assign and sequence surgeries under clinical capacity</p>
+  <div class="chips">
+    <span class="chip chip-sense">Min</span>
+    <span class="chip chip-mixed">Mixed</span>
+  </div>
+</a>
 <a class="card fam-border-scheduling" href="#scheduling" data-target="scheduling" data-search="scheduling scheduling generates a binary workforce scheduling model that assigns workers to shifts while minimizing cost and satisfying staffing, availability, workload, and consecutive-day constraints. workforce shift scheduling with coverage">
   <div class="card-top"><span class="card-title">Scheduling</span></div>
   <p class="card-tag">Workforce shift scheduling with coverage</p>
   <div class="chips">
     <span class="chip chip-sense">Min</span>
     <span class="chip chip-binary">Binary</span>
+  </div>
+</a>
+<a class="card fam-border-scheduling" href="#workforce_shift_scheduling" data-target="workforce_shift_scheduling" data-search="workforce shift scheduling  multi-skill shift-pattern staffing coverage">
+  <div class="card-top"><span class="card-title">Workforce Shift Scheduling</span></div>
+  <p class="card-tag">Multi-skill shift-pattern staffing coverage</p>
+  <div class="chips">
+    <span class="chip chip-sense">Min</span>
+    <span class="chip chip-continuous">Continuous</span>
   </div>
 </a>
 </div></div>
@@ -457,11 +494,19 @@ window.MathJax={
     <span class="chip chip-binary">Binary</span>
   </div>
 </a>
+<a class="card fam-border-selection" href="#revenue_management" data-target="revenue_management" data-search="revenue management the `revenue_management` category generates continuous network revenue-management lps. both variants allocate perishable capacity on a coherent hub-and-spoke network, distinguish fare classes, and preserve the status requested through a constructive witness or a mathematical infeasibility certificate. network capacity allocation and stochastic overbooking">
+  <div class="card-top"><span class="card-title">Revenue Management</span></div>
+  <p class="card-tag">Network capacity allocation and stochastic overbooking</p>
+  <div class="chips">
+    <span class="chip chip-sense">Max</span>
+    <span class="chip chip-continuous">Continuous</span>
+  </div>
+</a>
 </div></div>
 <div class="fam-block" data-family="land">
 <div class="fam-head"><span class="fam-dot fam-land"></span><h3>Land &amp; Agriculture</h3><p>Allocate parcels and acreage under physical limits.</p></div>
 <div class="card-grid">
-<a class="card fam-border-land" href="#crop_planning" data-target="crop_planning" data-search="crop planning generates agricultural land-allocation lps that maximize crop profit subject to land, water, labor, market, minimum-area, and optional diversity constraints. allocate acreage across crops">
+<a class="card fam-border-land" href="#crop_planning" data-target="crop_planning" data-search="crop planning `crop_planning/standard` generates continuous farm-planning lps that allocate hectares among crop and management-system options. the objective maximizes net margin while land, irrigation water, seasonal labor, saleable production, minimum-acreage commitments, and optional crop-group diversity are enforced. allocate acreage across crops">
   <div class="card-top"><span class="card-title">Crop Planning</span></div>
   <p class="card-tag">Allocate acreage across crops</p>
   <div class="chips">
@@ -469,7 +514,7 @@ window.MathJax={
     <span class="chip chip-continuous">Continuous</span>
   </div>
 </a>
-<a class="card fam-border-land" href="#land_use" data-target="land_use" data-search="land use `landuseproblem` generates a parcel zoning assignment model with resource capacities, environmental restrictions, minimum zoning counts, and residential-industrial adjacency rules. assign parcels to zoning types">
+<a class="card fam-border-land" href="#land_use" data-target="land_use" data-search="land use `landuseproblem` generates spatial parcel-zoning assignment models with infrastructure capacities, parcel-specific environmental exclusions, minimum zoning counts, and residential-industrial adjacency rules. the native model is a binary milp; the package api relaxes those binaries by default unless `relax_integer=false` is requested. assign parcels to zoning types">
   <div class="card-top"><span class="card-title">Land Use</span></div>
   <p class="card-tag">Assign parcels to zoning types</p>
   <div class="chips">
@@ -1075,62 +1120,64 @@ x[i] &lt;= max_food_amounts[i]    for listed foods</pre>
   <header class="art-head fam-border-blending">
     <div class="art-eyebrow"><span class="fam-dot fam-blending"></span>Blending &amp; Diet</div>
     <h2>Feed Blending</h2>
-    <p class="art-intro"><code>FeedBlendingProblem</code> generates a continuous least-cost diet model that mixes ingredients to meet a required batch size, nutrient requirements, ingredient availabilities, and optional nutrient-ratio limits.</p>
+    <p class="art-intro"><code>feed_blending/standard</code> generates a continuous least-cost feed formulation with a fixed batch mass, role-correlated ingredient data, nutrient floors and caps, ingredient availability, and typed average-content constraints.</p>
     <div class="chips">
       <span class="chip chip-sense">Objective: Min</span>
       <span class="chip chip-continuous">Continuous variables</span>
     </div>
   </header>
   <section class="doc-section">
-  <h3><span class="sec-icon">◆</span>Overview</h3>
-  <div class="sec-body"><p>This generator represents feed formulation or diet blending. A planner chooses how much of each ingredient to include in a fixed-size batch. Ingredients have costs and nutrient content, and the final recipe must meet minimum nutritional requirements while respecting maximum limits for restricted nutrients or anti-nutrients.</p></div>
+  <h3><span class="sec-icon">§</span>Application and data model</h3>
+  <div class="sec-body"><p>The decision is how much of each ingredient to include in one production batch. The generated ingredient catalog is synthetic, but its four roles create useful economic and nutritional correlations:</p>
+<ul><li><code>feed_energy_source</code>: inexpensive commodity ingredients, moderate major-nutrient<p>concentration, and comparatively broad availability;</p></li><li><code>feed_protein_source</code>: higher major-nutrient concentration and moderately higher<p>cost;</p></li><li><code>feed_mineral_supplement</code>: concentrated mineral and trace content, higher unit<p>cost, and tighter inclusion availability;</p></li><li><code>feed_specialty_additive</code>: the highest and most dispersed unit cost, frequent<p>trace content, and tight availability.</p></li></ul>
+<p>Every instance with at least four ingredients contains all four roles; larger instances draw additional roles randomly. Unit costs are positive lognormal draws whose medians increase from commodity energy sources through specialty additives. Availability limits are more frequent and tighter for supplements and additives.</p>
+<p>Nutrient rows likewise have typed semantics:</p>
+<ul><li><code>feed_major_nutrient</code>: dense concentrations, with protein sources typically<p>richer than energy sources;</p></li><li><code>feed_mineral</code>: concentrated in mineral supplements;</li><li><code>feed_trace_nutrient</code>: sparse in commodity ingredients and concentrated in<p>supplements/additives;</p></li><li><code>feed_restricted_compound</code>: usually upper-limited and more prevalent in specialty<p>additives.</p></li></ul>
+<p><code>nutrient_content[j, i]</code> is the concentration of nutrient or quality metric <code>j</code> in ingredient <code>i</code>. Different nutrient rows may use different domain units; totals and limits for a row always use that row&#x27;s unit consistently. Empty nutrient rows and ingredient columns are repaired with role-aware positive content.</p></div>
 </section><section class="doc-section">
-  <h3><span class="sec-icon">▦</span>Generator Data and Sizing</h3>
-  <div class="sec-body"><p><code>target_variables</code> maps to ingredient count:</p>
+  <h3><span class="sec-icon">§</span>Sizing and reproducibility</h3>
+  <div class="sec-body"><p>The decision-variable count is exact except for the smallest requests:</p>
 <pre class="formula">num_ingredients = max(3, target_variables)</pre>
-<p>The number of nutrients and batch size scale by target size:</p>
-<ul><li><code>target_variables &lt;= 250</code>: <code>num_nutrients</code> from <code>4:8</code>, batch size from <code>Normal(500, 200)</code> truncated to <code>[100, 2000]</code></li><li><code>target_variables &lt;= 1000</code>: <code>num_nutrients</code> from <code>6:12</code>, batch size from <code>Normal(2000, 800)</code> truncated to <code>[500, 10000]</code></li><li>larger targets: <code>num_nutrients</code> from <code>8:20</code>, batch size from <code>Normal(10000, 5000)</code> truncated to <code>[2000, 50000]</code></li></ul>
-<p>Costs are lognormal and become less dispersed as ingredient count grows:</p>
-<ul><li>up to 250 ingredients: <code>exp(Normal(log(4.0), 0.8))</code></li><li>up to 1000 ingredients: <code>exp(Normal(log(2.5), 0.6))</code></li><li>larger: <code>exp(Normal(log(1.8), 0.4))</code></li></ul>
-<p>Each nutrient is assigned a type from <code>1:4</code>:</p>
-<ul><li>Type 1 major nutrients: mostly positive <code>max(0, Normal(20, 7))</code>, with occasional high (<code>1.5-2.5x</code>) or low (<code>0.2-0.6x</code>) multipliers.</li><li>Type 2 minor nutrients: present with probability 0.7, sampled as <code>max(0, Normal(2, 1))</code>, sometimes multiplied by <code>2-5x</code>.</li><li>Type 3 trace nutrients: present with probability 0.3, sampled as <code>max(0, Normal(0.5, 0.3))</code>, sometimes multiplied by <code>3-10x</code>.</li><li>Type 4 anti-nutrients or upper-limited compounds: present with probability 0.6, sampled as <code>max(0, Normal(5, 3))</code>, sometimes multiplied by <code>1.5-3x</code>.</li></ul>
-<p>The generator repairs all-zero nutrient rows and all-zero ingredient columns by adding positive <code>Normal(2, 1)</code> values. Ingredient availability is <code>Inf</code> unless an availability limit is drawn. The probability of a finite availability is truncated normal, increasing with size: about <code>0.1-0.4</code>, <code>0.15-0.45</code>, or <code>0.2-0.5</code>. Finite availability values are sampled as fractions of batch size from truncated normal distributions whose centers increase with scale.</p>
-<p>The struct stores:</p>
-<ul><li><code>num_ingredients</code>, <code>num_nutrients</code></li><li><code>batch_size</code></li><li><code>costs</code></li><li><code>nutrient_content::Matrix{Float64}</code>, indexed as nutrient by ingredient</li><li><code>nutrient_types</code></li><li><code>min_requirements</code>, <code>max_limits</code></li><li><code>availabilities</code></li><li><code>ratio_constraints::Vector{Tuple}</code>, storing <code>(nutrient_idx, target_pct, type_string)</code></li></ul>
-<p>The constructor uses <code>rng = Random.MersenneTwister(seed)</code> and passes it through most random calls, so it does not intentionally reset Julia&#x27;s global RNG.</p></div>
+<p>The remaining dimensions scale as follows:</p>
+<table><thead><tr><th>Requested variables</th><th>Nutrients</th><th>Batch-size distribution</th></tr></thead><tbody><tr><td><code>&lt;= 250</code></td><td><code>4:8</code></td><td><code>Normal(500, 200)</code>, truncated to <code>[100, 2,000]</code></td></tr><tr><td><code>251:1,000</code></td><td><code>6:12</code></td><td><code>Normal(2,000, 800)</code>, truncated to <code>[500, 10,000]</code></td></tr><tr><td><code>&gt; 1,000</code></td><td><code>8:20</code></td><td><code>Normal(10,000, 5,000)</code>, truncated to <code>[2,000, 50,000]</code></td></tr></tbody></table>
+<p>All random operations receive a constructor-local <code>MersenneTwister</code>. Generating a feed blend therefore does not seed or advance Julia&#x27;s global RNG.</p>
+<p>The stored fields are:</p>
+<ul><li>dimensions: <code>num_ingredients</code>, <code>num_nutrients</code>, and <code>batch_size</code>;</li><li>ingredient data: <code>ingredient_types</code>, <code>costs</code>, and <code>availabilities</code>;</li><li>nutrient data: <code>nutrient_content</code>, <code>nutrient_types</code>, <code>min_requirements</code>, and<p><code>max_limits</code>;</p></li><li><code>ratio_constraints::Vector{FeedRatioConstraint}</code>;</li><li>status metadata: <code>feasible_witness</code>, <code>infeasibility_certificate</code>, and<p><code>requested_status</code>.</p></li></ul></div>
 </section><section class="doc-section">
-  <h3><span class="sec-icon">∑</span>LP Formulation</h3>
-  <div class="sec-body"><p>Sets:</p>
-<ul><li><code>I = {1, ..., num_ingredients}</code> ingredients</li><li><code>N = {1, ..., num_nutrients}</code> nutrients</li><li><code>R</code> ratio constraints</li></ul>
-<p>Decision variable:</p>
-<ul><li><code>x_i &gt;= 0</code>: amount of ingredient <code>i</code> in the batch</li></ul>
-<p>Objective:</p>
+  <h3><span class="sec-icon">§</span>Formulation</h3>
+  <div class="sec-body"><p>For ingredients <code>i in I</code>, let <code>x_i &gt;= 0</code> be the ingredient mass, <code>c_i</code> its unit cost, <code>A_i</code> a finite availability when one applies, and <code>B</code> the batch mass.</p>
 <div class="math">\[\min \sum_{i \in I} c_i x_i\]</div>
-<p>Fixed batch size:</p>
 <div class="math">\[\sum_{i \in I} x_i = B\]</div>
-<p>Nutrient minimums and maximums:</p>
-<div class="math">\[\sum_{i \in I} a_{ji} x_i \ge r_j \quad \text{for } r_j > 0\]</div>
-<div class="math">\[\sum_{i \in I} a_{ji} x_i \le u_j \quad \text{for finite } u_j\]</div>
-<p>Finite ingredient availabilities:</p>
-<div class="math">\[x_i \le A_i\]</div>
-<p>Ratio constraints are average-content bounds. For a minimum target percentage <code>p</code>:</p>
-<div class="math">\[\sum_{i \in I} (a_{ji} - p) x_i \ge 0\]</div>
-<p>For a maximum target percentage <code>p</code>:</p>
-<div class="math">\[\sum_{i \in I} (a_{ji} - p) x_i \le 0\]</div>
-<p>The implementation chooses the ratio direction by checking whether the type string contains <code>&quot;min&quot;</code>. This means injected strings such as <code>&quot;min_above_achievable&quot;</code> are treated as minimum constraints.</p></div>
+<p>For nutrient <code>j</code>, coefficient <code>a_{ji}</code>, total minimum <code>L_j</code>, and total maximum <code>U_j</code>, active nutrient rows are:</p>
+<div class="math">\[\sum_{i \in I} a_{ji}x_i \ge L_j,
+\qquad
+\sum_{i \in I} a_{ji}x_i \le U_j.\]</div>
+<p>Finite ingredient availability is enforced by:</p>
+<div class="math">\[x_i \le A_i.\]</div>
+<p>Each <code>FeedRatioConstraint</code> stores a nutrient index, concentration target <code>p</code>, and a <code>FeedRatioSense</code>. Because total mass is fixed, an average-content minimum is the linear row</p>
+<div class="math">\[\sum_{i \in I}(a_{ji} - p)x_i \ge 0,\]</div>
+<p>while an average-content maximum is</p>
+<div class="math">\[\sum_{i \in I}(a_{ji} - p)x_i \le 0.\]</div>
+<p>The model branches explicitly on <code>feed_ratio_minimum</code> versus <code>feed_ratio_maximum</code>. Constraint direction is not inferred from a diagnostic string. In particular, a certificate described as a “maximum below achievable minimum” remains a maximum row.</p></div>
 </section><section class="doc-section">
-  <h3><span class="sec-icon">⚖</span>Feasibility Controls</h3>
-  <div class="sec-body"><p>For <code>feasible</code>, the generator first builds a base recipe <code>x0</code>. It samples a Dirichlet allocation across ingredients, clips by finite availabilities, and fills any remaining batch amount by a randomized cheap-ingredient order. If finite availability capacity is too low, it gives the cheapest ingredient enough capacity to cover the batch. Nutrient requirements are then drawn inside achievable minimum/maximum average intervals, with behavior depending on nutrient type. Afterward, the requirements are repaired so the constructed <code>x0</code> satisfies every active minimum and maximum. Ratio constraints, if generated, are also biased so <code>x0</code> satisfies them.</p>
-<p>For <code>infeasible</code>, the constructor first skips the feasible requirement construction, generates optional random ratio constraints as it would for non-feasible cases, then injects one infeasibility mechanism:</p>
-<ul><li>A minimum ratio above any ingredient&#x27;s content for a nutrient with positive content.</li><li>A minimum ratio above the availability-aware achievable maximum average, usually for a major nutrient.</li><li>A maximum ratio below the availability-aware achievable minimum average.</li><li>An availability shortage where total ingredient capacity is forced below batch size.</li></ul>
-<p>For <code>unknown</code>, nutrient requirements are generated randomly without repair guarantees. Minimum requirement factors come from truncated <code>Normal(0.4, 0.1)</code> on <code>[0.2, 0.6]</code>; maximum limit factors come from truncated <code>Normal(1.5, 0.2)</code> on <code>[1.1, 2.0]</code>. Ratio constraints are generated as in non-feasible cases. The result may be feasible or infeasible.</p></div>
+  <h3><span class="sec-icon">§</span>Feasible requests and their witness</h3>
+  <div class="sec-body"><p>For <code>feasible</code> and <code>infeasible</code> requests, generation first constructs a complete baseline recipe. A Dirichlet composition is clipped to finite availability and then filled in a cost-biased randomized order. If sampled availability cannot fill the batch, one commodity ingredient is made sufficiently available before the recipe is built.</p>
+<p>Nutrient and ratio bounds are placed around this recipe with positive randomized slack. A requested-feasible instance stores the recipe in <code>feasible_witness</code>. <code>feed_recipe_satisfies(problem)</code> checks, without a solver:</p>
+<ul><li>nonnegativity and the batch equality;</li><li>every finite ingredient availability;</li><li>every active nutrient floor and cap;</li><li>every typed ratio minimum and maximum.</li></ul>
+<p>Requested-feasible instances have no infeasibility certificate.</p></div>
 </section><section class="doc-section">
-  <h3><span class="sec-icon">▤</span>Model Characteristics</h3>
-  <div class="sec-body"><p>The variable count is <code>num_ingredients</code>. Constraint count is driven by one batch equality, active nutrient minimums, active nutrient maximums, finite ingredient availabilities, and ratio constraints. Nutrient and ratio rows are generally dense over all ingredients, though the nutrient matrix itself can contain many zeros, especially for minor and trace nutrients. Availability constraints are sparse one-variable rows.</p>
-<p>The model is a continuous LP. Ingredient amounts are divisible; no integer batch, package, or recipe-count restrictions are modeled.</p></div>
+  <h3><span class="sec-icon">§</span>Infeasible requests and certificates</h3>
+  <div class="sec-body"><p>A requested-infeasible instance begins from the same feasible baseline and then applies exactly one certified contradiction. Its <code>FeedInfeasibilityCertificate</code> records the certificate kind, relevant nutrient and ratio-row index, the exact achievable bound, and the conflicting required bound.</p>
+<p>The four mechanisms are:</p>
+<ol><li><code>feed_minimum_ratio_above_achievable_maximum</code>: a minimum average target is<p>strictly above the availability-aware maximum concentration.</p></li><li><code>feed_maximum_ratio_below_achievable_minimum</code>: a maximum average target is<p>strictly below the availability-aware minimum concentration.</p></li><li><code>feed_minimum_nutrient_above_achievable_maximum</code>: a total nutrient minimum is<p>strictly above the maximum possible total contribution.</p></li><li><code>feed_insufficient_ingredient_capacity</code>: the sum of every ingredient&#x27;s usable<p>availability is strictly below the fixed batch mass.</p></li></ol>
+<p>The availability-aware nutrient extrema are exact for this model: sorting one nutrient row and greedily filling ingredient capacities solves the corresponding one-row continuous knapsack. <code>feed_infeasibility_certificate_holds(problem)</code> recomputes the bound from stored model data, verifies that metadata matches it, checks that the referenced row has the correct typed sense, and confirms a strict contradiction. It does not call a solver.</p>
+<p>Requested-infeasible instances have no feasible witness.</p></div>
 </section><section class="doc-section">
-  <h3><span class="sec-icon">✎</span>Practical Notes</h3>
-  <div class="sec-body"><p>This generator is useful for testing diet-style LPs with sparse nutrient matrices, fixed total mass, and feasibility controls based on achievable average nutrient content. Ratio constraints are stored as strings rather than a typed enum, and the model interprets any string containing <code>&quot;min&quot;</code> as a lower-bound ratio. Infeasible construction is stronger than random bad data because it uses achievable average calculations or total capacity shortage, but the constructor itself does not solve the instance.</p></div>
+  <h3><span class="sec-icon">§</span>Unknown requests</h3>
+  <div class="sec-body"><p>For <code>unknown</code>, each active nutrient or ratio target is drawn inside its own availability-aware attainable interval, but no common recipe is planted. Multiple individually attainable rows can still conflict, so joint feasibility is genuinely unspecified. Unknown instances store neither a witness nor a certificate.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Model characteristics</h3>
+  <div class="sec-body"><p>The generator produces a continuous LP. Ingredient amounts are divisible; it does not model package sizes, discrete mixer batches, or integer purchase lots. The batch equality and availability rows are sparse, while nutrient and ratio rows can be dense. Trace-nutrient sparsity and role-correlated concentrations create a mix of row densities and coefficient scales suitable for LP benchmarking.</p></div>
 </section>
 </article>
 <article id="energy" class="view article">
@@ -1470,6 +1517,91 @@ x[i] &lt;= max_food_amounts[i]    for listed foods</pre>
 <p>Because both <code>min_resource</code> and <code>max_resource</code> are sampled independently, it is possible for <code>min_resource</code> to exceed <code>max_resource</code>. The code then applies <code>max.(resources, min_resource)</code> followed by <code>min.(resources, max_resource)</code> or equivalent scalar clamps, so the final cap can be driven to <code>max_resource</code> in those cases. This is an implementation quirk to keep in mind when interpreting sampled resource scales.</p></div>
 </section>
 </article>
+<article id="unit_commitment" class="view article">
+  <a class="back" href="#overview" data-target="overview">← All generators</a>
+  <header class="art-head fam-border-production">
+    <div class="art-eyebrow"><span class="fam-dot fam-production"></span>Production &amp; Planning</div>
+    <h2>Unit Commitment</h2>
+    <p class="art-intro"><code>unit_commitment/standard</code> generates multi-period power-system scheduling MILPs with heterogeneous generators, time-varying availability, ramping, spinning reserve, startup and shutdown decisions, and minimum up/down times.</p>
+    <div class="chips">
+      <span class="chip chip-sense">Objective: Min</span>
+      <span class="chip chip-mixed">Mixed variables</span>
+    </div>
+  </header>
+  <section class="doc-section">
+  <h3><span class="sec-icon">§</span>Operational setting</h3>
+  <div class="sec-body"><p>The model schedules a fleet containing nuclear, coal, combined-cycle gas, combustion-turbine, hydro, and wind units. Every archetype has its own ranges for nameplate capacity, stable minimum output, ramp rates, operating costs, startup and shutdown costs, and minimum up/down times. Thermal units can be derated by planned outages, gas turbines can have short forced outages, hydro follows a daily/seasonal availability profile, and wind follows a noisy diurnal profile.</p>
+<p>The natural model uses binary commitment, startup, and shutdown decisions. As in the rest of the package, <code>generate_problem</code> defaults to <code>relax_integer=true</code>, so the ordinary returned model is its LP relaxation. Set <code>relax_integer=false</code> to retain an implementable unit-commitment MILP.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Sizing</h3>
+  <div class="sec-body"><p>There are four variable families indexed by unit and period:</p>
+<pre class="formula">generation, commitment, startup, shutdown</pre>
+<p>Consequently, the delivered variable count is exactly</p>
+<pre class="formula">4 * n_units * n_periods.</pre>
+<p>The constructor searches within scale-appropriate dimension ranges:</p>
+<table><thead><tr><th>Requested size</th><th>Units</th><th>Periods</th></tr></thead><tbody><tr><td>below 192</td><td>2–6</td><td>6–24</td></tr><tr><td>192–959</td><td>4–9</td><td>12–36</td></tr><tr><td>960–3,839</td><td>10–22</td><td>24–72</td></tr><tr><td>3,840 and above</td><td>20 or more</td><td>48–168</td></tr></tbody></table>
+<p>Band boundaries match the smallest formulation in the next band, avoiding a variable-count jump at the threshold. Large requests grow the fleet rather than silently saturating at a fixed 48-unit cap. Ordinary targets are within about 10% of the request. Targets below 48 clamp to the smallest useful formulation: two units over six periods, or 48 variables.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Generated data</h3>
+  <div class="sec-body"><p>For each unit <code>u</code>, the problem stores:</p>
+<ul><li><code>unit_types[u]</code>: one of <code>:nuclear</code>, <code>:coal</code>, <code>:ccgt</code>, <code>:gas_ct</code>, <code>:hydro</code>, or<p><code>:wind</code>;</p></li><li><code>max_output[u]</code> and <code>min_output[u]</code>;</li><li><code>ramp_up[u]</code> and <code>ramp_down[u]</code>;</li><li>variable, no-load, startup, and shutdown costs;</li><li>minimum up and down times;</li><li>one availability factor per period;</li><li>initial commitment and generation.</li></ul>
+<p>The load shape is sampled from three daily system profiles, with seasonal, day-to-day, and short-term noise. Spinning reserve is normally 8–18% of demand. In the constructive feasible profile it is capped below the online headroom of the stored dispatch, so reserve remains meaningful without invalidating the witness.</p>
+<p>All randomness uses a constructor-local <code>MersenneTwister</code>. Generating an instance is reproducible for a fixed seed and does not reset or consume Julia&#x27;s global RNG.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Formulation</h3>
+  <div class="sec-body"><p>For units <code>u in U</code> and periods <code>t in T</code>, define:</p>
+<pre class="formula">g[u,t]          generation (MW), g &gt;= 0
+on[u,t]         binary commitment
+startup[u,t]    binary startup indicator
+shutdown[u,t]   binary shutdown indicator</pre>
+<p>Under the default API relaxation, the last three domains become <code>[0, 1]</code>.</p>
+<p>The objective minimizes variable generation cost plus no-load, startup, and shutdown costs:</p>
+<div class="math">\[\min \sum_{u,t}
+  c^{var}_u g_{u,t}
+  + c^{nl}_u on_{u,t}
+  + c^{su}_u startup_{u,t}
+  + c^{sd}_u shutdown_{u,t}.\]</div>
+<p>Availability and commitment limit generation, while online units respect a stable minimum:</p>
+<div class="math">\[g_{u,t} \le \bar g_u a_{u,t},
+\qquad
+g_{u,t} \le \bar g_u on_{u,t},
+\qquad
+g_{u,t} \ge \underline g_u on_{u,t}.\]</div>
+<p>Demand balance is an equality:</p>
+<div class="math">\[\sum_u g_{u,t} = d_t.\]</div>
+<p>This prevents the model from economically or physically over-generating merely to satisfy other rows. Spinning reserve is available headroom from committed, available units:</p>
+<div class="math">\[\sum_u \left(\bar g_u a_{u,t} on_{u,t} - g_{u,t}\right) \ge r_t.\]</div>
+<p>Ramping between adjacent periods includes startup and shutdown allowances:</p>
+<div class="math">\[g_{u,t} - g_{u,t-1}
+  \le RU_u on_{u,t-1} + \bar g_u startup_{u,t},\]</div>
+<div class="math">\[g_{u,t-1} - g_{u,t}
+  \le RD_u on_{u,t} + \bar g_u shutdown_{u,t}.\]</div>
+<p>The first period uses the stored initial commitment and generation. State changes obey</p>
+<div class="math">\[on_{u,t} - on_{u,t-1} = startup_{u,t} - shutdown_{u,t},\]</div>
+<p>with an analogous initial-period equation. A unit cannot start and stop simultaneously:</p>
+<div class="math">\[startup_{u,t} + shutdown_{u,t} \le 1.\]</div>
+<p>Rolling startup and shutdown windows enforce minimum up and down times:</p>
+<div class="math">\[\sum_{k=\max(1,t-UT_u+1)}^t startup_{u,k} \le on_{u,t},\]</div>
+<div class="math">\[\sum_{k=\max(1,t-DT_u+1)}^t shutdown_{u,k} \le 1-on_{u,t}.\]</div>
+<p>The boundary convention assumes the initial state has already satisfied any pre-horizon minimum-time obligation; minimum up/down clocks start with transitions that occur inside the modeled horizon.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Feasibility profiles and audit artifacts</h3>
+  <div class="sec-body"><p>The constructor records the status it actually built in <code>resolved_status</code>. An <code>unknown</code> request is resolved deterministically from the instance seed to either a feasible or infeasible profile, so downstream analysis does not have to infer what the random branch selected.</p>
+<h4>Feasible</h4>
+<p>Feasible instances are constructed from a primal trajectory rather than from a capacity-margin heuristic:</p>
+<ol><li>Availability remains heterogeneous, but is floored above stable minimum output<p>for the always-online witness.</p></li><li>A smooth dispatch is built sequentially for every unit within availability and<p>ramp limits.</p></li><li>Initial generation is set to the witness&#x27;s first-period dispatch.</li><li>Demand is defined as the exact sum of witness generation in each period.</li><li>Reserve is set below the witness&#x27;s available online headroom.</li><li>Commitment is one throughout, with zero startups and shutdowns, which satisfies<p>transition and minimum up/down rows.</p></li></ol>
+<p>The complete integral point is stored in <code>feasible_witness</code> as four unit-by-period matrices: <code>generation</code>, <code>commitment</code>, <code>startup</code>, and <code>shutdown</code>. <code>build_model</code> installs these values as JuMP starts. The solver-independent helper <code>SyntheticLPs._unit_commitment_witness_is_valid(problem)</code> checks the witness against every model constraint family.</p>
+<h4>Infeasible</h4>
+<p>Infeasible instances retain diverse stress scenarios—demand spikes, outages, or tighter reserve—then force a relaxation-proof aggregate contradiction in one period. Demand remains below available generation when capacity is positive, but demand plus reserve strictly exceeds all available nameplate capacity.</p>
+<p>Demand balance and the reserve row imply the necessary cut</p>
+<div class="math">\[d_t + r_t \le \sum_u \bar g_u a_{u,t}.\]</div>
+<p>The selected period violates this inequality. <code>infeasibility_certificate</code> stores the period, available capacity, required capacity, and positive excess. The helper <code>SyntheticLPs._unit_commitment_certificate_is_valid(problem)</code> recomputes and checks the certificate without a solver.</p>
+<p>Exactly one of <code>feasible_witness</code> and <code>infeasibility_certificate</code> is present for every generated instance.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Practical notes</h3>
+  <div class="sec-body"><ul><li>The stored witness proves feasibility of both the natural MILP and its LP<p>relaxation; it is not intended to be optimal or representative of the solver&#x27;s final commitment schedule.</p></li><li>The infeasibility certificate survives integrality relaxation because it uses only<p>demand balance, reserve, availability, and the upper bound <code>on &lt;= 1</code>.</p></li><li>Cost and fleet data remain random even though feasibility is constructive, so<p>seeds still provide materially different objective coefficients, fleet mixes, availability profiles, and time-series loads.</p></li></ul></div>
+</section>
+</article>
 <article id="airline_crew" class="view article">
   <a class="back" href="#overview" data-target="overview">← All generators</a>
   <header class="art-head fam-border-scheduling">
@@ -1582,6 +1714,91 @@ x[i] &lt;= max_food_amounts[i]    for listed foods</pre>
   <div class="sec-body"><p>These instances are useful for testing assignment structure, binary relaxation behavior, and compatibility-driven infeasibility. The <code>unknown</code> mode is unusual because it keeps all assignments allowed, so infeasibility in that mode is mainly from a natural worker/task count imbalance rather than compatibility. The generator stores costs for forbidden pairs too, but the model fixes those variables to zero.</p></div>
 </section>
 </article>
+<article id="bin_packing" class="view article">
+  <a class="back" href="#overview" data-target="overview">← All generators</a>
+  <header class="art-head fam-border-scheduling">
+    <div class="art-eyebrow"><span class="fam-dot fam-scheduling"></span>Assignment &amp; Scheduling</div>
+    <h2>Bin Packing</h2>
+    <p class="art-intro">The <code>bin_packing</code> category models one-dimensional packing with operational handling categories. It provides two formulations: - <code>standard</code> (default): identical bins, minimizing the number used. - <code>heterogeneous</code>: a finite fleet of bin types with different capacities, fixed costs, availability, and category eligibility. These models pack a scalar item size. They are distinct from <code>container_loading</code>, which models multiple capacity dimensions or geometric two-dimensional non-overlap.</p>
+    <div class="chips">
+      <span class="chip chip-sense">Objective: Min</span>
+      <span class="chip chip-binary">Binary variables</span>
+    </div>
+  </header>
+  <section class="doc-section">
+  <h3><span class="sec-icon">§</span>Common Sizing and Data</h3>
+  <div class="sec-body"><p>Both variants use assignment variables <code>x[i,b]</code>, bin-use variables <code>y[b]</code>, and category-presence variables <code>z[c,b]</code>. Their emitted variable count is therefore</p>
+<div class="math">\[n_{bins}(n_{items}+n_{categories}+1).\]</div>
+<p>The constructor searches directly over integer dimensions that produce this count, typically with two to six items per bin (the smallest model has three items and two bins), two to eight nonempty categories, and at least two candidate bins. It stores both <code>target_variables</code> and <code>actual_variables</code>; status-specific generation never changes the dimensions. For targets below the smallest 12-variable formulation, the generator returns that smallest valid model.</p>
+<p>Representative sizing results are:</p>
+<table><thead><tr><th>Target</th><th>Actual variables</th></tr></thead><tbody><tr><td>12</td><td>12</td></tr><tr><td>49</td><td>48</td></tr><tr><td>50</td><td>51</td></tr><tr><td>99-101</td><td>100</td></tr><tr><td>249</td><td>248</td></tr><tr><td>250</td><td>250</td></tr><tr><td>251</td><td>252</td></tr><tr><td>999</td><td>1000</td></tr><tr><td>1000</td><td>1000</td></tr><tr><td>1001</td><td>1001</td></tr><tr><td>5000</td><td>5000</td></tr><tr><td>10000</td><td>10000</td></tr></tbody></table>
+<p>Every category is represented by at least one item. The category catalog is:</p>
+<ol><li>Food Grade</li><li>Hazardous</li><li>Fragile</li><li>Odorous</li><li>Chilled</li><li>Frozen</li><li>High Value</li><li>Ambient</li></ol>
+<p>Each profile has its own mean size fraction and dispersion. Items are sampled around those fractions, with common carton/pallet modules rounded near multiples of five percent of nominal capacity. Generated conflict pairs are sampled from interpretable restrictions such as food-grade versus hazardous or odorous, hazardous versus fragile or temperature-controlled, and odorous versus chilled or frozen.</p>
+<p>All random calls use <code>MersenneTwister(seed)</code> local to the constructor. Neither variant resets or consumes Julia&#x27;s process-wide random stream.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Standard Identical-Bin Formulation</h3>
+  <div class="sec-body"><h4>Data and variables</h4>
+<p><code>BinPackingProblem</code> stores:</p>
+<ul><li><code>n_items</code>, <code>n_bins</code>, and <code>n_categories</code>;</li><li><code>item_sizes</code> and common <code>bin_capacity</code>;</li><li>integer <code>item_categories</code>, readable <code>category_names</code>, and canonical<p><code>incompatible_pairs</code>;</p></li><li>sizing, requested-status, and named <code>load_profile</code> metadata;</li><li>either <code>feasible_witness</code>, <code>infeasibility_certificate</code>, or neither.</li></ul>
+<p>The binary variables are:</p>
+<div class="math">\[x_{ib}=1 \quad\text{if item }i\text{ is assigned to bin }b,\]</div>
+<div class="math">\[y_b=1 \quad\text{if bin }b\text{ is used},\]</div>
+<div class="math">\[z_{cb}=1 \quad\text{if category }c\text{ is present in bin }b.\]</div>
+<p>The objective is</p>
+<div class="math">\[\min \sum_b y_b.\]</div>
+<p>Each item is assigned exactly once:</p>
+<div class="math">\[\sum_b x_{ib}=1 \qquad \forall i.\]</div>
+<p>Capacity also activates a bin:</p>
+<div class="math">\[\sum_i s_i x_{ib}\le C y_b \qquad \forall b.\]</div>
+<p>Category presence uses a two-sided linear envelope:</p>
+<div class="math">\[x_{ib}\le z_{c(i),b},\]</div>
+<div class="math">\[z_{cb}\le \sum_{i:c(i)=c}x_{ib},\]</div>
+<div class="math">\[z_{cb}\le y_b.\]</div>
+<p>Thus presence is exact for integer assignments and meaningfully linked in both directions in the LP relaxation; it is not claimed to be a unique fractional value. The chain <code>x[i,b] &lt;= z[c(i),b] &lt;= y[b]</code> also makes a separate <code>x[i,b] &lt;= y[b]</code> row redundant in both the MILP and its LP relaxation. For every incompatible pair <code>(c,d)</code>:</p>
+<div class="math">\[z_{cb}+z_{db}\le1.\]</div>
+<h4>Symmetry</h4>
+<p>Identical bin labels create many equivalent solutions. The model opens a prefix of bins,</p>
+<div class="math">\[y_b\ge y_{b+1},\]</div>
+<p>and uses the standard triangular canonical labeling</p>
+<div class="math">\[x_{ib}=0 \qquad b>i.\]</div>
+<p>Any unlabeled packing can be relabeled by the smallest item index in each bin to satisfy both rules. The stored feasible witness is canonicalized the same way.</p>
+<h4>Status construction</h4>
+<p>For a requested-feasible instance, a conflict-aware first-fit-decreasing pass plants a packing. Sizes are adjusted only when necessary to fit the fixed target-sized bin budget, then tightened to avoid an excessively slack witness. <code>feasible_witness[i]</code> records the bin for item <code>i</code>.</p>
+<p>For a requested-infeasible instance, sizes retain their category-profile heterogeneity but are scaled so that</p>
+<div class="math">\[\sum_i s_i > n_{bins}C.\]</div>
+<p>Summing all capacity rows and using <code>y_b &lt;= 1</code> proves this contradictory even in the LP relaxation. <code>BinPackingCapacityCertificate</code> records total item size, aggregate capacity, and their positive difference.</p>
+<p>Unknown mode intentionally mixes three named workload regimes rather than inheriting an accidental scale-dependent feasibility bias:</p>
+<ul><li><code>light</code>: conflict-aware packing followed by an aggregate-load ceiling of 68%;</li><li><code>nominal</code>: calibrated conflict-aware packing at normal utilization;</li><li><code>surge</code>: a modest 3%-9% aggregate-capacity overload.</li></ul>
+<p>Every ten consecutive seeds contain three light, four nominal, and three surge profiles, with a deterministic target-dependent offset. The problem remains tagged <code>unknown</code> and stores neither a witness nor a certificate: the profile is workload metadata, not a requested feasibility contract.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Heterogeneous Fleet Formulation</h3>
+  <div class="sec-body"><p><code>HeterogeneousBinPackingProblem</code> represents individual available fleet slots. Each slot has a fixed type; the number of slots of each type equals its <code>type_availability</code>. This enforces availability directly without a redundant aggregate row.</p>
+<p>Depending on fleet size, types include:</p>
+<ul><li>Standard;</li><li>Controlled Specialty or Refrigerated;</li><li>Hazmat;</li><li>High Cube.</li></ul>
+<p>The struct stores type names, capacities, fixed costs, availability counts, the type of every candidate bin, a named <code>load_profile</code>, and a type-by-category compatibility matrix. General, temperature-controlled, regulated, and oversized equipment therefore have materially different feasible assignments and economics.</p>
+<p>The item-assignment, activation, presence, and conflict constraints have the same meaning as in <code>standard</code>, with two additions. Ineligible assignments are fixed to zero:</p>
+<div class="math">\[x_{ib}=0 \quad\text{if type}(b)\text{ cannot handle category}(i),\]</div>
+<p>and capacity depends on the slot type:</p>
+<div class="math">\[\sum_i s_i x_{ib}\le C_{type(b)}y_b.\]</div>
+<p>The objective minimizes fleet cost rather than bin count:</p>
+<div class="math">\[\min \sum_b f_{type(b)}y_b.\]</div>
+<p>Only slots of the same type are interchangeable, so prefix symmetry is applied within each type rather than globally across unequal equipment.</p>
+<p>Requested-feasible instances use compatibility-aware best-fit-decreasing, prioritizing items with fewer eligible fleet slots before size, then remap used slots to the within-type prefixes. The witness is checked for capacity, eligibility, conflicts, availability, and symmetry.</p>
+<p>Requested-infeasible instances satisfy</p>
+<div class="math">\[\sum_i s_i > \sum_t availability_t C_t.\]</div>
+<p>This is again valid for the LP relaxation because every candidate slot can contribute at most its type capacity. Certificate validation recomputes this capacity directly from <code>bin_types</code> and rejects metadata whose observed type counts disagree with <code>type_availability</code>.</p>
+<p>Unknown typed-fleet instances use the same deterministic light/nominal/surge mix as the standard variant. Their calibration is compatibility-aware, and they likewise store no feasibility artifact.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Evidence Validation and API Behavior</h3>
+  <div class="sec-body"><p>The solver-free methods</p>
+<pre class="formula">SyntheticLPs.validate_bin_packing_witness(problem)
+SyntheticLPs.validate_bin_packing_certificate(problem)</pre>
+<p>support both variants. Constructors assert the applicable validator before returning a requested-feasible or requested-infeasible instance. These checks cover the full planted structure, not just a stored scalar flag.</p>
+<p>For requested-feasible instances, <code>build_model</code> also attaches a complete JuMP start for every <code>x</code>, <code>y</code>, and category-presence variable reconstructed from the validated witness. Unknown and requested-infeasible instances do not receive these starts.</p>
+<p>Both native formulations are binary MILPs. The package API defaults to <code>relax_integer=true</code>, producing their LP relaxations. Set <code>relax_integer=false</code> to solve the original packing MILP. Feasible witnesses are integer-valid, and aggregate infeasibility certificates remain valid under either setting.</p></div>
+</section>
+</article>
 <article id="cutting_stock" class="view article">
   <a class="back" href="#overview" data-target="overview">← All generators</a>
   <header class="art-head fam-border-scheduling">
@@ -1635,6 +1852,49 @@ x[i] &lt;= max_food_amounts[i]    for listed foods</pre>
 </section><section class="doc-section">
   <h3><span class="sec-icon">✎</span>Practical Notes</h3>
   <div class="sec-body"><p>This generator is useful for testing column-style covering LPs, sparse nonnegative matrices, and infeasibility from missing coverage or aggregate resource limits. It does not generate patterns by solving a pricing problem; it samples a fixed pattern list up front. Because duplicate pattern rejection and unique piece lengths can shrink dimensions, expect actual model size to differ from the target, especially for small targets or repeated common lengths.</p></div>
+</section>
+</article>
+<article id="operating_room_scheduling" class="view article">
+  <a class="back" href="#overview" data-target="overview">← All generators</a>
+  <header class="art-head fam-border-scheduling">
+    <div class="art-eyebrow"><span class="fam-dot fam-scheduling"></span>Assignment &amp; Scheduling</div>
+    <h2>Operating Room Scheduling</h2>
+    <p class="art-intro">This category contains six complementary MILP generators rather than several names for the same formulation: | Variant | Planning level | Main decisions | |---|---|---| | <code>master_surgical_schedule</code> | tactical, repeating 5/10-day cycle | assign specialty blocks to compatible rooms and level expected ICU/ward beds | | <code>elective_assignment</code> | advance, finite horizon | assign waiting-list cases to MSS blocks or postpone them | | <code>robust_elective</code> | robust advance scheduling | elective assignment protected against duration overruns with a Γ budget | | <code>weekly_planning</code> | advance, aggregate OR capacity | assign cases to days and constrain their sequential ICU-to-ward paths | | <code>case_sequencing</code> | operational, one day | assign rooms/surgeons and sequence every shared-resource pair | | <code>benchmark_loading</code> | empirical benchmark abstraction | load empirical surgery types across identical 480-minute OR-days | All constructors use a local RNG. Calling a generator does not reseed or consume Julia&#x27;s global RNG, and <code>build_model</code> does no sampling.</p>
+    <div class="chips">
+      <span class="chip chip-sense">Objective: Min</span>
+      <span class="chip chip-mixed">Mixed variables</span>
+    </div>
+  </header>
+  <section class="doc-section">
+  <h3><span class="sec-icon">§</span>Leeftink--Hans empirical profile</h3>
+  <div class="sec-body"><p>The public <a href="https://www.utwente.nl/en/choir/research/benchmark-orscheduling/">Leeftink--Hans benchmark page</a> provides a 2019 archive associated with the <a href="https://doi.org/10.1007/s10951-017-0539-8">Journal of Scheduling paper</a>. Its real-life database was constructed from roughly 200,000 realized procedures at five Dutch hospitals and contains more than 1,000 surgery types. Every type has a frequency and a fitted three-parameter lognormal distribution:</p>
+<pre class="formula">duration = gamma + LogNormal(mu, sigma)</pre>
+<p>The upstream archive is about 91 MB. SyntheticLPs does not download data at generation time or vendor the archive. <code>leeftink_hans_data.jl</code> contains a transparent compact derivative:</p>
+<ol><li>normalize the frequencies within each of the 11 specialty files;</li><li>compute each type&#x27;s expected duration;</li><li>order types by expected duration; and</li><li>retain the representatives at weighted quantiles 1/12, 3/12, ..., 11/12.</li></ol>
+<p>Repeated IDs are intentional and preserve a high-frequency type. The file also records full-file, frequency-weighted specialty means and coefficients of variation. Generated cases expose the source type ID and/or fitted parameters, so the calibration is auditable. These are compressed, modified profiles, not copies of the published benchmark instances.</p>
+<p>The benchmark normalizes each specialty separately. It therefore does not supply hospital-wide specialty shares, and it has no patient urgency, deadline, surgeon, ward, or ICU fields. The relative service volumes and all clinical/downstream fields in the general generators are labeled synthetic assumptions. This boundary is important: empirical duration calibration does not make those other fields empirical.</p>
+<h4><code>benchmark_loading</code></h4>
+<p>This is the closest generator to the published instance design. It uses:</p>
+<ul><li>a 480-minute capacity per OR-day;</li><li>load factors <code>0.80:0.05:1.20</code>;</li><li>empirical three-parameter-lognormal type means as planning coefficients;</li><li>one independent realized duration per case as out-of-sample metadata; and</li><li>a generated case list within 0.025 of the requested load.</li></ul>
+<p>Published OR-day counts are marked <code>:published_or_days</code>; smaller or larger counts selected to honor the package&#x27;s variable-count contract are marked <code>:scaled_or_days</code>. Cancellation and overtime costs are package extensions and are not attributed to the benchmark.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Formulation notes</h3>
+  <div class="sec-body"><h4>Tactical master surgical schedule</h4>
+<p>Only compatible <code>(specialty, room, day)</code> columns are created. Room exclusivity, minimum/maximum service quotas, and daily room ceilings define the block plan. Separate expected ICU and post-ICU ward profiles are cyclically convolved with the repeating schedule. ICU stays use the same discrete 1--2 day distribution as weekly planning; each cohort enters the ward only on its ICU discharge day, and LOS tails from prior cycles are periodized into the current cycle. Feasible instances store the complete planted block array. Infeasible instances require one specialty to receive more blocks than all of its compatible room-days, an LP-level certificate.</p>
+<h4>Elective and robust assignment</h4>
+<p>The elective formulation creates variables only for triples that match the MSS specialty, surgeon availability, and deadline. Feasible instances first plant a capacity-respecting schedule and then designate mandatory cases from the scheduled set; the generator never downgrades clinical urgency to make the instance feasible.</p>
+<p><code>robust_elective</code> adds one <code>mu</code> variable per admissible triple and one <code>theta</code> per open block. Its capacity row is the linear robust counterpart from <a href="https://doi.org/10.1287/opre.1030.0065">Bertsimas and Sim, “The Price of Robustness”</a>:</p>
+<pre class="formula">nominal load + Gamma[q] * theta[q] + sum(mu[a]) &lt;= capacity + overtime[q]
+theta[q] + mu[a] &gt;= deviation[i] * assign[a]</pre>
+<p>Deviation magnitudes are calibrated from the empirical fitted standard deviations. A feasible robust witness is checked against the exact fractional Γ-budget (largest deviations first), not a proxy average.</p>
+<h4>Weekly downstream beds</h4>
+<p>Cases needing critical care occupy ICU first and enter the ward only after ICU discharge. Direct ward admissions start on their surgery day. Capacity arrays extend beyond the surgery horizon through the latest possible discharge, so a last-day case cannot evade downstream constraints through horizon truncation.</p>
+<h4>Daily sequencing</h4>
+<p>Room and surgeon eligibility variables are sparse. An ordering binary is created for each unordered case pair and each room/surgeon they could share. Big-M disjunctions enforce turnover-separated no-overlap, while hard surgeon windows and soft target completion times retain operational structure.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Feasibility status contract</h3>
+  <div class="sec-body"><ul><li><code>feasible</code> stores a witness revalidated against every relevant capacity and<p>compatibility family.</p></li><li><code>infeasible</code> stores a structural certificate: surgeon-minute shortage,<p>impossible completion deadline, compatible-block quota excess, or total OR-day workload excess, depending on the variant. Each contradiction also holds in the LP relaxation.</p></li><li><code>unknown</code> applies natural sampled conditions and stores neither a witness nor<p>a forced certificate.</p></li></ul>
+<p>The test suite checks helper properties over hundreds of seeds, exact sparse variable formulas, all witness resources, certificate inequalities, field-level determinism, global-RNG isolation, and HiGHS-solved status contracts for every variant.</p></div>
 </section>
 </article>
 <article id="scheduling" class="view article">
@@ -1710,6 +1970,36 @@ x[i] &lt;= max_food_amounts[i]    for listed foods</pre>
   <h3><span class="sec-icon">✎</span>Practical Notes</h3>
   <div class="sec-body"><p>This generator is useful for workforce assignment and scheduling benchmarks with rich combinatorial structure. The requested feasible path is unusually involved and actively modifies staffing requirements and minimum shifts to match a constructed schedule.</p>
 <p>The field name <code>max_consecutive_shifts</code> is implemented as a maximum number of consecutive working days, not consecutive shifts. Skill requirements are enforced indirectly by modifying <code>availability</code>; the model builder does not use <code>worker_skills</code> or <code>shift_skill_req</code> after construction.</p></div>
+</section>
+</article>
+<article id="workforce_shift_scheduling" class="view article">
+  <a class="back" href="#overview" data-target="overview">← All generators</a>
+  <header class="art-head fam-border-scheduling">
+    <div class="art-eyebrow"><span class="fam-dot fam-scheduling"></span>Assignment &amp; Scheduling</div>
+    <h2>Workforce Shift Scheduling</h2>
+    <p class="art-intro"></p>
+    <div class="chips">
+      <span class="chip chip-sense">Objective: Min</span>
+      <span class="chip chip-continuous">Continuous variables</span>
+    </div>
+  </header>
+  <section class="doc-section">
+  <h3><span class="sec-icon">§</span>`covering`</h3>
+  <div class="sec-body"><p>This variant is a continuous multi-skill shift-pattern covering LP for aggregate workforce planning. A decision variable assigns a number of workers from labor pool <code>q</code> to shift pattern <code>r</code> and served skill <code>s</code>. Only qualified pool-skill and availability-compatible pool-pattern combinations become columns.</p>
+<p>The model minimizes full-shift labor cost:</p>
+<pre class="formula">min  sum[q,r,s] assignment_cost[q,r,s] * assigned_workers[q,r,s]</pre>
+<p>subject to:</p>
+<ul><li>effective skill-period staffing meeting time-varying demand; and</li><li>total assignments from each labor pool not exceeding its available worker<p>capacity.</p></li></ul>
+<p>Pool productivity is skill-specific, so cross-trained workers provide genuine substitution without counting one worker simultaneously toward several served skills. Costs combine hourly wages, paid shift duration, skill premiums, and premiums for late, closing, or night work. There are no undercoverage variables: unmet demand is a real infeasibility rather than an expensive but always-available escape.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Structural profiles</h3>
+  <div class="sec-body"><p>The selected <code>problem.profile</code> is stored and inspectable:</p>
+<ul><li><code>contact_center</code>: 24 half-hour periods over a 12-hour service day, call-type<p>skills, morning/evening peaks, and 4/6/8-hour shifts.</p></li><li><code>retail</code>: 14 hourly periods over an opening day, sales/checkout/inventory<p>skills, a strong closing peak, and 4/6/8/10-hour shifts.</p></li><li><code>continuous_operations</code>: 24 hourly periods, operator/maintenance/quality<p>skills, around-the-clock pools, and 6/8/10/12-hour shifts including wraparound night patterns.</p></li></ul>
+<p>Long shifts include an unpaid break. Labor pools have distinct skill qualifications, productivities, availability windows, eligible pattern menus, wages, and capacities. Duplicate <code>(pool, skill, coverage support)</code> columns are not emitted.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Feasibility and sizing</h3>
+  <div class="sec-body"><ul><li><code>feasible</code>: demand is covered by the stored <code>feasible_staffing</code> witness,<p>and pool capacities are set above that witness&#x27;s usage. This field is <code>nothing</code> for <code>infeasible</code> and <code>unknown</code> instances.</p></li><li><code>infeasible</code>: one skill&#x27;s demand curve is scaled above an aggregate capacity<p>certificate. For each pool, the certificate permits its entire capacity to use its longest selected pattern serving the certified skill, so violating this upper bound proves infeasibility even for the continuous LP. <code>infeasible_skill</code> and <code>infeasibility_capacity_bound</code> store this certificate and are <code>nothing</code> for the other statuses.</p></li><li><code>unknown</code>: independently sampled workload and labor-market shocks are<p>applied without forcing either status; no witness or certificate is exposed.</p></li></ul>
+<p>The only variables are selected staffing columns. Normal targets are therefore matched exactly, including targets above 1,000 variables; only very small targets (including <code>target_variables=1</code>) are raised to the compact skill-period cover plus representative generated labor-pool columns.</p></div>
 </section>
 </article>
 <article id="knapsack" class="view article">
@@ -1922,67 +2212,130 @@ projects = collect(1:n_projects)</pre>
 <p>The constructor does not clamp <code>target_variables</code>; if <code>target_variables</code> is zero or negative, <code>projects</code> can be empty or malformed for downstream assumptions. Normal use should pass a positive project count.</p></div>
 </section>
 </article>
-<article id="crop_planning" class="view article">
+<article id="revenue_management" class="view article">
   <a class="back" href="#overview" data-target="overview">← All generators</a>
-  <header class="art-head fam-border-land">
-    <div class="art-eyebrow"><span class="fam-dot fam-land"></span>Land &amp; Agriculture</div>
-    <h2>Crop Planning</h2>
-    <p class="art-intro">Generates agricultural land-allocation LPs that maximize crop profit subject to land, water, labor, market, minimum-area, and optional diversity constraints.</p>
+  <header class="art-head fam-border-selection">
+    <div class="art-eyebrow"><span class="fam-dot fam-selection"></span>Selection &amp; Finance</div>
+    <h2>Revenue Management</h2>
+    <p class="art-intro">The <code>revenue_management</code> category generates continuous network revenue-management LPs. Both variants allocate perishable capacity on a coherent hub-and-spoke network, distinguish fare classes, and preserve the status requested through a constructive witness or a mathematical infeasibility certificate.</p>
     <div class="chips">
       <span class="chip chip-sense">Objective: Max</span>
       <span class="chip chip-continuous">Continuous variables</span>
     </div>
   </header>
   <section class="doc-section">
-  <h3><span class="sec-icon">◆</span>Overview</h3>
-  <div class="sec-body"><p>This generator represents farm or regional crop planning. A planner allocates hectares across crop options with different yields, prices, production costs, water needs, labor needs, market limits, and crop-type diversity requirements. The model chooses continuous planted area for each crop.</p></div>
+  <h3><span class="sec-icon">§</span>Variants</h3>
+  <div class="sec-body"><table><thead><tr><th>Variant</th><th>Planning setting</th><th>Main decisions</th></tr></thead><tbody><tr><td><code>standard</code> (default)</td><td>Deterministic network revenue management</td><td>Accepted demand by itinerary</td></tr><tr><td><code>stochastic_overbooking</code></td><td>Scenario-based show-ups with service recovery</td><td>Advance bookings, served customers, and denied customers in every scenario</td></tr></tbody></table>
+<p>Both constructors use their own <code>MersenneTwister</code>. A fixed seed reproduces all data without resetting or consuming Julia&#x27;s process-global random stream. <code>build_model</code> uses only stored data and is deterministic.</p></div>
 </section><section class="doc-section">
-  <h3><span class="sec-icon">▦</span>Generator Data and Sizing</h3>
-  <div class="sec-body"><p><code>target_variables</code> is interpreted directly as the number of crop variables:</p>
+  <h3><span class="sec-icon">§</span>Shared network and demand data</h3>
+  <div class="sec-body"><p>Capacity resources are directed legs in a compact hub-and-spoke network. Odd and even resource indices form outbound and inbound legs for successive spokes. Every leg first receives a local product; the remaining products are sampled as either local trips or coherent two-leg spoke-hub-spoke connections. Thus every resource appears in at least one itinerary, and a connection&#x27;s first destination is the second leg&#x27;s origin.</p>
+<p>Each product is stored as a <code>RevenueManagementProduct</code> containing its integer ID, origin, destination, fare class, and consumed resource indices. The parallel <code>product_resources</code> and <code>resource_products</code> fields provide both incidence directions for convenient downstream use.</p>
+<p>An instance samples one of three operating profiles:</p>
+<ul><li><code>regional_airline</code>: smaller aircraft, mostly local traffic, and moderate fares;</li><li><code>network_airline</code>: larger aircraft and a higher connecting-passenger share;</li><li><code>intercity_rail</code>: larger capacity, lower fares, and stronger local demand.</li></ul>
+<p>Economy, premium, and business products have different fare and demand scales. Demand uses a capped log-normal distribution to retain skew without producing pathological values. A sparse subset of products receives a positive contractual floor representing protected allotments or group blocks.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Deterministic network model (`standard`)</h3>
+  <div class="sec-body"><h4>Sizing</h4>
+<p>There is one acceptance variable per product, so the delivered variable count is exactly</p>
+<pre class="formula">max(2, target_variables).</pre>
+<p>The two-variable minimum keeps a meaningful capacity-allocation model even for tiny or non-positive requests. The number of resources is scale-dependent and is capped at 80 to keep very large formulations network-oriented rather than nearly diagonal.</p>
+<h4>Formulation</h4>
+<p>For products <code>j in P</code> and resources <code>r in R</code>, let <code>x[j]</code> be accepted demand, <code>f[j]</code> its fare, <code>d[j]</code> its forecast demand, <code>l[j]</code> its contractual floor, and <code>P(r)</code> the products consuming resource <code>r</code>:</p>
+<div class="math">\[\max \sum_{j \in P} f_j x_j\]</div>
+<p>subject to</p>
+<div class="math">\[l_j \le x_j \le d_j \qquad j \in P,\]</div>
+<div class="math">\[\sum_{j \in P(r)} x_j \le C_r \qquad r \in R.\]</div>
+<p>Connecting itineraries consume one unit of capacity on both constituent legs. This is the classic deterministic network LP used for bid-price and displacement- cost analysis.</p>
+<h4>Feasibility artifacts</h4>
+<p>A requested-feasible instance sets every acceptance to its contractual floor and constructs each capacity above that point&#x27;s resource load. This vector is stored in <code>feasible_witness</code> and attached to the JuMP variables as start values. The solver-independent helper <code>SyntheticLPs._revenue_management_witness_is_valid(problem)</code> checks all bounds and resource rows.</p>
+<p>A requested-infeasible instance selects a leg, raises the floors of every product using it, and places that leg&#x27;s capacity strictly below the resulting mandatory load. The stored <code>RevenueManagementCapacityCertificate</code> records the leg, committed load, capacity, and positive excess. Since all feasible points must satisfy <code>x[j] &gt;= l[j]</code>, the contradiction survives any objective choice. The helper <code>SyntheticLPs._revenue_management_certificate_is_valid(problem)</code> recomputes the proof directly from the generated data.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Stochastic network overbooking (`stochastic_overbooking`)</h3>
+  <div class="sec-body"><h4>Sizing and scenario mix</h4>
+<p>For <code>P</code> products and <code>S</code> scenarios, the variant creates:</p>
+<pre class="formula">P booking variables + P*S served variables + P*S denied variables
+    = P * (1 + 2*S) variables.</pre>
+<p>The dimension planner searches nearby product/scenario combinations instead of silently dropping recourse variables. It uses 3--5 scenarios below 150 requested variables, 4--8 below 1,200, and 6--12 thereafter. The smallest formulation is two products and three scenarios, or 14 variables. At ordinary scales the selected count is the closest representable count in the applicable band.</p>
+<p>Scenario probabilities are positive and normalized. Show-up rates reflect both fare-class behavior and one of three scenario profiles:</p>
+<ul><li><code>stable_business</code> has a narrow scenario range;</li><li><code>mixed_leisure</code> has moderately dispersed show-up rates;</li><li><code>disruption_prone</code> includes a deliberately low-show scenario.</li></ul>
+<p>Rates are kept in <code>[0.55, 0.995]</code>. Denied-service compensation and service standards vary by fare class: higher classes receive larger compensation and a smaller allowed denial fraction.</p>
+<h4>Formulation</h4>
+<p>Let <code>x[j]</code> be first-stage bookings. For each scenario <code>s</code>, <code>served[j,s]</code> and <code>denied[j,s]</code> allocate realized show-ups, <code>q[j,s]</code> is the show rate, <code>pi[s]</code> is the scenario probability, <code>a[j]</code> is the product denial limit, and <code>K[s]</code> is the aggregate denial cap. The objective maximizes expected realized service revenue minus denied-service compensation:</p>
+<div class="math">\[\max \sum_s \pi_s \sum_j
+  \left(f_j served_{j,s} - c^{deny}_j denied_{j,s}\right).\]</div>
+<p>Bookings retain the deterministic demand and commitment bounds:</p>
+<div class="math">\[l_j \le x_j \le d_j.\]</div>
+<p>Scenario recourse exactly accounts for realized show-ups:</p>
+<div class="math">\[served_{j,s} + denied_{j,s} = q_{j,s}x_j.\]</div>
+<p>Product-level and system-wide service promises are explicit:</p>
+<div class="math">\[denied_{j,s} \le a_j q_{j,s}x_j,\]</div>
+<div class="math">\[\sum_j denied_{j,s} \le K_s.\]</div>
+<p>Served customers consume each itinerary leg in every scenario:</p>
+<div class="math">\[\sum_{j \in P(r)} served_{j,s} \le C_r
+\qquad r \in R,\ s \in S.\]</div>
+<p>This is an LP with shared first-stage decisions and scenario-dependent continuous recourse; it does not require integer relaxation.</p>
+<h4>Feasibility artifacts</h4>
+<p>For feasible requests, the stored witness books exactly each product&#x27;s commitment, serves all corresponding show-ups, and denies nobody. Capacities are constructed above the maximum scenario load of that point, making feasibility independent of an optimizer or retry loop. The helper <code>SyntheticLPs._stochastic_overbooking_witness_is_valid(problem)</code> checks bounds, show-up balance, denial limits, aggregate service caps, and every scenario-leg capacity row.</p>
+<p>For infeasible requests, consider any product using a selected leg. Show-up balance and its denial cap imply</p>
+<div class="math">\[served_{j,s} \ge (1-a_j)q_{j,s}x_j
+                 \ge (1-a_j)q_{j,s}l_j.\]</div>
+<p>The generator selects the scenario with the largest sum of these mandatory served loads and puts the selected leg&#x27;s capacity strictly below that sum. The stored <code>StochasticOverbookingCertificate</code> records the resource, scenario, mandatory load, capacity, and positive excess. The helper <code>SyntheticLPs._stochastic_overbooking_certificate_is_valid(problem)</code> verifies the certificate without solving the LP.</p>
+<p>For either variant, an <code>unknown</code> request resolves reproducibly to a feasible or infeasible profile. The actual choice is recorded in <code>resolved_status</code>, and exactly one corresponding audit artifact is present.</p></div>
+</section>
+</article>
+<article id="crop_planning" class="view article">
+  <a class="back" href="#overview" data-target="overview">← All generators</a>
+  <header class="art-head fam-border-land">
+    <div class="art-eyebrow"><span class="fam-dot fam-land"></span>Land &amp; Agriculture</div>
+    <h2>Crop Planning</h2>
+    <p class="art-intro"><code>crop_planning/standard</code> generates continuous farm-planning LPs that allocate hectares among crop and management-system options. The objective maximizes net margin while land, irrigation water, seasonal labor, saleable production, minimum-acreage commitments, and optional crop-group diversity are enforced.</p>
+    <div class="chips">
+      <span class="chip chip-sense">Objective: Max</span>
+      <span class="chip chip-continuous">Continuous variables</span>
+    </div>
+  </header>
+  <section class="doc-section">
+  <h3><span class="sec-icon">§</span>Data model</h3>
+  <div class="sec-body"><p>The requested variable count maps directly to crop options:</p>
 <pre class="formula">n_crops = max(2, target_variables)</pre>
-<p>Scale-dependent ranges:</p>
-<table><thead><tr><th>Scale condition</th><th>Total land</th><th>Water availability factor</th><th>Labor availability factor</th><th>Market demand factor</th><th>Diversity probability</th></tr></thead><tbody><tr><td><code>target_variables &lt;= 250</code></td><td>50-500 ha</td><td>0.6-0.8</td><td>0.7-0.9</td><td>1.0-1.3</td><td>0.5-0.8</td></tr><tr><td><code>target_variables &lt;= 1000</code></td><td>500-5000 ha</td><td>0.65-0.85</td><td>0.75-0.95</td><td>1.1-1.5</td><td>0.6-0.9</td></tr><tr><td>otherwise</td><td>5000-50000 ha</td><td>0.7-0.9</td><td>0.8-1.0</td><td>1.2-2.0</td><td>0.7-0.95</td></tr></tbody></table>
-<p>The first 25 crops use fixed names and types:</p>
-<ul><li>1-5: cereals: Wheat, Corn, Rice, Barley, Oats.</li><li>6-10: vegetables: Tomatoes, Peppers, Lettuce, Carrots, Onions.</li><li>11-15: legumes: Soybeans, Peas, Lentils, Beans, Chickpeas.</li><li>16-20: industrial crops: Cotton, Sugarcane, Tobacco, Hemp, Flax.</li><li>21-25: oilseeds: Sunflower, Canola, Safflower, Sesame, Peanuts.</li></ul>
-<p>Additional crops are named <code>Crop_i</code> and assigned a random type from <code>:cereal</code>, <code>:vegetable</code>, <code>:legume</code>, <code>:industrial</code>, and <code>:oilseed</code>.</p>
-<p>Random data generation:</p>
-<ul><li>Yields are type-specific log-normal samples with clamps, e.g. cereals 3-10 tons/ha, vegetables 15-40, legumes 2-4, industrial 3-8, oilseeds 1.5-4.</li><li>Prices are type-specific log-normal samples with clamps, e.g. cereals 150-350 dollars/ton, vegetables 400-900, legumes 300-600, industrial 500-1200, oilseeds 400-700.</li><li>Production costs are type-specific normal samples with clamps, e.g. cereals 400-900 dollars/ha and vegetables 1200-2500.</li><li>Water requirements are type-specific normal samples with clamps; Rice and Sugarcane receive special high-water ranges.</li><li>Labor requirements are type-specific gamma samples with clamps.</li><li>Net profit per hectare is <code>prices .* yields .- production_costs</code>.</li><li>Market demand limits are sampled as <code>total_land * Uniform(0.1, 0.4) * market_demand_factor</code>.</li><li>With probability <code>0.85</code>, minimum area requirements are created for 30%-50% of crops, preferring cereals and legumes. Minimums are 2%-8% of total land, capped by market demand, and scaled down if their sum exceeds total land.</li><li>Optional diversity constraints require 5%-15% of total land in crop-type groups with at least two crops.</li></ul>
-<p>The stored struct fields are:</p>
-<ul><li><code>n_crops</code></li><li><code>total_land</code></li><li><code>crop_types</code></li><li><code>crop_names</code></li><li><code>yields</code></li><li><code>prices</code></li><li><code>production_costs</code></li><li><code>water_requirements</code></li><li><code>labor_requirements</code></li><li><code>net_profit_per_ha</code></li><li><code>market_demand_limits</code></li><li><code>min_area_per_crop</code></li><li><code>water_capacity</code></li><li><code>labor_capacity</code></li><li><code>diversity_constraints</code></li></ul>
-<p>The constructor calls <code>Random.seed!(seed)</code>, so generation is reproducible for a fixed seed but resets Julia&#x27;s global RNG state.</p></div>
+<p>Every option combines one of 25 recognizable crops with one of four agronomic systems: <code>rainfed</code>, <code>irrigated</code>, <code>low_input</code>, or <code>intensive</code>. Catalog blocks are independently shuffled, and blocks after the first receive cultivar identifiers. This keeps large instances interpretable instead of filling them with anonymous <code>Crop_i</code> columns. Management systems change yield, cost, irrigation, and labor together: intensive and irrigated options raise potential yield and inputs, while rainfed and low-input options trade output for lower resource use.</p>
+<p>The five crop groups and their base agronomic ranges are:</p>
+<table><thead><tr><th>Group</th><th>Example crops</th><th>Yield (t/ha)</th><th>Price ($/t)</th><th>Water (mm/season)</th><th>Labor (h/ha)</th></tr></thead><tbody><tr><td>cereal</td><td>wheat, maize, rice</td><td>3-10</td><td>150-350</td><td>400-650 normally</td><td>30-80</td></tr><tr><td>vegetable</td><td>tomatoes, peppers</td><td>15-40</td><td>400-900</td><td>350-600</td><td>120-250</td></tr><tr><td>legume</td><td>soybeans, lentils</td><td>2-4</td><td>300-600</td><td>300-500</td><td>25-60</td></tr><tr><td>industrial</td><td>cotton, sugarcane</td><td>3-8</td><td>500-1200</td><td>500-800 normally</td><td>80-180</td></tr><tr><td>oilseed</td><td>sunflower, canola</td><td>1.5-4</td><td>400-700</td><td>350-550</td><td>35-75</td></tr></tbody></table>
+<p>Rice and sugarcane use separate, higher water ranges. The table describes base draws; the selected management system subsequently applies correlated multipliers. Net margin is computed as</p>
+<div class="math">\[m_i = price_i \; yield_i - production\_cost_i.\]</div>
+<p>Farm scale controls total land and the frequency of diversity requirements:</p>
+<table><thead><tr><th>Requested size</th><th>Total land</th><th>Diversity-generation probability</th></tr></thead><tbody><tr><td>up to 250</td><td>50-500 ha</td><td>0.50-0.80</td></tr><tr><td>251-1000</td><td>500-5,000 ha</td><td>0.60-0.90</td></tr><tr><td>above 1000</td><td>5,000-50,000 ha</td><td>0.70-0.95</td></tr></tbody></table>
+<p>Market limits are stored in **tonnes**, not hectares. The constructor first samples an acreage-equivalent market scale, then multiplies it by the option&#x27;s yield. This makes the formulation&#x27;s market row dimensionally meaningful and ensures that yield participates in both revenue and market consumption.</p>
+<p>With probability 0.85, a subset of options receives minimum-acreage commitments. Cereals and legumes are preferred, modeling staple or rotation commitments. These minima are capped by market limits and jointly scaled when necessary so they fit available land.</p>
+<p>All randomness uses a constructor-local <code>MersenneTwister</code>. Constructing an instance is deterministic for <code>(target_variables, feasibility_status, seed)</code> and does not reset or advance Julia&#x27;s global RNG.</p></div>
 </section><section class="doc-section">
-  <h3><span class="sec-icon">∑</span>LP Formulation</h3>
-  <div class="sec-body"><p>Sets and indices:</p>
-<ul><li><code>I = {1, ..., n_crops}</code>: crops.</li><li><code>D</code>: optional diversity constraints, each containing a crop type, minimum area, and crop index set.</li></ul>
-<p>Decision variables:</p>
-<pre class="formula">x_i &gt;= 0</pre>
-<p><code>x_i</code> is hectares allocated to crop <code>i</code>.</p>
-<p>Objective:</p>
-<pre class="formula">maximize sum_{i in I} (price_i * yield_i - production_cost_i) x_i</pre>
-<p>Constraints:</p>
-<p>Land:</p>
-<pre class="formula">sum_{i in I} x_i &lt;= total_land</pre>
-<p>Water:</p>
-<pre class="formula">sum_{i in I} water_requirement_i x_i &lt;= water_capacity</pre>
-<p>Labor:</p>
-<pre class="formula">sum_{i in I} labor_requirement_i x_i &lt;= labor_capacity</pre>
-<p>Market demand:</p>
-<pre class="formula">x_i &lt;= market_demand_limit_i    for each i in I</pre>
-<p>Minimum area, only where <code>min_area_per_crop[i] &gt; 0</code>:</p>
-<pre class="formula">x_i &gt;= min_area_i</pre>
-<p>Diversity, for each generated tuple <code>(crop_type, min_type_area, crop_indices)</code>:</p>
-<pre class="formula">sum_{i in crop_indices} x_i &gt;= min_type_area</pre>
-<p>Bounds:</p>
-<p>All variables are continuous and nonnegative.</p></div>
+  <h3><span class="sec-icon">§</span>Formulation</h3>
+  <div class="sec-body"><p>For crop options <code>i in I</code>, the variable is</p>
+<pre class="formula">x_i &gt;= 0    hectares planted under option i</pre>
+<p>The LP maximizes total net margin:</p>
+<div class="math">\[\max \sum_{i \in I} m_i x_i.\]</div>
+<p>Resource capacities are</p>
+<div class="math">\[\sum_i x_i &amp;\le L, \\
+\sum_i water_i x_i &amp;\le W, \\
+\sum_i labor_i x_i &amp;\le H.\]</div>
+<p>Saleable production and mandatory acreage are option-specific:</p>
+<div class="math">\[yield_i x_i &amp;\le demand_i &amp;&amp; \forall i, \\
+x_i &amp;\ge minimum_i &amp;&amp; \forall i \text{ with a positive commitment}.\]</div>
+<p>An optional crop-group requirement <code>g</code> is</p>
+<div class="math">\[\sum_{i \in I_g} x_i \ge diversity_g.\]</div>
+<p>The implementation names the land, water, labor, market, minimum-area, and diversity row families, which makes exported models and formulation tests easier to inspect.</p></div>
 </section><section class="doc-section">
-  <h3><span class="sec-icon">⚖</span>Feasibility Controls</h3>
-  <div class="sec-body"><ul><li><code>feasible</code>: The generator constructs a baseline allocation by first satisfying minimum crop areas, then distributing remaining land by nonnegative profit weights subject to market limits. Water and labor capacities are set to baseline usage times a slack factor from <code>1.1</code> to <code>1.3</code>, and also at least <code>1.2</code> times the resource usage of minimum areas. Diversity constraints are added only when the baseline allocation satisfies them within a 5% tolerance.</li><li><code>infeasible</code>: The generator computes water and labor lower bounds from minimum crop areas plus an assumed allocation of all remaining land to the least-resource crop. It then randomly makes either water or labor capacity <code>75%</code> to <code>95%</code> of that lower bound, while giving the other resource <code>10%</code> to <code>40%</code> slack. Diversity constraints are not added in infeasible mode.</li><li><code>unknown</code>: Water and labor capacities are sampled from estimated average use times scale-specific availability factors and additional <code>Uniform(0.6, 1.4)</code> noise. Diversity constraints may be added without a feasibility check.</li></ul></div>
+  <h3><span class="sec-icon">§</span>Feasibility contracts and metadata</h3>
+  <div class="sec-body"><p>For a <code>feasible</code> request, the constructor stores <code>feasible_witness</code>, a complete acreage vector. It begins at the mandatory minima, distributes optional land by positive margin without exceeding market limits, and sizes water and labor with 10-30% slack. Every diversity floor is derived from the acreage already present in its crop group and is at most 95% of the witness value. Consequently the witness satisfies every implemented row directly; feasibility does not rely on a solver retry or a tolerance that is looser than the model.</p>
+<p>For an <code>infeasible</code> request, the constructor ensures that mandatory acreage has positive resource use, then makes either water or labor capacity 5-25% smaller than the amount forced by those lower bounds. The stored <code>CropResourceCertificate</code> contains:</p>
+<ul><li><code>resource</code>: <code>:water</code> or <code>:labor</code>;</li><li><code>forced_usage</code>: resource use implied by all mandatory crop minima;</li><li><code>capacity</code>: the strictly smaller model capacity.</li></ul>
+<p>This is a solver-independent proof because leaving land fallow cannot reduce resource use below the mandatory minima. No diversity rows are needed for the contradiction.</p>
+<p>For an <code>unknown</code> request, capacities and diversity floors are sampled without a witness or certificate. Such instances intentionally retain natural uncertainty and may be feasible or infeasible.</p>
+<p>Exactly one status-specific metadata field is populated for requested feasible or infeasible instances; both are <code>nothing</code> for unknown instances.</p></div>
 </section><section class="doc-section">
-  <h3><span class="sec-icon">▤</span>Model Characteristics</h3>
-  <div class="sec-body"><ul><li>Variables: <code>n_crops</code>.</li><li>Constraints: one land row, one water row, one labor row, <code>n_crops</code> market upper-bound rows, up to <code>n_crops</code> minimum-area rows, and optional diversity rows.</li><li>Density: land, water, and labor rows touch all crop variables; market and minimum-area rows are singleton bounds represented as constraints; diversity rows touch crop subsets by type.</li><li>Model class: continuous LP.</li></ul></div>
-</section><section class="doc-section">
-  <h3><span class="sec-icon">✎</span>Practical Notes</h3>
-  <div class="sec-body"><p>These instances are useful for testing dense resource rows mixed with many simple bound-like constraints. One implementation caveat is that the infeasible lower-bound calculation assumes all remaining land must be allocated, but the actual land constraint is <code>&lt;= total_land</code>, not equality. If minimum-area requirements alone are small, reducing water or labor below the &quot;use all land&quot; lower bound may not always prove infeasibility of the implemented LP.</p></div>
+  <h3><span class="sec-icon">§</span>Model characteristics</h3>
+  <div class="sec-body"><ul><li>Model class: continuous LP.</li><li>Variables: exactly <code>max(2, target_variables)</code>.</li><li>Dense rows: land, water, and labor.</li><li>Sparse/singleton rows: crop-group diversity, market limits, and mandatory<p>acreage.</p></li><li>Fallow land is allowed because the land constraint is an upper bound. The<p>infeasibility certificate therefore uses only true mandatory lower bounds and never assumes that all land must be planted.</p></li></ul></div>
 </section>
 </article>
 <article id="land_use" class="view article">
@@ -1990,62 +2343,71 @@ projects = collect(1:n_projects)</pre>
   <header class="art-head fam-border-land">
     <div class="art-eyebrow"><span class="fam-dot fam-land"></span>Land &amp; Agriculture</div>
     <h2>Land Use</h2>
-    <p class="art-intro"><code>LandUseProblem</code> generates a parcel zoning assignment model with resource capacities, environmental restrictions, minimum zoning counts, and residential-industrial adjacency rules.</p>
+    <p class="art-intro"><code>LandUseProblem</code> generates spatial parcel-zoning assignment models with infrastructure capacities, parcel-specific environmental exclusions, minimum zoning counts, and residential-industrial adjacency rules. The native model is a binary MILP; the package API relaxes those binaries by default unless <code>relax_integer=false</code> is requested.</p>
     <div class="chips">
       <span class="chip chip-sense">Objective: Max</span>
       <span class="chip chip-binary">Binary variables</span>
     </div>
   </header>
   <section class="doc-section">
-  <h3><span class="sec-icon">◆</span>Overview</h3>
-  <div class="sec-body"><p>This generator represents land-use planning. A planner assigns each parcel to one zoning type, such as residential, commercial, industrial, agricultural, or conservation. Assignments create economic value from revenue minus development cost, consume infrastructure resources, and may be blocked by environmental restrictions or adjacency rules.</p></div>
+  <h3><span class="sec-icon">§</span>Planning Setting</h3>
+  <div class="sec-body"><p>Each parcel must receive exactly one zoning type. A zoning decision produces a parcel-size-weighted economic benefit, consumes infrastructure resources, and may be unavailable because of an environmental restriction. Residential and industrial uses cannot occupy adjacent parcels when adjacency rules are active.</p>
+<p>Unlike a generic random graph, parcel adjacency comes from geography. Parcels are placed on a jittered two-dimensional grid, parcel identifiers are shuffled over the cells, and horizontal and vertical neighboring cells form a connected spatial graph. The generator stores both the symmetric adjacency matrix and a canonical list of undirected edges <code>(i, j)</code> with <code>i &lt; j</code>.</p></div>
 </section><section class="doc-section">
-  <h3><span class="sec-icon">▦</span>Generator Data and Sizing</h3>
-  <div class="sec-body"><p><code>target_variables</code> is interpreted as approximately <code>n_parcels * n_zoning_types</code>. The generator first selects zoning and resource counts by size regime, then sets:</p>
+  <h3><span class="sec-icon">§</span>Sizing and Catalogs</h3>
+  <div class="sec-body"><p><code>target_variables</code> approximates <code>n_parcels * n_zoning_types</code>:</p>
 <pre class="formula">n_parcels = max(2, round(Int, target_variables / n_zoning_types))</pre>
-<p>Size regimes:</p>
-<ul><li><code>target_variables &lt;= 250</code>: <code>n_zoning_types</code> from <code>3:5</code>, <code>n_resources</code> from <code>3:5</code>, development cost scale <code>50000:150000</code>, revenue scale <code>20000:80000</code>, infrastructure capacity factor <code>0.6-0.8</code>, environmental restriction probability <code>0.2-0.4</code>.</li><li><code>target_variables &lt;= 1000</code>: <code>n_zoning_types</code> from <code>4:8</code>, <code>n_resources</code> from <code>4:6</code>, development cost scale <code>75000:250000</code>, revenue scale <code>40000:120000</code>, infrastructure capacity factor <code>0.65-0.85</code>, environmental restriction probability <code>0.25-0.45</code>.</li><li>larger targets: <code>n_zoning_types</code> from <code>5:12</code>, <code>n_resources</code> from <code>5:8</code>, development cost scale <code>100000:500000</code>, revenue scale <code>60000:200000</code>, infrastructure capacity factor <code>0.7-0.9</code>, environmental restriction probability <code>0.3-0.5</code>.</li></ul>
-<p>Adjacency constraints are enabled with probability <code>0.8</code>; minimum zoning requirements with probability <code>0.9</code>.</p>
-<p>Parcel sizes follow <code>LogNormal(log(5), 0.8)</code> and are floored at <code>0.1</code>. Development costs and revenues are generated per parcel-zoning pair using zoning-specific multipliers, parcel-specific gamma location factors, and normal noise. Resource consumption is generated per zoning-resource pair from hand-coded patterns for the first five zoning types and random <code>Uniform(0.5, 3.0)</code> bases for additional types, multiplied by <code>Gamma(2, 0.5)</code>.</p>
-<p>Initial resource capacities are based on total parcel size times mean consumption, scaled by the infrastructure capacity factor and <code>Uniform(0.8, 1.2)</code> noise. Environmental restrictions randomly forbid some parcel-zoning pairs, but the constructor repairs any parcel with no allowed zoning type. If minimum zoning requirements are active, the first up to three zoning types receive minimum parcel counts, usually about 10 percent of parcels each, adjusted to fit the parcel count. Environmental restrictions are relaxed when needed so enough parcels allow required zoning types.</p>
-<p>The struct stores:</p>
-<ul><li><code>n_parcels</code>, <code>n_zoning_types</code>, <code>n_resources</code></li><li><code>parcel_sizes</code></li><li><code>development_costs</code>, <code>revenues</code></li><li><code>resource_consumption</code></li><li><code>resource_capacities</code></li><li><code>environmental_restrictions</code></li><li><code>adjacency_matrix</code></li><li><code>zoning_names</code>, <code>resource_names</code></li><li><code>min_counts_by_type</code></li><li><code>zoning_adjacency_constraints</code></li><li><code>minimum_zoning_requirements</code></li></ul>
-<p>The constructor calls <code>Random.seed!(seed)</code>, resetting Julia&#x27;s global RNG.</p></div>
+<table><thead><tr><th>Target regime</th><th>Zoning types</th><th>Resources</th><th>Development-cost scale</th><th>Revenue scale</th></tr></thead><tbody><tr><td><code>target_variables &lt;= 250</code></td><td>3-5</td><td>3-5</td><td>50,000-150,000</td><td>20,000-80,000</td></tr><tr><td><code>250 &lt; target_variables &lt;= 1000</code></td><td>4-8</td><td>4-6</td><td>75,000-250,000</td><td>40,000-120,000</td></tr><tr><td><code>target_variables &gt; 1000</code></td><td>5-12</td><td>5-8</td><td>100,000-500,000</td><td>60,000-200,000</td></tr></tbody></table>
+<p>The complete zoning catalog, in order, is:</p>
+<ol><li>Residential</li><li>Commercial</li><li>Industrial</li><li>Agricultural</li><li>Conservation</li><li>Mixed Use</li><li>Recreational</li><li>Institutional</li><li>Transportation</li><li>Special</li><li>Utilities</li><li>Open Space</li></ol>
+<p>Every catalog entry defines its name, cost multiplier, revenue multiplier, and an eight-resource consumption profile. The resource catalog is Water, Sewage, Transportation, Power, Internet, Gas, Environmental, and Emergency. Because the catalogs are the source of both sampling limits and generated metadata, every sampled large instance has complete names and parameter profiles.</p></div>
 </section><section class="doc-section">
-  <h3><span class="sec-icon">∑</span>LP Formulation</h3>
-  <div class="sec-body"><p>The implemented model is a binary assignment MILP, not a pure LP.</p>
-<p>Sets:</p>
-<ul><li><code>P = {1, ..., n_parcels}</code> parcels</li><li><code>Z = {1, ..., n_zoning_types}</code> zoning types</li><li><code>R = {1, ..., n_resources}</code> resources</li></ul>
-<p>Decision variable:</p>
-<ul><li><code>x_{ij} in {0,1}</code>: parcel <code>i</code> is assigned to zoning type <code>j</code></li></ul>
-<p>Objective:</p>
-<div class="math">\[\max \sum_{i \in P} \sum_{j \in Z} s_i (rev_{ij} - cost_{ij}) x_{ij}\]</div>
-<p>Each parcel receives exactly one zoning type:</p>
-<div class="math">\[\sum_{j \in Z} x_{ij} = 1 \quad \forall i \in P\]</div>
-<p>Resource capacities:</p>
-<div class="math">\[\sum_{i \in P} \sum_{j \in Z} s_i r_{jk} x_{ij} \le C_k \quad \forall k \in R\]</div>
-<p>Environmental restrictions:</p>
-<div class="math">\[x_{ij} = 0 \quad \text{for restricted parcel-zoning pairs}\]</div>
-<p>Minimum zoning requirements, when enabled:</p>
-<div class="math">\[\sum_{i \in P} x_{ij} \ge m_j\]</div>
-<p>Adjacency constraints, when enabled and at least three zoning types exist, prohibit residential type 1 next to industrial type 3:</p>
-<div class="math">\[x_{i,1} + x_{i',3} \le 1\]</div>
-<div class="math">\[x_{i,3} + x_{i',1} \le 1\]</div>
-<p>for adjacent parcels <code>i</code> and <code>i&#x27;</code>.</p></div>
+  <h3><span class="sec-icon">§</span>Generated Data</h3>
+  <div class="sec-body"><ul><li>Parcel sizes follow <code>LogNormal(log(5), 0.75)</code> and are floored at 0.1 acres.</li><li>Coordinates lie inside the unit square on a jittered grid. Grid-cell<p>assignment to parcel identifiers is shuffled.</p></li><li>Development cost and revenue combine zoning-specific catalog multipliers,<p>distance to the urban center, and log-normal parcel noise. Urban uses favor accessible central parcels; agricultural, conservation, recreational, and open-space uses favor more rural parcels.</p></li><li>Zoning-resource rates apply log-normal noise to the catalog profiles while<p>remaining strictly positive.</p></li><li>Adjacency constraints are active with probability 0.8. The spatial graph is<p>still retained when the rule is inactive.</p></li><li>Minimum zoning counts are active with probability 0.9. The first up to three<p>types—Residential, Commercial, and Industrial—each normally require about 10 percent of parcels, with small-instance counts reduced to fit.</p></li><li>Environmental restrictions affect a random subset of parcels and forbid one<p>to three zoning types. They never forbid the generator&#x27;s planted reference assignment, so restrictions cannot accidentally invalidate a requested feasible witness.</p></li></ul>
+<p>The constructor uses a local <code>MersenneTwister(seed)</code>. It neither resets nor consumes Julia&#x27;s process-wide random stream. Identical arguments produce field-identical problem data for the same package version.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Stored Evidence and Spatial Fields</h3>
+  <div class="sec-body"><p>In addition to the economic, resource, and restriction data, the problem stores:</p>
+<ul><li><code>parcel_coordinates::Matrix{Float64}</code>: <code>n_parcels x 2</code> coordinates.</li><li><code>adjacency_matrix::Matrix{Bool}</code>: symmetric parcel adjacency.</li><li><code>adjacency_edges::Vector{Tuple{Int,Int}}</code>: unique undirected edges with<p><code>i &lt; j</code>.</p></li><li><code>feasible_witness::Union{Nothing,Vector{Int}}</code>: zoning index selected for each<p>parcel in a requested-feasible instance.</p></li><li><code>infeasibility_certificate::Union{Nothing,LandUseInfeasibilityCertificate}</code>:<p>a resource lower-bound certificate for a requested-infeasible instance.</p></li></ul>
+<p>Unknown instances expose neither status claim.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>MILP Formulation</h3>
+  <div class="sec-body"><p>Let <code>P</code> be parcels, <code>Z</code> zoning types, <code>R</code> resources, and <code>E</code> undirected spatial edges. The binary variable</p>
+<div class="math">\[x_{iz} = 1\]</div>
+<p>means that parcel <code>i</code> receives zoning type <code>z</code>.</p>
+<p>The objective maximizes parcel-size-weighted net benefit:</p>
+<div class="math">\[\max \sum_{i \in P}\sum_{z \in Z}
+s_i(\mathit{revenue}_{iz}-\mathit{cost}_{iz})x_{iz}.\]</div>
+<p>Each parcel receives one zoning:</p>
+<div class="math">\[\sum_{z \in Z} x_{iz}=1 \qquad \forall i \in P.\]</div>
+<p>Resource use is limited by capacity:</p>
+<div class="math">\[\sum_{i \in P}\sum_{z \in Z}s_i r_{zk}x_{iz}\le C_k
+\qquad \forall k \in R.\]</div>
+<p>Environmentally forbidden assignments are fixed to zero:</p>
+<div class="math">\[x_{iz}=0 \qquad \forall (i,z)\text{ restricted}.\]</div>
+<p>When minimum zoning requirements are active:</p>
+<div class="math">\[\sum_{i \in P}x_{iz}\ge m_z.\]</div>
+<p>For every edge <code>{i,j}</code> when adjacency rules are active:</p>
+<div class="math">\[x_{i,\mathrm{Residential}}+x_{j,\mathrm{Industrial}}\le 1,\]</div>
+<div class="math">\[x_{i,\mathrm{Industrial}}+x_{j,\mathrm{Residential}}\le 1.\]</div>
+<p>Each undirected edge is visited once, so these are the two distinct orientations rather than duplicated rows from a symmetric matrix traversal.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">⚖</span>Feasibility Controls</h3>
-  <div class="sec-body"><p>For <code>feasible</code>, the constructor builds a concrete witness assignment. It computes allowed zoning sets and neighbor lists, then tries to satisfy minimum counts for type 1, type 3, and type 2. Residential type 1 and industrial type 3 assignment is adjacency-aware. If it cannot find enough nonconflicting parcels, it prunes adjacency edges to make the witness possible. Commercial type 2 has additional fallbacks, including swaps and final environmental relaxation when needed.</p>
-<p>Remaining parcels are assigned to the allowed zoning type with the best parcel-level net benefit, excluding residential-industrial adjacency conflicts when possible. The witness is then repaired: adjacency edges that conflict with the witness are pruned, minimum zoning count violations are addressed by swaps, and as a last resort minimum requirements are reduced to the achieved count. Finally, resource usage of the witness is computed and capacities are raised to at least usage times a slack factor from <code>1.05</code> to <code>1.25</code>.</p>
-<p>For <code>infeasible</code>, the constructor computes a resource lower bound by assigning each parcel its minimum possible consumption for each resource over currently allowed zoning types. It then sets every resource capacity below that lower bound by <code>5-25</code> percent, floored at <code>1e-6</code>. Since every parcel must be assigned exactly one allowed zoning, this creates a resource-capacity contradiction.</p>
-<p>For <code>unknown</code>, no feasibility enforcement branch is applied. The base random restrictions, capacities, adjacency matrix, and minimum counts are returned after only the general repairs that ensure each parcel has an allowed zoning and required types are not blocked solely by environmental restrictions.</p></div>
+  <div class="sec-body"><h4>Requested feasible</h4>
+<p>The generator plants an integer reference assignment before environmental restrictions are sampled. Required residential and industrial parcels are chosen from one parity class of the bipartite grid graph, so they cannot be adjacent. Required commercial parcels and all remaining parcels are then assigned while preserving the residential-industrial rule. Environmental restrictions exclude the chosen zoning from their candidates.</p>
+<p>Resource capacities are finally set to at least the witness consumption with 5-20 percent slack. The resulting <code>feasible_witness</code> directly satisfies parcel assignment, environmental, minimum-count, adjacency, and capacity constraints.</p>
+<h4>Requested infeasible</h4>
+<p>One resource <code>k*</code> receives a solver-independent lower-bound certificate. For each parcel, let <code>A_i</code> be its environmentally allowed zoning types and define</p>
+<div class="math">\[b_i=s_i\min_{z\in A_i}r_{z,k^*}.\]</div>
+<p>Even in the LP relaxation, the exactly-one assignment and environmental rows imply resource use of at least</p>
+<div class="math">\[B=\sum_i b_i.\]</div>
+<p>The generator sets <code>C[k*]</code> to 72-92 percent of <code>B</code>, hence <code>C[k*] &lt; B</code>. The certificate stores <code>k*</code>, every <code>b_i</code>, <code>B</code>, and the capacity. All other resource capacities admit the planted reference assignment, making the recorded contradiction easy to inspect.</p>
+<h4>Requested unknown</h4>
+<p>Unknown mode returns nominal capacities derived from total parcel area and average zoning consumption with additional scenario noise. It makes no status claim and stores neither a witness nor a certificate.</p></div>
 </section><section class="doc-section">
-  <h3><span class="sec-icon">▤</span>Model Characteristics</h3>
-  <div class="sec-body"><p>Variable count is <code>n_parcels * n_zoning_types</code>, all binary. Constraint count is driven by:</p>
-<ul><li><code>n_parcels</code> assignment equalities</li><li><code>n_resources</code> resource capacity inequalities</li><li>one equality for each restricted parcel-zoning pair</li><li>up to <code>length(min_counts_by_type)</code> minimum zoning rows</li><li>two adjacency inequalities for each true ordered adjacency entry when adjacency constraints are active and <code>n_zoning_types &gt;= 3</code></li></ul>
-<p>The assignment and environmental rows are sparse. Resource rows are dense across all parcel-zoning variables. Adjacency rows are sparse two-variable rows. Because the adjacency matrix is symmetric and the model loops over all ordered pairs, each undirected adjacency can produce duplicated directional constraints.</p></div>
-</section><section class="doc-section">
-  <h3><span class="sec-icon">✎</span>Practical Notes</h3>
-  <div class="sec-body"><p>This generator is useful for testing binary assignment, resource-capacity infeasibility, environmental exclusions, and graph-like adjacency restrictions. The feasible path may modify generated environmental restrictions, minimum counts, and adjacency edges to admit the witness. The built model uses binary variables, so solving it requires MILP support; the LP relaxation would allow fractional parcel-zoning assignments but is not what <code>build_model</code> creates.</p></div>
+  <h3><span class="sec-icon">§</span>Model Size and Use</h3>
+  <div class="sec-body"><ul><li>Variables: <code>n_parcels * n_zoning_types</code>, binary before optional relaxation.</li><li>Assignment rows: <code>n_parcels</code>.</li><li>Resource rows: <code>n_resources</code>.</li><li>Environmental rows: one per restricted parcel-zoning pair.</li><li>Minimum-count rows: up to three.</li><li>Adjacency rows: exactly <code>2 * length(adjacency_edges)</code> when enabled.</li></ul>
+<p>The package-level default <code>relax_integer=true</code> converts the binaries to continuous variables in <code>[0,1]</code>. Use <code>relax_integer=false</code> for the native zoning MILP. The infeasibility certificate is valid for both formulations, while the feasible witness is an integer solution to both.</p></div>
 </section>
 </article>
   </main>
