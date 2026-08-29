@@ -82,7 +82,7 @@ julia --project=@.
 
 ## Architecture
 
-SyntheticLPs uses a type-based dispatch system for generating realistic linear programming problems. Problems are organized as a two-level hierarchy: a **category** (a problem domain, e.g. `:transportation`) groups one or more **variants** (concrete generators with their own data generation and model formulation, e.g. `:standard`). There are 41 categories; most have a single variant, while several carry multiple variants with distinct formulations. All generators follow a consistent pattern using Julia's multiple dispatch.
+SyntheticLPs uses a type-based dispatch system for generating realistic linear programming problems. Problems are organized as a two-level hierarchy: a **category** (a problem domain, e.g. `:transportation`) groups one or more **variants** (concrete generators with their own data generation and model formulation, e.g. `:standard`). There are 42 categories; most have a single variant, while several carry multiple variants with distinct formulations. All generators follow a consistent pattern using Julia's multiple dispatch.
 
 ### Core Components
 
@@ -185,7 +185,7 @@ register_variant(:category, :standard, VariantStruct, "Description")
 
 ### Available Problem Categories
 
-The system includes 41 categories covering major LP/MIP problem classes. Each
+The system includes 42 categories covering major LP/MIP problem classes. Each
 category's default variant is `:standard` except `graph_optimization`
 (`:independent_set`), `neural_network_verification` (`:relu_big_m`), `portfolio`
 (`:cvar`), `regression` (`:lad`), `set_system` (`:set_cover`),
@@ -194,7 +194,7 @@ Categories with multiple variants are listed with them below.
 - Transportation (`standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`, `fixed_charge`), Diet Problem (`standard`, `nutrient_bounds`, `food_groups`), Knapsack (`standard`, `multidimensional`, `bounded`, `mixed_integer_set`), Portfolio (`cvar`, `tracking_error`), Network Flow (`standard`, `generalized_flow`)
 - Multi-Commodity Flow (`standard`, `binary_capacity`, `integer_flow`), Assignment (`standard`, `workload_balance`), Blending (`standard`, `equipment_batches`, `multi_product`), Container Loading (`standard`, `two_dimensional_bin_packing`), Facility Location (`standard`, `two_echelon`, `p_median`)
 - Cutting Stock (`standard`, `setup_cost`, `due_dates`, `integer_patterns`), Energy (`standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`, `optimal_transmission_switching`), Inventory (`standard`, `lot_sizing`, `multi_item`, `multi_echelon`), Load Balancing (`standard`, `discrete_placement`)
-- Graph Optimization (`independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`), Set System (`set_cover`, `set_packing`, `set_partitioning`, `combinatorial_auction`), Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`, `network_planning`)
+- Graph Optimization (`independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`), Set System (`set_cover`, `set_packing`, `set_partitioning`, `combinatorial_auction`), Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`, `network_planning`), Operating Room Scheduling (`elective_assignment`, `case_sequencing`, `weekly_planning`)
 - TSP (`standard`, `asymmetric`, `flow`, `time_windows`, `assignment_relaxation`, `prize_collecting`, `multiple_salespersons`, `precedence`), Vehicle Routing (`cvrp`), Regression (`lad`, `quantile`, `chebyshev`, `basis_pursuit`), Workforce Shift Scheduling (`covering`)
 - Single-variant categories: Airline Crew, Bin Packing, Crop Planning, Feed Blending, Generic MILP, Job Shop Scheduling, Land Use, Maritime Inventory Routing, Neural Network Verification, Nurse Scheduling, Product Mix, Production Planning, Project Selection, Resilient Network Design, Resource Allocation, Revenue Management, Scheduling, Stochastic Program, Telecom Network Design, Unit Commitment
 
@@ -217,8 +217,15 @@ The corpus deliberately mixes three model classes; treat the names accordingly:
   variables), `flow` and `prize_collecting` (single-commodity flow),
   `time_windows` (big-M time propagation), `multiple_salespersons` (lifted
   route-order variables), and `precedence` (lifted MTZ plus ordering rows)
-  likewise deliver genuine routing relaxations. These are real mixed-integer
-  formulations.
+  likewise deliver genuine routing relaxations. The
+  `operating_room_scheduling` variants are also real mixed-integer
+  formulations: `elective_assignment` (binary surgery-to-block assignment),
+  `weekly_planning` (binary surgery-to-day assignment with bed occupancy), and
+  `case_sequencing` (binary room/surgeon assignment plus big-M ordering
+  variables), plus `master_surgical_schedule` (binary tactical block design),
+  `robust_elective` (a sparse budgeted-uncertainty counterpart), and
+  `benchmark_loading` (empirically calibrated OR-day assignment). These are
+  real mixed-integer formulations.
 - **LP relaxations of MIPs**: continuous relaxations of integer models, useful as
   LP-solver test instances but *not* directly implementable integer solutions —
   notably `nurse_scheduling` (fractional rosters), `unit_commitment`

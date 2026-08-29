@@ -4,6 +4,109 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-29 14:01 UTC (operating room scheduling refinement and combination)
+
+**Previous Commit**: `49a6bc3`
+
+**Summary**: Hardened PR #43's three OR-scheduling generators and combined the
+non-duplicate tactical/robust ideas from the alternative branch into a
+six-variant family, including a dedicated Leeftink--Hans benchmark-informed
+loading generator.
+
+**Details**:
+- Fixed the MSS quota repair so it only reassigns unallocated blocks or donors
+  above quota, and fixed case-mix repair so short- and long-duration services
+  cannot overwrite each other. Both helpers now have multi-seed regression
+  sweeps.
+- Replaced global seeding with constructor-local `MersenneTwister`s throughout
+  the family. Feasible waiting-list generators plant a schedule before
+  designating mandatory cases and no longer downgrade urgency to repair a
+  heuristic failure.
+- Changed weekly recovery from simultaneous ICU/ward occupancy to a sequential
+  ICU-to-ward patient path and extended bed constraints through discharge past
+  the final surgery day.
+- Added sparse `master_surgical_schedule`: compatible block columns, quotas,
+  daily concentration, cyclical but separate expected ICU/ward profiles, full
+  witnesses, and compatible-room-day quota certificates. Post-ICU ward arrivals
+  follow the discrete ICU discharge distribution, and complete LOS tails are
+  periodized across the repeating cycle without double-counting cohorts.
+- Added sparse `robust_elective` using the Bertsimas--Sim dual counterpart, one
+  uncertainty auxiliary per admissible triple, deviations calibrated from
+  fitted empirical duration distributions, and witnesses sized against the
+  exact fractional Γ-budget.
+- Added `benchmark_loading`, based on the public Leeftink--Hans 2019 data and
+  design: auditable compressed three-parameter-lognormal specialty archetypes,
+  480-minute OR-days, the published 0.80--1.20 load grid, 0.025 load tolerance,
+  and visible expected/realized duration metadata. The documentation clearly
+  separates empirical duration fields from synthetic urgency, LOS, and
+  cross-specialty-volume assumptions.
+- Expanded tests to all six formulations: exact sparse sizing, empirical
+  parameter identities, global-RNG isolation, patient-path timing, witness
+  revalidation, LP-level certificates, and HiGHS status checks. Full result:
+  38,110 tests passed.
+
+## 2026-08-29 09:23 UTC (operating room scheduling category)
+
+**Previous Commit**: `5c890bc`
+
+**Summary**: New `operating_room_scheduling` category with three variants
+covering the operational levels of OR planning: elective surgery advance
+scheduling under a master surgical schedule, daily surgical case allocation
+and sequencing, and multi-day surgery planning with downstream ward/ICU beds.
+The package now has 42 categories.
+
+**Details**:
+- Formulations and data are grounded in the OR-scheduling literature: the
+  Cardoen-Demeulemeester-Beliën survey (EJOR 2010), the elective surgery
+  scheduling ILP of Marques-Captivo-Vaz Pato (OR Spectrum 2012), the
+  allocation-plus-sequencing MILP of Maaroufi-Camus-Korbaa (IEEE SMC 2016),
+  and the Leeftink & Hans benchmark case mixes (Journal of Scheduling 2018).
+- Shared data helpers (`_orsched_`-prefixed) generate the 11-specialty case
+  mix with per-specialty lognormal planned durations (Strum-May-Vargas,
+  Anesthesiology 2000) rounded to 5-minute granularity, master surgical
+  schedules (85-97% open OR-days, one specialty per block, 240/480/780-minute
+  sessions), surgeon pools whose per-specialty size follows the caseload with
+  240-480-minute daily budgets, 15-35-minute OR turnovers, and waiting lists
+  with urgent/semi-urgent/routine urgency classes, clinical deadlines, and
+  urgency-weighted postponement penalties.
+- `elective_assignment` (default): binary assignment of waiting-list surgeries
+  to admissible (surgery, room, day) block triples with block overtime
+  (capped, costly) and postponement; urgent cases are mandatory. Feasible
+  instances plant a greedy earliest-deadline/best-fit witness
+  (`feasible_witness`) and re-triage unplaceable urgent cases; infeasible
+  instances force an LP-level surgeon-shortage certificate (mandatory case
+  whose surgeon's budgeted minutes over its admissible days sum below its
+  duration, `infeasible_surgery`).
+- `case_sequencing`: daily allocation + sequencing with binary room/surgeon
+  assignment, big-M disjunctive no-overlap per shared room (OR turnover) and
+  shared surgeon (surgeon turnover), hard surgeon availability windows, and a
+  weighted-tardiness-plus-makespan objective. Surgeon windows are hard, so
+  feasibility is witnessed: capacity-aware surgeon assignment (per-specialty
+  pools ceiled to the caseload), home-room anchoring, and per-room contiguous
+  simulation produce a provably feasible schedule (`feasible_witness`), with
+  window extensions recorded as surgeons staying late. Infeasible instances
+  add a hard completion deadline below a surgery's own duration (LP-level,
+  the `job_shop_scheduling` pattern).
+- `weekly_planning`: binary surgery-to-day assignment against aggregate
+  specialty-day OR capacity, surgeon-day budgets, and day-by-day ward/ICU bed
+  occupancy windows from length-of-stay data (bed leveling); same witness and
+  surgeon-shortage certificate pattern as `elective_assignment`.
+- `unknown` requests keep urgent cases mandatory without a witness, so
+  feasibility is genuinely uncertain (measured mix: ~85% feasible for
+  `elective_assignment`, ~55% for `weekly_planning`).
+- Constructors iterate over waiting-list/case-count sizes, computing the
+  exact variable count of each sampled candidate (admissible-triple counts,
+  shared-resource pair counts), and land within ~5% of the target from 25 to
+  8,000+ variables.
+- Tests: registry wiring, per-variant data contracts (MSS/session consistency,
+  admissibility structure, pair-list exactness, big-M dominance), exact
+  variable-count formulas, witness re-validation against every capacity
+  family, certificate structure for both infeasibility modes, field-level
+  reproducibility, and HiGHS-verified feasibility contracts over multiple
+  seeds. Verified end-to-end: relaxed and unrelaxed feasibility contracts,
+  central `optimizer=` verification, dataset generation, and both CLI
+  scripts.
+
 ## 2026-08-28 23:18 UTC (basis-pursuit sparse certificate coverage)
 
 **Previous Commit**: `842580f`

@@ -15,7 +15,7 @@ This package provides:
 
 ## Problem Types
 
-The package includes generators for 41 common LP/MIP problem categories, all
+The package includes generators for 42 common LP/MIP problem categories, all
 unified with a standardized interface. Each category groups one or more
 **variants** — concrete formulations with their own data generation and model
 structure (see [Categories and Variants](#categories-and-variants)). Categories
@@ -46,6 +46,7 @@ with more than one variant are annotated below.
 - Maritime Inventory Routing
 - Neural Network Verification
 - Nurse Scheduling
+- Operating Room Scheduling — variants: `elective_assignment` (advance scheduling to MSS blocks), `case_sequencing` (daily allocation + sequencing), `weekly_planning` (multi-day planning with sequential ICU-to-ward beds), `master_surgical_schedule` (tactical cyclic block allocation), `robust_elective` (sparse Bertsimas--Sim duration uncertainty), `benchmark_loading` (Leeftink--Hans empirical case types and load factors); see [generator notes](docs/operating_room_scheduling.md)
 - Product Mix
 - Project Selection
 - Regression — variants: `lad`, `quantile`, `chebyshev`, `basis_pursuit` (weighted sparse recovery)
