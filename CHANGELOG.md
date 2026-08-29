@@ -4,6 +4,39 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-29 22:43 UTC (feed-blending quality pass)
+
+**Previous Commit**: `1c87ef5`
+
+**Summary**: Rebuilt feed blending around role-correlated synthetic data and
+typed average-content bounds, eliminating the string-parsing defect that could
+turn a certified maximum into a minimum and make requested-infeasible instances
+feasible.
+
+**Details**:
+- Added explicit ingredient and nutrient roles with correlated costs,
+  concentrations, sparsity, and availability. Empty nutrient rows and ingredient
+  columns are repaired with role-aware values, while the ingredient count still
+  tracks the requested target exactly above the three-variable floor.
+- Replaced diagnostic-string ratio tuples with `FeedRatioConstraint` and
+  `FeedRatioSense`. Named `ratio_min` and `ratio_max` row families now select the
+  inequality direction from the enum, fixing the former "maximum below
+  achievable minimum" regression.
+- Feasible requests now store a complete availability-respecting recipe. A
+  solver-free checker validates its batch balance, ingredient limits, nutrient
+  totals, and all typed ratio rows.
+- Infeasible requests start from that feasible baseline and inject one of four
+  independently checkable contradictions: a ratio minimum above its exact
+  attainable maximum, a ratio maximum below its exact attainable minimum, a
+  nutrient-total floor above its exact maximum, or aggregate ingredient
+  capacity below the batch mass.
+- Isolated randomness in a local `MersenneTwister`, rewrote the category
+  documentation with consistent units and formulation details, and added focused
+  tests for sizing, determinism, RNG isolation, coefficient directions,
+  witnesses, certificates, and solver status. Broad validation covered 500
+  feasible and 500 infeasible instances with zero HiGHS status mismatches, plus
+  2,700 constructor/status combinations.
+
 ## 2026-08-29 22:41 UTC (land-use quality pass)
 
 **Previous Commit**: `ac7206a`
