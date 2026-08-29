@@ -222,7 +222,10 @@ The corpus deliberately mixes three model classes; treat the names accordingly:
   formulations: `elective_assignment` (binary surgery-to-block assignment),
   `weekly_planning` (binary surgery-to-day assignment with bed occupancy), and
   `case_sequencing` (binary room/surgeon assignment plus big-M ordering
-  variables). These are real mixed-integer formulations.
+  variables), plus `master_surgical_schedule` (binary tactical block design),
+  `robust_elective` (a sparse budgeted-uncertainty counterpart), and
+  `benchmark_loading` (empirically calibrated OR-day assignment). These are
+  real mixed-integer formulations.
 - **LP relaxations of MIPs**: continuous relaxations of integer models, useful as
   LP-solver test instances but *not* directly implementable integer solutions —
   notably `nurse_scheduling` (fractional rosters), `unit_commitment`

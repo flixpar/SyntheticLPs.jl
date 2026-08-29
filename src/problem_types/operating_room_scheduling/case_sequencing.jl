@@ -128,7 +128,7 @@ end
 # times come from a serial pass respecting room/surgeon disjunctions and
 # windows. Returns `(assigned_room, assigned_surgeon, start, window_end,
 # eligible_surgeons)` with windows/eligibility possibly repaired.
-function _sequencing_build_schedule(durations::Vector{Float64},
+function _sequencing_build_schedule(rng::AbstractRNG, durations::Vector{Float64},
                                     eligible_rooms::Vector{Vector{Int}},
                                     eligible_surgeons::Vector{Vector{Int}},
                                     surgeon_specialty_idx::Vector{Int},
@@ -160,7 +160,7 @@ function _sequencing_build_schedule(durations::Vector{Float64},
             # No eligible surgeon fits: extend eligibility to the same-specialty
             # surgeon with the most remaining capacity.
             pool = findall(==(surgery_specialty_idx[o]), surgeon_specialty_idx)
-            for s in shuffle(pool)
+            for s in shuffle(rng, pool)
                 slack = 0.92 * (window_end[s] - window_start[s]) -
                         (load[s] + (load[s] > 0 ? surgeon_turnover : 0.0) + durations[o])
                 if slack > best_slack
@@ -300,7 +300,7 @@ and keeps the closest one.
 - `seed`: Random seed for reproducibility
 """
 function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     target = max(target_variables, 20)
 
@@ -310,20 +310,20 @@ function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status
     # utilization), with the tier value as a minimum suite size.
     if target <= 150
         n_rooms_min = 2
-        n_specs = rand(2:3)
+        n_specs = rand(rng, 2:3)
     elseif target <= 700
-        n_rooms_min = rand(2:4)
-        n_specs = rand(2:4)
+        n_rooms_min = rand(rng, 2:4)
+        n_specs = rand(rng, 2:4)
     elseif target <= 3000
-        n_rooms_min = rand(3:5)
-        n_specs = rand(3:5)
+        n_rooms_min = rand(rng, 3:5)
+        n_specs = rand(rng, 3:5)
     else
-        n_rooms_min = rand(4:7)
-        n_specs = rand(4:7)
+        n_rooms_min = rand(rng, 4:7)
+        n_specs = rand(rng, 4:7)
     end
 
-    room_turnover = 5.0 * round(rand(Uniform(15.0, 35.0)) / 5.0)
-    surgeon_turnover = 5.0 * round(rand(Uniform(10.0, 20.0)) / 5.0)
+    room_turnover = 5.0 * round(rand(rng, Uniform(15.0, 35.0)) / 5.0)
+    surgeon_turnover = 5.0 * round(rand(rng, Uniform(10.0, 20.0)) / 5.0)
 
     best = nothing
     best_gap = Inf
@@ -331,7 +331,7 @@ function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status
     n_surgeries = max(4, round(Int, sqrt(target / max(1.0, n_rooms_min * 0.6))))
 
     for _ in 1:60
-        spec_ids = _orsched_case_mix(n_specs)
+        spec_ids = _orsched_case_mix(rng, n_specs)
 
         durations = Vector{Float64}(undef, n_surgeries)
         specialties = Vector{Symbol}(undef, n_surgeries)
@@ -339,9 +339,11 @@ function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status
         weights = [_ORSCHED_SPECIALTIES[k].weight for k in spec_ids]
         cum = cumsum(weights ./ sum(weights))
         for o in 1:n_surgeries
-            k = _orsched_pick(cum)
+            k = _orsched_pick(rng, cum)
             profile = _ORSCHED_SPECIALTIES[spec_ids[k]]
-            durations[o] = _orsched_sample_duration(profile.mean, profile.cv)
+            surgery_type = _orsched_sample_benchmark_type(rng, spec_ids[k])
+            durations[o] = clamp(5.0 * round(_orsched_type_mean(surgery_type) / 5.0),
+                                 20.0, 480.0)
             specialties[o] = profile.name
             spec_index[o] = spec_ids[k]
         end
@@ -357,7 +359,8 @@ function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status
             isempty(cases_k) && continue
             eff_load_k = sum(durations[o] for o in cases_k) +
                          length(cases_k) * surgeon_turnover
-            n_k = max(1, ceil(Int, eff_load_k / (0.85 * 480.0) * rand(Uniform(1.0, 1.2))))
+            n_k = max(1, ceil(Int, eff_load_k / (0.85 * 480.0) *
+                                               rand(rng, Uniform(1.0, 1.2))))
             append!(surgeon_specialty, fill(k, n_k))
         end
         n_surgeons = length(surgeon_specialty)
@@ -369,13 +372,13 @@ function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status
         window_end = Vector{Float64}(undef, n_surgeons)
         seen_specialty = Set{Int}()
         for s in 1:n_surgeons
-            u = rand()
+            u = rand(rng)
             if !(surgeon_specialty[s] in seen_specialty) || u < 0.55
                 window_start[s], window_end[s] = 0.0, 480.0
             elseif u < 0.75
-                window_start[s], window_end[s] = 0.0, 5.0 * round(rand(Uniform(210.0, 300.0)) / 5.0)
+                window_start[s], window_end[s] = 0.0, 5.0 * round(rand(rng, Uniform(210.0, 300.0)) / 5.0)
             else
-                window_start[s], window_end[s] = 5.0 * round(rand(Uniform(180.0, 300.0)) / 5.0), 480.0
+                window_start[s], window_end[s] = 5.0 * round(rand(rng, Uniform(180.0, 300.0)) / 5.0), 480.0
             end
             push!(seen_specialty, surgeon_specialty[s])
         end
@@ -389,7 +392,7 @@ function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status
             eff_load_k = sum(durations[o] for o in cases_k; init=0.0) +
                          length(cases_k) * surgeon_turnover
             cap_k() = sum(0.85 * (window_end[s] - window_start[s]) for s in pool)
-            for s in shuffle(pool)
+            for s in shuffle(rng, pool)
                 cap_k() >= 1.02 * eff_load_k && break
                 window_start[s], window_end[s] = 0.0, 480.0
             end
@@ -403,32 +406,32 @@ function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status
         total_minutes = sum(durations) + n_surgeries * room_turnover +
                         0.7 * idle_allowance
         n_rooms = max(n_rooms_min,
-                      ceil(Int, total_minutes / (480.0 * rand(Uniform(0.75, 0.95)))))
+                      ceil(Int, total_minutes / (480.0 * rand(rng, Uniform(0.75, 0.95)))))
 
         # Eligible surgeons: one or two surgeons of the surgery's specialty.
         eligible_surgeons = Vector{Vector{Int}}(undef, n_surgeries)
         for o in 1:n_surgeries
             pool = findall(==(spec_index[o]), surgeon_specialty)
-            eligible_surgeons[o] = rand() < 0.65 ? [rand(pool)] :
-                                   shuffle(pool)[1:min(2, length(pool))]
+            eligible_surgeons[o] = rand(rng) < 0.65 ? [rand(rng, pool)] :
+                                   shuffle(rng, pool)[1:min(2, length(pool))]
         end
 
         # Eligible rooms: most surgeries can use any room; some need specially
         # equipped rooms (hybrid OR, robotics) and are restricted to a subset.
         eligible_rooms = Vector{Vector{Int}}(undef, n_surgeries)
         for o in 1:n_surgeries
-            if rand() < 0.75 || n_rooms == 1
+            if rand(rng) < 0.75 || n_rooms == 1
                 eligible_rooms[o] = collect(1:n_rooms)
             else
-                k = rand(1:max(1, n_rooms ÷ 2))
-                eligible_rooms[o] = sort(randperm(n_rooms)[1:k])
+                k = rand(rng, 1:max(1, n_rooms ÷ 2))
+                eligible_rooms[o] = sort(randperm(rng, n_rooms)[1:k])
             end
         end
 
         # Feasible schedule (witness): capacity-aware assignment + simulation;
         # may repair eligibility and window ends.
         assigned_room, assigned_surgeon, start, final_window_end, final_eligible =
-            _sequencing_build_schedule(durations, eligible_rooms, eligible_surgeons,
+            _sequencing_build_schedule(rng, durations, eligible_rooms, eligible_surgeons,
                                        surgeon_specialty, spec_index,
                                        window_start, window_end,
                                        room_turnover, surgeon_turnover)
@@ -466,10 +469,10 @@ function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status
     target_end = fill(480.0, n_surgeries)
     tardiness_weight = Vector{Float64}(undef, n_surgeries)
     for o in 1:n_surgeries
-        u = rand()
-        tardiness_weight[o] = u < 0.12 ? rand(Uniform(4.0, 8.0)) :
-                              u < 0.40 ? rand(Uniform(2.0, 4.0)) :
-                              rand(Uniform(0.5, 2.0))
+        u = rand(rng)
+        tardiness_weight[o] = u < 0.12 ? rand(rng, Uniform(4.0, 8.0)) :
+                              u < 0.40 ? rand(rng, Uniform(2.0, 4.0)) :
+                              rand(rng, Uniform(0.5, 2.0))
     end
 
     # Big-M valid for every feasible start: starts complete within a surgeon

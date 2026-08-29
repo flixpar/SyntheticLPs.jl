@@ -18,10 +18,10 @@ offers aggregate OR minutes per specialty (the sum of that day's master
 surgical schedule blocks for the specialty) and each surgeon a daily
 operating-time budget. A surgery is admissible to a day when its specialty has
 capacity, its surgeon works, and the day is within its clinical deadline.
-Scheduled cases occupy a ward bed for their length of stay (0-8 days by
-specialty; day cases need none) and, for a specialty-dependent fraction, an
-ICU bed for 1-2 days, so day-by-day bed occupancy must stay within effective
-capacity (beds net of non-surgical background occupancy). Surgeries may be
+Scheduled cases follow a sequential ICU-to-ward path: cases needing ICU use an
+ICU bed for 1-2 days and start their post-ICU ward stay only after discharge;
+other admitted cases enter the ward directly. Occupancy is constrained through
+discharge beyond the last surgery day. Surgeries may be
 postponed at an urgency-weighted penalty, except clinically urgent cases,
 which are mandatory. Scheduling earlier in the horizon is mildly preferred
 (waiting-time reduction), so the objective combines postponement penalties
@@ -41,9 +41,9 @@ Minimize postponement penalties plus day-preference costs, subject to:
 # Feasibility control
 Same pattern as the `elective_assignment` variant: for `feasible` instances a
 greedy earliest-deadline schedule respecting all four capacity families is
-built first (stored as `feasible_witness`, the scheduled day per surgery), and
-urgent cases the heuristic cannot place are re-triaged to semi-urgent, so the
-witness provably satisfies every row. For `infeasible` instances one surgery
+built first (stored as `feasible_witness`, the scheduled day per surgery), then
+mandatory urgent cases are designated from the scheduled set. For `infeasible`
+instances one surgery
 is made mandatory and its surgeon's budgets are shrunk below what its
 admissible days would need — an LP-level contradiction with the mandatory
 assignment row (`infeasible_surgery` records the case). For `unknown`, urgent
@@ -78,6 +78,7 @@ cases stay mandatory regardless, so feasibility is genuinely uncertain.
 struct WeeklySurgeryPlanningProblem <: ProblemGenerator
     n_surgeries::Int
     n_days::Int
+    bed_horizon::Int
     n_specialties::Int
     specialty_names::Vector{Symbol}
     surgery_specialty::Vector{Int}
@@ -132,23 +133,25 @@ sampled instance, and keeps the closest one.
 - `seed`: Random seed for reproducibility
 """
 function WeeklySurgeryPlanningProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     target = max(target_variables, 20)
-    n_rooms, n_days, n_specs = _orsched_hospital_scale(target)
-    turnover = 5.0 * round(rand(Uniform(15.0, 35.0)) / 5.0)
+    n_rooms, n_days, n_specs = _orsched_hospital_scale(rng, target)
+    turnover = 5.0 * round(rand(rng, Uniform(15.0, 35.0)) / 5.0)
 
     best = nothing
     best_gap = Inf
     n_surgeries = max(4, round(Int, target / 5.0))
 
     for _ in 1:60
-        spec_ids = _orsched_case_mix(n_specs)
-        mss, session = _orsched_master_schedule(n_rooms, n_days, spec_ids)
-        wl = _orsched_waiting_list(n_surgeries, spec_ids, n_days; with_los=true)
+        spec_ids = _orsched_case_mix(rng, n_specs)
+        mss, session = _orsched_master_schedule(rng, n_rooms, n_days, spec_ids)
+        wl = _orsched_waiting_list(rng, n_surgeries, spec_ids, n_days;
+                                   with_los=true,
+                                   allow_urgent=feasibility_status != feasible)
         counts = [count(==(k), wl.specialty) for k in 1:n_specs]
-        surgeon_specialty, surgeon_budget = _orsched_surgeon_pool(counts, n_days, mss)
-        surgery_surgeon = _elective_assign_surgeons(wl.specialty, surgeon_specialty)
+        surgeon_specialty, surgeon_budget = _orsched_surgeon_pool(rng, counts, n_days, mss)
+        surgery_surgeon = _elective_assign_surgeons(rng, wl.specialty, surgeon_specialty)
 
         # Aggregate OR minutes per (specialty, day) from the master schedule.
         specialty_capacity = zeros(Float64, n_specs, n_days)
@@ -191,31 +194,29 @@ function WeeklySurgeryPlanningProblem(target_variables::Int, feasibility_status:
     penalty = collect(wl.penalty)
     day_cost = [0.02 * penalty[i] for i in 1:n_surgeries]
 
-    # Effective bed capacities: supply slightly above the list's average daily
-    # bed-day demand, with day-to-day fluctuation from background occupancy.
+    # Keep post-operative occupancy through discharge even for cases placed on
+    # the last surgery day.  Ward occupancy starts after ICU discharge; the two
+    # resources are never consumed simultaneously by one patient.
+    max_path = maximum(wl.icu_los .+ wl.ward_los)
+    bed_horizon = n_days + max(0, max_path - 1)
+
+    # Effective bed capacities: supply slightly above average daily demand,
+    # with day-to-day fluctuation from background occupancy.
     ward_demand = sum(wl.ward_los) / n_days
-    ward_capacity = [max(1.0, round(ward_demand * rand(Uniform(1.05, 1.35)) *
-                                    rand(Uniform(0.85, 1.15)))) for _ in 1:n_days]
+    ward_capacity = [max(1.0, round(ward_demand * rand(rng, Uniform(1.05, 1.35)) *
+                                    rand(rng, Uniform(0.85, 1.15))))
+                     for _ in 1:bed_horizon]
     icu_demand = sum(wl.icu_los) / n_days
     icu_capacity = if any(>(0), wl.icu_los)
-        [max(1.0, round(icu_demand * rand(Uniform(1.1, 1.5)) * rand(Uniform(0.85, 1.15))))
-         for _ in 1:n_days]
+        [max(1.0, round(icu_demand * rand(rng, Uniform(1.1, 1.5)) *
+                         rand(rng, Uniform(0.85, 1.15)))) for _ in 1:bed_horizon]
     else
-        zeros(Float64, n_days)
-    end
-
-    # Re-triage urgent cases with no admissible day at all (every status), so
-    # infeasibility is never a trivial empty-option-set artifact.
-    for i in 1:n_surgeries
-        if urgency[i] == :urgent && isempty(admissible_days[i])
-            urgency[i] = :semi_urgent
-            penalty[i] = rand(Uniform(5.0, 25.0)) * rand(Uniform(2.0, 4.0))
-            day_cost[i] = 0.02 * penalty[i]
-        end
+        zeros(Float64, bed_horizon)
     end
 
     witness = nothing
     infeasible_surgery = nothing
+    mandatory = BitVector(urgency[i] == :urgent for i in 1:n_surgeries)
 
     if feasibility_status == feasible
         # Greedy earliest-deadline schedule respecting specialty-day OR
@@ -227,10 +228,8 @@ function WeeklySurgeryPlanningProblem(target_variables::Int, feasibility_status:
         function consume!(day::Int, i::Int)
             need_or = wl.duration[i] + turnover
             need_surg = wl.duration[i]
-            ward_days = wl.ward_los[i] > 0 ?
-                collect(day:min(n_days, day + wl.ward_los[i] - 1)) : Int[]
-            icu_days = wl.icu_los[i] > 0 ?
-                collect(day:min(n_days, day + wl.icu_los[i] - 1)) : Int[]
+            icu_days, ward_days = _orsched_postop_days(day, wl.icu_los[i],
+                                                       wl.ward_los[i], bed_horizon)
             if rem_spec[wl.specialty[i], day] >= need_or &&
                rem_surg[surgery_surgeon[i], day] >= need_surg &&
                all(rem_ward[t] >= 1 for t in ward_days) &&
@@ -250,18 +249,18 @@ function WeeklySurgeryPlanningProblem(target_variables::Int, feasibility_status:
         assignment = _orsched_greedy_schedule(n_surgeries, urgency, deadline,
                                               wl.duration, admissible_days,
                                               n_days, consume!)
-        # Re-triage urgent cases the heuristic could not place; the witness is
-        # then a provably feasible point (postpone = 1 for unscheduled cases).
-        for i in 1:n_surgeries
-            if urgency[i] == :urgent && assignment[i] == 0
-                urgency[i] = :semi_urgent
-            end
-        end
+        mandatory = _orsched_designate_mandatory!(rng, urgency, deadline, penalty,
+                                                  assignment,
+                                                  wl.requested_urgent_fraction)
+        day_cost .= 0.02 .* penalty
         witness = assignment
     elseif feasibility_status == infeasible
         candidates = [i for i in 1:n_surgeries if !isempty(admissible_days[i])]
         if isempty(candidates)
             deadline[1] = n_days
+            days_with_capacity = [d for d in 1:n_days
+                                  if specialty_capacity[wl.specialty[1], d] > 0]
+            surgeon_budget[surgery_surgeon[1], first(days_with_capacity)] = wl.duration[1]
             admissible_days = _weekly_admissible_days(n_surgeries, wl.specialty, deadline,
                                                       surgery_surgeon, surgeon_budget,
                                                       specialty_capacity, n_days)
@@ -272,16 +271,15 @@ function WeeklySurgeryPlanningProblem(target_variables::Int, feasibility_status:
         _orsched_inject_surgeon_shortage!(surgeon_budget, surgeon,
                                           wl.duration[victim], admissible_days[victim])
         urgency[victim] = :urgent
+        mandatory[victim] = true
         infeasible_surgery = victim
         admissible_days = _weekly_admissible_days(n_surgeries, wl.specialty, deadline,
                                                   surgery_surgeon, surgeon_budget,
                                                   specialty_capacity, n_days)
     end
 
-    mandatory = BitVector(urgency[i] == :urgent for i in 1:n_surgeries)
-
     return WeeklySurgeryPlanningProblem(
-        n_surgeries, n_days, n_specs, specialty_names,
+        n_surgeries, n_days, bed_horizon, n_specs, specialty_names,
         wl.specialty, wl.duration, urgency, deadline, penalty, day_cost,
         surgery_surgeon, wl.ward_los, wl.icu_los, mandatory,
         surgeon_specialty, surgeon_budget, specialty_capacity, turnover,
@@ -340,14 +338,15 @@ function build_model(prob::WeeklySurgeryPlanningProblem)
             prob.surgeon_budget[s, d])
     end
 
-    # Ward bed occupancy per day: a surgery scheduled on day d occupies a bed
-    # on days d .. d + los - 1 (clamped to the horizon).
-    for t in 1:n_days
+    # Sequential ICU -> ward patient path.  The extended bed horizon prevents
+    # last-day cases from escaping downstream capacity constraints.
+    for t in 1:prob.bed_horizon
         terms = Tuple{Int,Int}[]
         for i in 1:n_surgeries
             prob.ward_los[i] > 0 || continue
             for d in admissible_days[i]
-                if d <= t <= min(n_days, d + prob.ward_los[i] - 1)
+                ward_start = d + prob.icu_los[i]
+                if ward_start <= t <= ward_start + prob.ward_los[i] - 1
                     push!(terms, (i, d))
                 end
             end
@@ -357,12 +356,12 @@ function build_model(prob::WeeklySurgeryPlanningProblem)
     end
 
     # ICU bed occupancy per day.
-    for t in 1:n_days
+    for t in 1:prob.bed_horizon
         terms = Tuple{Int,Int}[]
         for i in 1:n_surgeries
             prob.icu_los[i] > 0 || continue
             for d in admissible_days[i]
-                if d <= t <= min(n_days, d + prob.icu_los[i] - 1)
+                if d <= t <= d + prob.icu_los[i] - 1
                     push!(terms, (i, d))
                 end
             end

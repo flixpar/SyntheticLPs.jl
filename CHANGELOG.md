@@ -4,6 +4,45 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-29 14:01 UTC (operating room scheduling refinement and combination)
+
+**Previous Commit**: `49a6bc3`
+
+**Summary**: Hardened PR #43's three OR-scheduling generators and combined the
+non-duplicate tactical/robust ideas from the alternative branch into a
+six-variant family, including a dedicated Leeftink--Hans benchmark-informed
+loading generator.
+
+**Details**:
+- Fixed the MSS quota repair so it only reassigns unallocated blocks or donors
+  above quota, and fixed case-mix repair so short- and long-duration services
+  cannot overwrite each other. Both helpers now have multi-seed regression
+  sweeps.
+- Replaced global seeding with constructor-local `MersenneTwister`s throughout
+  the family. Feasible waiting-list generators plant a schedule before
+  designating mandatory cases and no longer downgrade urgency to repair a
+  heuristic failure.
+- Changed weekly recovery from simultaneous ICU/ward occupancy to a sequential
+  ICU-to-ward patient path and extended bed constraints through discharge past
+  the final surgery day.
+- Added sparse `master_surgical_schedule`: compatible block columns, quotas,
+  daily concentration, cyclical but separate expected ICU/ward profiles, full
+  witnesses, and compatible-room-day quota certificates.
+- Added sparse `robust_elective` using the Bertsimas--Sim dual counterpart, one
+  uncertainty auxiliary per admissible triple, deviations calibrated from
+  fitted empirical duration distributions, and witnesses sized against the
+  exact fractional Γ-budget.
+- Added `benchmark_loading`, based on the public Leeftink--Hans 2019 data and
+  design: auditable compressed three-parameter-lognormal specialty archetypes,
+  480-minute OR-days, the published 0.80--1.20 load grid, 0.025 load tolerance,
+  and visible expected/realized duration metadata. The documentation clearly
+  separates empirical duration fields from synthetic urgency, LOS, and
+  cross-specialty-volume assumptions.
+- Expanded tests to all six formulations: exact sparse sizing, empirical
+  parameter identities, global-RNG isolation, patient-path timing, witness
+  revalidation, LP-level certificates, and HiGHS status checks. Full result:
+  38,110 tests passed.
+
 ## 2026-08-29 09:23 UTC (operating room scheduling category)
 
 **Previous Commit**: `5c890bc`

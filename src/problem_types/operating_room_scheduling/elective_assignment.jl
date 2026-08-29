@@ -35,10 +35,10 @@ Minimize total postponement penalty plus overtime cost, subject to:
 
 # Feasibility control
 For `feasible` instances a greedy earliest-deadline/best-fit schedule is
-constructed first (urgent cases never use overtime in the witness), urgent
-cases the heuristic could not place are downgraded to semi-urgent, and the
-resulting assignment is stored in `feasible_witness` as admissible-triple
-indices — a provably feasible point. For `infeasible` instances one surgery is
+constructed first; mandatory urgent cases are then designated from cases in
+that schedule, so urgency is never weakened to repair feasibility. The
+assignment is stored in `feasible_witness` as admissible-triple indices — a
+provably feasible point. For `infeasible` instances one surgery is
 made mandatory and its surgeon's budgets are shrunk so the budgeted minutes
 over the surgery's admissible days total less than its duration; summing that
 surgeon's day rows contradicts the mandatory assignment row already in the LP
@@ -79,6 +79,8 @@ struct ElectiveSurgeryAssignmentProblem <: ProblemGenerator
     specialty_names::Vector{Symbol}
     surgery_specialty::Vector{Int}
     surgery_duration::Vector{Float64}
+    surgery_duration_sd::Vector{Float64}
+    surgery_type_id::Vector{Int}
     surgery_urgency::Vector{Symbol}
     surgery_deadline::Vector{Int}
     postponement_penalty::Vector{Float64}
@@ -117,11 +119,12 @@ end
 # Assign each surgery a surgeon of its specialty, rotating so surgeon caseloads
 # stay balanced. Specialties without a surgeon cannot occur: the surgeon pool
 # creates at least one surgeon per specialty that has cases.
-function _elective_assign_surgeons(surgery_specialty::Vector{Int}, surgeon_specialty::Vector{Int})
+function _elective_assign_surgeons(rng::AbstractRNG, surgery_specialty::Vector{Int},
+                                   surgeon_specialty::Vector{Int})
     pools = Dict(k => findall(==(k), surgeon_specialty) for k in unique(surgeon_specialty))
     assignment = Vector{Int}(undef, length(surgery_specialty))
     for k in keys(pools)
-        cases = shuffle(findall(==(k), surgery_specialty))
+        cases = shuffle(rng, findall(==(k), surgery_specialty))
         pool = pools[k]
         for (offset, i) in enumerate(cases)
             assignment[i] = pool[mod1(offset, length(pool))]
@@ -144,13 +147,13 @@ count of each sampled instance, and keeps the closest one.
 - `seed`: Random seed for reproducibility
 """
 function ElectiveSurgeryAssignmentProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     target = max(target_variables, 20)
-    n_rooms, n_days, n_specs = _orsched_hospital_scale(target)
-    turnover = 5.0 * round(rand(Uniform(15.0, 35.0)) / 5.0)
-    max_overtime = 5.0 * round(rand(Uniform(60.0, 120.0)) / 5.0)
-    overtime_cost = rand(Uniform(2.0, 6.0))
+    n_rooms, n_days, n_specs = _orsched_hospital_scale(rng, target)
+    turnover = 5.0 * round(rand(rng, Uniform(15.0, 35.0)) / 5.0)
+    max_overtime = 5.0 * round(rand(rng, Uniform(60.0, 120.0)) / 5.0)
+    overtime_cost = rand(rng, Uniform(2.0, 6.0))
     n_open_estimate = round(Int, n_rooms * n_days * 0.9)
 
     best = nothing
@@ -158,12 +161,13 @@ function ElectiveSurgeryAssignmentProblem(target_variables::Int, feasibility_sta
     n_surgeries = max(4, round(Int, (target - n_open_estimate) / 4.0))
 
     for _ in 1:60
-        spec_ids = _orsched_case_mix(n_specs)
-        mss, session = _orsched_master_schedule(n_rooms, n_days, spec_ids)
-        wl = _orsched_waiting_list(n_surgeries, spec_ids, n_days)
+        spec_ids = _orsched_case_mix(rng, n_specs)
+        mss, session = _orsched_master_schedule(rng, n_rooms, n_days, spec_ids)
+        wl = _orsched_waiting_list(rng, n_surgeries, spec_ids, n_days;
+                                   allow_urgent=feasibility_status != feasible)
         counts = [count(==(k), wl.specialty) for k in 1:n_specs]
-        surgeon_specialty, surgeon_budget = _orsched_surgeon_pool(counts, n_days, mss)
-        surgery_surgeon = _elective_assign_surgeons(wl.specialty, surgeon_specialty)
+        surgeon_specialty, surgeon_budget = _orsched_surgeon_pool(rng, counts, n_days, mss)
+        surgery_surgeon = _elective_assign_surgeons(rng, wl.specialty, surgeon_specialty)
         admissible = _elective_admissible_triples(n_surgeries, wl.specialty, wl.deadline,
                                                   surgery_surgeon, surgeon_budget, mss)
         open_blocks = [(r, d) for d in 1:n_days for r in 1:n_rooms if session[r, d] > 0]
@@ -198,29 +202,14 @@ function ElectiveSurgeryAssignmentProblem(target_variables::Int, feasibility_sta
     deadline = collect(wl.deadline)
     penalty = collect(wl.penalty)
 
-    # Re-triage urgent cases that have no admissible block at all this week
-    # (no matching block before their deadline on a day their surgeon works).
-    # Hospitals re-triage such cases rather than issuing an impossible mandate;
-    # this applies in every status so infeasibility is never a trivial
-    # empty-option-set artifact.
-    has_adm = falses(n_surgeries)
-    for t in admissible
-        has_adm[t[1]] = true
-    end
-    for i in 1:n_surgeries
-        if urgency[i] == :urgent && !has_adm[i]
-            urgency[i] = :semi_urgent
-            penalty[i] = rand(Uniform(5.0, 25.0)) * rand(Uniform(2.0, 4.0))
-        end
-    end
-
     witness = nothing
     infeasible_surgery = nothing
+    mandatory = BitVector(urgency[i] == :urgent for i in 1:n_surgeries)
 
     if feasibility_status == feasible
-        # Greedy schedule respecting block (session-length) capacity without
-        # overtime and surgeon-day budgets; urgent cases that cannot be placed
-        # are downgraded to semi-urgent so every remaining urgent case fits.
+        # Plant a schedule first and then designate mandatory cases from the
+        # scheduled set.  Clinical urgency is never weakened to repair the
+        # heuristic.
         slots_for = [Int[] for _ in 1:n_surgeries]
         for (a, (i, _, _)) in enumerate(admissible)
             push!(slots_for[i], a)
@@ -241,44 +230,9 @@ function ElectiveSurgeryAssignmentProblem(target_variables::Int, feasibility_sta
         assignment = _orsched_greedy_schedule(n_surgeries, urgency, deadline,
                                               wl.duration, slots_for,
                                               length(admissible), consume!)
-        for i in 1:n_surgeries
-            if urgency[i] == :urgent && assignment[i] == 0
-                urgency[i] = :semi_urgent
-                deadline[i] = max(deadline[i], min(n_days, max(2, (2 * n_days) ÷ 3)))
-                penalty[i] = rand(Uniform(5.0, 25.0)) * rand(Uniform(2.0, 4.0))
-            end
-        end
-        # Downgraded cases may have gained admissible triples (later deadline).
-        admissible = _elective_admissible_triples(n_surgeries, wl.specialty, deadline,
-                                                  surgery_surgeon, surgeon_budget, mss)
-        # Re-run the heuristic against the final admissible set for the witness.
-        slots_for = [Int[] for _ in 1:n_surgeries]
-        for (a, (i, _, _)) in enumerate(admissible)
-            push!(slots_for[i], a)
-        end
-        rem_room = copy(session)
-        rem_surg = copy(surgeon_budget)
-        function consume2!(a::Int, i::Int)
-            (_, r, d) = admissible[a]
-            need_room = wl.duration[i] + turnover
-            need_surg = wl.duration[i]
-            if rem_room[r, d] >= need_room && rem_surg[surgery_surgeon[i], d] >= need_surg
-                rem_room[r, d] -= need_room
-                rem_surg[surgery_surgeon[i], d] -= need_surg
-                return true
-            end
-            return false
-        end
-        assignment = _orsched_greedy_schedule(n_surgeries, urgency, deadline,
-                                              wl.duration, slots_for,
-                                              length(admissible), consume2!)
-        # Any mandatory (urgent) case still unplaced would break the contract;
-        # downgrade those too (their deadline extensions arrived too late).
-        for i in 1:n_surgeries
-            if urgency[i] == :urgent && assignment[i] == 0
-                urgency[i] = :semi_urgent
-            end
-        end
+        mandatory = _orsched_designate_mandatory!(rng, urgency, deadline, penalty,
+                                                  assignment,
+                                                  wl.requested_urgent_fraction)
         witness = [assignment[i] for i in 1:n_surgeries if assignment[i] > 0]
     elseif feasibility_status == infeasible
         # Pick the longest surgery with at least one admissible triple, make it
@@ -288,9 +242,11 @@ function ElectiveSurgeryAssignmentProblem(target_variables::Int, feasibility_sta
         candidates = [i for i in 1:n_surgeries
                       if any(t[1] == i for t in admissible)]
         if isempty(candidates)
-            # No surgery has an admissible triple (pathological sample): relax
-            # surgery 1's deadline to the horizon end so it gains triples.
+            # Repair one option without changing urgency: expose its surgeon on
+            # a matching MSS day, then use that case for the explicit certificate.
             deadline[1] = n_days
+            matching_days = [d for d in 1:n_days if any(mss[:, d] .== wl.specialty[1])]
+            surgeon_budget[surgery_surgeon[1], first(matching_days)] = wl.duration[1]
             admissible = _elective_admissible_triples(n_surgeries, wl.specialty, deadline,
                                                       surgery_surgeon, surgeon_budget, mss)
             candidates = [i for i in 1:n_surgeries
@@ -302,16 +258,16 @@ function ElectiveSurgeryAssignmentProblem(target_variables::Int, feasibility_sta
         _orsched_inject_surgeon_shortage!(surgeon_budget, surgeon,
                                           wl.duration[victim], working_days)
         urgency[victim] = :urgent
+        mandatory[victim] = true
         infeasible_surgery = victim
         admissible = _elective_admissible_triples(n_surgeries, wl.specialty, deadline,
                                                   surgery_surgeon, surgeon_budget, mss)
     end
 
-    mandatory = BitVector(urgency[i] == :urgent for i in 1:n_surgeries)
-
     return ElectiveSurgeryAssignmentProblem(
         n_surgeries, n_rooms, n_days, n_specs,
-        specialty_names, wl.specialty, wl.duration, urgency, deadline, penalty,
+        specialty_names, wl.specialty, wl.duration, wl.duration_sd, wl.source_type,
+        urgency, deadline, penalty,
         surgery_surgeon, mandatory, surgeon_specialty, surgeon_budget,
         mss, session, turnover, max_overtime, overtime_cost,
         admissible, open_blocks, witness, infeasible_surgery, feasibility_status,

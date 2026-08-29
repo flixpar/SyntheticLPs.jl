@@ -55,6 +55,7 @@ where relaxation changes the solved model.
 - [Load Balancing](load_balancing.md)
 - [Multi-Commodity Flow](multi_commodity_flow.md)
 - [Network Flow](network_flow.md)
+- [Operating Room Scheduling](operating_room_scheduling.md)
 - [Portfolio](portfolio.md)
 - [Product Mix](product_mix.md)
 - [Production Planning](production_planning.md)
