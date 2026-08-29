@@ -4,6 +4,68 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-29 09:23 UTC (operating room scheduling category)
+
+**Previous Commit**: `5c890bc`
+
+**Summary**: New `operating_room_scheduling` category with three variants
+covering the operational levels of OR planning: elective surgery advance
+scheduling under a master surgical schedule, daily surgical case allocation
+and sequencing, and multi-day surgery planning with downstream ward/ICU beds.
+The package now has 42 categories.
+
+**Details**:
+- Formulations and data are grounded in the OR-scheduling literature: the
+  Cardoen-Demeulemeester-Beliën survey (EJOR 2010), the elective surgery
+  scheduling ILP of Marques-Captivo-Vaz Pato (OR Spectrum 2012), the
+  allocation-plus-sequencing MILP of Maaroufi-Camus-Korbaa (IEEE SMC 2016),
+  and the Leeftink & Hans benchmark case mixes (Journal of Scheduling 2018).
+- Shared data helpers (`_orsched_`-prefixed) generate the 11-specialty case
+  mix with per-specialty lognormal planned durations (Strum-May-Vargas,
+  Anesthesiology 2000) rounded to 5-minute granularity, master surgical
+  schedules (85-97% open OR-days, one specialty per block, 240/480/780-minute
+  sessions), surgeon pools whose per-specialty size follows the caseload with
+  240-480-minute daily budgets, 15-35-minute OR turnovers, and waiting lists
+  with urgent/semi-urgent/routine urgency classes, clinical deadlines, and
+  urgency-weighted postponement penalties.
+- `elective_assignment` (default): binary assignment of waiting-list surgeries
+  to admissible (surgery, room, day) block triples with block overtime
+  (capped, costly) and postponement; urgent cases are mandatory. Feasible
+  instances plant a greedy earliest-deadline/best-fit witness
+  (`feasible_witness`) and re-triage unplaceable urgent cases; infeasible
+  instances force an LP-level surgeon-shortage certificate (mandatory case
+  whose surgeon's budgeted minutes over its admissible days sum below its
+  duration, `infeasible_surgery`).
+- `case_sequencing`: daily allocation + sequencing with binary room/surgeon
+  assignment, big-M disjunctive no-overlap per shared room (OR turnover) and
+  shared surgeon (surgeon turnover), hard surgeon availability windows, and a
+  weighted-tardiness-plus-makespan objective. Surgeon windows are hard, so
+  feasibility is witnessed: capacity-aware surgeon assignment (per-specialty
+  pools ceiled to the caseload), home-room anchoring, and per-room contiguous
+  simulation produce a provably feasible schedule (`feasible_witness`), with
+  window extensions recorded as surgeons staying late. Infeasible instances
+  add a hard completion deadline below a surgery's own duration (LP-level,
+  the `job_shop_scheduling` pattern).
+- `weekly_planning`: binary surgery-to-day assignment against aggregate
+  specialty-day OR capacity, surgeon-day budgets, and day-by-day ward/ICU bed
+  occupancy windows from length-of-stay data (bed leveling); same witness and
+  surgeon-shortage certificate pattern as `elective_assignment`.
+- `unknown` requests keep urgent cases mandatory without a witness, so
+  feasibility is genuinely uncertain (measured mix: ~85% feasible for
+  `elective_assignment`, ~55% for `weekly_planning`).
+- Constructors iterate over waiting-list/case-count sizes, computing the
+  exact variable count of each sampled candidate (admissible-triple counts,
+  shared-resource pair counts), and land within ~5% of the target from 25 to
+  8,000+ variables.
+- Tests: registry wiring, per-variant data contracts (MSS/session consistency,
+  admissibility structure, pair-list exactness, big-M dominance), exact
+  variable-count formulas, witness re-validation against every capacity
+  family, certificate structure for both infeasibility modes, field-level
+  reproducibility, and HiGHS-verified feasibility contracts over multiple
+  seeds. Verified end-to-end: relaxed and unrelaxed feasibility contracts,
+  central `optimizer=` verification, dataset generation, and both CLI
+  scripts.
+
 ## 2026-08-28 23:18 UTC (basis-pursuit sparse certificate coverage)
 
 **Previous Commit**: `842580f`

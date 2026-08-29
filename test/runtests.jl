@@ -1124,6 +1124,236 @@ end
         end
     end
 
+    # Operating room scheduling: registry wiring, data contracts,
+    # variable-count formulas, witness validity, and certificate structure.
+    @testset "Operating Room Scheduling" begin
+        @test :operating_room_scheduling in list_categories()
+        @test list_variants(:operating_room_scheduling) ==
+              [:case_sequencing, :elective_assignment, :weekly_planning]
+        @test problem_info(:operating_room_scheduling)[:default_variant] ==
+              :elective_assignment
+        @test ProblemVariant("operating_room_scheduling") ==
+              ProblemVariant(:operating_room_scheduling, :elective_assignment)
+
+        elective_ref = ProblemVariant(:operating_room_scheduling, :elective_assignment)
+        sequencing_ref = ProblemVariant(:operating_room_scheduling, :case_sequencing)
+        weekly_ref = ProblemVariant(:operating_room_scheduling, :weekly_planning)
+
+        # --- elective_assignment data contracts and exact variable count ---
+        for seed in 0:3, target in (100, 500)
+            model, p = generate_problem(elective_ref, target, feasible, seed)
+            @test num_variables(model) ==
+                  length(p.admissible) + p.n_surgeries + length(p.open_blocks)
+            @test all(20.0 <= d <= 480.0 for d in p.surgery_duration)
+            @test all(1 <= p.surgery_deadline[i] <= p.n_days for i in 1:p.n_surgeries)
+            @test all((p.mss[r, d] == 0) == (p.session_length[r, d] == 0)
+                      for r in 1:p.n_rooms, d in 1:p.n_days)
+            @test Set(p.open_blocks) ==
+                  Set((r, d) for r in 1:p.n_rooms, d in 1:p.n_days if p.session_length[r, d] > 0)
+            # Every specialty has at least one block per (partial) week.
+            for k in 1:p.n_specialties
+                @test count(==(k), p.mss) >= max(1, p.n_days ÷ 5)
+            end
+            # Admissible triples: specialty match, surgeon works, within deadline.
+            for (i, r, d) in p.admissible
+                @test p.mss[r, d] == p.surgery_specialty[i]
+                @test p.surgeon_budget[p.surgery_surgeon[i], d] > 0
+                @test d <= p.surgery_deadline[i]
+            end
+            # Mandatory exactly the urgent cases; each has an admissible block.
+            for i in 1:p.n_surgeries
+                @test p.mandatory[i] == (p.surgery_urgency[i] == :urgent)
+                p.mandatory[i] &&
+                    @test any(t[1] == i for t in p.admissible)
+            end
+            # The planted witness is a feasible point: at most one block per
+            # surgery, block and surgeon capacities respected, all mandatory
+            # cases scheduled.
+            w = something(p.feasible_witness)
+            rem_room = copy(p.session_length)
+            rem_surg = copy(p.surgeon_budget)
+            assigned = falses(p.n_surgeries)
+            for a in w
+                (i, r, d) = p.admissible[a]
+                @test !assigned[i]
+                assigned[i] = true
+                rem_room[r, d] -= p.surgery_duration[i] + p.turnover
+                rem_surg[p.surgery_surgeon[i], d] -= p.surgery_duration[i]
+            end
+            @test all(rem_room .>= -1e-9)
+            @test all(rem_surg .>= -1e-9)
+            @test all(!p.mandatory[i] || assigned[i] for i in 1:p.n_surgeries)
+        end
+
+        # elective_assignment infeasibility certificate: the victim is
+        # mandatory and its surgeon's budgets over its admissible days sum to
+        # less than its duration.
+        for seed in 0:3
+            _, p = generate_problem(elective_ref, 200, infeasible, seed)
+            victim = something(p.infeasible_surgery)
+            @test p.feasible_witness === nothing
+            @test p.mandatory[victim]
+            surgeon = p.surgery_surgeon[victim]
+            days = unique(t[3] for t in p.admissible if t[1] == victim)
+            @test sum(p.surgeon_budget[surgeon, d] for d in days; init=0.0) <
+                  p.surgery_duration[victim]
+        end
+        _, pu = generate_problem(elective_ref, 200, unknown, 0)
+        @test pu.feasible_witness === nothing
+        @test pu.infeasible_surgery === nothing
+        @test pu.feasibility_status == unknown
+
+        # --- case_sequencing data contracts and exact variable count ---
+        for seed in 0:3, target in (100, 500)
+            model, p = generate_problem(sequencing_ref, target, feasible, seed)
+            @test num_variables(model) ==
+                  sum(length, p.eligible_rooms) +
+                  sum(length, p.eligible_surgeons) +
+                  length(p.room_pairs) + length(p.surgeon_pairs) +
+                  2 * p.n_surgeries + 1
+            @test all(!isempty(p.eligible_rooms[o]) for o in 1:p.n_surgeries)
+            @test all(!isempty(p.eligible_surgeons[o]) for o in 1:p.n_surgeries)
+            # Every case individually fits at least one eligible surgeon's window.
+            for o in 1:p.n_surgeries
+                @test any(p.surgeon_window_end[s] - p.surgeon_window_start[s] >=
+                          p.surgery_duration[o] for s in p.eligible_surgeons[o])
+            end
+            # Pair lists match eligibility intersections exactly.
+            expected_room_pairs = Tuple{Int,Int,Int}[]
+            expected_surgeon_pairs = Tuple{Int,Int,Int}[]
+            for o in 1:p.n_surgeries, q in (o + 1):p.n_surgeries
+                for r in intersect(p.eligible_rooms[o], p.eligible_rooms[q])
+                    push!(expected_room_pairs, (o, q, r))
+                end
+                for s in intersect(p.eligible_surgeons[o], p.eligible_surgeons[q])
+                    push!(expected_surgeon_pairs, (o, q, s))
+                end
+            end
+            @test p.room_pairs == expected_room_pairs
+            @test p.surgeon_pairs == expected_surgeon_pairs
+            # Big-M dominates any feasible start plus one duration and turnover.
+            @test p.big_m >= maximum(p.surgeon_window_end) - 1e-9
+            # The witness satisfies eligibility, windows, and both no-overlap
+            # families with their turnovers.
+            w = something(p.feasible_witness)
+            room_seen = Dict{Int,Vector{Tuple{Float64,Float64}}}()
+            surg_seen = Dict{Int,Vector{Tuple{Float64,Float64}}}()
+            for o in 1:p.n_surgeries
+                (r, s, t) = w[o]
+                dur = p.surgery_duration[o]
+                @test r in p.eligible_rooms[o]
+                @test s in p.eligible_surgeons[o]
+                @test t >= p.surgeon_window_start[s] - 1e-9
+                @test t + dur <= p.surgeon_window_end[s] + 1e-9
+                for (a, b) in get(room_seen, r, [])
+                    @test t + dur + p.room_turnover <= a + 1e-9 ||
+                          b + p.room_turnover <= t + 1e-9
+                end
+                for (a, b) in get(surg_seen, s, [])
+                    @test t + dur + p.surgeon_turnover <= a + 1e-9 ||
+                          b + p.surgeon_turnover <= t + 1e-9
+                end
+                push!(get!(room_seen, r, []), (t, t + dur))
+                push!(get!(surg_seen, s, []), (t, t + dur))
+            end
+        end
+
+        # case_sequencing infeasibility certificate: hard deadline below the
+        # victim's own duration (completion >= duration since start >= 0).
+        for seed in 0:3
+            model, p = generate_problem(sequencing_ref, 200, infeasible, seed)
+            victim = something(p.infeasible_surgery)
+            @test p.feasible_witness === nothing
+            @test something(p.hard_deadline) < p.surgery_duration[victim]
+            start_vars = model[:start]
+            @test length(start_vars) == p.n_surgeries
+        end
+        _, ps = generate_problem(sequencing_ref, 200, unknown, 0)
+        @test ps.feasible_witness === nothing
+        @test ps.infeasible_surgery === nothing
+
+        # --- weekly_planning data contracts and exact variable count ---
+        for seed in 0:3, target in (100, 500)
+            model, p = generate_problem(weekly_ref, target, feasible, seed)
+            @test num_variables(model) ==
+                  sum(length, p.admissible_days) + p.n_surgeries
+            @test all(p.ward_los[i] >= p.icu_los[i] for i in 1:p.n_surgeries)
+            @test all(c > 0 for c in p.ward_capacity)
+            for i in 1:p.n_surgeries, d in p.admissible_days[i]
+                @test p.specialty_capacity[p.surgery_specialty[i], d] > 0
+                @test p.surgeon_budget[p.surgery_surgeon[i], d] > 0
+                @test d <= p.surgery_deadline[i]
+            end
+            for i in 1:p.n_surgeries
+                @test p.mandatory[i] == (p.surgery_urgency[i] == :urgent)
+                p.mandatory[i] && @test !isempty(p.admissible_days[i])
+            end
+            # The witness respects specialty-day OR capacity, surgeon budgets,
+            # and day-by-day ward/ICU occupancy; all mandatory cases scheduled.
+            w = something(p.feasible_witness)
+            @test length(w) == p.n_surgeries
+            rem_spec = copy(p.specialty_capacity)
+            rem_surg = copy(p.surgeon_budget)
+            occ_ward = zeros(p.n_days)
+            occ_icu = zeros(p.n_days)
+            for i in 1:p.n_surgeries
+                d = w[i]
+                d == 0 && continue
+                @test d in p.admissible_days[i]
+                rem_spec[p.surgery_specialty[i], d] -=
+                    p.surgery_duration[i] + p.turnover
+                rem_surg[p.surgery_surgeon[i], d] -= p.surgery_duration[i]
+                p.ward_los[i] > 0 || continue
+                for t in d:min(p.n_days, d + p.ward_los[i] - 1)
+                    occ_ward[t] += 1
+                end
+                for t in d:min(p.n_days, d + p.icu_los[i] - 1)
+                    p.icu_los[i] > 0 && (occ_icu[t] += 1)
+                end
+            end
+            @test all(rem_spec .>= -1e-9)
+            @test all(rem_surg .>= -1e-9)
+            @test all(occ_ward .<= p.ward_capacity .+ 1e-9)
+            @test all(occ_icu .<= p.icu_capacity .+ 1e-9)
+            @test all(!p.mandatory[i] || w[i] > 0 for i in 1:p.n_surgeries)
+        end
+
+        # weekly_planning infeasibility certificate (same surgeon-shortage
+        # structure as elective_assignment).
+        for seed in 0:3
+            _, p = generate_problem(weekly_ref, 200, infeasible, seed)
+            victim = something(p.infeasible_surgery)
+            @test p.feasible_witness === nothing
+            @test p.mandatory[victim]
+            surgeon = p.surgery_surgeon[victim]
+            @test sum(p.surgeon_budget[surgeon, d]
+                      for d in p.admissible_days[victim]; init=0.0) <
+                  p.surgery_duration[victim]
+        end
+
+        # Exact field reproducibility for one variant of each kind.
+        for ref in (elective_ref, sequencing_ref, weekly_ref)
+            _, p1 = generate_problem(ref, 240, unknown, 12345)
+            _, p2 = generate_problem(ref, 240, unknown, 12345)
+            @test all(isequal(getfield(p1, f), getfield(p2, f))
+                      for f in fieldnames(typeof(p1)))
+        end
+
+        # Solver-based feasibility contracts on the (relaxed) models.
+        if HAS_HIGHS
+            for ref in (elective_ref, sequencing_ref, weekly_ref)
+                for seed in 1:4, status in (feasible, infeasible)
+                    model, _ = generate_problem(ref, 220, status, seed)
+                    set_optimizer(model, HiGHS.Optimizer)
+                    set_silent(model)
+                    optimize!(model)
+                    expected = status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE
+                    @test termination_status(model) == expected
+                end
+            end
+        end
+    end
+
     # Test individual problem generators (every registered variant)
     for ref in list_problems()
         test_problem_generator(ref)
