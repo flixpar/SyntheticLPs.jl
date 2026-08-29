@@ -4,6 +4,37 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-29 22:41 UTC (land-use quality pass)
+
+**Previous Commit**: `ac7206a`
+
+**Summary**: Rebuilt the legacy land-use generator around a coherent spatial
+planning model, fixing its reproducible large-target crash and duplicated
+adjacency rows while adding checkable feasibility evidence and native-MILP tests.
+
+**Details**:
+- Centralized all zoning metadata in a complete 12-zone catalog and all
+  infrastructure metadata in an eight-resource catalog. Large requests can now
+  sample 11 or 12 zones without indexing past the former ten-element tables.
+- Replaced the arbitrary random adjacency matrix with parcel coordinates on a
+  jittered grid and a connected, planar-like four-neighbor graph. Stored edges
+  are canonical, sorted, and unique; each undirected edge now emits exactly the
+  two distinct residential/industrial orientation rows instead of traversing a
+  symmetric matrix twice.
+- Correlated development economics with urban accessibility/rurality and built
+  a geography-respecting integer assignment before sampling environmental
+  restrictions. Feasible requests store that complete witness and size every
+  resource capacity against it without pruning exogenous graph edges.
+- Infeasible requests store a relaxation-valid per-parcel resource lower-bound
+  certificate: each parcel's cheapest allowed zoning consumption sums to more
+  than the selected capacity. Unknown instances expose neither status artifact.
+- Replaced global seeding with a local `MersenneTwister`, rewrote the category
+  documentation, and added 12,000+ focused assertions for catalog bounds,
+  1,001-10,000 target construction, graph invariants, field determinism, global
+  RNG isolation, witness/certificate arithmetic, exact adjacency-row counts,
+  and relaxed/native HiGHS statuses. The focused suite passed 12,621 assertions;
+  separate evidence and solver sweeps covered 900 and 200 cases respectively.
+
 ## 2026-08-29 22:39 UTC (unit-commitment quality pass)
 
 **Previous Commit**: `917c573`
