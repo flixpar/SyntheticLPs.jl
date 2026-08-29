@@ -4,6 +4,50 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-29 23:01 UTC (bin-packing quality pass)
+
+**Previous Commit**: `bb5b219`
+
+**Summary**: Rebuilt the legacy identical-bin generator around realistic
+handling categories and auditable status evidence, and added a distinct
+heterogeneous-fleet variant with type-specific operational tradeoffs.
+
+**Details**:
+- Replaced discontinuous sizing bands with an integer dimension search over the
+  variables actually emitted (`x`, `y`, and category-presence indicators).
+  Instances store their requested and exact actual counts; targets such as 250,
+  1,000, 1,001, 5,000, and 10,000 are matched exactly, with nearby supported
+  counts selected for non-representable sizes.
+- Standard instances now use named handling categories, category-correlated item
+  sizes, sampled operational conflicts, two-sided presence links, used-bin
+  prefix symmetry, and a triangular canonical-label formulation. A
+  conflict-aware first-fit-decreasing construction supplies a complete integer
+  witness for feasible requests.
+- Added `bin_packing/heterogeneous`, which models a finite typed fleet with
+  different capacities, fixed costs, availability, and category eligibility.
+  Its compatibility-aware best-fit construction plants a feasible assignment,
+  and symmetry is applied only within interchangeable slots of the same type.
+- Both variants expose solver-free witness validators that check capacity,
+  conflicts, eligibility, and their respective symmetry rules. Infeasible
+  requests store an aggregate item-size certificate exceeding every available
+  bin's combined capacity; the contradiction remains valid in the LP relaxation.
+  Typed-fleet validation derives that capacity from the concrete slot types and
+  separately audits redundant availability metadata.
+- Recalibrated `unknown` around deterministic light, nominal, and surge load
+  profiles instead of inheriting a size-dependent infeasibility bias. Each
+  ten-seed block contains a 70/30 feasible/infeasible native mix at every tested
+  scale while retaining no witness or certificate claim. Complete binary starts
+  derived from feasible witnesses are now attached to all assignment, bin-use,
+  and category-presence variables.
+- Isolated all random sampling in local `MersenneTwister` instances, named the
+  formulation's symmetry and eligibility rows, added full documentation, and
+  added focused tests for registry behavior, sizing boundaries, data diversity,
+  RNG isolation, field determinism, row structure, witnesses, certificates, and
+  relaxed/native statuses. The focused suite passed 15,140 assertions, including
+  128 labeled HiGHS LP/MILP status cases, 60 raw native unknown-profile solves,
+  and two 2,000-variable native incumbent checks. A broader 120-case unknown
+  sweep reproduced the intended 70/30 mix at all six variant/scale combinations.
+
 ## 2026-08-29 22:54 UTC (revenue-management quality pass)
 
 **Previous Commit**: `827799e`
