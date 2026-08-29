@@ -4,6 +4,39 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-29 22:54 UTC (revenue-management quality pass)
+
+**Previous Commit**: `827799e`
+
+**Summary**: Replaced the legacy anonymous capacity-allocation data with a
+coherent network revenue-management generator and added a substantively distinct
+stochastic-overbooking variant with scenario recourse and service guarantees.
+
+**Details**:
+- The standard deterministic LP now samples directed hub-and-spoke legs,
+  coherent local and connecting itineraries, three operating profiles, and
+  economy/premium/business products with correlated fares and demand. Parallel
+  forward and reverse incidence make the network structure directly auditable.
+- Added contractual acceptance floors and explicit status artifacts. Feasible
+  requests store the complete floor vector as a witness; infeasible requests
+  store a selected leg whose mandatory accepted load strictly exceeds capacity.
+  Unknown requests reproducibly resolve to a recorded profile and artifact.
+- Added `revenue_management/stochastic_overbooking`, a two-stage continuous LP
+  with shared advance bookings, normalized scenario probabilities, correlated
+  show-up profiles, served/denied recourse, class-dependent compensation and
+  denial limits, scenario-wide service caps, and per-scenario leg capacity.
+- The stochastic variant stores either a no-denial scenario witness or a
+  relaxation-valid certificate derived from show-up balance, product denial
+  limits, booking commitments, and a conflicting scenario-leg capacity.
+- Both constructors now isolate randomness in local `MersenneTwister` instances,
+  use dimension planners tied to emitted variables, and attach feasible starts.
+  Added full formulation documentation and focused tests for topology, economic
+  profiles, sizing boundaries, determinism, RNG isolation, row coefficients,
+  witnesses, certificates, and registry behavior.
+- Validation passed 45,487 focused assertions, 720 direct raw HiGHS status
+  cases, a 5,700-case constructor/artifact sweep, and the 107,960-assertion
+  monolithic suite in the scripts environment.
+
 ## 2026-08-29 22:43 UTC (feed-blending quality pass)
 
 **Previous Commit**: `1c87ef5`
