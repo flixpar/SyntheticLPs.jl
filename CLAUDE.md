@@ -185,7 +185,7 @@ register_variant(:category, :standard, VariantStruct, "Description")
 
 ### Available Problem Categories
 
-The system includes 41 categories covering major LP/MIP problem classes. Each
+The system includes 42 categories covering major LP/MIP problem classes. Each
 category's default variant is `:standard` except `graph_optimization`
 (`:independent_set`), `neural_network_verification` (`:relu_big_m`), `portfolio`
 (`:cvar`), `regression` (`:lad`), `set_system` (`:set_cover`),
@@ -196,6 +196,7 @@ Categories with multiple variants are listed with them below.
 - Cutting Stock (`standard`, `setup_cost`, `due_dates`, `integer_patterns`), Energy (`standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`, `optimal_transmission_switching`), Inventory (`standard`, `lot_sizing`, `multi_item`, `multi_echelon`), Load Balancing (`standard`, `discrete_placement`)
 - Graph Optimization (`independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`), Set System (`set_cover`, `set_packing`, `set_partitioning`, `combinatorial_auction`), Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`, `network_planning`)
 - TSP (`standard`, `asymmetric`, `flow`, `time_windows`, `assignment_relaxation`, `prize_collecting`, `multiple_salespersons`, `precedence`), Vehicle Routing (`cvrp`), Regression (`lad`, `quantile`, `chebyshev`, `basis_pursuit`), Workforce Shift Scheduling (`covering`)
+- Operating Room Scheduling (`standard`, `daily_sequencing`, `master_surgical_schedule`, `robust_elective`)
 - Single-variant categories: Airline Crew, Bin Packing, Crop Planning, Feed Blending, Generic MILP, Job Shop Scheduling, Land Use, Maritime Inventory Routing, Neural Network Verification, Nurse Scheduling, Product Mix, Production Planning, Project Selection, Resilient Network Design, Resource Allocation, Revenue Management, Scheduling, Stochastic Program, Telecom Network Design, Unit Commitment
 
 #### Model classes (LP / MIP / LP relaxation)
@@ -208,17 +209,18 @@ The corpus deliberately mixes three model classes; treat the names accordingly:
   revenue management, stochastic program, and `workforce_shift_scheduling/covering`).
 - **MIPs** (binary/integer variables): e.g. `facility_location` variants
   (including `p_median`), `cutting_stock/setup_cost`, `inventory/lot_sizing`,
-  `bin_packing`, `job_shop_scheduling`, `supply_chain/single_source`,
-  `knapsack/multidimensional` (binary) and `knapsack/bounded` (integer),
-  `assignment/workload_balance` (binary min-makespan), and `vehicle_routing/cvrp`
-  (binary arc selection with single-commodity-flow subtour elimination — its
-  continuous relaxation is a genuine depot-anchored routing relaxation, not a
-  degenerate one). The `tsp` MIP variants `standard`/`asymmetric` (MTZ order
-  variables), `flow` and `prize_collecting` (single-commodity flow),
-  `time_windows` (big-M time propagation), `multiple_salespersons` (lifted
-  route-order variables), and `precedence` (lifted MTZ plus ordering rows)
-  likewise deliver genuine routing relaxations. These are real mixed-integer
-  formulations.
+  `bin_packing`, `job_shop_scheduling`, `operating_room_scheduling` variants
+  (`standard`, `daily_sequencing`, `master_surgical_schedule`, `robust_elective`),
+  `supply_chain/single_source`, `knapsack/multidimensional` (binary) and
+  `knapsack/bounded` (integer), `assignment/workload_balance` (binary min-makespan),
+  and `vehicle_routing/cvrp` (binary arc selection with single-commodity-flow
+  subtour elimination — its continuous relaxation is a genuine depot-anchored
+  routing relaxation, not a degenerate one). The `tsp` MIP variants
+  `standard`/`asymmetric` (MTZ order variables), `flow` and `prize_collecting`
+  (single-commodity flow), `time_windows` (big-M time propagation),
+  `multiple_salespersons` (lifted route-order variables), and `precedence`
+  (lifted MTZ plus ordering rows) likewise deliver genuine routing relaxations.
+  These are real mixed-integer formulations.
 - **LP relaxations of MIPs**: continuous relaxations of integer models, useful as
   LP-solver test instances but *not* directly implementable integer solutions —
   notably `nurse_scheduling` (fractional rosters), `unit_commitment`

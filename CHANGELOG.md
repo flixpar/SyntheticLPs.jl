@@ -4,6 +4,22 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-29 08:31 UTC (operating room scheduling problem family)
+
+**Previous Commit**: `5c890bc`
+
+**Summary**: Added `operating_room_scheduling`, a comprehensive problem category covering the four major operations research formulations of hospital Operating Room (OR) planning and scheduling: advance elective case scheduling, daily multi-stage operational sequencing, Master Surgical Schedule (MSS) block planning with downstream bed leveling, and robust advance scheduling under duration uncertainty.
+
+**Details**:
+- Implemented `operating_room_scheduling/standard`: Advance elective case scheduling across multi-day planning horizons (e.g. 5-10 days) with specialized room eligibility (laminar airflow, hybrid imaging, robotic systems), surgeon daily availability and operating limits, regular and overtime room capacity, undertime penalties, downstream PACU recovery bed limits, patient urgency weighting, and postponement tradeoffs.
+- Implemented `operating_room_scheduling/daily_sequencing`: Intra-day operational scheduling and sequencing of surgeries across rooms and recovery stages, tracking 3 distinct phases (pre-op preparation, intra-op surgery with room turnover/cleaning times, post-op PACU recovery), disjunctive no-overlap constraints for shared rooms and shared surgeons, room overtime tracking, and makespan/patient flow-time minimization.
+- Implemented `operating_room_scheduling/master_surgical_schedule`: Tactical cyclical block planning (MSS) assigning OR blocks to surgical departments/specialties, modeling minimum/maximum block quotas, room-specialty affinities, daily room caps, and multi-day cyclical downstream ward/ICU bed occupancy leveling to smooth hospital inpatient workload.
+- Implemented `operating_room_scheduling/robust_elective`: Robust advance elective scheduling under surgical duration uncertainty using Bertsimas-Simchi-Levi uncertainty budgets ($\Gamma_{r,d}$), dualized into exact linear inequalities via strong duality to protect OR opening plans against duration overruns without excessive overtime.
+- Calibrated exact variable-count scaling formulas across all 4 variants ensuring accurate sizing from small to large problem targets.
+- Established constructive feasible witness schedules and mathematically provable relaxation-proof infeasibility contradictions across all variants.
+- Added comprehensive unit tests in `test/runtests.jl` covering variant discovery, registry contracts, variable count arithmetic, data integrity, HiGHS solver-based feasibility contract verification for all variants, and dataset generation integration.
+- Updated `README.md` and `CLAUDE.md` to reflect the 42-category inventory and document the new Operating Room Scheduling problem family.
+
 ## 2026-08-28 23:18 UTC (basis-pursuit sparse certificate coverage)
 
 **Previous Commit**: `842580f`

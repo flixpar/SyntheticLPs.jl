@@ -1124,6 +1124,82 @@ end
         end
     end
 
+    @testset "Operating Room Scheduling Variants" begin
+        @test :operating_room_scheduling in list_categories()
+        @test list_variants(:operating_room_scheduling) ==
+              [:daily_sequencing, :master_surgical_schedule, :robust_elective, :standard]
+        @test problem_info(:operating_room_scheduling)[:default_variant] == :standard
+        @test ProblemVariant("operating_room_scheduling") == ProblemVariant(:operating_room_scheduling, :standard)
+
+        # ProblemVariant parsing & printing
+        for v in (:standard, :daily_sequencing, :master_surgical_schedule, :robust_elective)
+            @test ProblemVariant("operating_room_scheduling/$v") == ProblemVariant(:operating_room_scheduling, v)
+            @test string(ProblemVariant(:operating_room_scheduling, v)) == "operating_room_scheduling/$v"
+            info = problem_info(:operating_room_scheduling, v)
+            @test info isa Dict
+            @test haskey(info, :description)
+            @test haskey(info, :type)
+        end
+
+        # Variable-count formulas match models exactly
+        for seed in (0, 1, 42)
+            # standard: (N + 3) * R * D + N
+            m, p = generate_problem("operating_room_scheduling/standard", 100, unknown, seed)
+            @test num_variables(m) == (p.n_surgeries + 3) * p.n_rooms * p.n_days + p.n_surgeries
+            @test p.n_surgeries > 0 && p.n_rooms > 0 && p.n_days > 0
+            @test all(p.duration .> 0)
+            @test all(p.cleaning_time .> 0)
+            @test all(p.pacu_stay .> 0)
+            @test all(p.urgency_weight .> 0)
+
+            # daily_sequencing: N*R + 4N + N*(N-1)/2 + length(surgeon_pairs) + R + 1
+            m, p = generate_problem("operating_room_scheduling/daily_sequencing", 120, unknown, seed)
+            pair_count = p.n_surgeries * (p.n_surgeries - 1) ÷ 2
+            expected_ds = p.n_surgeries * p.n_rooms + 4 * p.n_surgeries + pair_count + length(p.surgeon_pairs) + p.n_rooms + 1
+            @test num_variables(m) == expected_ds
+            @test all(p.preop_duration .> 0)
+            @test all(p.surgery_duration .> 0)
+            @test all(p.pacu_duration .> 0)
+
+            # master_surgical_schedule: (S + 1) * R * D + 2*S + D + 1
+            m, p = generate_problem("operating_room_scheduling/master_surgical_schedule", 150, unknown, seed)
+            expected_mss = (p.n_specialties + 1) * p.n_rooms * p.n_days + 2 * p.n_specialties + p.n_days + 1
+            @test num_variables(m) == expected_mss
+            @test size(p.bed_occupancy_profiles) == (p.n_specialties, p.n_days)
+            @test all(p.bed_occupancy_profiles .>= 0)
+            @test all(p.min_blocks .<= p.target_blocks .<= p.max_blocks)
+
+            # robust_elective: 2 * N * R * D + 3 * R * D + N
+            m, p = generate_problem("operating_room_scheduling/robust_elective", 100, unknown, seed)
+            @test num_variables(m) == 2 * p.n_surgeries * p.n_rooms * p.n_days + 3 * p.n_rooms * p.n_days + p.n_surgeries
+            @test all(p.nominal_duration .> 0)
+            @test all(p.duration_deviation .> 0)
+            @test all(p.uncertainty_budget .> 0)
+        end
+
+        # Feasibility contract verification with solver
+        if HAS_HIGHS
+            for v in (:standard, :daily_sequencing, :master_surgical_schedule, :robust_elective)
+                ref = ProblemVariant(:operating_room_scheduling, v)
+                for seed in 1:3
+                    # Feasible instance
+                    m_feas, _ = generate_problem(ref, 80, feasible, seed; optimizer=HiGHS.Optimizer)
+                    set_optimizer(m_feas, HiGHS.Optimizer)
+                    set_silent(m_feas)
+                    optimize!(m_feas)
+                    @test termination_status(m_feas) == MOI.OPTIMAL
+
+                    # Infeasible instance
+                    m_infeas, _ = generate_problem(ref, 80, infeasible, seed; optimizer=HiGHS.Optimizer)
+                    set_optimizer(m_infeas, HiGHS.Optimizer)
+                    set_silent(m_infeas)
+                    optimize!(m_infeas)
+                    @test termination_status(m_infeas) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
+                end
+            end
+        end
+    end
+
     # Test individual problem generators (every registered variant)
     for ref in list_problems()
         test_problem_generator(ref)
@@ -2033,18 +2109,33 @@ end
         end
         @test length(route_lengths) == p.n_salespersons
         @test all(p.min_stops <= len <= p.max_stops for len in route_lengths)
+
+        # Operating room scheduling variants feasibility verification
+        for variant in list_variants(:operating_room_scheduling)
+            ref = "operating_room_scheduling/$variant"
+            for s in 1:4
+                m, _ = generate_problem(ref, 100, feasible, s;
+                                        optimizer = HiGHS.Optimizer)
+                set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+                @test termination_status(m) == MOI.OPTIMAL
+                m, _ = generate_problem(ref, 100, infeasible, s;
+                                        optimizer = HiGHS.Optimizer)
+                set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+                @test termination_status(m) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
+            end
+        end
     end
 
     # Dataset generation honors the contract when an optimizer is supplied.
     @testset "Dataset Feasibility Verification" begin
         # feasible_only + optimizer: every emitted instance must actually be feasible.
-        insts = generate_dataset(num_problems = 8, var_mean = 120, var_std = 20,
+        insts = generate_dataset(num_problems = 12, var_mean = 120, var_std = 20,
                                  var_min = 80, var_max = 200, seed = 31,
-                                 problem_types = [:unit_commitment, :crop_planning],
+                                 problem_types = [:unit_commitment, :crop_planning, :operating_room_scheduling],
                                  feasible_only = true, quality_filter = false,
                                  optimizer = HiGHS.Optimizer,
                                  max_candidate_multiplier = 3)
-        @test length(insts) == 8
+        @test length(insts) == 12
         for inst in insts
             # Rebuild with the recorded (resolved) seed and confirm feasibility.
             m, _ = generate_problem(ProblemVariant(inst.problem_type, inst.variant),
