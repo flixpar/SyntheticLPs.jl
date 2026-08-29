@@ -4,6 +4,39 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-29 22:39 UTC (unit-commitment quality pass)
+
+**Previous Commit**: `917c573`
+
+**Summary**: Replaced the legacy unit-commitment feasibility heuristic with
+auditable temporal witnesses and capacity-cut certificates, corrected demand
+balance and commitment domains, and removed target-size cliffs and saturation.
+
+**Details**:
+- The natural formulation now declares commitment, startup, and shutdown as
+  binary, so `relax_integer=false` returns a genuine UC MILP; the package's
+  default `relax_integer=true` still returns its LP relaxation.
+- Feasible requests construct and store complete integral generation,
+  commitment, startup, and shutdown trajectories. Demand is the exact dispatched
+  load, reserve fits online headroom, initial conditions are consistent, and a
+  solver-independent validator checks bounds, availability, ramps, transitions,
+  minimum up/down windows, balance, and reserve.
+- Infeasible requests retain varied stress profiles but now store a period cut
+  where demand plus reserve strictly exceeds all available capacity. The proof
+  holds for both the MILP and its relaxation.
+- Changed demand coverage from a permissive inequality to physical equality,
+  prohibited simultaneous startup and shutdown, recorded unit archetypes and
+  the resolved unknown profile, installed witness values as JuMP starts, and
+  isolated all randomness in a local `MersenneTwister`.
+- Aligned sizing bands with their actual formulation floors and let large
+  requests grow the fleet instead of saturating near 32,000 variables. Added
+  thorough category documentation and 5,000+ focused assertions covering
+  boundary sizing, a 100,000-variable constructor request, formulation domains,
+  witnesses, certificates, RNG isolation, data diversity, and direct relaxed
+  and integer HiGHS solves. Independent direct checks passed 100/100 requested
+  statuses before the natural-domain follow-up, with an additional eight MILP
+  solves passing afterward.
+
 ## 2026-08-29 22:33 UTC (crop-planning quality pass)
 
 **Previous Commit**: `6313980`
