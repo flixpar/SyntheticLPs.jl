@@ -4,6 +4,31 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-30 14:40 UTC (hub location tests moved to the per-category file)
+
+**Previous Commit**: `5a67821`
+
+**Summary**: Relocated the `Hub Location` testset from `test/runtests.jl` into
+`test/problem_types/hub_location.jl`, adopting the per-category test-file
+convention that arrived on `main` in the quality-improvements pass. No test
+was added, removed, or changed: the suite still reports 124,728 passing tests.
+
+**Details**:
+- `test/runtests.jl`: dropped the 338-line inline `@testset "Hub Location"`
+  block that had sat directly after the `test/problem_types/*.jl` include
+  loop. It was inline only because the hub-location branch predated the
+  per-category convention and the two met in a rebase conflict.
+- `test/problem_types/hub_location.jl`: the same testset, dedented one level
+  and prefixed with a header comment naming what it covers (registry shape,
+  exact variable-count formulas, sizing, benchmark data conventions, witness
+  and certificate arithmetic, reproducibility, and the HiGHS feasibility
+  contracts on both the LP relaxation and the unrelaxed integer models).
+- The file follows the ambient-scope style of `crop_planning.jl` rather than
+  the self-contained style of `bin_packing.jl`/`land_use.jl`: `include` runs
+  at module top level, so `MOI`, `HAS_HIGHS`, and the `using` imports from
+  `runtests.jl` remain visible and are used as before. Sorted include order
+  places it between `feed_blending.jl` and `land_use.jl`.
+
 ## 2026-08-30 (hub location review fixes)
 
 **Previous Commit**: `ef092ef`
