@@ -304,6 +304,83 @@ false feasible label.
   and multi-scale HiGHS status sweeps. A 20-seed standalone sweep passed at
   targets 30, 300, and 1,200 for both requested statuses.
 
+## 2026-08-29 18:39 UTC (hub location and hub-and-spoke network design)
+
+**Previous Commit**: `72d63a9`
+
+**Summary**: New `hub_location` category with five variants covering the
+classical hub-location problem family: single-allocation p-hub median,
+r-allocation with backup hubs, fixed-charge multiple allocation, capacitated
+single allocation, and single allocation over an incomplete (designed) hub
+backbone. The package now has 43 categories.
+
+**Details**:
+- Formulations and data conventions are grounded in the literature and in the
+  published benchmark files, which were downloaded and measured directly:
+  O'Kelly (1987) and Campbell (1994) for the problem classes; Skorin-Kapov,
+  Skorin-Kapov & O'Kelly (1996) for the tight four-index path-flow
+  linearisation; Ernst & Krishnamoorthy (1996/1999) for the AP dataset and
+  per-destination flow formulations; Peiró-Corberán-Martí (2014) for
+  r-allocation; Yaman (2009), Yoon & Current (2008) and Yaman & Carello
+  (2005) for incomplete hub networks and modular link capacities; Correia,
+  Nickel & Saldanha-da-Gama (2010) for the corrected capacity rows; Alumur &
+  Kara (2009) and Campbell & O'Kelly (2012) surveys; Brimberg et al. (2021)
+  for the efficient flow models.
+- Measured benchmark conventions baked into the generators: CAB has symmetric
+  flows spanning 565..205,088 (median ~7,000) with network (non-metric)
+  costs, alpha in [0.2, 1.0], chi = delta = 1; AP has 200 nodes, asymmetric
+  flows (63% of ordered pairs, CV ~5) with the published cost parameters
+  chi = 3 (collection), alpha = 0.75 (transfer), delta = 2 (distribution) and
+  loose/tight capacity files bounding hub inflow. Telecom-flavored variants
+  reuse the OC-3/12/48/192/768 module ladder and distance-proportional build
+  costs of `telecom_network_design`.
+- `p_hub_median` (default): USA*pHMP with allocation reach windows using the
+  tight four-index path-flow formulation with disaggregated equality linking.
+  `feasible` plants a minimum-cover-radius hub set with the reach window just
+  above it (`HubAssignmentWitness`); `infeasible` builds p+1 island groups
+  with pairwise disjoint admissible sets (`DisjointRegionCertificate`),
+  refuting the relaxation via the exact-p row; `unknown` samples the window
+  around the covering radius.
+- `r_allocation`: UrApHMP - each node keeps r primary/backup hubs; same
+  four-index structure with inequality linking and r-cover-based windows
+  (`HubBackupWitness`).
+- `multiple_allocation`: fixed-charge MA hub location (parcel/LTL) with
+  feeder windows and an opening budget; per-destination multicommodity flows.
+  `feasible` plants a greedy candidate cover within budget
+  (`HubCoverWitness`); `infeasible` sets the budget below
+  groups x min fixed cost (`BudgetCoverCertificate`).
+- `capacitated`: CSAHLP with collection-inflow capacities in `:loose`/`:tight`
+  profiles mirroring the AP capacity files; single-allocation coupling rows.
+  `feasible` plants a distance-best-fit capacity-respecting assignment
+  (`HubCapacitatedWitness`); `infeasible` puts total capacity below total
+  flow (`CapacityShortfallCertificate`), which contradicts the summed
+  capacity rows already in the relaxation.
+- `hub_network`: single allocation over an incomplete hub network (telecom
+  backbone): reach-windowed regional gateways, candidate backbone links with
+  build binaries and module capacities shared by both directions. `feasible`
+  plants gateways plus a sized spanning backbone whose exact routed loads fit
+  (`HubNetworkWitness`); `infeasible` shrinks a regional gateway cut below
+  its crossing traffic (`BackboneCutCertificate`).
+- Shared `_hub_` data helpers generate clustered/corridor/archipelago
+  geographies with anchor cities, ring-separated island groups for
+  certificates, Euclidean metric distances, CAB-style detour-perturbed
+  costs, lognormal populations, and doubly-constrained gravity flows with
+  lognormal scatter (symmetrised for the airline variants, asymmetric for
+  postal/parcel/telecom). All constructors use local `MersenneTwister`s.
+- Sizing uses iterative re-sizing loops with exact variable-count formulas
+  (documented per variant); independent node/candidate-count hints for the
+  flow variants. Verified across targets 50..3000 x all statuses x seeds:
+  within the corpus tolerance everywhere, and HiGHS confirms the feasibility
+  contract (OPTIMAL/INFEASIBLE) for every feasible/infeasible request on the
+  LP relaxation. Unknown requests are a genuine mix on every variant
+  (measured opt/inf splits: 31/17, 20/28, 13/35, 40/8, 21/27).
+- New `docs/hub_location.md` generator notes (variant table, formulation
+  summary, data grounding, certificate catalogue, references); README,
+  CLAUDE.md, and docs index updated; bespoke "Hub Location" testset covering
+  registry, exact count formulas, sizing matrix, data contracts, witness and
+  certificate arithmetic, reproducibility/RNG isolation, HiGHS feasibility
+  contracts, and the unknown-status mix. Full result: 38,887 tests passed.
+
 ## 2026-08-29 14:01 UTC (operating room scheduling refinement and combination)
 
 **Previous Commit**: `49a6bc3`

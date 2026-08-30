@@ -50,6 +50,7 @@ where relaxation changes the solved model.
 - [Energy](energy.md)
 - [Facility Location](facility_location.md)
 - [Feed Blending](feed_blending.md)
+- [Hub Location](hub_location.md)
 - [Inventory](inventory.md)
 - [Knapsack](knapsack.md)
 - [Land Use](land_use.md)
