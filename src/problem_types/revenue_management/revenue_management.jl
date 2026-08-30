@@ -1,9 +1,12 @@
 # revenue_management category
 #
-# Entry point for the `revenue_management` problem category. A category groups one
-# or more variant formulations; the category is registered lazily from its first
-# variant's `register_variant` call (or call `register_category` explicitly to
-# give the category its own description). Add a variant by creating a file in this
-# folder and including it below.
+# Deterministic bid-price capacity allocation and stochastic overbooking share a
+# coherent hub-and-spoke itinerary generator and typed product metadata.
+
+register_category(
+    :revenue_management,
+    "Network revenue-management LPs for deterministic capacity allocation and stochastic overbooking with denied-service recourse",
+)
 
 include("standard.jl")
+include("stochastic_overbooking.jl")

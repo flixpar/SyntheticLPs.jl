@@ -1,31 +1,50 @@
 using JuMP
 using Random
 using Distributions
-using StatsBase
+
+"""
+    BinPackingCapacityCertificate
+
+Relaxation-valid proof that total item size exceeds the aggregate capacity of
+every available bin. It applies to both identical- and heterogeneous-bin
+variants.
+"""
+struct BinPackingCapacityCertificate
+    total_item_size::Float64
+    total_available_capacity::Float64
+    excess::Float64
+end
+
+const _PACKING_CATEGORY_PROFILES = (
+    (name = "Food_Grade", mean_fraction = 0.24, deviation = 0.055),
+    (name = "Hazardous",  mean_fraction = 0.30, deviation = 0.060),
+    (name = "Fragile",    mean_fraction = 0.19, deviation = 0.050),
+    (name = "Odorous",    mean_fraction = 0.23, deviation = 0.055),
+    (name = "Chilled",    mean_fraction = 0.27, deviation = 0.055),
+    (name = "Frozen",     mean_fraction = 0.31, deviation = 0.060),
+    (name = "High_Value", mean_fraction = 0.14, deviation = 0.040),
+    (name = "Ambient",    mean_fraction = 0.25, deviation = 0.060),
+)
+
+# Operationally motivated separation rules. Sampling a subset changes the
+# conflict graph by seed while retaining interpretable handling restrictions.
+const _PACKING_CONFLICT_CANDIDATES = (
+    (1, 2), # food-grade / hazardous
+    (1, 4), # food-grade / odorous
+    (2, 3), # hazardous / fragile
+    (2, 5), # hazardous / chilled
+    (2, 6), # hazardous / frozen
+    (4, 5), # odorous / chilled
+    (4, 6), # odorous / frozen
+)
 
 """
     BinPackingProblem <: ProblemGenerator
 
-Generator for bin packing problems that minimize the number of bins needed to pack
-items, with realistic item-size distributions and category-conflict constraints.
-
-# Overview
-Models the classic bin packing problem. The decisions are binary assignments of
-items to bins, binary bin-usage indicators, and per-bin per-category presence
-indicators. The objective minimizes the number of bins used. Each item is assigned
-to exactly one bin, each bin's packed size cannot exceed its capacity, items may
-only occupy used bins, and pairs of conflicting categories may not co-occur in the
-same bin (enforced through the presence indicators, NOT by summing raw assignment
-variables — so two items of the *same* category may freely share a bin).
-
-# Fields
-- `n_items::Int`: Number of items to pack
-- `n_bins::Int`: Maximum number of bins available (upper bound)
-- `n_categories::Int`: Number of item categories
-- `item_sizes::Vector{Float64}`: Size/weight of each item
-- `bin_capacity::Float64`: Capacity of each bin
-- `item_categories::Vector{Int}`: Category index (1..n_categories) for each item
-- `incompatible_pairs::Vector{Tuple{Int,Int}}`: Pairs of conflicting categories
+Identical-bin packing with handling-category conflicts. `feasible_witness`
+stores a bin index per item for requested-feasible instances. Requested-
+infeasible instances instead carry an aggregate-capacity certificate that is
+valid before or after integrality relaxation.
 """
 struct BinPackingProblem <: ProblemGenerator
     n_items::Int
@@ -35,278 +54,432 @@ struct BinPackingProblem <: ProblemGenerator
     bin_capacity::Float64
     item_categories::Vector{Int}
     incompatible_pairs::Vector{Tuple{Int,Int}}
+    category_names::Vector{String}
+    load_profile::Symbol
+    target_variables::Int
+    actual_variables::Int
+    feasibility_status::FeasibilityStatus
+    feasible_witness::Union{Nothing,Vector{Int}}
+    infeasibility_certificate::Union{Nothing,BinPackingCapacityCertificate}
 end
 
-"""
-    simulate_first_fit_decreasing(item_sizes, capacity, item_categories, incompatible_pairs)
+# Unknown instances intentionally span operating regimes instead of inheriting
+# an accidental size-dependent feasibility bias. The arithmetic assignment is
+# stable across Julia versions and gives every ten consecutive seeds a 30/40/30
+# split, with the target offset preventing one seed from meaning the same regime
+# at every scale.
+function _packing_unknown_load_profile(target_variables::Int, seed::Int)
+    residue = mod(mod(seed, 10) + 3 * mod(target_variables, 10), 10)
+    return residue <= 2 ? :light : residue <= 6 ? :nominal : :surge
+end
 
-Greedy first-fit-decreasing heuristic that respects category conflicts. Returns the
-number of bins used by the heuristic, giving a constructive upper bound on the bins
-required for a conflict-respecting packing.
-"""
-function simulate_first_fit_decreasing(
-    item_sizes::Vector{Float64},
-    capacity::Float64,
-    item_categories::Vector{Int},
-    incompatible_pairs::Vector{Tuple{Int,Int}},
-)
-    # Build conflict lookup over categories
-    conflicts = Set{Tuple{Int,Int}}()
-    for (a, b) in incompatible_pairs
-        push!(conflicts, (min(a, b), max(a, b)))
-    end
-    function cat_conflicts(c1::Int, c2::Int)
-        return (min(c1, c2), max(c1, c2)) in conflicts
-    end
+_bin_packing_variable_count(n_items::Int, n_bins::Int, n_categories::Int) =
+    n_bins * (n_items + n_categories + 1)
 
-    order = sortperm(item_sizes, rev=true)
-    bin_loads = Float64[]
-    bin_cats = Vector{Set{Int}}()
+# Search dimensions against the variables that are actually emitted. Candidate
+# solutions keep two to six items per bin and at most eight nonempty categories,
+# avoiding the discontinuities caused by the old target-size bands.
+function _bin_packing_dimensions(target_variables::Int)
+    target = max(target_variables, 12)
+    maximum_items = max(12, ceil(Int, sqrt(8 * target)) + 12)
+    best_key = (typemax(Int), Inf, Inf)
+    best_dimensions = (3, 2, 2)
 
-    for idx in order
-        item = item_sizes[idx]
-        cat = item_categories[idx]
-        placed = false
-        for b in eachindex(bin_loads)
-            # Capacity check
-            bin_loads[b] + item > capacity && continue
-            # Conflict check against categories already in the bin
-            if any(cat_conflicts(cat, c) for c in bin_cats[b])
-                continue
+    for n_items in 3:maximum_items
+        minimum_bins = max(2, ceil(Int, n_items / 6))
+        maximum_bins = max(minimum_bins, min(n_items, ceil(Int, n_items / 2)))
+        desired_categories = clamp(round(Int, sqrt(n_items) / 1.8), 2,
+                                   length(_PACKING_CATEGORY_PROFILES))
+        for n_bins in minimum_bins:maximum_bins
+            maximum_categories = min(
+                length(_PACKING_CATEGORY_PROFILES), n_items,
+                max(2, 2 * n_bins - 2),
+            )
+            for n_categories in 2:maximum_categories
+                actual = _bin_packing_variable_count(
+                    n_items, n_bins, n_categories,
+                )
+                realism_penalty = abs(n_items / n_bins - 3.5) +
+                                  0.2 * abs(n_categories - desired_categories)
+                shape_penalty = abs(n_bins - n_items / 3.5)
+                key = (abs(actual - target), realism_penalty, shape_penalty)
+                if key < best_key
+                    best_key = key
+                    best_dimensions = (n_items, n_bins, n_categories)
+                end
             end
-            bin_loads[b] += item
-            push!(bin_cats[b], cat)
-            placed = true
+        end
+    end
+    return best_dimensions
+end
+
+function _packing_category_data(rng::AbstractRNG, n_items::Int,
+                                n_categories::Int)
+    categories = [mod(item - 1, n_categories) + 1 for item in 1:n_items]
+    shuffle!(rng, categories)
+    names = [String(_PACKING_CATEGORY_PROFILES[category].name)
+             for category in 1:n_categories]
+
+    candidates = [pair for pair in _PACKING_CONFLICT_CANDIDATES
+                  if pair[1] <= n_categories && pair[2] <= n_categories]
+    incompatible_pairs = Tuple{Int,Int}[]
+    if !isempty(candidates)
+        push!(incompatible_pairs, first(candidates))
+        for pair in Iterators.drop(candidates, 1)
+            rand(rng) < 0.62 && push!(incompatible_pairs, pair)
+        end
+    end
+    sort!(unique!(incompatible_pairs))
+    return categories, names, incompatible_pairs
+end
+
+function _sample_packing_sizes(rng::AbstractRNG, item_categories::Vector{Int},
+                               capacity::Float64)
+    sizes = zeros(Float64, length(item_categories))
+    for item in eachindex(item_categories)
+        profile = _PACKING_CATEGORY_PROFILES[item_categories[item]]
+        fraction = rand(rng, Normal(profile.mean_fraction, profile.deviation))
+        if rand(rng) < 0.55
+            # Common carton/pallet modules with small measurement variation.
+            fraction = round(fraction / 0.05) * 0.05 +
+                       rand(rng, Normal(0.0, 0.0075))
+        end
+        sizes[item] = capacity * clamp(fraction, 0.055, 0.62)
+    end
+    return sizes
+end
+
+function _packing_conflict_set(incompatible_pairs::Vector{Tuple{Int,Int}})
+    return Set((min(first(pair), last(pair)), max(first(pair), last(pair)))
+               for pair in incompatible_pairs)
+end
+
+function _first_fit_conflict_packing(item_sizes::Vector{Float64},
+                                     capacity::Float64,
+                                     item_categories::Vector{Int},
+                                     incompatible_pairs::Vector{Tuple{Int,Int}})
+    conflicts = _packing_conflict_set(incompatible_pairs)
+    order = sortperm(eachindex(item_sizes);
+                     by = item -> (-item_sizes[item], item))
+    bins = Vector{Vector{Int}}()
+    loads = Float64[]
+    bin_categories = Vector{Set{Int}}()
+
+    for item in order
+        category = item_categories[item]
+        selected = 0
+        for bin in eachindex(bins)
+            loads[bin] + item_sizes[item] <= capacity + 1e-10 || continue
+            conflicts_with_bin = any(
+                (min(category, other), max(category, other)) in conflicts
+                for other in bin_categories[bin] if other != category
+            )
+            conflicts_with_bin && continue
+            selected = bin
             break
         end
-        if !placed
-            push!(bin_loads, item)
-            push!(bin_cats, Set{Int}([cat]))
+        if selected == 0
+            push!(bins, [item])
+            push!(loads, item_sizes[item])
+            push!(bin_categories, Set([category]))
+        else
+            push!(bins[selected], item)
+            loads[selected] += item_sizes[item]
+            push!(bin_categories[selected], category)
         end
     end
+    return bins, loads
+end
 
-    return length(bin_loads)
+function _fit_standard_packing!(item_sizes::Vector{Float64}, capacity::Float64,
+                                item_categories::Vector{Int},
+                                incompatible_pairs::Vector{Tuple{Int,Int}},
+                                n_bins::Int)
+    bins = Vector{Vector{Int}}()
+    loads = Float64[]
+    for _ in 1:60
+        bins, loads = _first_fit_conflict_packing(
+            item_sizes, capacity, item_categories, incompatible_pairs,
+        )
+        length(bins) <= n_bins && break
+        item_sizes .*= 0.92
+    end
+    length(bins) <= n_bins || error("Could not construct a packing witness")
+
+    # Avoid exceptionally loose planted instances while preserving the exact
+    # conflict-respecting bin partition.
+    maximum_load = maximum(loads)
+    if maximum_load < 0.78 * capacity
+        scale = 0.82 * capacity / maximum_load
+        item_sizes .*= scale
+    end
+    return bins
+end
+
+function _canonical_bin_assignment(bins::Vector{Vector{Int}}, n_items::Int)
+    ordered_bins = sort(bins; by = minimum)
+    assignment = zeros(Int, n_items)
+    for (bin, items) in enumerate(ordered_bins), item in items
+        assignment[item] = bin
+    end
+    return assignment
 end
 
 """
-    BinPackingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+    validate_bin_packing_witness(prob::BinPackingProblem) -> Bool
 
-Construct a bin packing problem instance with realistic item size distributions.
-
-Variable count = n_bins * (n_items + 1 + n_categories), summing the assignment
-binaries x[i,j], the bin-usage binaries y[j], and the per-bin per-category presence
-binaries p[c,j]. Dimensions are sized so this total lands near `target_variables`.
-
-# Arguments
-- `target_variables`: Target number of variables
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+Validate the stored assignment without a solver, including capacity, handling
+conflicts, used-bin prefix order, and the triangular canonical-label rule.
 """
-function BinPackingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+function validate_bin_packing_witness(prob::BinPackingProblem)
+    witness = prob.feasible_witness
+    witness === nothing && return false
+    length(witness) == prob.n_items || return false
+    all(bin -> 1 <= bin <= prob.n_bins, witness) || return false
+    all(witness[item] <= item for item in 1:prob.n_items) || return false
 
-    # Determine problem scale and parameters
-    if target_variables <= 100
-        min_items, max_items = 5, 20
-        min_bins, max_bins = 3, 12
-        capacity_base = rand(Uniform(50.0, 100.0))
-        size_alpha, size_beta = 2.0, 5.0  # Beta distribution params (skewed small)
-        common_sizes_prob = 0.4
-        incompatibility_prob = 0.3
-    elseif target_variables <= 1000
-        min_items, max_items = 20, 100
-        min_bins, max_bins = 8, 40
-        capacity_base = rand(Uniform(100.0, 500.0))
-        size_alpha, size_beta = 2.0, 6.0
-        common_sizes_prob = 0.5
-        incompatibility_prob = 0.4
-    else
-        min_items, max_items = 100, 500
-        min_bins, max_bins = 30, 200
-        capacity_base = rand(Uniform(500.0, 2000.0))
-        size_alpha, size_beta = 2.0, 7.0
-        common_sizes_prob = 0.6
-        incompatibility_prob = 0.5
-    end
-
-    # Var count = n_bins * (n_items + 1 + n_categories). Crucially, n_bins is NOT a
-    # free dimension: the feasibility/unknown logic below sets it to the actual
-    # packing requirement (~ density * n_items, where density is the mean item fill
-    # fraction). Sizing n_items against a freely-chosen n_bins therefore overshoots
-    # the target badly. Instead we estimate the packing density analytically and
-    # size n_items so that (density-implied n_bins) * (n_items + 1 + cats) ≈ target.
-    function est_categories(n_items)
-        return max(2, min(5, round(Int, sqrt(n_items))))
-    end
-
-    # Expected item fill fraction (mean over the common-size and Beta paths).
-    mean_common = 0.27  # mean of common_sizes_base
-    mean_beta = size_alpha / (size_alpha + size_beta)
-    mean_fraction = common_sizes_prob * mean_common +
-                    (1 - common_sizes_prob) * (0.05 + mean_beta * 0.85)
-    # First-fit-decreasing packs at ~88% fill, and the natural (unknown/feasible)
-    # bin count is ~1.05x the ideal ceil(volume/capacity). Bins per item:
-    bins_per_item = mean_fraction / 0.88 * 1.05
-    # Only an upper sanity cap here; the lower bin count follows naturally from the
-    # item count so a target just above a band threshold is not forced to overshoot.
-    est_bins(n) = clamp(round(Int, bins_per_item * n), 1, max_bins)
-
-    # Search a wide item range (down to a small floor) so the closed-form optimum
-    # n_items ≈ sqrt(target / bins_per_item) is reachable regardless of band floors.
-    lo = max(3, min(min_items, round(Int, sqrt(target_variables / bins_per_item) / 2)))
-    best_n_items = lo
-    best_error = Inf
-    for n in lo:max_items
-        cats = est_categories(n)
-        actual_vars = est_bins(n) * (n + 1 + cats)
-        err = abs(actual_vars - target_variables) / target_variables
-        if err < best_error
-            best_error = err
-            best_n_items = n
+    used_bins = sort(unique(witness))
+    used_bins == collect(1:maximum(used_bins)) || return false
+    conflicts = _packing_conflict_set(prob.incompatible_pairs)
+    for bin in used_bins
+        items = findall(==(bin), witness)
+        load = sum(prob.item_sizes[item] for item in items)
+        load <= prob.bin_capacity + 1e-8 || return false
+        categories = unique(prob.item_categories[items])
+        for first_index in 1:length(categories)
+            for second_index in (first_index + 1):length(categories)
+                first_category = categories[first_index]
+                second_category = categories[second_index]
+                pair = (min(first_category, second_category),
+                        max(first_category, second_category))
+                pair in conflicts && return false
+            end
         end
     end
+    return true
+end
 
-    n_items = best_n_items
-    n_bins_upper_bound = est_bins(n_items)
+"""
+    validate_bin_packing_certificate(prob::BinPackingProblem) -> Bool
 
-    # Generate realistic item sizes using Beta distribution (skewed toward small)
-    item_sizes = Float64[]
-    common_sizes_base = [0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5]
-    common_sizes = [s * capacity_base for s in common_sizes_base]
+Recompute and validate the aggregate-capacity contradiction.
+"""
+function validate_bin_packing_certificate(prob::BinPackingProblem)
+    certificate = prob.infeasibility_certificate
+    certificate === nothing && return false
+    demand = sum(prob.item_sizes)
+    capacity = prob.n_bins * prob.bin_capacity
+    return isapprox(certificate.total_item_size, demand; atol = 1e-8) &&
+           isapprox(certificate.total_available_capacity, capacity; atol = 1e-8) &&
+           isapprox(certificate.excess, demand - capacity; atol = 1e-8) &&
+           certificate.excess > 1e-8
+end
 
-    for i in 1:n_items
-        if rand() < common_sizes_prob && !isempty(common_sizes)
-            base_size = rand(common_sizes)
-            variation = rand(Normal(0, 0.02 * base_size))
-            sz = clamp(base_size + variation, 0.05 * capacity_base, 0.9 * capacity_base)
-        else
-            beta_val = rand(Beta(size_alpha, size_beta))
-            sz = 0.05 * capacity_base + beta_val * (0.85 * capacity_base)
-        end
-        push!(item_sizes, round(sz, digits=2))
+# Scale positive samples to an exact target while respecting item-specific
+# upper bounds. This preserves profile heterogeneity better than replacing all
+# sizes with a common contradiction value.
+function _bounded_sizes_with_total(base_sizes::Vector{Float64}, target::Float64,
+                                   upper_bounds::Vector{Float64})
+    target <= sum(upper_bounds) + 1e-9 ||
+        error("Requested aggregate size exceeds item upper bounds")
+    sizes = min.(base_sizes .* (target / sum(base_sizes)), upper_bounds)
+    remaining = target - sum(sizes)
+    if remaining > 1e-10
+        headroom = upper_bounds .- sizes
+        total_headroom = sum(headroom)
+        total_headroom > 0 || error("No headroom remains for aggregate size")
+        sizes .+= remaining .* headroom ./ total_headroom
     end
+    return sizes
+end
 
-    # Item categories for conflict constraints
-    n_categories = max(2, min(5, round(Int, sqrt(n_items))))
-    item_categories = [rand(1:n_categories) for _ in 1:n_items]
 
-    # Conflicting (distinct) category pairs
-    incompatible_pairs = Tuple{Int,Int}[]
-    if rand() < incompatibility_prob && n_categories >= 2
-        all_pairs = [(i, j) for i in 1:n_categories for j in (i + 1):n_categories]
-        if !isempty(all_pairs)
-            n_incompatible = rand(1:min(3, length(all_pairs)))
-            incompatible_pairs = collect(sample(all_pairs, n_incompatible, replace=false))
-        end
-    end
-
-    # Resolve feasibility status (unknown -> natural instance, no forced contradiction)
-    actual_status = feasibility_status
-
-    total_item_volume = sum(item_sizes)
-
-    if actual_status == feasible
-        # Constructive feasibility: use a conflict-respecting FFD packing to find how
-        # many bins are actually needed, then provide at least that many (plus buffer).
-        bins_needed = simulate_first_fit_decreasing(
-            item_sizes, capacity_base, item_categories, incompatible_pairs
-        )
-        # Small buffer so a feasible packing exists without materially inflating the
-        # variable count above the target.
-        safety = rand(0:1)
-        n_bins_upper_bound = max(n_bins_upper_bound, bins_needed + safety)
-
-    elseif actual_status == infeasible
-        # Preserve the target-sized dimensions and force a deterministic
-        # contradiction that survives LP relaxation: total item volume exceeds
-        # the aggregate capacity of all bins. Summing the bin-capacity rows gives
-        # sum(item_sizes) <= n_bins * capacity, while the assignment equalities
-        # force every item to be packed exactly once.
-        capacity_base = total_item_volume / (n_bins_upper_bound * rand(Uniform(1.10, 1.30)))
-
-    else  # unknown: natural instance, capacity near the requirement
-        min_bins_needed = ceil(Int, total_item_volume / capacity_base)
-        ratio = 0.9 + rand() * 0.4  # 0.9 to 1.3
-        n_bins_upper_bound = max(1, round(Int, min_bins_needed * ratio))
-    end
-
-    return BinPackingProblem(
-        n_items, n_bins_upper_bound, n_categories, item_sizes, capacity_base,
-        item_categories, incompatible_pairs
+function _force_standard_overload!(rng::AbstractRNG,
+                                   item_sizes::Vector{Float64},
+                                   n_bins::Int, capacity::Float64;
+                                   factor_bounds = (1.08, 1.22))
+    aggregate_capacity = n_bins * capacity
+    factor = rand(rng, Uniform(factor_bounds...))
+    total_size = aggregate_capacity * factor
+    item_sizes .= _bounded_sizes_with_total(
+        item_sizes, total_size, fill(0.82 * capacity, length(item_sizes)),
     )
+    return aggregate_capacity
+end
+
+
+function _set_bin_packing_starts!(model::Model, prob)
+    witness = prob.feasible_witness
+    witness === nothing && return model
+
+    used = falses(prob.n_bins)
+    present = falses(prob.n_categories, prob.n_bins)
+    for item in 1:prob.n_items
+        bin = witness[item]
+        used[bin] = true
+        present[prob.item_categories[item], bin] = true
+        for candidate_bin in 1:prob.n_bins
+            set_start_value(
+                model[:x][item, candidate_bin],
+                candidate_bin == bin ? 1.0 : 0.0,
+            )
+        end
+    end
+    for bin in 1:prob.n_bins
+        set_start_value(model[:y][bin], used[bin] ? 1.0 : 0.0)
+        for category in 1:prob.n_categories
+            set_start_value(
+                model[:category_present][category, bin],
+                present[category, bin] ? 1.0 : 0.0,
+            )
+        end
+    end
+    return model
+end
+
+"""
+    BinPackingProblem(target_variables, feasibility_status, seed)
+
+Construct an identical-bin instance using only a local RNG. The dimensions are
+fixed before status-specific data generation, so requested status never causes
+variable-count drift.
+"""
+function BinPackingProblem(target_variables::Int,
+                           feasibility_status::FeasibilityStatus, seed::Int)
+    rng = MersenneTwister(seed)
+    n_items, n_bins, n_categories = _bin_packing_dimensions(target_variables)
+    actual_variables = _bin_packing_variable_count(
+        n_items, n_bins, n_categories,
+    )
+
+    bin_capacity = n_items <= 25 ? rand(rng, Uniform(80.0, 140.0)) :
+                   n_items <= 100 ? rand(rng, Uniform(300.0, 650.0)) :
+                   rand(rng, Uniform(900.0, 2_000.0))
+    item_categories, category_names, incompatible_pairs =
+        _packing_category_data(rng, n_items, n_categories)
+    item_sizes = _sample_packing_sizes(rng, item_categories, bin_capacity)
+    load_profile = feasibility_status == feasible ? :guaranteed_feasible :
+                   feasibility_status == infeasible ? :aggregate_overload :
+                   _packing_unknown_load_profile(target_variables, seed)
+
+    feasible_witness = nothing
+    infeasibility_certificate = nothing
+    if feasibility_status == feasible
+        bins = _fit_standard_packing!(
+            item_sizes, bin_capacity, item_categories, incompatible_pairs,
+            n_bins,
+        )
+        feasible_witness = _canonical_bin_assignment(bins, n_items)
+    elseif feasibility_status == infeasible
+        aggregate_capacity = _force_standard_overload!(
+            rng, item_sizes, n_bins, bin_capacity,
+        )
+        infeasibility_certificate = BinPackingCapacityCertificate(
+            sum(item_sizes), aggregate_capacity,
+            sum(item_sizes) - aggregate_capacity,
+        )
+    elseif load_profile in (:light, :nominal)
+        _fit_standard_packing!(
+            item_sizes, bin_capacity, item_categories, incompatible_pairs,
+            n_bins,
+        )
+        if load_profile == :light
+            aggregate_capacity = n_bins * bin_capacity
+            utilization = sum(item_sizes) / aggregate_capacity
+            utilization > 0.68 && (item_sizes .*= 0.68 / utilization)
+        end
+    else
+        _force_standard_overload!(
+            rng, item_sizes, n_bins, bin_capacity;
+            factor_bounds = (1.03, 1.09),
+        )
+    end
+
+    problem = BinPackingProblem(
+        n_items,
+        n_bins,
+        n_categories,
+        item_sizes,
+        bin_capacity,
+        item_categories,
+        incompatible_pairs,
+        category_names,
+        load_profile,
+        target_variables,
+        actual_variables,
+        feasibility_status,
+        feasible_witness,
+        infeasibility_certificate,
+    )
+    if feasibility_status == feasible
+        @assert validate_bin_packing_witness(problem)
+    elseif feasibility_status == infeasible
+        @assert validate_bin_packing_certificate(problem)
+    end
+    return problem
 end
 
 """
     build_model(prob::BinPackingProblem)
 
-Build a JuMP model for the bin packing problem. Completely deterministic — uses only
-the struct's fields.
-
-# Formulation
-- Variables: x[i,j] (item i in bin j), y[j] (bin j used), p[c,j] (category c present
-  in bin j).
-- Objective: minimize the number of bins used.
-- Constraints: each item assigned exactly once; per-bin capacity (linked to y);
-  items only in used bins; category presence linking x[i,j] <= p[cat(i),j]; and
-  conflict bans p[c1,j] + p[c2,j] <= 1 for each conflicting category pair.
-
-# Returns
-- `model`: The JuMP model
+Build the identical-bin MILP. Category-presence indicators have a two-sided LP
+envelope: every assigned item implies presence, and presence cannot exceed the
+category's total assignment. The chain `x[i,b] <= category_present[c(i),b] <=
+y[b]` makes separate item-to-used-bin rows unnecessary even in the relaxation.
+Canonical bin ordering removes label symmetries without excluding any unlabeled
+packing.
 """
 function build_model(prob::BinPackingProblem)
     model = Model()
+    I = 1:prob.n_items
+    B = 1:prob.n_bins
+    C = 1:prob.n_categories
+    category_items = [findall(==(category), prob.item_categories)
+                      for category in C]
 
-    n_items = prob.n_items
-    n_bins = prob.n_bins
-    n_categories = prob.n_categories
+    @variable(model, x[I, B], Bin)
+    @variable(model, y[B], Bin)
+    @variable(model, category_present[C, B], Bin)
 
-    # Variables: total = n_bins * (n_items + 1 + n_categories)
-    @variable(model, x[1:n_items, 1:n_bins], Bin)
-    @variable(model, y[1:n_bins], Bin)
-    @variable(model, p[1:n_categories, 1:n_bins], Bin)
+    @objective(model, Min, sum(y[bin] for bin in B))
 
-    # Objective: minimize number of bins used
-    @objective(model, Min, sum(y[j] for j in 1:n_bins))
+    @constraint(model, item_assignment[item in I],
+        sum(x[item, bin] for bin in B) == 1)
+    @constraint(model, bin_capacity[bin in B],
+        sum(prob.item_sizes[item] * x[item, bin] for item in I) <=
+        prob.bin_capacity * y[bin])
 
-    # Each item assigned to exactly one bin
-    for i in 1:n_items
-        @constraint(model, sum(x[i, j] for j in 1:n_bins) == 1)
+    @constraint(model, presence_lower[item in I, bin in B],
+        x[item, bin] <= category_present[prob.item_categories[item], bin])
+    @constraint(model, presence_upper[category in C, bin in B],
+        category_present[category, bin] <=
+        sum(x[item, bin] for item in category_items[category]))
+    @constraint(model, presence_used[category in C, bin in B],
+        category_present[category, bin] <= y[bin])
+
+    @constraint(model,
+        category_conflict[pair in eachindex(prob.incompatible_pairs), bin in B],
+        category_present[prob.incompatible_pairs[pair][1], bin] +
+        category_present[prob.incompatible_pairs[pair][2], bin] <= 1)
+
+    # Identical-bin symmetry: open a prefix of bins, and label that prefix by
+    # increasing smallest item index. Any unlabeled packing has this canonical
+    # representation.
+    if prob.n_bins >= 2
+        @constraint(model, used_prefix[bin in 1:(prob.n_bins - 1)],
+            y[bin] >= y[bin + 1])
     end
+    @constraint(model, canonical_label[item in I, bin in B; bin > item],
+        x[item, bin] == 0)
 
-    # Bin capacity (and bin must be open to hold anything)
-    for j in 1:n_bins
-        @constraint(model, sum(prob.item_sizes[i] * x[i, j] for i in 1:n_items) <= prob.bin_capacity * y[j])
-    end
-
-    # Items can only go in used bins
-    for i in 1:n_items
-        for j in 1:n_bins
-            @constraint(model, x[i, j] <= y[j])
-        end
-    end
-
-    # Category presence linking: if item i is in bin j, its category is present in j
-    for i in 1:n_items
-        c = prob.item_categories[i]
-        for j in 1:n_bins
-            @constraint(model, x[i, j] <= p[c, j])
-        end
-    end
-
-    # Conflict bans: two conflicting categories cannot both be present in a bin
-    for (cat1, cat2) in prob.incompatible_pairs
-        for j in 1:n_bins
-            @constraint(model, p[cat1, j] + p[cat2, j] <= 1)
-        end
-    end
-
+    _set_bin_packing_starts!(model, prob)
     return model
 end
 
-# Register the variant
 register_variant(
     :bin_packing,
     :standard,
     BinPackingProblem,
-    "Bin packing that minimizes bins used, with realistic item sizes and true category-conflict constraints",
+    "Identical-bin packing with handling conflicts, two-sided category links, constructive witnesses, and aggregate capacity certificates",
+    default = true,
 )

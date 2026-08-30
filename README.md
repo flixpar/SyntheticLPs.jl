@@ -31,7 +31,7 @@ with more than one variant are annotated below.
 - Assignment — variants: `standard`, `workload_balance`
 - Blending — variants: `standard`, `equipment_batches`, `multi_product`
 - Airline Crew
-- Bin Packing
+- Bin Packing — variants: `standard` (identical bins with handling conflicts), `heterogeneous` (typed fleet with capacity, cost, availability, and eligibility differences)
 - Container Loading — variants: `standard`, `two_dimensional_bin_packing`
 - Cutting Stock — variants: `standard`, `setup_cost`, `due_dates`, `integer_patterns`
 - Energy — variants: `standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`, `optimal_transmission_switching`
@@ -52,7 +52,7 @@ with more than one variant are annotated below.
 - Regression — variants: `lad`, `quantile`, `chebyshev`, `basis_pursuit` (weighted sparse recovery)
 - Resilient Network Design
 - Resource Allocation
-- Revenue Management (network deterministic LP / bid-price)
+- Revenue Management — variants: `standard` (deterministic network LP / bid-price), `stochastic_overbooking` (scenario show-ups with denied-service recourse)
 - Scheduling
 - Set System — variants: `set_cover`, `set_packing`, `set_partitioning`, `combinatorial_auction`
 - Stochastic Program (two-stage with recourse; dual block-angular structure)
@@ -151,6 +151,13 @@ model, problem = generate_problem(:diet_problem, 100, infeasible, 0)
 # Generate a problem with unknown feasibility (randomized)
 model, problem = generate_problem(:portfolio, 100, unknown, 0)
 ```
+
+The modernized crop-planning, feed-blending, land-use, unit-commitment,
+bin-packing, and revenue-management generators also store auditable status
+artifacts. Feasible instances carry a complete primal witness; infeasible
+instances carry a structural certificate that can be checked without a solver.
+Their category documentation names the fields and validation helpers. Unknown
+instances either make no claim or record the profile to which they resolved.
 
 Generators honor the requested status by construction, but a few use heuristic
 feasibility logic that occasionally misses. Pass an `optimizer` to **verify and

@@ -1,125 +1,207 @@
 # Land Use
 
-`LandUseProblem` generates a parcel zoning assignment model with resource capacities, environmental restrictions, minimum zoning counts, and residential-industrial adjacency rules.
+`LandUseProblem` generates spatial parcel-zoning assignment models with
+infrastructure capacities, parcel-specific environmental exclusions, minimum
+zoning counts, and residential-industrial adjacency rules. The native model is
+a binary MILP; the package API relaxes those binaries by default unless
+`relax_integer=false` is requested.
 
-## Overview
+## Planning Setting
 
-This generator represents land-use planning. A planner assigns each parcel to one zoning type, such as residential, commercial, industrial, agricultural, or conservation. Assignments create economic value from revenue minus development cost, consume infrastructure resources, and may be blocked by environmental restrictions or adjacency rules.
+Each parcel must receive exactly one zoning type. A zoning decision produces a
+parcel-size-weighted economic benefit, consumes infrastructure resources, and
+may be unavailable because of an environmental restriction. Residential and
+industrial uses cannot occupy adjacent parcels when adjacency rules are active.
 
-## Generator Data and Sizing
+Unlike a generic random graph, parcel adjacency comes from geography. Parcels
+are placed on a jittered two-dimensional grid, parcel identifiers are shuffled
+over the cells, and horizontal and vertical neighboring cells form a connected
+spatial graph. The generator stores both the symmetric adjacency matrix and a
+canonical list of undirected edges `(i, j)` with `i < j`.
 
-`target_variables` is interpreted as approximately `n_parcels * n_zoning_types`. The generator first selects zoning and resource counts by size regime, then sets:
+## Sizing and Catalogs
+
+`target_variables` approximates `n_parcels * n_zoning_types`:
 
 ```text
 n_parcels = max(2, round(Int, target_variables / n_zoning_types))
 ```
 
-Size regimes:
+| Target regime | Zoning types | Resources | Development-cost scale | Revenue scale |
+| --- | ---: | ---: | ---: | ---: |
+| `target_variables <= 250` | 3-5 | 3-5 | 50,000-150,000 | 20,000-80,000 |
+| `250 < target_variables <= 1000` | 4-8 | 4-6 | 75,000-250,000 | 40,000-120,000 |
+| `target_variables > 1000` | 5-12 | 5-8 | 100,000-500,000 | 60,000-200,000 |
 
-- `target_variables <= 250`: `n_zoning_types` from `3:5`, `n_resources` from `3:5`, development cost scale `50000:150000`, revenue scale `20000:80000`, infrastructure capacity factor `0.6-0.8`, environmental restriction probability `0.2-0.4`.
-- `target_variables <= 1000`: `n_zoning_types` from `4:8`, `n_resources` from `4:6`, development cost scale `75000:250000`, revenue scale `40000:120000`, infrastructure capacity factor `0.65-0.85`, environmental restriction probability `0.25-0.45`.
-- larger targets: `n_zoning_types` from `5:12`, `n_resources` from `5:8`, development cost scale `100000:500000`, revenue scale `60000:200000`, infrastructure capacity factor `0.7-0.9`, environmental restriction probability `0.3-0.5`.
+The complete zoning catalog, in order, is:
 
-Adjacency constraints are enabled with probability `0.8`; minimum zoning requirements with probability `0.9`.
+1. Residential
+2. Commercial
+3. Industrial
+4. Agricultural
+5. Conservation
+6. Mixed Use
+7. Recreational
+8. Institutional
+9. Transportation
+10. Special
+11. Utilities
+12. Open Space
 
-Parcel sizes follow `LogNormal(log(5), 0.8)` and are floored at `0.1`. Development costs and revenues are generated per parcel-zoning pair using zoning-specific multipliers, parcel-specific gamma location factors, and normal noise. Resource consumption is generated per zoning-resource pair from hand-coded patterns for the first five zoning types and random `Uniform(0.5, 3.0)` bases for additional types, multiplied by `Gamma(2, 0.5)`.
+Every catalog entry defines its name, cost multiplier, revenue multiplier, and
+an eight-resource consumption profile. The resource catalog is Water, Sewage,
+Transportation, Power, Internet, Gas, Environmental, and Emergency. Because the
+catalogs are the source of both sampling limits and generated metadata, every
+sampled large instance has complete names and parameter profiles.
 
-Initial resource capacities are based on total parcel size times mean consumption, scaled by the infrastructure capacity factor and `Uniform(0.8, 1.2)` noise. Environmental restrictions randomly forbid some parcel-zoning pairs, but the constructor repairs any parcel with no allowed zoning type. If minimum zoning requirements are active, the first up to three zoning types receive minimum parcel counts, usually about 10 percent of parcels each, adjusted to fit the parcel count. Environmental restrictions are relaxed when needed so enough parcels allow required zoning types.
+## Generated Data
 
-The struct stores:
+- Parcel sizes follow `LogNormal(log(5), 0.75)` and are floored at 0.1 acres.
+- Coordinates lie inside the unit square on a jittered grid. Grid-cell
+  assignment to parcel identifiers is shuffled.
+- Development cost and revenue combine zoning-specific catalog multipliers,
+  distance to the urban center, and log-normal parcel noise. Urban uses favor
+  accessible central parcels; agricultural, conservation, recreational, and
+  open-space uses favor more rural parcels.
+- Zoning-resource rates apply log-normal noise to the catalog profiles while
+  remaining strictly positive.
+- Adjacency constraints are active with probability 0.8. The spatial graph is
+  still retained when the rule is inactive.
+- Minimum zoning counts are active with probability 0.9. The first up to three
+  types—Residential, Commercial, and Industrial—each normally require about 10
+  percent of parcels, with small-instance counts reduced to fit.
+- Environmental restrictions affect a random subset of parcels and forbid one
+  to three zoning types. They never forbid the generator's planted reference
+  assignment, so restrictions cannot accidentally invalidate a requested
+  feasible witness.
 
-- `n_parcels`, `n_zoning_types`, `n_resources`
-- `parcel_sizes`
-- `development_costs`, `revenues`
-- `resource_consumption`
-- `resource_capacities`
-- `environmental_restrictions`
-- `adjacency_matrix`
-- `zoning_names`, `resource_names`
-- `min_counts_by_type`
-- `zoning_adjacency_constraints`
-- `minimum_zoning_requirements`
+The constructor uses a local `MersenneTwister(seed)`. It neither resets nor
+consumes Julia's process-wide random stream. Identical arguments produce
+field-identical problem data for the same package version.
 
-The constructor calls `Random.seed!(seed)`, resetting Julia's global RNG.
+## Stored Evidence and Spatial Fields
 
-## LP Formulation
+In addition to the economic, resource, and restriction data, the problem stores:
 
-The implemented model is a binary assignment MILP, not a pure LP.
+- `parcel_coordinates::Matrix{Float64}`: `n_parcels x 2` coordinates.
+- `adjacency_matrix::Matrix{Bool}`: symmetric parcel adjacency.
+- `adjacency_edges::Vector{Tuple{Int,Int}}`: unique undirected edges with
+  `i < j`.
+- `feasible_witness::Union{Nothing,Vector{Int}}`: zoning index selected for each
+  parcel in a requested-feasible instance.
+- `infeasibility_certificate::Union{Nothing,LandUseInfeasibilityCertificate}`:
+  a resource lower-bound certificate for a requested-infeasible instance.
 
-Sets:
+Unknown instances expose neither status claim.
 
-- `P = {1, ..., n_parcels}` parcels
-- `Z = {1, ..., n_zoning_types}` zoning types
-- `R = {1, ..., n_resources}` resources
+## MILP Formulation
 
-Decision variable:
-
-- `x_{ij} in {0,1}`: parcel `i` is assigned to zoning type `j`
-
-Objective:
-
-```math
-\max \sum_{i \in P} \sum_{j \in Z} s_i (rev_{ij} - cost_{ij}) x_{ij}
-```
-
-Each parcel receives exactly one zoning type:
-
-```math
-\sum_{j \in Z} x_{ij} = 1 \quad \forall i \in P
-```
-
-Resource capacities:
-
-```math
-\sum_{i \in P} \sum_{j \in Z} s_i r_{jk} x_{ij} \le C_k \quad \forall k \in R
-```
-
-Environmental restrictions:
-
-```math
-x_{ij} = 0 \quad \text{for restricted parcel-zoning pairs}
-```
-
-Minimum zoning requirements, when enabled:
-
-```math
-\sum_{i \in P} x_{ij} \ge m_j
-```
-
-Adjacency constraints, when enabled and at least three zoning types exist, prohibit residential type 1 next to industrial type 3:
+Let `P` be parcels, `Z` zoning types, `R` resources, and `E` undirected spatial
+edges. The binary variable
 
 ```math
-x_{i,1} + x_{i',3} \le 1
+x_{iz} = 1
+```
+
+means that parcel `i` receives zoning type `z`.
+
+The objective maximizes parcel-size-weighted net benefit:
+
+```math
+\max \sum_{i \in P}\sum_{z \in Z}
+s_i(\mathit{revenue}_{iz}-\mathit{cost}_{iz})x_{iz}.
+```
+
+Each parcel receives one zoning:
+
+```math
+\sum_{z \in Z} x_{iz}=1 \qquad \forall i \in P.
+```
+
+Resource use is limited by capacity:
+
+```math
+\sum_{i \in P}\sum_{z \in Z}s_i r_{zk}x_{iz}\le C_k
+\qquad \forall k \in R.
+```
+
+Environmentally forbidden assignments are fixed to zero:
+
+```math
+x_{iz}=0 \qquad \forall (i,z)\text{ restricted}.
+```
+
+When minimum zoning requirements are active:
+
+```math
+\sum_{i \in P}x_{iz}\ge m_z.
+```
+
+For every edge `{i,j}` when adjacency rules are active:
+
+```math
+x_{i,\mathrm{Residential}}+x_{j,\mathrm{Industrial}}\le 1,
 ```
 
 ```math
-x_{i,3} + x_{i',1} \le 1
+x_{i,\mathrm{Industrial}}+x_{j,\mathrm{Residential}}\le 1.
 ```
 
-for adjacent parcels `i` and `i'`.
+Each undirected edge is visited once, so these are the two distinct
+orientations rather than duplicated rows from a symmetric matrix traversal.
 
 ## Feasibility Controls
 
-For `feasible`, the constructor builds a concrete witness assignment. It computes allowed zoning sets and neighbor lists, then tries to satisfy minimum counts for type 1, type 3, and type 2. Residential type 1 and industrial type 3 assignment is adjacency-aware. If it cannot find enough nonconflicting parcels, it prunes adjacency edges to make the witness possible. Commercial type 2 has additional fallbacks, including swaps and final environmental relaxation when needed.
+### Requested feasible
 
-Remaining parcels are assigned to the allowed zoning type with the best parcel-level net benefit, excluding residential-industrial adjacency conflicts when possible. The witness is then repaired: adjacency edges that conflict with the witness are pruned, minimum zoning count violations are addressed by swaps, and as a last resort minimum requirements are reduced to the achieved count. Finally, resource usage of the witness is computed and capacities are raised to at least usage times a slack factor from `1.05` to `1.25`.
+The generator plants an integer reference assignment before environmental
+restrictions are sampled. Required residential and industrial parcels are
+chosen from one parity class of the bipartite grid graph, so they cannot be
+adjacent. Required commercial parcels and all remaining parcels are then
+assigned while preserving the residential-industrial rule. Environmental
+restrictions exclude the chosen zoning from their candidates.
 
-For `infeasible`, the constructor computes a resource lower bound by assigning each parcel its minimum possible consumption for each resource over currently allowed zoning types. It then sets every resource capacity below that lower bound by `5-25` percent, floored at `1e-6`. Since every parcel must be assigned exactly one allowed zoning, this creates a resource-capacity contradiction.
+Resource capacities are finally set to at least the witness consumption with
+5-20 percent slack. The resulting `feasible_witness` directly satisfies parcel
+assignment, environmental, minimum-count, adjacency, and capacity constraints.
 
-For `unknown`, no feasibility enforcement branch is applied. The base random restrictions, capacities, adjacency matrix, and minimum counts are returned after only the general repairs that ensure each parcel has an allowed zoning and required types are not blocked solely by environmental restrictions.
+### Requested infeasible
 
-## Model Characteristics
+One resource `k*` receives a solver-independent lower-bound certificate. For
+each parcel, let `A_i` be its environmentally allowed zoning types and define
 
-Variable count is `n_parcels * n_zoning_types`, all binary. Constraint count is driven by:
+```math
+b_i=s_i\min_{z\in A_i}r_{z,k^*}.
+```
 
-- `n_parcels` assignment equalities
-- `n_resources` resource capacity inequalities
-- one equality for each restricted parcel-zoning pair
-- up to `length(min_counts_by_type)` minimum zoning rows
-- two adjacency inequalities for each true ordered adjacency entry when adjacency constraints are active and `n_zoning_types >= 3`
+Even in the LP relaxation, the exactly-one assignment and environmental rows
+imply resource use of at least
 
-The assignment and environmental rows are sparse. Resource rows are dense across all parcel-zoning variables. Adjacency rows are sparse two-variable rows. Because the adjacency matrix is symmetric and the model loops over all ordered pairs, each undirected adjacency can produce duplicated directional constraints.
+```math
+B=\sum_i b_i.
+```
 
-## Practical Notes
+The generator sets `C[k*]` to 72-92 percent of `B`, hence `C[k*] < B`. The
+certificate stores `k*`, every `b_i`, `B`, and the capacity. All other resource
+capacities admit the planted reference assignment, making the recorded
+contradiction easy to inspect.
 
-This generator is useful for testing binary assignment, resource-capacity infeasibility, environmental exclusions, and graph-like adjacency restrictions. The feasible path may modify generated environmental restrictions, minimum counts, and adjacency edges to admit the witness. The built model uses binary variables, so solving it requires MILP support; the LP relaxation would allow fractional parcel-zoning assignments but is not what `build_model` creates.
+### Requested unknown
+
+Unknown mode returns nominal capacities derived from total parcel area and
+average zoning consumption with additional scenario noise. It makes no status
+claim and stores neither a witness nor a certificate.
+
+## Model Size and Use
+
+- Variables: `n_parcels * n_zoning_types`, binary before optional relaxation.
+- Assignment rows: `n_parcels`.
+- Resource rows: `n_resources`.
+- Environmental rows: one per restricted parcel-zoning pair.
+- Minimum-count rows: up to three.
+- Adjacency rows: exactly `2 * length(adjacency_edges)` when enabled.
+
+The package-level default `relax_integer=true` converts the binaries to
+continuous variables in `[0,1]`. Use `relax_integer=false` for the native zoning
+MILP. The infeasibility certificate is valid for both formulations, while the
+feasible witness is an integer solution to both.

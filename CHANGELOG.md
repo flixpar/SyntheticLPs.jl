@@ -4,6 +4,306 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-30 (review fixes: RNG determinism and latent generator crashes)
+
+**Previous Commit**: `fbf049e`
+
+**Summary**: Four correctness/robustness fixes found while reviewing the
+quality-improvements branch. No formulation or model row changed; three of the
+four shift the RNG stream only in cases that were previously broken or
+unreachable, while the feed-blending fix changes generated data for every
+feed-blending instance.
+
+**Details**:
+- `src/problem_types/feed_blending/standard.jl`: `_feed_reference_recipe` built
+  its fill-order with `sortperm(1:n; by = i -> costs[i] * rand(rng, ...))`.
+  Julia evaluates `by` inside the comparator (`Base.Order.By`), so a fresh
+  jitter was drawn on *every comparison* instead of once per ingredient. That
+  made the comparator inconsistent (the same ingredient could compare with
+  different keys) and, worse, made the number of `rand` draws a function of
+  Base's sorting algorithm — so any change to `sort!` internals would silently
+  change every subsequent random value in the instance, breaking the
+  "same seed -> identical instance" contract. The jittered keys are now
+  materialized into a vector before sorting.
+- `src/problem_types/bin_packing/heterogeneous.jl`: `_fit_heterogeneous_packing!`
+  already held a valid witness when it decided to tighten a loosely packed
+  instance, then scaled `item_sizes` up and re-ran the greedy, calling
+  `error("Tightened heterogeneous witness failed")` if the second pass failed.
+  The greedy is not scale invariant (bin capacities are fixed), so a packing
+  that exists at the looser scale can be lost, turning a `feasible` request
+  into an exception. The looser sizes and assignment are now restored instead.
+- `src/problem_types/bin_packing/heterogeneous.jl`: `_heterogeneous_type_data`
+  computed `n_bin_types = min(4, n_bins)` but its `else` branch names four bin
+  types unconditionally. With `n_bins == 1` the function would size
+  `availability`/`compatibility` for one type, return four names, and raise a
+  `BoundsError` on `compatibility[2, category]`. Unreachable today only because
+  `_bin_packing_dimensions` floors `n_bins` at 2; now floored explicitly via
+  `clamp(n_bins, 2, 4)`.
+- `src/problem_types/unit_commitment/standard.jl`: the initial-commitment guard
+  `available_first + 1e-9 >= min_output[u]` admitted `available_first` up to
+  1e-9 *below* the unit's stable minimum, after which
+  `rand(rng, Uniform(min_output[u], available_first))` throws `ArgumentError`
+  because `Uniform` requires `a < b`. The guard is now strict
+  (`available_first > min_output[u] + 1e-9`).
+- Verification: `Pkg.test()` (solver-backed testsets included) passes, and a
+  34,560-instance sweep over the eight touched generators x 3 statuses x 24
+  targets x 120 seeds constructs without error.
+
+## 2026-08-30 (crop-planning witness market cap)
+
+**Previous Commit**: `9702010`
+
+**Summary**: Fixed the crop-planning feasible witness so the all-negative-profit
+fallback allocation respects per-crop market limits.
+
+**Details**:
+- `src/problem_types/crop_planning/standard.jl`: when every sampled crop option
+  has nonpositive `net_profit_per_ha`, the baseline allocation distributed the
+  remaining land evenly across crops without applying `market_area_caps`. The
+  resulting `feasible_witness` could violate the model's
+  `yield[i] * x[i] <= market_demand_tonnes[i]` rows, and the water/labor
+  capacities and diversity floors derived from that witness were therefore not
+  guaranteed to admit it. The even split is now capped by each crop's remaining
+  market headroom, matching the profit-weighted branch directly above it.
+- Empirically: sweeping seeds 1–20000 at small targets found 3 instances that
+  take the all-negative branch; all 3 produced witnesses violating the market
+  rows before the fix and none do after. Reported by Codex review on PR #44.
+
+## 2026-08-29 23:13 UTC (quality-pass documentation integration)
+
+**Previous Commit**: `15fa540`
+
+**Summary**: Synchronized the project-level catalogs and offline explainer with
+the six upgraded generator categories and made future Markdown/HTML drift fail
+fast during explainer generation.
+
+**Details**:
+- Updated the README and contributor architecture guide for the new
+  `bin_packing/heterogeneous` and
+  `revenue_management/stochastic_overbooking` variants, the auditable status
+  artifacts introduced across six legacy categories, and unit commitment's
+  natural binary formulation versus the API's default LP relaxation.
+- Corrected the contributor catalog's previously incomplete operating-room
+  variant list and removed bin packing and revenue management from the
+  single-variant inventory.
+- Expanded the documentation index with bin packing, revenue management, and
+  unit commitment, clarified that it covers the documented subset of the 42
+  categories, and recorded the required offline-explainer rebuild workflow.
+- Added explainer metadata for those three categories plus the already
+  documented operating-room and workforce-shift generators. The builder now
+  excludes the historical branch review, verifies exact parity between
+  Markdown pages and configured metadata, and reports the number of rendered
+  articles rather than every Markdown file.
+- Marked the branch-variant review as a historical June 2026 snapshot and
+  regenerated the self-contained HTML. Its 30 article IDs now exactly match the
+  metadata catalog, and stale feed-blending, crop-planning, and land-use claims
+  were replaced by their current documentation.
+
+## 2026-08-29 23:01 UTC (bin-packing quality pass)
+
+**Previous Commit**: `bb5b219`
+
+**Summary**: Rebuilt the legacy identical-bin generator around realistic
+handling categories and auditable status evidence, and added a distinct
+heterogeneous-fleet variant with type-specific operational tradeoffs.
+
+**Details**:
+- Replaced discontinuous sizing bands with an integer dimension search over the
+  variables actually emitted (`x`, `y`, and category-presence indicators).
+  Instances store their requested and exact actual counts; targets such as 250,
+  1,000, 1,001, 5,000, and 10,000 are matched exactly, with nearby supported
+  counts selected for non-representable sizes.
+- Standard instances now use named handling categories, category-correlated item
+  sizes, sampled operational conflicts, two-sided presence links, used-bin
+  prefix symmetry, and a triangular canonical-label formulation. A
+  conflict-aware first-fit-decreasing construction supplies a complete integer
+  witness for feasible requests.
+- Added `bin_packing/heterogeneous`, which models a finite typed fleet with
+  different capacities, fixed costs, availability, and category eligibility.
+  Its compatibility-aware best-fit construction plants a feasible assignment,
+  and symmetry is applied only within interchangeable slots of the same type.
+- Both variants expose solver-free witness validators that check capacity,
+  conflicts, eligibility, and their respective symmetry rules. Infeasible
+  requests store an aggregate item-size certificate exceeding every available
+  bin's combined capacity; the contradiction remains valid in the LP relaxation.
+  Typed-fleet validation derives that capacity from the concrete slot types and
+  separately audits redundant availability metadata.
+- Recalibrated `unknown` around deterministic light, nominal, and surge load
+  profiles instead of inheriting a size-dependent infeasibility bias. Each
+  ten-seed block contains a 70/30 feasible/infeasible native mix at every tested
+  scale while retaining no witness or certificate claim. Complete binary starts
+  derived from feasible witnesses are now attached to all assignment, bin-use,
+  and category-presence variables.
+- Isolated all random sampling in local `MersenneTwister` instances, named the
+  formulation's symmetry and eligibility rows, added full documentation, and
+  added focused tests for registry behavior, sizing boundaries, data diversity,
+  RNG isolation, field determinism, row structure, witnesses, certificates, and
+  relaxed/native statuses. The focused suite passed 15,140 assertions, including
+  128 labeled HiGHS LP/MILP status cases, 60 raw native unknown-profile solves,
+  and two 2,000-variable native incumbent checks. A broader 120-case unknown
+  sweep reproduced the intended 70/30 mix at all six variant/scale combinations.
+
+## 2026-08-29 22:54 UTC (revenue-management quality pass)
+
+**Previous Commit**: `827799e`
+
+**Summary**: Replaced the legacy anonymous capacity-allocation data with a
+coherent network revenue-management generator and added a substantively distinct
+stochastic-overbooking variant with scenario recourse and service guarantees.
+
+**Details**:
+- The standard deterministic LP now samples directed hub-and-spoke legs,
+  coherent local and connecting itineraries, three operating profiles, and
+  economy/premium/business products with correlated fares and demand. Parallel
+  forward and reverse incidence make the network structure directly auditable.
+- Added contractual acceptance floors and explicit status artifacts. Feasible
+  requests store the complete floor vector as a witness; infeasible requests
+  store a selected leg whose mandatory accepted load strictly exceeds capacity.
+  Unknown requests reproducibly resolve to a recorded profile and artifact.
+- Added `revenue_management/stochastic_overbooking`, a two-stage continuous LP
+  with shared advance bookings, normalized scenario probabilities, correlated
+  show-up profiles, served/denied recourse, class-dependent compensation and
+  denial limits, scenario-wide service caps, and per-scenario leg capacity.
+- The stochastic variant stores either a no-denial scenario witness or a
+  relaxation-valid certificate derived from show-up balance, product denial
+  limits, booking commitments, and a conflicting scenario-leg capacity.
+- Both constructors now isolate randomness in local `MersenneTwister` instances,
+  use dimension planners tied to emitted variables, and attach feasible starts.
+  Added full formulation documentation and focused tests for topology, economic
+  profiles, sizing boundaries, determinism, RNG isolation, row coefficients,
+  witnesses, certificates, and registry behavior.
+- Validation passed 45,487 focused assertions, 720 direct raw HiGHS status
+  cases, a 5,700-case constructor/artifact sweep, and the 107,960-assertion
+  monolithic suite in the scripts environment.
+
+## 2026-08-29 22:43 UTC (feed-blending quality pass)
+
+**Previous Commit**: `1c87ef5`
+
+**Summary**: Rebuilt feed blending around role-correlated synthetic data and
+typed average-content bounds, eliminating the string-parsing defect that could
+turn a certified maximum into a minimum and make requested-infeasible instances
+feasible.
+
+**Details**:
+- Added explicit ingredient and nutrient roles with correlated costs,
+  concentrations, sparsity, and availability. Empty nutrient rows and ingredient
+  columns are repaired with role-aware values, while the ingredient count still
+  tracks the requested target exactly above the three-variable floor.
+- Replaced diagnostic-string ratio tuples with `FeedRatioConstraint` and
+  `FeedRatioSense`. Named `ratio_min` and `ratio_max` row families now select the
+  inequality direction from the enum, fixing the former "maximum below
+  achievable minimum" regression.
+- Feasible requests now store a complete availability-respecting recipe. A
+  solver-free checker validates its batch balance, ingredient limits, nutrient
+  totals, and all typed ratio rows.
+- Infeasible requests start from that feasible baseline and inject one of four
+  independently checkable contradictions: a ratio minimum above its exact
+  attainable maximum, a ratio maximum below its exact attainable minimum, a
+  nutrient-total floor above its exact maximum, or aggregate ingredient
+  capacity below the batch mass.
+- Isolated randomness in a local `MersenneTwister`, rewrote the category
+  documentation with consistent units and formulation details, and added focused
+  tests for sizing, determinism, RNG isolation, coefficient directions,
+  witnesses, certificates, and solver status. Broad validation covered 500
+  feasible and 500 infeasible instances with zero HiGHS status mismatches, plus
+  2,700 constructor/status combinations.
+
+## 2026-08-29 22:41 UTC (land-use quality pass)
+
+**Previous Commit**: `ac7206a`
+
+**Summary**: Rebuilt the legacy land-use generator around a coherent spatial
+planning model, fixing its reproducible large-target crash and duplicated
+adjacency rows while adding checkable feasibility evidence and native-MILP tests.
+
+**Details**:
+- Centralized all zoning metadata in a complete 12-zone catalog and all
+  infrastructure metadata in an eight-resource catalog. Large requests can now
+  sample 11 or 12 zones without indexing past the former ten-element tables.
+- Replaced the arbitrary random adjacency matrix with parcel coordinates on a
+  jittered grid and a connected, planar-like four-neighbor graph. Stored edges
+  are canonical, sorted, and unique; each undirected edge now emits exactly the
+  two distinct residential/industrial orientation rows instead of traversing a
+  symmetric matrix twice.
+- Correlated development economics with urban accessibility/rurality and built
+  a geography-respecting integer assignment before sampling environmental
+  restrictions. Feasible requests store that complete witness and size every
+  resource capacity against it without pruning exogenous graph edges.
+- Infeasible requests store a relaxation-valid per-parcel resource lower-bound
+  certificate: each parcel's cheapest allowed zoning consumption sums to more
+  than the selected capacity. Unknown instances expose neither status artifact.
+- Replaced global seeding with a local `MersenneTwister`, rewrote the category
+  documentation, and added 12,000+ focused assertions for catalog bounds,
+  1,001-10,000 target construction, graph invariants, field determinism, global
+  RNG isolation, witness/certificate arithmetic, exact adjacency-row counts,
+  and relaxed/native HiGHS statuses. The focused suite passed 12,621 assertions;
+  separate evidence and solver sweeps covered 900 and 200 cases respectively.
+
+## 2026-08-29 22:39 UTC (unit-commitment quality pass)
+
+**Previous Commit**: `917c573`
+
+**Summary**: Replaced the legacy unit-commitment feasibility heuristic with
+auditable temporal witnesses and capacity-cut certificates, corrected demand
+balance and commitment domains, and removed target-size cliffs and saturation.
+
+**Details**:
+- The natural formulation now declares commitment, startup, and shutdown as
+  binary, so `relax_integer=false` returns a genuine UC MILP; the package's
+  default `relax_integer=true` still returns its LP relaxation.
+- Feasible requests construct and store complete integral generation,
+  commitment, startup, and shutdown trajectories. Demand is the exact dispatched
+  load, reserve fits online headroom, initial conditions are consistent, and a
+  solver-independent validator checks bounds, availability, ramps, transitions,
+  minimum up/down windows, balance, and reserve.
+- Infeasible requests retain varied stress profiles but now store a period cut
+  where demand plus reserve strictly exceeds all available capacity. The proof
+  holds for both the MILP and its relaxation.
+- Changed demand coverage from a permissive inequality to physical equality,
+  prohibited simultaneous startup and shutdown, recorded unit archetypes and
+  the resolved unknown profile, installed witness values as JuMP starts, and
+  isolated all randomness in a local `MersenneTwister`.
+- Aligned sizing bands with their actual formulation floors and let large
+  requests grow the fleet instead of saturating near 32,000 variables. Added
+  thorough category documentation and 5,000+ focused assertions covering
+  boundary sizing, a 100,000-variable constructor request, formulation domains,
+  witnesses, certificates, RNG isolation, data diversity, and direct relaxed
+  and integer HiGHS solves. Independent direct checks passed 100/100 requested
+  statuses before the natural-domain follow-up, with an additional eight MILP
+  solves passing afterward.
+
+## 2026-08-29 22:33 UTC (crop-planning quality pass)
+
+**Previous Commit**: `6313980`
+
+**Summary**: Reworked the legacy crop-planning generator around interpretable
+crop-management options, dimensionally correct market rows, and independently
+checkable feasibility metadata. Direct feasible requests now have a complete
+witness, including the diversity rows that previously caused a reproducible
+false feasible label.
+
+**Details**:
+- Replaced the fixed first-25/anonymous-`Crop_i` scheme with shuffled blocks of
+  25 named crops and four correlated management systems (`rainfed`, `irrigated`,
+  `low_input`, and `intensive`). Management choices jointly affect yield,
+  production cost, irrigation, and labor.
+- Changed market limits from acreage proxies to tonnes and changed the JuMP
+  rows to `yield[i] * area[i] <= demand_tonnes[i]`, so yield now has the correct
+  economic and dimensional role.
+- Added typed crop-group requirements, a complete feasible acreage witness, and
+  a typed water/labor lower-bound certificate for infeasible requests. Diversity
+  floors for feasible instances are derived from the witness with strict slack;
+  the former 95%-satisfaction loophole is gone.
+- Isolated all constructor randomness in a local `MersenneTwister`, named every
+  formulation row family, and rewrote the category documentation to match the
+  implementation and units.
+- Added per-category test loading plus crop-planning tests for data contracts,
+  exact witness/certificate arithmetic, global-RNG isolation, field-level
+  determinism, market-row coefficients, the former target-300/seed-4 regression,
+  and multi-scale HiGHS status sweeps. A 20-seed standalone sweep passed at
+  targets 30, 300, and 1,200 for both requested statuses.
+
 ## 2026-08-29 14:01 UTC (operating room scheduling refinement and combination)
 
 **Previous Commit**: `49a6bc3`

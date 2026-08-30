@@ -1,9 +1,10 @@
 # bin_packing category
 #
-# Entry point for the `bin_packing` problem category. A category groups one or
-# more variant formulations; the category is registered lazily from its
-# first variant's `register_variant` call (or call `register_category`
-# explicitly to give the category its own description). Add a variant by
-# creating a file in this folder and including it below.
+# Entry point for the `bin_packing` problem category.
 
+register_category(
+    :bin_packing,
+    "One-dimensional item packing with identical-bin and typed-fleet formulations",
+)
 include("standard.jl")
+include("heterogeneous.jl")

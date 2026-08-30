@@ -1,126 +1,177 @@
 # Feed Blending
 
-`FeedBlendingProblem` generates a continuous least-cost diet model that mixes ingredients to meet a required batch size, nutrient requirements, ingredient availabilities, and optional nutrient-ratio limits.
+`feed_blending/standard` generates a continuous least-cost feed formulation with
+a fixed batch mass, role-correlated ingredient data, nutrient floors and caps,
+ingredient availability, and typed average-content constraints.
 
-## Overview
+## Application and data model
 
-This generator represents feed formulation or diet blending. A planner chooses how much of each ingredient to include in a fixed-size batch. Ingredients have costs and nutrient content, and the final recipe must meet minimum nutritional requirements while respecting maximum limits for restricted nutrients or anti-nutrients.
+The decision is how much of each ingredient to include in one production batch.
+The generated ingredient catalog is synthetic, but its four roles create useful
+economic and nutritional correlations:
 
-## Generator Data and Sizing
+- `feed_energy_source`: inexpensive commodity ingredients, moderate major-nutrient
+  concentration, and comparatively broad availability;
+- `feed_protein_source`: higher major-nutrient concentration and moderately higher
+  cost;
+- `feed_mineral_supplement`: concentrated mineral and trace content, higher unit
+  cost, and tighter inclusion availability;
+- `feed_specialty_additive`: the highest and most dispersed unit cost, frequent
+  trace content, and tight availability.
 
-`target_variables` maps to ingredient count:
+Every instance with at least four ingredients contains all four roles; larger
+instances draw additional roles randomly. Unit costs are positive lognormal draws
+whose medians increase from commodity energy sources through specialty additives.
+Availability limits are more frequent and tighter for supplements and additives.
+
+Nutrient rows likewise have typed semantics:
+
+- `feed_major_nutrient`: dense concentrations, with protein sources typically
+  richer than energy sources;
+- `feed_mineral`: concentrated in mineral supplements;
+- `feed_trace_nutrient`: sparse in commodity ingredients and concentrated in
+  supplements/additives;
+- `feed_restricted_compound`: usually upper-limited and more prevalent in specialty
+  additives.
+
+`nutrient_content[j, i]` is the concentration of nutrient or quality metric `j`
+in ingredient `i`. Different nutrient rows may use different domain units; totals
+and limits for a row always use that row's unit consistently. Empty nutrient rows
+and ingredient columns are repaired with role-aware positive content.
+
+## Sizing and reproducibility
+
+The decision-variable count is exact except for the smallest requests:
 
 ```text
 num_ingredients = max(3, target_variables)
 ```
 
-The number of nutrients and batch size scale by target size:
+The remaining dimensions scale as follows:
 
-- `target_variables <= 250`: `num_nutrients` from `4:8`, batch size from `Normal(500, 200)` truncated to `[100, 2000]`
-- `target_variables <= 1000`: `num_nutrients` from `6:12`, batch size from `Normal(2000, 800)` truncated to `[500, 10000]`
-- larger targets: `num_nutrients` from `8:20`, batch size from `Normal(10000, 5000)` truncated to `[2000, 50000]`
+| Requested variables | Nutrients | Batch-size distribution |
+| ---: | ---: | --- |
+| `<= 250` | `4:8` | `Normal(500, 200)`, truncated to `[100, 2,000]` |
+| `251:1,000` | `6:12` | `Normal(2,000, 800)`, truncated to `[500, 10,000]` |
+| `> 1,000` | `8:20` | `Normal(10,000, 5,000)`, truncated to `[2,000, 50,000]` |
 
-Costs are lognormal and become less dispersed as ingredient count grows:
+All random operations receive a constructor-local `MersenneTwister`. Generating a
+feed blend therefore does not seed or advance Julia's global RNG.
 
-- up to 250 ingredients: `exp(Normal(log(4.0), 0.8))`
-- up to 1000 ingredients: `exp(Normal(log(2.5), 0.6))`
-- larger: `exp(Normal(log(1.8), 0.4))`
+The stored fields are:
 
-Each nutrient is assigned a type from `1:4`:
+- dimensions: `num_ingredients`, `num_nutrients`, and `batch_size`;
+- ingredient data: `ingredient_types`, `costs`, and `availabilities`;
+- nutrient data: `nutrient_content`, `nutrient_types`, `min_requirements`, and
+  `max_limits`;
+- `ratio_constraints::Vector{FeedRatioConstraint}`;
+- status metadata: `feasible_witness`, `infeasibility_certificate`, and
+  `requested_status`.
 
-- Type 1 major nutrients: mostly positive `max(0, Normal(20, 7))`, with occasional high (`1.5-2.5x`) or low (`0.2-0.6x`) multipliers.
-- Type 2 minor nutrients: present with probability 0.7, sampled as `max(0, Normal(2, 1))`, sometimes multiplied by `2-5x`.
-- Type 3 trace nutrients: present with probability 0.3, sampled as `max(0, Normal(0.5, 0.3))`, sometimes multiplied by `3-10x`.
-- Type 4 anti-nutrients or upper-limited compounds: present with probability 0.6, sampled as `max(0, Normal(5, 3))`, sometimes multiplied by `1.5-3x`.
+## Formulation
 
-The generator repairs all-zero nutrient rows and all-zero ingredient columns by adding positive `Normal(2, 1)` values. Ingredient availability is `Inf` unless an availability limit is drawn. The probability of a finite availability is truncated normal, increasing with size: about `0.1-0.4`, `0.15-0.45`, or `0.2-0.5`. Finite availability values are sampled as fractions of batch size from truncated normal distributions whose centers increase with scale.
-
-The struct stores:
-
-- `num_ingredients`, `num_nutrients`
-- `batch_size`
-- `costs`
-- `nutrient_content::Matrix{Float64}`, indexed as nutrient by ingredient
-- `nutrient_types`
-- `min_requirements`, `max_limits`
-- `availabilities`
-- `ratio_constraints::Vector{Tuple}`, storing `(nutrient_idx, target_pct, type_string)`
-
-The constructor uses `rng = Random.MersenneTwister(seed)` and passes it through most random calls, so it does not intentionally reset Julia's global RNG.
-
-## LP Formulation
-
-Sets:
-
-- `I = {1, ..., num_ingredients}` ingredients
-- `N = {1, ..., num_nutrients}` nutrients
-- `R` ratio constraints
-
-Decision variable:
-
-- `x_i >= 0`: amount of ingredient `i` in the batch
-
-Objective:
+For ingredients `i in I`, let `x_i >= 0` be the ingredient mass, `c_i` its unit
+cost, `A_i` a finite availability when one applies, and `B` the batch mass.
 
 ```math
 \min \sum_{i \in I} c_i x_i
 ```
 
-Fixed batch size:
-
 ```math
 \sum_{i \in I} x_i = B
 ```
 
-Nutrient minimums and maximums:
+For nutrient `j`, coefficient `a_{ji}`, total minimum `L_j`, and total maximum
+`U_j`, active nutrient rows are:
 
 ```math
-\sum_{i \in I} a_{ji} x_i \ge r_j \quad \text{for } r_j > 0
+\sum_{i \in I} a_{ji}x_i \ge L_j,
+\qquad
+\sum_{i \in I} a_{ji}x_i \le U_j.
 ```
+
+Finite ingredient availability is enforced by:
 
 ```math
-\sum_{i \in I} a_{ji} x_i \le u_j \quad \text{for finite } u_j
+x_i \le A_i.
 ```
 
-Finite ingredient availabilities:
+Each `FeedRatioConstraint` stores a nutrient index, concentration target `p`, and
+a `FeedRatioSense`. Because total mass is fixed, an average-content minimum is the
+linear row
 
 ```math
-x_i \le A_i
+\sum_{i \in I}(a_{ji} - p)x_i \ge 0,
 ```
 
-Ratio constraints are average-content bounds. For a minimum target percentage `p`:
+while an average-content maximum is
 
 ```math
-\sum_{i \in I} (a_{ji} - p) x_i \ge 0
+\sum_{i \in I}(a_{ji} - p)x_i \le 0.
 ```
 
-For a maximum target percentage `p`:
+The model branches explicitly on `feed_ratio_minimum` versus
+`feed_ratio_maximum`. Constraint direction is not inferred from a diagnostic
+string. In particular, a certificate described as a “maximum below achievable
+minimum” remains a maximum row.
 
-```math
-\sum_{i \in I} (a_{ji} - p) x_i \le 0
-```
+## Feasible requests and their witness
 
-The implementation chooses the ratio direction by checking whether the type string contains `"min"`. This means injected strings such as `"min_above_achievable"` are treated as minimum constraints.
+For `feasible` and `infeasible` requests, generation first constructs a complete
+baseline recipe. A Dirichlet composition is clipped to finite availability and
+then filled in a cost-biased randomized order. If sampled availability cannot fill
+the batch, one commodity ingredient is made sufficiently available before the
+recipe is built.
 
-## Feasibility Controls
+Nutrient and ratio bounds are placed around this recipe with positive randomized
+slack. A requested-feasible instance stores the recipe in `feasible_witness`.
+`feed_recipe_satisfies(problem)` checks, without a solver:
 
-For `feasible`, the generator first builds a base recipe `x0`. It samples a Dirichlet allocation across ingredients, clips by finite availabilities, and fills any remaining batch amount by a randomized cheap-ingredient order. If finite availability capacity is too low, it gives the cheapest ingredient enough capacity to cover the batch. Nutrient requirements are then drawn inside achievable minimum/maximum average intervals, with behavior depending on nutrient type. Afterward, the requirements are repaired so the constructed `x0` satisfies every active minimum and maximum. Ratio constraints, if generated, are also biased so `x0` satisfies them.
+- nonnegativity and the batch equality;
+- every finite ingredient availability;
+- every active nutrient floor and cap;
+- every typed ratio minimum and maximum.
 
-For `infeasible`, the constructor first skips the feasible requirement construction, generates optional random ratio constraints as it would for non-feasible cases, then injects one infeasibility mechanism:
+Requested-feasible instances have no infeasibility certificate.
 
-- A minimum ratio above any ingredient's content for a nutrient with positive content.
-- A minimum ratio above the availability-aware achievable maximum average, usually for a major nutrient.
-- A maximum ratio below the availability-aware achievable minimum average.
-- An availability shortage where total ingredient capacity is forced below batch size.
+## Infeasible requests and certificates
 
-For `unknown`, nutrient requirements are generated randomly without repair guarantees. Minimum requirement factors come from truncated `Normal(0.4, 0.1)` on `[0.2, 0.6]`; maximum limit factors come from truncated `Normal(1.5, 0.2)` on `[1.1, 2.0]`. Ratio constraints are generated as in non-feasible cases. The result may be feasible or infeasible.
+A requested-infeasible instance begins from the same feasible baseline and then
+applies exactly one certified contradiction. Its
+`FeedInfeasibilityCertificate` records the certificate kind, relevant nutrient and
+ratio-row index, the exact achievable bound, and the conflicting required bound.
 
-## Model Characteristics
+The four mechanisms are:
 
-The variable count is `num_ingredients`. Constraint count is driven by one batch equality, active nutrient minimums, active nutrient maximums, finite ingredient availabilities, and ratio constraints. Nutrient and ratio rows are generally dense over all ingredients, though the nutrient matrix itself can contain many zeros, especially for minor and trace nutrients. Availability constraints are sparse one-variable rows.
+1. `feed_minimum_ratio_above_achievable_maximum`: a minimum average target is
+   strictly above the availability-aware maximum concentration.
+2. `feed_maximum_ratio_below_achievable_minimum`: a maximum average target is
+   strictly below the availability-aware minimum concentration.
+3. `feed_minimum_nutrient_above_achievable_maximum`: a total nutrient minimum is
+   strictly above the maximum possible total contribution.
+4. `feed_insufficient_ingredient_capacity`: the sum of every ingredient's usable
+   availability is strictly below the fixed batch mass.
 
-The model is a continuous LP. Ingredient amounts are divisible; no integer batch, package, or recipe-count restrictions are modeled.
+The availability-aware nutrient extrema are exact for this model: sorting one
+nutrient row and greedily filling ingredient capacities solves the corresponding
+one-row continuous knapsack. `feed_infeasibility_certificate_holds(problem)`
+recomputes the bound from stored model data, verifies that metadata matches it,
+checks that the referenced row has the correct typed sense, and confirms a strict
+contradiction. It does not call a solver.
 
-## Practical Notes
+Requested-infeasible instances have no feasible witness.
 
-This generator is useful for testing diet-style LPs with sparse nutrient matrices, fixed total mass, and feasibility controls based on achievable average nutrient content. Ratio constraints are stored as strings rather than a typed enum, and the model interprets any string containing `"min"` as a lower-bound ratio. Infeasible construction is stronger than random bad data because it uses achievable average calculations or total capacity shortage, but the constructor itself does not solve the instance.
+## Unknown requests
+
+For `unknown`, each active nutrient or ratio target is drawn inside its own
+availability-aware attainable interval, but no common recipe is planted. Multiple
+individually attainable rows can still conflict, so joint feasibility is genuinely
+unspecified. Unknown instances store neither a witness nor a certificate.
+
+## Model characteristics
+
+The generator produces a continuous LP. Ingredient amounts are divisible; it does
+not model package sizes, discrete mixer batches, or integer purchase lots. The
+batch equality and availability rows are sparse, while nutrient and ratio rows can
+be dense. Trace-nutrient sparsity and role-correlated concentrations create a mix
+of row densities and coefficient scales suitable for LP benchmarking.
