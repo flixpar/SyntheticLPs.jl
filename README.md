@@ -79,6 +79,17 @@ Its status metadata is explicit: only feasible requests store a
 network-wide production/resource conditions, so they naturally include both
 feasible and infeasible instances without acting as a hidden infeasible mode.
 
+`telecom_network_design/standard` follows the same conventions: it accepts
+targets through 1,000,000 variables and raises `ArgumentError` above that, and
+its metadata is status-specific — a `feasible_witness` (the planted routing and
+the links it installs) for feasible requests, and an
+`infeasibility_certificate` for infeasible ones, either a capacity cut or a
+budget shortfall. Both certificate modes are proved from LP rows alone, so the
+instances stay infeasible under the default `relax_integer=true`. Demand is
+calibrated against the planted routing rather than sampled independently, so
+unknown requests are a genuine mix at every scale rather than drifting
+infeasible as the network grows.
+
 The `hub_location` family follows the same status discipline, grounded in the
 classical benchmark datasets (CAB airline passengers; AP postal volumes with
 `chi = 3`, `alpha = 0.75`, `delta = 2` leg costs). Feasible requests plant a
