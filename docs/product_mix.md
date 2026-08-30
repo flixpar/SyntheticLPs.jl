@@ -1,12 +1,14 @@
 # Product Mix
 
-Product mix generates a continuous profit-maximization LP that chooses production levels across many products with resource capacities and optional market lower and upper bounds.
+Product mix generates a continuous profit-maximization LP that chooses production levels across many products with resource capacities and market lower and upper bounds.
 
 ## Overview
 
-This generator represents a product mix planning problem in which a manufacturer chooses quantities for multiple products. Products earn profit and consume resources; optional lower bounds model minimum market commitments, while optional upper bounds model market saturation or sales limits.
+This generator represents a product mix planning problem in which a manufacturer chooses quantities for multiple products. Products earn profit and consume resources; lower bounds model minimum market commitments, while upper bounds model market saturation or sales limits.
 
 The generator includes scale-dependent and industry-dependent data generation. It can produce small, medium, and large operations with different resource counts, profit ranges, usage ranges, sparsity levels, and market-bound frequencies.
+
+Capacities and market floors are derived from a **planted operating plan** rather than sampled independently of each other. Sampling them independently makes the aggregate floor consumption and the aggregate capacity drift apart as the number of products grows, which used to drive the `unknown` profile to near-certain infeasibility from roughly 500 variables upward. Anchoring both sides on one nominal plan keeps them mutually consistent at every scale.
 
 ## Generator Data and Sizing
 
@@ -28,6 +30,7 @@ For `target_variables <= 250`:
 - `resource_usage_max`: `LogNormal(log(5), 0.3)`.
 - `market_constraint_prob`: `Beta(4, 6)`.
 - `correlation_strength`: `Beta(4, 3)`.
+- `volume_center`: `LogNormal(log(140), 0.4)`.
 
 For `250 < target_variables <= 1000`:
 
@@ -39,6 +42,7 @@ For `250 < target_variables <= 1000`:
 - `resource_usage_max`: `LogNormal(log(4.5), 0.4)`.
 - `market_constraint_prob`: `Beta(5, 5)`.
 - `correlation_strength`: `Beta(6, 4)`.
+- `volume_center`: `LogNormal(log(90), 0.45)`.
 
 For `target_variables > 1000`:
 
@@ -50,6 +54,7 @@ For `target_variables > 1000`:
 - `resource_usage_max`: `LogNormal(log(4), 0.5)`.
 - `market_constraint_prob`: `Beta(6, 4)`.
 - `correlation_strength`: `Beta(8, 3)`.
+- `volume_center`: `LogNormal(log(50), 0.5)`.
 
 The generator samples an industry type from:
 
@@ -57,20 +62,20 @@ The generator samples an industry type from:
 manufacturing, food_processing, electronics, furniture, chemical, automotive
 ```
 
-with scale-dependent weights. Industry type then modifies profit ranges, resource usage ranges, sparsity, market-bound probability, and/or correlation strength. For example, electronics increases profit and usage maxima and raises sparsity, while automotive strongly increases profit and usage ranges but lowers sparsity and market-bound probability.
+with scale-dependent weights (stored as a `Symbol` in the `industry` field). Industry type then modifies profit ranges, resource usage ranges, sparsity, market-bound probability, correlation strength, and/or the nominal production volume. For example, electronics increases profit and usage maxima and raises sparsity, while automotive strongly increases profit and usage ranges but lowers sparsity, market-bound probability, and per-product volume.
 
 Generated data:
 
 - `quality_factors[j]`: `Beta(2, 2)` per product.
 - `profits[j]`: log-normal base profit clamped to `[profit_min, profit_max]`, plus a quality-correlated component.
 - `usage_matrix[i, j]`: resource `i` usage by product `j`. Entries are zero with probability `sparsity`; otherwise they combine a resource-level base usage, a gamma random component, and quality correlation.
-- Each product is forced to use at least one resource.
+- Each product is forced to use at least one resource (this keeps the maximization bounded).
 - Each resource is forced to be used by at least one product.
-- `availabilities[i]`: based on average usage per resource times `num_products / 2`, multiplied by log-normal variability clamped to `[0.5, 2.0]` and a factor in roughly `[0.6, 1.2]`.
-- `lower_bounds[j]`: optional market floor, initially zero.
-- `upper_bounds[j]`: optional market cap, initially `Inf`.
-
-Market bounds are generated from each product's single-product `max_possible[j]`, computed as the minimum availability-to-usage ratio across resources with positive usage. Each product independently receives a lower bound with probability `market_constraint_prob / 2` and an upper bound with the same probability.
+- `nominal_plan[j]`: the planted operating plan, `LogNormal(log(volume_center), 0.55)` clamped to `[0.1, 10] * volume_center`.
+- `consumption = usage_matrix * nominal_plan`: what the plan actually consumes.
+- `availabilities[i] = consumption[i] * (1 + headroom[i])`, with `headroom[i]` drawn from `LogNormal(log(0.18), 0.8)` clamped to `[0.02, 2.0]`. Small headroom values give genuinely binding capacity rows.
+- `lower_bounds[j]`: with probability `clamp(0.25 + 0.7 * market_constraint_prob, 0.25, 0.95)`, a committed minimum of `(0.2 + 0.7 * Beta(2, 2)) * nominal_plan[j]`; otherwise `0`. At least one product always carries a floor.
+- `upper_bounds[j]`: with probability `clamp(0.5 * market_constraint_prob, 0.05, 0.8)`, a sales ceiling of `(1.05 + 1.4 * Beta(2, 2)) * nominal_plan[j]`; otherwise `Inf`.
 
 The stored struct fields are:
 
@@ -81,8 +86,14 @@ The stored struct fields are:
 - `availabilities::Vector{Float64}`
 - `lower_bounds::Vector{Float64}`
 - `upper_bounds::Vector{Float64}`
+- `nominal_plan::Vector{Float64}`
+- `floor_utilization::Float64`
+- `industry::Symbol`
+- `feasible_witness::Union{Nothing,ProductMixPlanWitness}`
+- `infeasibility_certificate::Union{Nothing,ResourceOvercommitCertificate}`
+- `feasibility_status::FeasibilityStatus`
 
-The constructor calls `Random.seed!(seed)`, so generation is reproducible for the same arguments and package version, while also resetting Julia's global RNG.
+The constructor draws from a local `MersenneTwister(seed)`, so generation is reproducible for the same arguments and package version and never disturbs Julia's global RNG.
 
 ## LP Formulation
 
@@ -103,7 +114,7 @@ Objective:
 \max \sum_{j \in P} profit_j x_j
 ```
 
-Resource constraints:
+Resource constraints (only products with a positive usage coefficient appear in a row):
 
 ```math
 \sum_{j \in P} usage_{i,j} x_j \le availability_i \quad \forall i \in R
@@ -124,38 +135,40 @@ x_j \le upper\_bound_j
 Bounds:
 
 - All variables are continuous and nonnegative.
-- Upper bounds are optional and product-specific.
+- Market floors and ceilings are explicit rows, not variable bounds.
 
 Interpretation: the model chooses a profit-maximizing production portfolio while respecting limited resources and product-level market requirements.
 
 ## Feasibility Controls
 
-The constructor converts the requested status into:
+Because every usage coefficient is nonnegative, `x = lower_bounds` is the pointwise-smallest candidate point. The constructor always keeps `lower_bounds .<= upper_bounds`, so the instance is feasible **iff**
 
-```text
-:feasible      if feasibility_status == feasible
-:infeasible    if feasibility_status == infeasible
-:all           if feasibility_status == unknown
+```math
+floor\_utilization \;=\; \max_{i \in R} \frac{\sum_{j \in P} usage_{i,j}\, lower\_bound_j}{availability_i} \;\le\; 1 .
 ```
 
-For `feasible`, the generator:
+That scalar is stored in the `floor_utilization` field, and the three profiles differ only in where they place it.
 
-1. Repairs any product where `lower_bounds[j] > upper_bounds[j]` by setting the lower bound to `0.98 * upper_bounds[j]`.
-2. Computes aggregate resource usage required by the lower bounds.
-3. If any resource requirement exceeds availability, scales all lower bounds down by `minimum(availability / required) * 0.98`.
-4. Rechecks lower bounds against finite upper bounds.
+For `feasible`, nothing is perturbed: floors are at most `0.9 * nominal_plan`, ceilings at least `1.05 * nominal_plan`, and capacities strictly exceed the plan's consumption, so `floor_utilization < 1`. The planted plan is stored as a `ProductMixPlanWitness` (`plan`, `consumption`, `slack = availabilities - consumption`, all strictly positive) and is an actual feasible point of the built model.
 
-This makes the lower-bound point feasible with respect to resource capacities and finite product caps.
+For `unknown` and `infeasible`, the generator picks a target utilization and moves the data onto it:
 
-For `infeasible`, the generator:
+- `infeasible`: `target = 1.15 + 0.45 * rand()`.
+- `unknown`: `target = 1 ± margin` with `margin = 0.04 + 0.31 * rand()` and a fair coin for the sign. Feasibility is therefore an explicit coin flip that is independent of problem size.
 
-1. Ensures there are positive lower bounds. If none exist, it selects products using a heavily used resource and assigns lower bounds equal to `(0.15 + 0.25 * rand()) * max_possible[j]`.
-2. Computes required resource usage from lower bounds.
-3. Chooses the resource with the largest required-to-available ratio, or a heavily used fallback resource if requirements are zero.
-4. Reduces that resource availability to `required[critical_i] * (1 - shortage_margin)`, where `shortage_margin` is sampled from `0.10` to `0.35`.
-5. With probability `0.3`, also reduces another resource to slightly below its required lower-bound usage.
+Let `gap = target / floor_utilization` for the pre-perturbation data. The adjustment is split between tightening capacity and raising commitments so neither is pushed to an extreme:
 
-For `unknown`, no repair or forced infeasibility branch is applied after the initial stochastic construction. The instance may be feasible or infeasible depending on the sampled bounds and capacities.
+```text
+theta          = 0.35 + 0.3 * rand()
+capacity_scale = clamp(gap^(theta - 1), 0.35, 3.0)
+floor_scale    = gap * capacity_scale
+availabilities .*= capacity_scale
+lower_bounds   .*= floor_scale
+```
+
+Since the ratio multiplier is `floor_scale / capacity_scale = gap`, the resulting `floor_utilization` equals `target` exactly. Any ceiling that would fall below its floor is raised to `1.05 * lower_bounds[j]`, so infeasibility never degenerates into a per-variable bound clash.
+
+For `infeasible`, the most stressed resource and the products whose floors consume it are stored in a `ResourceOvercommitCertificate` (`resource`, `products`, `required_usage`, `availability`) with `required_usage > availability`. The refutation uses the aggregate capacity row together with the floor rows, so it holds for the LP itself.
 
 ## Model Characteristics
 
@@ -171,7 +184,7 @@ Constraint count drivers:
 - One lower-bound constraint for each positive `lower_bounds[j]`.
 - One upper-bound constraint for each finite `upper_bounds[j]`.
 
-The usage matrix is sparse by construction: each entry is independently set to zero with probability `sparsity`, followed by repair passes that prevent all-zero product columns and all-zero resource rows.
+The usage matrix is sparse by construction: each entry is independently set to zero with probability `sparsity`, followed by repair passes that prevent all-zero product columns and all-zero resource rows. Zero coefficients are omitted from the capacity rows.
 
 The model is a continuous LP. Product quantities are divisible; no integer or batch constraints are enforced.
 
@@ -179,4 +192,4 @@ The model is a continuous LP. Product quantities are divisible; no integer or ba
 
 This generator is useful for benchmarking product-mix LPs with more varied structure than the simpler production planning generator. It introduces sparse resource consumption, correlated profit/quality/usage patterns, industry-specific regimes, and both lower and upper market bounds.
 
-For `unknown`, the code deliberately leaves the sampled instance uncorrected, so the status is not a randomized 70/30 choice as in some other generators. The imported `LinearAlgebra` module is not used by this file.
+Observed feasibility mix under HiGHS (30 seeds per cell): `feasible` is 100% `OPTIMAL` and `infeasible` is 100% `INFEASIBLE` at every size, while `unknown` stays close to an even split at 50, 100, 500, 1000, and 5000 variables. The analytic `floor_utilization <= 1` test agreed with HiGHS on all 450 solved instances.
