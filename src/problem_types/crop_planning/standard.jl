@@ -413,9 +413,12 @@ function CropPlanningProblem(target_variables::Int, feasibility_status::Feasibil
                 baseline_allocation[i] += min(additional_area, max_additional)
             end
         else
-            # If all profits are negative, distribute evenly
+            # If all profits are negative, distribute evenly, still respecting
+            # the per-crop market headroom so the witness satisfies the
+            # `yield[i] * x[i] <= market_demand_tonnes[i]` rows.
             for i in 1:n_crops
-                baseline_allocation[i] += remaining_land / n_crops
+                max_additional = max(0.0, market_area_caps[i] - baseline_allocation[i])
+                baseline_allocation[i] += min(remaining_land / n_crops, max_additional)
             end
         end
     end

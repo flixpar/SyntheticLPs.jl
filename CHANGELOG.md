@@ -4,6 +4,26 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-30 (crop-planning witness market cap)
+
+**Previous Commit**: `9702010`
+
+**Summary**: Fixed the crop-planning feasible witness so the all-negative-profit
+fallback allocation respects per-crop market limits.
+
+**Details**:
+- `src/problem_types/crop_planning/standard.jl`: when every sampled crop option
+  has nonpositive `net_profit_per_ha`, the baseline allocation distributed the
+  remaining land evenly across crops without applying `market_area_caps`. The
+  resulting `feasible_witness` could violate the model's
+  `yield[i] * x[i] <= market_demand_tonnes[i]` rows, and the water/labor
+  capacities and diversity floors derived from that witness were therefore not
+  guaranteed to admit it. The even split is now capped by each crop's remaining
+  market headroom, matching the profit-weighted branch directly above it.
+- Empirically: sweeping seeds 1–20000 at small targets found 3 instances that
+  take the all-negative branch; all 3 produced witnesses violating the market
+  rows before the fix and none do after. Reported by Codex review on PR #44.
+
 ## 2026-08-29 23:13 UTC (quality-pass documentation integration)
 
 **Previous Commit**: `15fa540`
