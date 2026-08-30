@@ -16,54 +16,58 @@ n_arcs * (2 * n_commodities + 1)
 
 For each physical arc, the model has one installation variable and one flow variable for each commodity in each of the two directions.
 
-Scale-dependent ranges:
+Sizing is exact-product driven rather than band driven. The constructor samples a realistic commodities-per-link ratio (log-uniform in `[0.35, 1.4]`), derives the implied arc count from `target = n_arcs * (2 * ratio * n_arcs + 1)`, and then scores every commodity count in a wide window around it by
 
-| Scale condition | Nodes | Physical arcs | Commodities |
-| --- | ---: | ---: | ---: |
-| `target_variables <= 100` | 4-12 | 5-25 | 3-15 |
-| `target_variables <= 1000` | 8-35 | 15-120 | 10-80 |
-| otherwise | 20-120 | 50-600 | 20-300 |
+```text
+|n_arcs * (2 * n_commodities + 1) - target| / target  +  0.02 * |log(n_commodities / hint)|
+```
 
-The constructor searches over `n_arcs` and the implied `n_commodities`. If no combination is within 10% error, it uses a square-root heuristic. Node count is then derived from arc count using a random density factor between 1.5 and 2.5 arcs per node, subject to scale bounds and complete-graph feasibility.
+picking the best. Because the exactness term dominates, the realised variable count tracks the target continuously: over a 25-point logarithmic sweep from 50 to 20000 variables (all three feasibility statuses, five seeds each) the mean relative error is 0.3% and the worst case 1.6%. Node count is then derived from arc count with a random density factor between 1.5 and 2.5 arcs per node, clamped so the topology is realisable (connected and simple).
 
-Scale-dependent parameter ranges:
+Requests above `TELECOM_MAX_VARIABLES = 1_000_000` raise an `ArgumentError` rather than silently undersizing, matching the convention used by `supply_chain/network_planning`.
 
-| Scale | Grid | Base install cost | Cost/km | Flow cost/unit | Demand range | Budget factor | Capacity modules |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| small | 100-500 | 10000-50000 | 50-150 | 0.005-0.02 | sampled 1-5 to 50-150 | 0.4-0.7 | 155, 622, 2488 |
-| medium | 500-2000 | 30000-100000 | 80-200 | 0.01-0.05 | sampled 5-15 to 100-300 | 0.5-0.8 | 155, 622, 2488, 9953 |
-| large | 2000-10000 | 100000-500000 | 150-500 | 0.02-0.1 | sampled 10-30 to 200-1000 | 0.6-0.9 | 622, 2488, 9953, 39813 |
+Geographic scale and unit costs are derived from the node count rather than from hard-coded size bands:
+
+| Quantity | Value |
+| --- | --- |
+| Grid span | `clamp(120 * sqrt(n_nodes), 150, 9000)` times `U(0.8, 1.25)` |
+| Base install cost | `12000 * sqrt(n_nodes)` times `U(0.8, 1.3)` |
+| Cost per km | `U(60, 400)` |
+| Flow cost per unit | `U(0.005, 0.08)` |
+| Capacity modules | 155, 622, 2488, 9953, 39813 (OC-3 to OC-768) |
 
 Random data generation:
 
-- Node locations are clustered around `max(1, div(n_nodes, 3))` random centers with normal offsets and clamping to the grid.
-- Topology starts with a nearest-neighbor spanning tree to ensure connectivity, then adds mostly short arcs, then random remaining arcs if needed.
+- Node locations are clustered around `max(1, div(n_nodes, 4))` random centers with normal offsets and clamping to the grid.
+- Topology is a Euclidean minimum spanning tree (guaranteeing connectivity) plus the shortest remaining node pairs, ranked with a lognormal perturbation so a few long-haul links appear. Exactly `n_arcs` links are produced.
 - Physical arcs are stored canonically with `i < j`; `directed_arcs` contains both `(i, j)` and `(j, i)`.
 - Distances are Euclidean and stored for both directions.
-- Link capacities are selected from optical capacity modules. Longer links bias toward larger modules.
-- Installation costs equal a base term adjusted by capacity module plus distance cost with 10% random noise.
+- Commodities are population-weighted source-sink pairs with gravity-style lognormal volume *shares* that sum to one. The absolute demand scale is fixed later, once the topology's routing capacity is known.
+- Link capacity modules are sized from the traffic each link actually carries: a first cheapest-path routing pass gives per-link reference loads, and each link takes the smallest module covering its load (with a 12% floor of the peak load so unused links stay installable and useful for reroutes).
+- Installation costs equal a base term adjusted by the chosen capacity module plus distance cost with 10% random noise.
 - Flow costs are proportional to distance and stored for both directions.
-- Commodities are random source-sink pairs. Hub-to-hub traffic, where both endpoints are among the first quarter of nodes, receives higher log-normal demand.
-- Initial budget is `sum(installation_costs) * budget_factor`.
+
+## Joint Calibration
+
+Topology, demand, capacity and budget are derived from one another through a **planted nominal design** instead of being sampled on independent schedules:
+
+1. The unit-demand traffic matrix is routed over the topology by a Frank-Wolfe congestion-balancing routing (iteration 1 is the plain cheapest-path routing; later iterations take Frank-Wolfe steps on `sum_a (load_a / cap_a)^4`). Small topologies get more steps, since they are cheap to route.
+2. `routable_scale = 1 / max_a (load_a / cap_a)` is the largest total demand this planted routing carries exactly. Solving the max-concurrent-flow LP shows the planted routing is within 0-11% of the true routing threshold at every network size.
+3. A family of cuts (every singleton, geometric sweep cuts along random directions, nearest-neighbour balls) yields `cut_bound_scale`, the smallest total demand that provably cannot be routed. By construction `routable_scale <= cut_bound_scale`.
+4. `nominal_cost` is the installation cost of the links the planted routing uses; the budget is set relative to it.
 
 The stored struct fields are:
 
-- `n_nodes`
-- `n_arcs`
-- `n_commodities`
-- `arcs`
-- `directed_arcs`
-- `node_locations`
-- `distances`
-- `installation_costs`
-- `link_capacities`
-- `flow_costs`
-- `commodities`
-- `budget`
-- `outgoing_arcs`
-- `incoming_arcs`
+- `n_nodes`, `n_arcs`, `n_commodities`
+- `arcs`, `directed_arcs`, `node_locations`, `distances`
+- `installation_costs`, `link_capacities`, `flow_costs`
+- `commodities`, `budget`, `outgoing_arcs`, `incoming_arcs`
+- `total_demand`, `routable_scale`, `cut_bound_scale`, `nominal_cost`
+- `feasible_witness::Union{Nothing,TelecomRouteWitness}`
+- `infeasibility_certificate::Union{Nothing,TelecomCapacityCutCertificate,TelecomBudgetCertificate}`
+- `feasibility_status`
 
-The constructor calls `Random.seed!(seed)`, so generation is reproducible for a fixed seed but resets Julia's global RNG state.
+All randomness runs through a local `MersenneTwister(seed)`, so generation is reproducible for a fixed seed and leaves Julia's global RNG untouched.
 
 ## LP Formulation
 
@@ -126,11 +130,16 @@ At the package API level, `generate_problem(...; relax_integer=true)` is the def
 
 ## Feasibility Controls
 
-- `feasible`: The generator first checks whether all demands can be greedily routed on the full network using `can_route_demands`. If not, it repeatedly scales link capacities up by factors up to a maximum cumulative scale of 50, with one final doubling attempt. It then greedily selects a high capacity-per-cost subset of links, first building connectivity and then adding links until `can_route_demands` succeeds. Budget is set to at least the selected-link installation cost times `1.05` to `1.20`.
-- `infeasible`: The generator tightens budget below a greedy spanning-tree cost estimate, using a multiplier from `0.45` to `0.75`. It also targets the busiest source and sink nodes and reduces incident link capacities to only `25%` to `60%` of their associated traffic. If routing still appears possible, it globally halves capacities up to three times, then may directly cap the busiest source's incident capacity to about 10% of outgoing demand.
-- `unknown`: No explicit feasibility adjustment is applied; the original budget and sampled capacities are used.
+All three profiles place the total demand relative to the two calibration anchors above.
 
-The feasibility checks are constructive heuristics, not calls to the final JuMP solver. They route commodities one at a time along shortest paths with remaining undirected capacity.
+- `feasible`: total demand is 55-90% of `routable_scale`, so the planted design routes every commodity inside the installed capacities, and the budget is 1.02-1.35 times that design's installation cost. The design is stored as a typed `TelecomRouteWitness` (installed links, per-commodity `(node path, flow)` routes, resulting link loads, installation cost) and is an exact feasible point of the integer model - hence also of the LP relaxation.
+- `infeasible`: one of two modes, chosen at random.
+  - *Capacity shortfall*: total demand is pushed 15-80% past `cut_bound_scale`, so the tightest cut cannot carry the traffic that must cross it. Stored as `TelecomCapacityCutCertificate` with the node set, crossing links, crossing demand and crossing capacity.
+  - *Budget shortfall*: demand stays comfortably routable (40-80% of `routable_scale`), but the budget is set to 45-85% of the cut-implied minimum spend `crossing_demand * min_{a in cut} (c_a / cap_a)`. Stored as `TelecomBudgetCertificate`.
+  Both arguments use only flow conservation, `sum_k f_k(a) <= cap_a * y_a` and `0 <= y <= 1`, so **the infeasibility survives `relax_integrality`** - it is not integer-deep. This matters because the package API defaults to `relax_integer=true`.
+- `unknown`: total demand is placed in a +-35% log band just above `routable_scale`, which brackets the true routing threshold at every scale. The position inside the band is a golden-ratio (low-discrepancy) function of the seed, so consecutive seeds sweep the band evenly and any block of seeds is a genuine mix. Measured with HiGHS on the default LP relaxation (30 seeds per size), the feasible share is 53%, 50%, 43%, 47%, 43% and 43% at 50, 100, 500, 1000, 5000 and 20000 variables.
+
+The witness and the certificates are exact arithmetic statements about the stored fields, not solver calls; `test/problem_types/telecom_network_design.jl` recomputes both from the struct.
 
 ## Model Characteristics
 
@@ -142,4 +151,4 @@ The feasibility checks are constructive heuristics, not calls to the final JuMP 
 
 ## Practical Notes
 
-These instances are useful for testing large sparse network matrices, multicommodity flow structure, and fixed-charge design relaxations. The helper `can_route_demands` is greedy and capacity-based, so it is a generation heuristic rather than a proof procedure for all cases. The generated physical network is undirected for capacity and installation, but flow variables are directed.
+These instances are useful for testing large sparse network matrices, multicommodity flow structure, and fixed-charge design relaxations. The generated physical network is undirected for capacity and installation, but flow variables are directed. The `feasible` and `infeasible` profiles are backed by a planted design and by cut certificates respectively, so they are proofs rather than heuristics; only the `unknown` profile is left genuinely undecided.
