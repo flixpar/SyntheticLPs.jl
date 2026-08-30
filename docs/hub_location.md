@@ -4,16 +4,21 @@ This category generates the classical hub-location and hub-and-spoke network
 design family: origin-destination traffic is consolidated through
 intermediate hubs, and inter-hub legs carry a discount factor `alpha` that
 models economies of scale (denser vehicles, better-loaded sortation, wavelength
-multiplexing). It contains five variants spanning the problem classes most
+multiplexing). It contains eight variants spanning the problem classes most
 solved in practice:
+
+## Variants
 
 | Variant | Allocation | Key structure | Domain grounding |
 |---|---|---|---|
 | `p_hub_median` | single | exact `p` hubs, reach windows, tight four-index path flows | airline (CAB) |
+| `compact_single_allocation` | single | exact `p` hubs, compact origin-indexed flows | passenger / freight / telecom |
 | `r_allocation` | r of p hubs | primary/backup allocations, four-index path flows | airline resilience |
 | `multiple_allocation` | multiple | fixed costs + opening budget, per-destination flows | parcel / LTL (AP) |
 | `capacitated` | single | collection-inflow capacities in loose/tight profiles | postal (AP) |
+| `hub_covering` | multiple | minimum-cost openings under OD service thresholds | express / airline service design |
 | `hub_network` | single | incomplete backbone: build modular hub-hub links | telecom backbone |
+| `budgeted_backbone` | single | exact `p`, candidate links, shared capacity + investment budget | telecom backbone |
 
 All constructors use a local RNG; calling a generator does not reseed or
 consume Julia's global RNG, and `build_model` does no sampling.
@@ -30,18 +35,35 @@ commodity, the standard symmetric-problem convention. With
 `relax_integer=true` this is the famously tight SKO LP relaxation of the
 p-hub median problem.
 
-The other three variants use per-destination multicommodity flows through a
+`compact_single_allocation` uses the standard origin-indexed `O(n^3)` flow
+formulation. Binary `z_ik` variables both assign nodes and identify hubs on the
+diagonal (`z_kk = 1`), while directed `q_ikm` variables carry origin `i`'s
+consolidated flow through the hub layer. Flow balance retains the complete OD
+matrix rather than replacing it with origin/destination margins. The result is
+exactly `n^3` variables and complements the tighter but larger SKO formulation.
+
+`multiple_allocation`, `capacitated`, and `hub_network` use per-destination multicommodity flows through a
 hub layer (the efficient-flow-model family surveyed by Brimberg et al. 2021):
 collection arcs `i -> k`, discounted transfer arcs, and a delivery arc into
 the destination. Costs are Euclidean (metric) and the discount is uniform, so
 routing through additional hubs can never pay less than the direct inter-hub
 leg — optimal paths visit at most two hubs and the flow model is exact.
-`capacitated` adds the single-allocation coupling (all of a node's volume
+`capacitated` adds the canonical single-allocation coupling (all of a node's volume
 enters and leaves at its own hub) plus capacity rows corrected per Correia,
 Nickel & Saldanha-da-Gama (2010). `hub_network` replaces the complete
 inter-hub network with *candidate backbone links* that must be built (binary)
 and then carry limited both-direction capacity — single allocation over an
 incomplete hub network in the sense of Yaman (2009).
+
+`hub_covering` is a service-design formulation. For every ordered OD pair it
+creates variables only for hub pairs whose collection, transfer, and
+distribution cost is at most a service threshold, then minimizes hub opening
+cost subject to selecting at least one such path. `budgeted_backbone` instead
+models infrastructure investment: exactly `p` hubs open, physical undirected
+links consume a budget and share both-direction capacity, and origin-indexed
+flows may traverse multiple installed links. These variants are intentionally
+distinct: one designs guaranteed service coverage; the other designs a
+capacity-limited backbone.
 
 ## Data grounding
 
@@ -71,10 +93,12 @@ Conventions were verified against the published benchmark files (OR-Library
 - **Telecom conventions** (matching this package's
   `telecom_network_design`): access multipliers `chi = delta in [1, 2.5]`, a
   deep backbone discount `alpha in [0.05, 0.4]`, link build costs with a
-  distance-proportional component, and capacities snapped up to the
-  SONET/SDH module ladder 155 / 622 / 2488 / 9953 / 39813 (OC-3/12/48/192/768).
+  distance-proportional component, and shared both-direction link capacities.
+  The regional `hub_network` variant snaps capacities up to the SONET/SDH
+  module ladder 155 / 622 / 2488 / 9953 / 39813 (OC-3/12/48/192/768), while
+  `budgeted_backbone` uses continuously sized candidate-link capacities.
 
-Flows follow a doubly-constrained gravity model
+Flows follow a production/attraction gravity model
 `w_ij ~ O_i * D_j / d_ij^decay * LogNormal(0, noise)` with population-driven,
 independently jittered origin/destination potentials, `decay in [0.4, 1.1]`
 and `noise in [0.6, 1.2]` — reproducing the heavy right skew of both
@@ -94,18 +118,27 @@ Every certificate refutes the LP relaxation, not only the MIP:
 - `capacitated` **infeasible**: total capacity strictly below total flow;
   summing the capacity rows against the single-allocation rows gives
   `W <= sum_k Gamma_k < W`.
+- `compact_single_allocation` **infeasible**: the exact hub count is `n + 1`,
+  exceeding the `n` diagonal hub candidates.
+- `hub_covering` **infeasible**: the service threshold is below the cheapest
+  admissible two-hub route for a recorded OD pair, leaving a literal
+  `0 >= 1` coverage row.
 - `hub_network` **infeasible**: a regional gateway cut whose total crossing
   capacity (with every crossing link built) is below the inter-regional
   traffic that must cross it; reach windows keep each side's traffic on its
   own hubs.
+- `budgeted_backbone` **infeasible**: active-hub degree rows imply at least
+  `p/2` installed links; even pricing each at the cheapest candidate-link cost
+  exceeds the available link budget.
 
-Feasible requests plant a witness — a hub set with admissible assignments
-(cover-radius based), a capacity-respecting best-fit assignment, or a sized
-spanning backbone whose exact routed loads fit under the module capacities.
-Unknown requests sample near the corresponding feasibility boundary (reach
-window around the covering radius, budget around the cover cost, capacities
-around total flow, crossing capacity around the crossing traffic), which
-yields a genuine mix of outcomes rather than a hidden always-infeasible mode.
+Feasible requests plant a witness — a hub set with admissible self-anchored
+assignments (cover-radius based), a capacity-respecting best-fit assignment,
+an all-open covering solution, or a sized backbone whose exact routed loads fit
+under its capacities.
+Unknown requests use nominal valid data or sample near the corresponding
+feasibility boundary (reach/service windows, opening or link budgets,
+capacities, and crossing cuts). Across the family this yields a genuine mix of
+outcomes rather than a hidden always-infeasible mode.
 
 ## Variable counts
 
@@ -114,14 +147,18 @@ With `A_i` the admissible hub list of node `i`, `h` the candidate count and
 
 - `p_hub_median`, `r_allocation`:
   `sum_{i<j} |A_i| |A_j| + sum_i |A_i| + |union_i A_i|`
+- `compact_single_allocation`: `n^3`
 - `multiple_allocation`:
   `sum_j [ sum_{i != j} |A_i| + h(h-1) + |A_j| ] + h`
 - `capacitated`: `n h (n + h - 1) + h (n + 1)`
+- `hub_covering`: `n + sum_{i != j} |S_ij|`, where `S_ij` is the set of
+  hub pairs meeting the OD service threshold
 - `hub_network`:
   `sum_j [ sum_{i != j} |A_i| + 2L + |A_j| ] + sum_i |A_i| + h + L`
+- `budgeted_backbone`: `n h^2 + h + h(h-1)/2`
 
-An iterative re-sizing loop adjusts the node/candidate hints so the exact
-count lands within a few percent of the requested target.
+Direct dimension searches and iterative re-sizing adjust node/candidate hints
+and sparse thresholds so counts satisfy the package's target-size tolerance.
 
 ## References
 

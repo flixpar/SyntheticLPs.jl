@@ -39,7 +39,7 @@ with more than one variant are annotated below.
 - Feed Blending
 - Generic MILP
 - Graph Optimization — variants: `independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`
-- Hub Location — variants: `p_hub_median` (single-allocation p-hub median with reach windows, tight four-index path flows, CAB airline conventions), `r_allocation` (primary/backup hub allocations), `multiple_allocation` (fixed-charge multiple allocation with feeder windows and an opening budget, AP postal conventions), `capacitated` (capacitated single allocation in loose/tight AP profiles), `hub_network` (incomplete hub network: design a modular regional backbone, telecom conventions); see [generator notes](docs/hub_location.md)
+- Hub Location — variants: `p_hub_median` (tight four-index single allocation), `compact_single_allocation` (origin-indexed `O(n^3)` formulation), `r_allocation` (primary/backup hubs), `multiple_allocation` (fixed-charge AP-style routing), `capacitated` (loose/tight AP profiles), `hub_covering` (OD service thresholds), `hub_network` (modular regional links), `budgeted_backbone` (exact-p capacitated link investment); see [generator notes](docs/hub_location.md)
 - Inventory — variants: `standard`, `lot_sizing`, `multi_item`, `multi_echelon`
 - Job Shop Scheduling
 - Land Use
@@ -84,7 +84,8 @@ classical benchmark datasets (CAB airline passengers; AP postal volumes with
 `chi = 3`, `alpha = 0.75`, `delta = 2` leg costs). Feasible requests plant a
 witness (hub set plus allocations, or a sized backbone) and infeasible requests
 store a relaxation-proof certificate — disjoint reach regions that need more
-than `p` hubs, an opening budget below the cheapest cover, total hub capacity
+than `p` hubs, an impossible exact hub count, an uncovered service-threshold
+OD pair, an opening/link budget below a valid lower bound, total hub capacity
 below total flow, or a regional gateway cut whose crossing capacity cannot
 carry the inter-regional traffic. Every certificate refutes the LP relaxation,
 not just the MIP.

@@ -177,6 +177,7 @@ Build the four-index path-flow model with r-allocation linking. Deterministic.
 
 Differences from `build_model(::PHubMedianProblem)`:
 - allocation rows: `sum_{k in A_i} z_ik == r`
+- every open hub allocates its own node to itself: `z_kk == y_k`
 - path-to-allocation linking uses inequalities (a pair uses at most one of the
   origin's / destination's r hubs):
   `sum_m x_ikmj <= w_ij * z_ik` and `sum_k x_ikmj <= w_ij * z_jm`
@@ -238,6 +239,9 @@ function build_model(prob::RAllocationHubProblem)
     end
     for (i, k) in allocations
         @constraint(model, z[(i, k)] <= y[k])
+    end
+    for k in hub_candidates
+        @constraint(model, z[(k, k)] == y[k])
     end
     @constraint(model, sum(y[k] for k in hub_candidates) == prob.p)
 

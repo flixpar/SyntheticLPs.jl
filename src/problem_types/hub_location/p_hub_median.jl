@@ -296,6 +296,7 @@ Constraints:
 - allocation equalities on both disaggregated sides:
   `sum_m x_ikmj == w_ij * z_ik` and `sum_k x_ikmj == w_ij * z_jm`
 - opening: `z_ik <= y_k`
+- hub self-allocation: `z_kk == y_k`
 - exact p: `sum_k y_k == p`
 """
 function build_model(prob::PHubMedianProblem)
@@ -352,6 +353,14 @@ function build_model(prob::PHubMedianProblem)
 
     for (i, k) in allocations
         @constraint(model, z[(i, k)] <= y[k])
+    end
+    # In the classical single-allocation formulation, opening candidate k and
+    # assigning node k to itself are the same decision.  Keeping a separate y
+    # variable is convenient for the sparse reach-window representation, but
+    # the diagonal equality is needed to preserve that semantics and the SKO
+    # relaxation.
+    for k in hub_candidates
+        @constraint(model, z[(k, k)] == y[k])
     end
 
     @constraint(model, sum(y[k] for k in hub_candidates) == prob.p)

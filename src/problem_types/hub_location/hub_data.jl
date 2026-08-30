@@ -164,7 +164,7 @@ _hub_populations(rng::AbstractRNG, n::Int) =
     _hub_gravity_flows(rng, n, populations, dist, decay, noise;
                        symmetric=false, scale=1.0) -> Matrix{Float64}
 
-Doubly-constrained gravity flows with lognormal residual scatter:
+Production/attraction gravity flows with lognormal residual scatter:
 
     w_ij = scale * O_i * D_j / max(d_ij, d_floor)^decay * LogNormal(0, noise)
 

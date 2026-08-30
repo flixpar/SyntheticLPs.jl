@@ -1421,7 +1421,8 @@ end
     @testset "Hub Location" begin
         @test :hub_location in list_categories()
         @test Set(list_variants(:hub_location)) == Set([:p_hub_median,
-            :r_allocation, :multiple_allocation, :capacitated, :hub_network])
+            :compact_single_allocation, :r_allocation, :multiple_allocation,
+            :capacitated, :hub_covering, :hub_network, :budgeted_backbone])
         info = problem_info(:hub_location)
         @test info[:default_variant] == :p_hub_median
         @test occursin("hub", lowercase(info[:description]))
@@ -1436,6 +1437,9 @@ end
             @test num_variables(m) == path_count(p.admissible)
         end
         for status in (feasible, infeasible)
+            m, p = generate_problem("hub_location/compact_single_allocation",
+                                    120, status, 3)
+            @test num_variables(m) == p.n_nodes^3
             m, p = generate_problem("hub_location/multiple_allocation", 120, status, 3)
             n, h, A = p.n_nodes, length(p.hubs), p.admissible
             @test num_variables(m) ==
@@ -1450,6 +1454,13 @@ end
                   sum(sum(length(A[i]) for i in 1:n if i != j) + 2L +
                       length(A[j]) for j in 1:n) +
                   sum(length(A[i]) for i in 1:n) + h + L
+            m, p = generate_problem("hub_location/hub_covering", 120, status, 3)
+            @test num_variables(m) == p.n_nodes +
+                  sum(length(paths) for paths in values(p.covering_sets))
+            m, p = generate_problem("hub_location/budgeted_backbone", 120,
+                                    status, 3)
+            n, h = p.n_nodes, length(p.hubs)
+            @test num_variables(m) == n * h^2 + h + h * (h - 1) ÷ 2
         end
 
         # Sizing: every variant lands within 25% of the target (or <= 50 vars)
@@ -1484,6 +1495,30 @@ end
         @test length(w.hubs) == p.p
         @test all(w.assignment[i] in w.hubs for i in 1:p.n_nodes)
         @test all(p.dist[i, w.assignment[i]] <= p.reach for i in 1:p.n_nodes)
+        @test all(w.assignment[k] == k for k in w.hubs)
+
+        # Compact single allocation retains the complete directed OD matrix
+        # in an origin-indexed flow formulation, and uses the classical
+        # diagonal assignment/opening convention.
+        for s in 0:2
+            _, p = generate_problem("hub_location/compact_single_allocation",
+                                    150, feasible, s)
+            w = p.feasible_witness
+            @test w !== nothing
+            @test p.profile in (:passenger, :freight, :telecom)
+            @test length(w.hubs) == p.p
+            @test all(w.assignment[k] == k for k in w.hubs)
+            @test all(w.assignment[i] in w.hubs for i in 1:p.n_nodes)
+            @test p.outvolume == vec(sum(p.flow; dims=2))
+            @test p.involume == vec(sum(p.flow; dims=1))
+
+            _, q = generate_problem("hub_location/compact_single_allocation",
+                                    150, infeasible, s)
+            cert = q.infeasibility_certificate
+            @test cert !== nothing
+            @test cert.requested_hubs > cert.candidates
+            @test q.p == q.n_nodes + 1
+        end
 
         # Disjoint-region certificate: p + 1 groups, pairwise disjoint
         # admissible sets, every window nonempty.
@@ -1514,6 +1549,7 @@ end
                   for i in 1:p.n_nodes)
         @test all(all(k in w.hubs for k in w.assignments[i])
                   for i in 1:p.n_nodes)
+        @test all(k in w.assignments[k] for k in w.hubs)
 
         # AP postal conventions for the flow variants.
         for v in (:multiple_allocation, :capacitated, :hub_network)
@@ -1568,6 +1604,7 @@ end
         for (t, k) in enumerate(p.hubs)
             load = sum(p.outvolume[i] for i in 1:p.n_nodes if w.assignment[i] == k)
             @test load <= p.capacity[t] + 1e-9
+            @test w.assignment[k] == k
         end
         for s in 0:2
             _, q = generate_problem("hub_location/capacitated", 150, infeasible, s)
@@ -1585,6 +1622,7 @@ end
         @test w !== nothing
         @test all(w.assignment[i] in w.open_hubs for i in 1:p.n_nodes)
         @test all(p.dist[i, w.assignment[i]] <= p.reach for i in 1:p.n_nodes)
+        @test all(w.assignment[k] == k for k in w.open_hubs)
         loads = SyntheticLPs._hub_tree_link_loads(p.n_nodes, w.assignment,
                                                   p.flow, w.backbone)
         link_pos = Dict(l => t for (t, l) in enumerate(p.links))
@@ -1606,6 +1644,54 @@ end
             @test cert.crossing_capacity < cert.crossing_flow
         end
 
+        # Hub covering: an all-open witness covers every OD pair, while the
+        # infeasible mode exhibits a concrete OD pair with no admissible path.
+        for s in 0:2
+            _, p = generate_problem("hub_location/hub_covering", 150,
+                                    feasible, s)
+            @test p.feasible_witness !== nothing
+            @test p.feasible_witness.open_hubs == collect(1:p.n_nodes)
+            @test all(!isempty(paths) for paths in values(p.covering_sets))
+            @test p.profile in (:passenger, :freight, :express)
+
+            _, q = generate_problem("hub_location/hub_covering", 150,
+                                    infeasible, s)
+            cert = q.infeasibility_certificate
+            @test cert !== nothing
+            @test isempty(q.covering_sets[(cert.origin, cert.destination)])
+            @test cert.minimum_route_cost > cert.threshold
+        end
+
+        # Budgeted backbone: the planted hubs form a complete selected-hub
+        # subgraph with self-allocated candidate nodes and sufficient direct
+        # link capacities. The infeasible budget violates the degree lower
+        # bound even in the LP relaxation.
+        for s in 0:2
+            _, p = generate_problem("hub_location/budgeted_backbone", 150,
+                                    feasible, s)
+            w = p.feasible_witness
+            @test w !== nothing
+            @test length(w.open_hubs) == p.p
+            @test length(w.links) == p.p * (p.p - 1) ÷ 2
+            @test all(w.assignment[p.hubs[k]] == k for k in w.open_hubs)
+            @test sum(p.link_cost[k, m] for (k, m) in w.links) <=
+                  p.link_budget + 1e-9
+            for (k, m) in w.links
+                direct_load = sum(p.flow[i, j] for i in 1:p.n_nodes,
+                                  j in 1:p.n_nodes
+                                  if (w.assignment[i] == k && w.assignment[j] == m) ||
+                                     (w.assignment[i] == m && w.assignment[j] == k))
+                @test direct_load <= p.link_capacity[k, m] + 1e-9
+            end
+
+            _, q = generate_problem("hub_location/budgeted_backbone", 150,
+                                    infeasible, s)
+            cert = q.infeasibility_certificate
+            @test cert !== nothing
+            @test cert.implied_minimum > cert.budget
+            @test cert.budget == q.link_budget
+        end
+
         # Reproducibility and global-RNG isolation: identical seeds produce
         # field-identical structs even with a seeded/dirty global RNG.
         for v in list_variants(:hub_location)
@@ -1624,6 +1710,20 @@ end
                 s in 0:4
                 m, _ = generate_problem(ProblemVariant(:hub_location, v), 220,
                                         status, s)
+                set_optimizer(m, HiGHS.Optimizer)
+                set_silent(m)
+                optimize!(m)
+                expected = status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE
+                @test termination_status(m) == expected
+            end
+
+            # The same contract also holds for the unrelaxed integer models;
+            # this catches witnesses that only work fractionally (especially
+            # diagonal hub self-allocation and physical-link decisions).
+            for v in list_variants(:hub_location), status in (feasible, infeasible),
+                s in 0:1
+                m, _ = generate_problem(ProblemVariant(:hub_location, v), 120,
+                                        status, s; relax_integer=false)
                 set_optimizer(m, HiGHS.Optimizer)
                 set_silent(m)
                 optimize!(m)

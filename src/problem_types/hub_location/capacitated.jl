@@ -169,11 +169,11 @@ end
     -> Union{Nothing,HubCapacitatedWitness}
 
 Best-fit-by-distance assignment of every node to an open hub such that each
-hub's collected outvolume respects its capacity: nodes are placed in
-decreasing volume order, each to the nearest hub with enough residual room.
-Every candidate is treated as open (opening is only an economic decision
-here), so this always succeeds when total capacity suffices and the largest
-origin fits somewhere; returns `nothing` otherwise so the caller can scale up.
+hub's collected outvolume respects its capacity. Candidate hubs are first
+self-assigned and their loads reserved; remaining nodes are then placed in
+decreasing-volume order at the nearest hub with enough residual room. Returns
+`nothing` if this constructive packing fails so the caller can scale capacity
+and retry.
 """
 function _hub_capacitated_assignment(dist::Matrix{Float64}, hubs::Vector{Int},
                                      outvolume::Vector{Float64},
@@ -181,7 +181,17 @@ function _hub_capacitated_assignment(dist::Matrix{Float64}, hubs::Vector{Int},
     n = length(outvolume)
     residual = copy(capacity)
     assignment = zeros(Int, n)
+    # Opening a hub and assigning its own demand node to itself are the same
+    # classical CSAHLP decision. Reserve that load first, then pack spokes into
+    # the remaining capacity.
+    for (t, k) in enumerate(hubs)
+        residual[t] + 1e-9 >= outvolume[k] || return nothing
+        assignment[k] = k
+        residual[t] -= outvolume[k]
+    end
+    hub_set = Set(hubs)
     for i in sortperm(outvolume; rev=true)
+        i in hub_set && continue
         order = sort(hubs; by=k -> dist[i, k])
         placed = false
         for k in order
@@ -277,6 +287,7 @@ Constraints:
 - supply / delivery / hub conservation (as in the multiple-allocation model,
   with every candidate admissible - no reach windows)
 - single allocation: `sum_{k in H} z_ik == 1`
+- hub self-allocation: `z_kk == y_k` for every candidate hub `k`
 - allocation coupling: `sum_j u[(j,i,k)] <= O_i z_ik` and
   `d[(i,k)] <= D_i z_ik` (all of a node's volume uses its own hub)
 - hub capacity: `sum_i O_i z_ik <= Gamma_k y_k` (collection inflow)
@@ -365,6 +376,9 @@ function build_model(prob::CapacitatedHubLocationProblem)
         # All of node i's inbound volume is delivered from its own hub.
         @constraint(model, d[(i, k)] <= prob.involume[i] * z[(i, k)])
         @constraint(model, z[(i, k)] <= y[k])
+    end
+    for k in H
+        @constraint(model, z[(k, k)] == y[k])
     end
     for k in H
         # Hub capacity on collected inflow (AP convention), active when open.

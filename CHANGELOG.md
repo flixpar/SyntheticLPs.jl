@@ -4,6 +4,40 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-30 (hub location combination and canonical formulations)
+
+**Previous Commit**: `ebb1ba3`
+
+**Summary**: Combined the strongest complementary ideas from the three hub
+location branches on branch A. The category now has eight variants: A's five
+benchmark-grounded formulations, a compact origin-indexed p-hub median, hub
+set covering under OD service thresholds, and budgeted capacitated backbone
+investment.
+
+**Details**:
+- Added `compact_single_allocation`, an exact `n^3` origin-indexed formulation
+  that retains the full directed OD matrix in its flow balances and supports
+  passenger, freight, and telecom data profiles.
+- Added `hub_covering`, a sparse multiple-allocation hub set-covering model
+  minimizing opening costs while every ordered OD pair has a two-hub path
+  inside its service threshold. Feasible requests plant an all-open cover;
+  infeasible requests record an uncovered OD pair.
+- Added `budgeted_backbone`, integrating exact-p hub opening and self-anchored
+  terminal assignment with binary physical links, an investment budget,
+  shared both-direction link capacities, and origin-indexed routing.
+- Corrected the classical single-allocation semantics throughout A's
+  `p_hub_median`, `r_allocation`, `capacitated`, and `hub_network` models:
+  every open candidate hub must allocate its own node to itself. The
+  capacitated witness constructor now reserves candidate-node demand before
+  packing spokes, so its proof matches the strengthened model.
+- Added exact variable-count, sizing, data-contract, witness/certificate,
+  self-allocation, reproducibility, LP-relaxation, and unrelaxed-MIP tests for
+  all eight variants. HiGHS confirms every requested feasible/infeasible
+  status across the committed seed matrix; the full suite passes 39,303 tests.
+- Updated the generator notes, README, contributor guidance, and offline HTML
+  explainer. Corrected the shared flow-data description from
+  "doubly-constrained" to the implemented production/attraction gravity model.
+
 ## 2026-08-30 (review fixes: RNG determinism and latent generator crashes)
 
 **Previous Commit**: `fbf049e`
@@ -364,7 +398,7 @@ backbone. The package now has 43 categories.
 - Shared `_hub_` data helpers generate clustered/corridor/archipelago
   geographies with anchor cities, ring-separated island groups for
   certificates, Euclidean metric distances, CAB-style detour-perturbed
-  costs, lognormal populations, and doubly-constrained gravity flows with
+  costs, lognormal populations, and production/attraction gravity flows with
   lognormal scatter (symmetrised for the airline variants, asymmetric for
   postal/parcel/telecom). All constructors use local `MersenneTwister`s.
 - Sizing uses iterative re-sizing loops with exact variable-count formulas

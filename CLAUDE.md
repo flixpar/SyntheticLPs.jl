@@ -193,7 +193,7 @@ category's default variant is `:standard` except `graph_optimization`
 `vehicle_routing` (`:cvrp`), and `workforce_shift_scheduling` (`:covering`).
 Categories with multiple variants are listed with them below.
 - Transportation (`standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`, `fixed_charge`), Diet Problem (`standard`, `nutrient_bounds`, `food_groups`), Knapsack (`standard`, `multidimensional`, `bounded`, `mixed_integer_set`), Portfolio (`cvar`, `tracking_error`), Network Flow (`standard`, `generalized_flow`)
-- Multi-Commodity Flow (`standard`, `binary_capacity`, `integer_flow`), Assignment (`standard`, `workload_balance`), Blending (`standard`, `equipment_batches`, `multi_product`), Container Loading (`standard`, `two_dimensional_bin_packing`), Facility Location (`standard`, `two_echelon`, `p_median`), Hub Location (`p_hub_median`, `r_allocation`, `multiple_allocation`, `capacitated`, `hub_network`)
+- Multi-Commodity Flow (`standard`, `binary_capacity`, `integer_flow`), Assignment (`standard`, `workload_balance`), Blending (`standard`, `equipment_batches`, `multi_product`), Container Loading (`standard`, `two_dimensional_bin_packing`), Facility Location (`standard`, `two_echelon`, `p_median`), Hub Location (`p_hub_median`, `compact_single_allocation`, `r_allocation`, `multiple_allocation`, `capacitated`, `hub_covering`, `hub_network`, `budgeted_backbone`)
 - Cutting Stock (`standard`, `setup_cost`, `due_dates`, `integer_patterns`), Energy (`standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`, `optimal_transmission_switching`), Inventory (`standard`, `lot_sizing`, `multi_item`, `multi_echelon`), Load Balancing (`standard`, `discrete_placement`)
 - Graph Optimization (`independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`), Set System (`set_cover`, `set_packing`, `set_partitioning`, `combinatorial_auction`), Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`, `network_planning`), Operating Room Scheduling (`elective_assignment`, `case_sequencing`, `weekly_planning`, `master_surgical_schedule`, `robust_elective`, `benchmark_loading`)
 - TSP (`standard`, `asymmetric`, `flow`, `time_windows`, `assignment_relaxation`, `prize_collecting`, `multiple_salespersons`, `precedence`), Vehicle Routing (`cvrp`), Regression (`lad`, `quantile`, `chebyshev`, `basis_pursuit`), Workforce Shift Scheduling (`covering`), Bin Packing (`standard`, `heterogeneous`), Revenue Management (`standard`, `stochastic_overbooking`)
@@ -208,7 +208,7 @@ The corpus deliberately mixes three model classes; treat the names accordingly:
   (multi-period, multi-product planning with inventory), regression variants,
   revenue management, stochastic program, and `workforce_shift_scheduling/covering`).
 - **MIPs** (binary/integer variables): e.g. `facility_location` variants
-  (including `p_median`), all five `hub_location` variants (hub opening,
+  (including `p_median`), all eight `hub_location` variants (hub opening,
   allocation, and backbone-build binaries; their LP relaxations are the
   classical tight SKO path relaxation and multicommodity design relaxations,
   grounded in the CAB/AP benchmark conventions), `cutting_stock/setup_cost`,

@@ -397,6 +397,7 @@ Constraints:
 - link capacity, shared by both directions: `sum_j (t_jkm + t_jmk) <= C_l b_l`
 - single allocation with disaggregated coupling to `z` and linking to `y`,
   as in the capacitated model but restricted to the reach windows
+- gateway self-allocation: `z_kk == y_k`
 """
 function build_model(prob::HubNetworkDesignProblem)
     model = Model()
@@ -504,6 +505,9 @@ function build_model(prob::HubNetworkDesignProblem)
             sum(u[(j, i, k)] for j in 1:n if j != i) <= outvolume[i] * z[(i, k)])
         @constraint(model, d[(i, k)] <= involume[i] * z[(i, k)])
         @constraint(model, z[(i, k)] <= y[k])
+    end
+    for k in H
+        @constraint(model, z[(k, k)] == y[k])
     end
 
     return model
