@@ -4,6 +4,38 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-30 (hub cover farthest-first duplicate fix)
+
+**Previous Commit**: `a50f6a1`
+
+**Summary**: Fixed `_hub_cover_hubs` so its farthest-first branch never
+re-selects an already chosen hub when `r > 1` (PR review feedback on #45).
+
+**Details**:
+- Bug: with `r >= 2` and instances large enough to skip the exhaustive subset
+  search (`n > 26` or `binomial(n, p) > 30,000`), a selected node's `r`-th
+  nearest *chosen* hub distance stays at the maximum, so `argmax(nth)` could
+  pick it again. Empirically 600/600 such runs produced duplicated hubs, and
+  23/100 sampled large `r_allocation` `feasible` requests carried a corrupted
+  `HubBackupWitness` (fewer than `p` distinct open hubs, fewer than `r`
+  distinct backups per node) and a cover radius computed from a multiset with
+  repeats, breaking the documented `reach >= cover` admissibility guarantee.
+  The relaxed models sampled stayed feasible (HiGHS, 36/36 OPTIMAL) because
+  the admissible-set top-up loop and the free choice of extra open hubs
+  rescue solvability, but the planted witness was invalid as a solution
+  record and the feasibility argument no longer held.
+- Fix: selected hubs are scored `-Inf` before each update sweep (mirroring
+  the `k in chosen && continue` guard in `_hub_greedy_hubs`), so
+  `argmax` only ever considers unselected nodes; the docstring now states
+  the returned hub vector always holds `p` distinct nodes.
+- The `r = 1` path (`p_hub_median`) is bit-identical after the fix
+  (witness fingerprint over 160 seed/target/status combinations unchanged);
+  `r_allocation` instances with duplicated hubs now select distinct hubs.
+- Strengthened the r-allocation witness test: hubs/backups must be *distinct*
+  (`length(unique(...))`), and the test now also runs a 20,000-variable
+  target that exercises the farthest-first branch, not just the exhaustive
+  one (the old `length(...) == p` check passed even with duplicates).
+
 ## 2026-08-30 (hub location combination and canonical formulations)
 
 **Previous Commit**: `ebb1ba3`

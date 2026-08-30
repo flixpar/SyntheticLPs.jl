@@ -91,7 +91,8 @@ _number_of_variables(admissible::Vector{Vector{Int}}) =
     _hub_cover_hubs(dist, p, r) -> (hubs, radius)
 
 Choose `p` hub candidates minimising the maximum distance from any node to its
-`r`-th nearest chosen hub (`r = 1` for the p-hub median). Exhaustive over
+`r`-th nearest chosen hub (`r = 1` for the p-hub median); the returned hub
+vector always holds `p` distinct nodes. Exhaustive over
 subsets when `binomial(n, p)` is small; farthest-first traversal otherwise
 (the classic 2-approximation for p-center).
 """
@@ -128,13 +129,17 @@ function _hub_cover_hubs(dist::Matrix{Float64}, p::Int, r::Int)
     end
 
     # Farthest-first: repeatedly add the node whose r-th nearest chosen hub
-    # is farthest away.
+    # is farthest away. Selected hubs score -Inf so they are never re-picked:
+    # with r > 1 a chosen node's r-th distance can still be the largest, and
+    # duplicates would corrupt the cover radius and the planted witnesses.
     hubs = Int[]
     nth = fill(Inf, n)
     while length(hubs) < p
         k = argmax(nth)
         push!(hubs, k)
+        nth[k] = -Inf
         for i in 1:n
+            nth[i] == -Inf && continue
             ranks = sort([dist[i, h] for h in hubs])
             nth[i] = ranks[min(r, length(ranks))]
         end

@@ -1539,17 +1539,22 @@ end
             @test all(!isempty(p.admissible[i]) for i in 1:p.n_nodes)
         end
 
-        # r-allocation witness: r admissible hubs per node, p open hubs.
-        _, p = generate_problem("hub_location/r_allocation", 150, feasible, 1)
-        w = p.feasible_witness
-        @test w !== nothing
-        @test length(w.hubs) == p.p
-        @test all(length(a) == p.r for a in w.assignments)
-        @test all(all(k in p.admissible[i] for k in w.assignments[i])
-                  for i in 1:p.n_nodes)
-        @test all(all(k in w.hubs for k in w.assignments[i])
-                  for i in 1:p.n_nodes)
-        @test all(k in w.assignments[k] for k in w.hubs)
+        # r-allocation witness: r distinct admissible hubs per node, p distinct
+        # open hubs. Cover both placement branches: the small target goes
+        # through the exhaustive subset search, the large one through
+        # farthest-first (which must never re-pick a selected hub).
+        for target in (150, 20000)
+            _, p = generate_problem("hub_location/r_allocation", target, feasible, 1)
+            w = p.feasible_witness
+            @test w !== nothing
+            @test length(unique(w.hubs)) == p.p
+            @test all(length(unique(a)) == p.r for a in w.assignments)
+            @test all(all(k in p.admissible[i] for k in w.assignments[i])
+                      for i in 1:p.n_nodes)
+            @test all(all(k in w.hubs for k in w.assignments[i])
+                      for i in 1:p.n_nodes)
+            @test all(k in w.assignments[k] for k in w.hubs)
+        end
 
         # AP postal conventions for the flow variants.
         for v in (:multiple_allocation, :capacitated, :hub_network)
