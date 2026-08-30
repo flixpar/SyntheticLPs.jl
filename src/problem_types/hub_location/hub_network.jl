@@ -125,18 +125,20 @@ function _hub_mst_links(dist::Matrix{Float64}, nodes::Vector{Int})
 end
 
 """
-    _hub_tree_link_loads(n, assignment, flow, tree_links)
+    _hub_tree_link_loads(n, assignment, flow, backbone_links)
     -> Dict{Tuple{Int,Int},Float64}
 
-Route every origin-destination pair over the unique tree path between its
-endpoints' hubs and accumulate both-direction loads per link (capacities are
-shared between directions).
+Route every origin-destination pair over the fewest-hop path between its
+endpoints' hubs (the unique path when `backbone_links` is a tree) and
+accumulate both-direction loads per link (capacities are shared between
+directions). Pass only links whose endpoints are open in the design being
+sized: a link with a closed endpoint cannot carry backbone flow in the model.
 """
 function _hub_tree_link_loads(n::Int, assignment::Vector{Int},
                               flow::Matrix{Float64},
-                              tree_links::Vector{Tuple{Int,Int}})
+                              backbone_links::Vector{Tuple{Int,Int}})
     adj = Dict{Int,Vector{Int}}()
-    for (k, m) in tree_links
+    for (k, m) in backbone_links
         push!(get!(adj, k, Int[]), m)
         push!(get!(adj, m, Int[]), k)
     end
@@ -249,6 +251,15 @@ function _build_hub_network(n_nodes::Int, n_hubs::Int,
                   for _ in hubs]
 
     assignment = _hub_nearest_assignment(dist, planted)
+    # The planted design only opens the regional gateways, and the model
+    # forbids backbone flow on a link with a closed endpoint
+    # (t <= w_j * y_k / y_m). Size capacities against a routing over the
+    # gateway-induced subgraph only - routing the loads over the full
+    # candidate link set would attribute traffic to links the planted
+    # solution cannot use, leaving the gateway links under-sized.
+    planted_set = Set(planted)
+    planted_backbone = [l for l in links
+                        if l[1] in planted_set && l[2] in planted_set]
     witness = nothing
     certificate = nothing
     if feasibility_status == infeasible
@@ -268,7 +279,7 @@ function _build_hub_network(n_nodes::Int, n_hubs::Int,
             link_capacity[t] = round(target * shares[s]; digits=3)
         end
         # Generous capacities away from the cut.
-        intra_loads = _hub_tree_link_loads(n, assignment, flow, links)
+        intra_loads = _hub_tree_link_loads(n, assignment, flow, planted_backbone)
         for (t, (k, m)) in enumerate(links)
             (node_region[k] == 1) != (node_region[m] == 1) && continue
             link_capacity[t] = _hub_backbone_module(
@@ -277,14 +288,14 @@ function _build_hub_network(n_nodes::Int, n_hubs::Int,
         certificate = BackboneCutCertificate(side_a, crossing_flow,
                                              sum(link_capacity[t] for t in crossing))
     else
-        loads = _hub_tree_link_loads(n, assignment, flow, links)
+        loads = _hub_tree_link_loads(n, assignment, flow, planted_backbone)
         link_capacity = [
             _hub_backbone_module(rand(rng, Uniform(1.3, 2.0)) *
                                  get(loads, (k, m), 0.0))
             for (k, m) in links
         ]
         if feasibility_status == feasible
-            witness = HubNetworkWitness(planted, assignment, copy(links))
+            witness = HubNetworkWitness(planted, assignment, planted_backbone)
         else
             # Unknown: squeeze the crossing capacity toward the crossing flow.
             side_a = findall(==(1), node_region)

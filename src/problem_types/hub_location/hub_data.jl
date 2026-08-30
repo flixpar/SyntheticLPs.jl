@@ -88,8 +88,9 @@ end
 Rejection-sample `q` group centers in `[0, span]^2` that are pairwise at least
 `min_sep` apart. If the separation cannot be met within `tries` proposals the
 requirement is relaxed geometrically so a valid configuration is always
-returned (callers that rely on the separation for infeasibility certificates
-recheck it afterwards and repair; see `_hub_region_groups`).
+returned - the returned centers therefore only *approximately* honour
+`min_sep`. Callers that need a guaranteed separation (the disjoint-region
+infeasibility certificates) use [`_hub_ring_centers`](@ref) instead.
 """
 function _hub_separated_centers(rng::AbstractRNG, q::Int, min_sep::Float64;
                                 span::Float64=100.0, tries::Int=800)
@@ -192,23 +193,32 @@ function _hub_gravity_flows(rng::AbstractRNG, n::Int,
     if symmetric
         w = (w .+ w') ./ 2
     end
-    # Keep every ordered pair positive (the AP matrix has no zero entries) but
-    # retain the heavy right skew: round to three significant decimals.
-    w .= max.(round.(w; digits=3), 0.001)
-    w[diagind(w)] .= 0.0
     # Normalise the overall volume so downstream capacity scales are stable.
     total = sum(w)
     total > 0 && (w .*= scale * n^2 / total)
-    return round.(w; digits=3)
+    # Keep every ordered pair positive (the AP matrix has no zero entries) but
+    # retain the heavy right skew: round to three decimals *first*, then floor,
+    # so the rounding cannot push a tiny volume back to exactly zero (a zero
+    # w_ij drops that pair's supply row and the hub-opening it forces).
+    w .= max.(round.(w; digits=3), 0.001)
+    w[diagind(w)] .= 0.0
+    return w
 end
 
 """
-    _hub_reach_admissible(dist, reach; include_self=true) -> Vector{Vector{Int}}
+    _hub_reach_admissible(dist, reach; candidates=Int[], include_self=true)
+    -> Vector{Vector{Int}}
 
 Admissible hub lists `A_i` under a reach window: node `i` may only be served by
 candidates within `reach` of it. Returns, per node, the sorted list of
-admissible candidates. Every node's own coordinate is at distance zero, so with
-`include_self` each list contains the node itself and is nonempty.
+admissible candidates. `candidates` restricts the hub sites (empty means every
+node is a candidate).
+
+With every node a candidate each list contains the node itself (distance zero)
+and is therefore nonempty. Under a restricted `candidates` set that guarantee
+is gone: a node farther than `reach` from every candidate gets an empty list,
+which makes its allocation/supply rows unsatisfiable. Callers that need a
+feasible instance must size `reach` above the covering radius of `candidates`.
 """
 function _hub_reach_admissible(dist::Matrix{Float64}, reach::Float64;
                                candidates::AbstractVector{Int}=Int[],
@@ -236,7 +246,10 @@ them, as in real networks.
 function _hub_greedy_hubs(dist::Matrix{Float64}, weight::Vector{Float64}, p::Int)
     n = size(dist, 1)
     chosen = Int[]
-    best = fill(Inf, n)
+    # Start from the diameter rather than Inf: with an infinite incumbent every
+    # candidate scores an infinite gain in the first round, so the first (and
+    # most important) hub would always fall on node 1 regardless of weights.
+    best = fill(maximum(dist), n)
     for _ in 1:p
         best_gain = -Inf
         best_k = 0

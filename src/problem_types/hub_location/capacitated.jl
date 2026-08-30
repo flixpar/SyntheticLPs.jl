@@ -190,12 +190,13 @@ function _hub_capacitated_assignment(dist::Matrix{Float64}, hubs::Vector{Int},
         residual[t] -= outvolume[k]
     end
     hub_set = Set(hubs)
+    position = Dict(k => t for (t, k) in enumerate(hubs))
     for i in sortperm(outvolume; rev=true)
         i in hub_set && continue
         order = sort(hubs; by=k -> dist[i, k])
         placed = false
         for k in order
-            t = findfirst(==(k), hubs)
+            t = position[k]
             if residual[t] >= outvolume[i]
                 assignment[i] = k
                 residual[t] -= outvolume[i]

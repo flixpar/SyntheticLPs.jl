@@ -152,7 +152,9 @@ end
 
 `q` well-separated group centers: jittered points on a circle of radius 33
 inside the 100x100 region, guaranteeing pairwise separation of at least
-`66 * sin(pi / q) - jitter` (>= 15 for the q <= 8 used here).
+`66 * sin(pi / q) - jitter` (>= 19 for the q <= 9 used here - the `p + 1`
+disjoint regions of the `p <= 8` certificates - since the +-0.04 rad jitter
+closes an adjacent chord by at most 33 * 0.08).
 """
 function _hub_ring_centers(rng::AbstractRNG, q::Int)
     angle0 = rand(rng, Uniform(0.0, 2.0 * pi))

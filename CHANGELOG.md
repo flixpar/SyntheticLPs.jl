@@ -4,6 +4,66 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-30 (hub location review fixes)
+
+**Previous Commit**: `ef092ef`
+
+**Summary**: Code-review fixes for the `hub_location` family: the
+`hub_network` feasible witness is now genuinely feasible, `_hub_greedy_hubs`
+no longer always places its first hub on node 1, and `_hub_gravity_flows` no
+longer rounds tiny volumes back to exactly zero. Plus docstring corrections.
+
+**Details**:
+- `hub_network`: `_build_hub_network` sized the backbone by routing the
+  planted traffic with `_hub_tree_link_loads(..., links)` - the *full*
+  candidate link set, which includes extra links incident to candidates the
+  planted design leaves closed. Since the model forbids backbone flow on a
+  link with a closed endpoint (`t <= w_j * y_k`, `t <= w_j * y_m`), part of
+  the traffic was charged to links the witness cannot use and the gateway
+  links were under-sized. Loads (and the witness `backbone`) are now computed
+  over `planted_backbone`, the subgraph induced by the open gateways.
+  Demonstrated: fixing `y`/`z`/`b` to the stored witness made the LP
+  INFEASIBLE at `hub_network` targets 5000/seed 0, 5000/seed 5 and
+  60000/seed 0; all three are OPTIMAL after the fix. (The *models* were
+  always feasible - the solver can open extra hubs - so only the witness
+  metadata and the README/docs witness guarantee were wrong. The existing
+  witness test could not catch this: it recomputed the loads with the same
+  over-broad graph.)
+- `_hub_greedy_hubs`: `best` was initialised to `Inf`, so every candidate
+  scored an infinite gain in the first round and `gain > best_gain` was false
+  for all but `k = 1`; the first (and most influential) hub was therefore
+  always node 1, regardless of the flow weights the docstring says drive the
+  placement. In `clustered`/`archipelago` geographies node 1 is always a
+  group anchor, so the bias was systematic. `best` now starts at the instance
+  diameter, making the first pick the weighted 1-median.
+- `_hub_gravity_flows`: the `max(..., 0.001)` floor and the diagonal reset ran
+  *before* the volume normalisation and the final `round(...; digits=3)`, so
+  small entries were rounded back to exactly `0.0` - contradicting the stated
+  "keep every ordered pair positive (the AP matrix has no zero entries)"
+  invariant and silently dropping the supply/demand row (and the hub opening
+  it forces) for those OD pairs. Measured over 63 instances per variant:
+  21 zero entries in `multiple_allocation`, 12 in `capacitated`, 144 in
+  `hub_network`, 9 in `budgeted_backbone`; zero after the fix. The CAB-scale
+  variants (`p_hub_median`, `r_allocation`, `compact_single_allocation`) were
+  never affected. The floor is applied after the volume normalisation, so it
+  can inflate the normalised total by at most `0.001 * n^2` - negligible
+  against the `scale * n^2` target.
+- Docstrings: `_hub_separated_centers` referenced a nonexistent
+  `_hub_region_groups`; `_hub_reach_admissible` claimed every list contains
+  the node itself and is nonempty, which is false once `candidates` restricts
+  the hub sites (the actual usage in `multiple_allocation`/`hub_network`),
+  and its `candidates` keyword was undocumented; `_hub_ring_centers` said
+  `q <= 8` where `p_hub_median`/`r_allocation` pass `q = p + 1 <= 9`;
+  `_hub_tree_link_loads` said "unique tree path" but is called with graphs
+  that may contain cycles.
+- `_hub_capacitated_assignment` now looks hub positions up through a
+  precomputed dictionary instead of a `findfirst` scan inside the packing
+  loop.
+- Verification: full suite (39,309 tests) passes; sizing stays within
+  tolerance across 8 variants x 8 targets x 3 statuses x 6 seeds; the LP
+  feasibility contract holds on 480 solved instances; the unrelaxed MIP
+  contract holds on 240.
+
 ## 2026-08-30 (hub cover farthest-first duplicate fix)
 
 **Previous Commit**: `a50f6a1`
