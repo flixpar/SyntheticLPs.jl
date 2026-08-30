@@ -9,9 +9,8 @@ travelling-salesman problem, delivered as a standalone LP test instance.
 
 # Overview
 This variant is an LP: the arc variables are continuous fractions
-`x[i,j] ∈ [0, 1]` (integrality is never declared, in the manner of
-`nurse_scheduling` and `unit_commitment`), so the model is an LP even with
-`relax_integer = false`. The formulation keeps:
+`x[i,j] ∈ [0, 1]` (integrality is never declared), so the model is an LP even
+with `relax_integer = false`. The formulation keeps:
 
 - **Degree constraints**: exactly one incoming and one outgoing arc at every
   node (a fractional cycle cover; the bipartite assignment relaxation of the

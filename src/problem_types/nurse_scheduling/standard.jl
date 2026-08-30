@@ -3,18 +3,63 @@ using Random
 using Distributions
 
 """
+Planted integral roster for a `feasible` instance: the 0/1 assignment tensor the
+demand, skill, and labor-contract parameters are derived from, together with the
+per-nurse aggregates those parameters are bounded against. Every constraint of the
+*integer* model is satisfied by `assignments`, so `feasible` instances are feasible
+both for the natural MIP and for its LP relaxation.
+
+# Fields
+- `assignments::Array{Int,3}`: `1` if nurse `n` works `(day, shift)` in the roster
+- `shift_totals::Vector{Int}`: total shifts worked per nurse
+- `night_counts::Vector{Int}`: night shifts worked per nurse
+- `weekend_counts::Vector{Int}`: weekend shifts worked per nurse
+- `max_consecutive::Vector{Int}`: longest run of consecutive working days per nurse
+"""
+struct NurseRosterWitness
+    assignments::Array{Int,3}
+    shift_totals::Vector{Int}
+    night_counts::Vector{Int}
+    weekend_counts::Vector{Int}
+    max_consecutive::Vector{Int}
+end
+
+"""
+Relaxation-proof infeasibility certificate: on `(day, shift)` the roster is required
+to field `required` nurses holding skill `skill`, but only `qualified < required`
+nurses in the entire roster hold that skill. The skill-mix row reads
+`sum_n nurse_skills[n, skill] * x[n, day, shift] >= required` and every variable is
+bounded above by 1, so its left-hand side cannot exceed `qualified`. The argument uses
+only variable upper bounds, so it refutes the LP relaxation as well as the MIP.
+
+# Fields
+- `day::Int`, `shift::Int`: the contradictory slot
+- `skill::Int`: the specialty skill index
+- `required::Int`: required qualified nurses on the slot (`== qualified + 1`)
+- `qualified::Int`: nurses in the roster holding the skill
+"""
+struct NurseSkillShortageCertificate
+    day::Int
+    shift::Int
+    skill::Int
+    required::Int
+    qualified::Int
+end
+
+"""
     NurseSchedulingProblem <: ProblemGenerator
 
 Generator for nurse scheduling problems with realistic labor-contract rules.
 
 # Overview
-Models the assignment of nurses to shifts across a planning horizon. This is the
-**LP relaxation** of the nurse-rostering MIP: the natural model uses binary
-assignments, but here the decision variables are continuous assignment fractions
-`x[n, d, s]` in `[0, 1]` indicating the extent to which nurse `n` works shift `s`
-on day `d`. The objective minimizes total labor cost (with night/weekend/penalty
-multipliers). As an LP it is a realistic, structurally rich workforce-scheduling
-*relaxation* (fractional rosters), not a directly implementable integer roster.
+Models the assignment of nurses to shifts across a planning horizon. This is a
+genuine **mixed-integer rostering formulation**: the decision variables
+`x[n, d, s]` are binary and indicate whether nurse `n` works shift `s` on day `d`.
+The objective minimizes total labor cost (with night/weekend/penalty multipliers).
+Because the public generation API defaults to `relax_integer=true`, the *default*
+model returned is the LP relaxation of this MIP (fractional rosters, produced by the
+central `relax_integrality` step); pass `relax_integer=false` for the natural integer
+roster, which `feasible` instances also satisfy by construction.
 
 Constraints capture a rich set of labor rules:
 - Shift coverage: each (day, shift) must be staffed to its demand level.
@@ -46,6 +91,12 @@ Constraints capture a rich set of labor rules:
 - `nurse_types::Vector{Symbol}`: Contract type per nurse (`:core`, `:float_pool`, etc.)
 - `costs::Array{Float64,3}`: Cost of assigning nurse `n` to (day, shift)
 - `weekend_days::Vector{Int}`: Indices of weekend days in the horizon
+- `min_available_per_shift::Int`: Guaranteed minimum available nurses per (day, shift)
+  slot; `sum(availability[:, d, s]) >= min_available_per_shift` holds for every slot
+- `feasible_witness::Union{Nothing,NurseRosterWitness}`: planted integral roster
+  (set exactly when the resolved status is `feasible`)
+- `infeasibility_certificate::Union{Nothing,NurseSkillShortageCertificate}`:
+  skill-shortage certificate (set exactly when the resolved status is `infeasible`)
 - `feasibility_status::FeasibilityStatus`: Resolved feasibility status of the instance
 """
 struct NurseSchedulingProblem <: ProblemGenerator
@@ -67,8 +118,17 @@ struct NurseSchedulingProblem <: ProblemGenerator
     nurse_types::Vector{Symbol}
     costs::Array{Float64,3}
     weekend_days::Vector{Int}
+    min_available_per_shift::Int
+    feasible_witness::Union{Nothing,NurseRosterWitness}
+    infeasibility_certificate::Union{Nothing,NurseSkillShortageCertificate}
     feasibility_status::FeasibilityStatus
 end
+
+# Minimum number of nurses that must be available for every (day, shift) slot. The
+# availability repair in `build_nurse_availability` achieves this exactly, and
+# `select_nurse_dimensions` never returns fewer nurses than this, so the guarantee is
+# structural rather than best-effort.
+const NURSE_MIN_AVAILABLE_PER_SHIFT = 2
 
 const NURSE_SHIFT_ALIASES = Dict(
     1 => [:day],
@@ -181,6 +241,10 @@ function build_nurse_availability(
     shift_labels::Vector{Symbol}, nurse_types::Vector{Symbol},
     night_qualified::Vector{Bool},
 )
+    n_nurses >= NURSE_MIN_AVAILABLE_PER_SHIFT || throw(ArgumentError(
+        "nurse scheduling needs at least $(NURSE_MIN_AVAILABLE_PER_SHIFT) nurses to " *
+        "guarantee $(NURSE_MIN_AVAILABLE_PER_SHIFT) available nurses per shift " *
+        "(got $n_nurses)"))
     availability = zeros(Int, n_nurses, n_days, n_shifts)
     for n in 1:n_nurses
         base_density = rand(Beta(7, 2))
@@ -209,14 +273,21 @@ function build_nurse_availability(
             end
         end
     end
-    # Guarantee at least 2 available nurses per shift slot.
+    # Guarantee at least `NURSE_MIN_AVAILABLE_PER_SHIFT` available nurses per shift slot.
+    # The repair pool holds only the nurses that are *not yet* available for the slot:
+    # drawing from all nurses (as a plain `randperm(n_nurses)` does) can re-pick a nurse
+    # that is already available, so the flip is a no-op and the slot silently stays short
+    # of the promised minimum. Because the pool has `n_nurses - current` members and
+    # `needed == NURSE_MIN_AVAILABLE_PER_SHIFT - current <= n_nurses - current` (the guard
+    # above forces `n_nurses >= NURSE_MIN_AVAILABLE_PER_SHIFT`), it never runs out and the
+    # minimum is always reached.
     for d in 1:n_days, s in 1:n_shifts
-        if sum(availability[:, d, s]) < 2
-            needed = 2 - sum(availability[:, d, s])
-            idxs = randperm(n_nurses)[1:needed]
-            for idx in idxs
-                availability[idx, d, s] = 1
-            end
+        current = sum(availability[:, d, s])
+        needed = NURSE_MIN_AVAILABLE_PER_SHIFT - current
+        needed <= 0 && continue
+        pool = [n for n in 1:n_nurses if availability[n, d, s] == 0]
+        for idx in pool[randperm(length(pool))[1:needed]]
+            availability[idx, d, s] = 1
         end
     end
     # On night slots, also guarantee at least one night-qualified nurse is available.
@@ -565,7 +636,9 @@ function build_nurse_night_limits(night_counts::Vector{Int}, night_qualified::Ve
 end
 
 # Force a deterministic contradiction: require more nurses of a specialty skill on
-# some (day, shift) than exist in the entire roster.
+# some (day, shift) than exist in the entire roster. Since every assignment variable is
+# bounded above by 1, the skill-mix row is violated by any point of the LP relaxation as
+# well, so the instance is infeasible for both model classes. Returns the certificate.
 function inject_nurse_infeasibility!(
     demand::Matrix{Int},
     skill_requirements::Array{Int,3},
@@ -579,7 +652,15 @@ function inject_nurse_infeasibility!(
     available = sum(nurse_skills[:, skill])
     skill_requirements[day, shift, skill] = available + 1
     demand[day, shift] = min(size(nurse_skills, 1), demand[day, shift] + max(1, available))
+    return NurseSkillShortageCertificate(day, shift, skill, available + 1, available)
 end
+
+# Package the planted 0/1 roster and its per-nurse aggregates as the feasibility witness.
+# `observed_nurse_consecutive_days` recomputes the longest working-day run, which the
+# constructor has already folded into `max_consecutive_days`.
+build_nurse_roster_witness(assignments, assigned_total, night_counts, weekend_counts) =
+    NurseRosterWitness(assignments, assigned_total, night_counts, weekend_counts,
+                       observed_nurse_consecutive_days(assignments))
 
 """
     NurseSchedulingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
@@ -591,12 +672,18 @@ so the variable count is `n_nurses * n_days * n_shifts`. Dimensions are chosen b
 `select_nurse_dimensions`, which scales the horizon (7–28 days) and shift count (2–3)
 with problem size and then sets `n_nurses` to land within ~12% of `target_variables`.
 
-For `feasible` (and `unknown` resolved to feasible) instances, a heuristic schedule
-respecting availability, consecutive-day limits and night rules is built first, and
-the demand / skill / labor parameters are then derived from that achieved schedule so
-a feasible point provably exists. For `infeasible` instances a specialty-skill
-requirement is forced above the number of qualified nurses, creating a guaranteed
-contradiction.
+For `feasible` (and `unknown` resolved to feasible) instances, a heuristic **integral**
+schedule respecting availability, consecutive-day limits and night rules is built first,
+and the demand / skill / labor parameters are then derived from that achieved schedule,
+so a feasible 0/1 point provably exists for the natural MIP (and hence for its
+relaxation). That roster is retained in `feasible_witness`.
+
+For `infeasible` instances a specialty-skill requirement is forced above the number of
+qualified nurses, a contradiction that only uses the variables' upper bounds and so also
+refutes the LP relaxation; it is retained in `infeasibility_certificate`.
+
+Every `(day, shift)` slot is guaranteed to have at least `min_available_per_shift`
+(`= $(NURSE_MIN_AVAILABLE_PER_SHIFT)`) available nurses.
 
 # Arguments
 - `target_variables`: Target number of variables (`n_nurses * n_days * n_shifts`)
@@ -647,8 +734,17 @@ function NurseSchedulingProblem(target_variables::Int, feasibility_status::Feasi
     night_limits = build_nurse_night_limits(night_counts, night_qualified)
     costs = build_nurse_cost_tensor(base_rates, n_days, n_shifts, shift_labels, weekend_days, nurse_types)
 
+    witness = nothing
+    certificate = nothing
     if actual_status == infeasible
-        inject_nurse_infeasibility!(demand, skill_requirements, nurse_skills)
+        certificate = inject_nurse_infeasibility!(demand, skill_requirements, nurse_skills)
+    else
+        # The planted roster satisfies every row of the integer model: coverage and skill
+        # requirements are capped at what it achieves, availability gated its choices, and
+        # the shift / weekend / night / consecutive-day / rest bounds are derived from its
+        # own counts. It therefore certifies feasibility of the MIP and of its relaxation.
+        witness = build_nurse_roster_witness(assignments, assigned_total, night_counts,
+                                             weekend_counts)
     end
 
     return NurseSchedulingProblem(
@@ -670,6 +766,9 @@ function NurseSchedulingProblem(target_variables::Int, feasibility_status::Feasi
         nurse_types,
         costs,
         weekend_days,
+        NURSE_MIN_AVAILABLE_PER_SHIFT,
+        witness,
+        certificate,
         actual_status,
     )
 end
@@ -680,8 +779,10 @@ end
 Build a JuMP model for the nurse scheduling problem. Deterministic — uses only data
 from the struct fields.
 
-The single variable block `x[1:n_nurses, 1:n_days, 1:n_shifts] ∈ [0, 1]` gives a
-variable count of `n_nurses * n_days * n_shifts`.
+The single variable block `x[1:n_nurses, 1:n_days, 1:n_shifts]` is **binary** and gives
+a variable count of `n_nurses * n_days * n_shifts`. Integrality is relaxed centrally by
+`generate_problem` when `relax_integer=true` (the default), which turns the block into
+the continuous `[0, 1]` box.
 
 # Returns
 - `model`: The JuMP model
@@ -699,8 +800,10 @@ function build_model(prob::NurseSchedulingProblem)
     # heuristic so the generated demand/bounds stay consistent with these constraints).
     early_indices = nurse_early_shift_indices(n_shifts)
 
-    # Decision variables: assignment fraction of nurse n to (day d, shift s).
-    @variable(model, 0 <= x[1:n_nurses, 1:n_days, 1:n_shifts] <= 1)
+    # Decision variables: does nurse n work (day d, shift s)? Binary in the natural
+    # model; `generate_problem` defaults to `relax_integer=true`, which relaxes these
+    # to the continuous `[0, 1]` box centrally (as for every other MIP in the package).
+    @variable(model, x[1:n_nurses, 1:n_days, 1:n_shifts], Bin)
 
     # Objective: minimize total labor cost.
     @objective(model, Min, sum(prob.costs[n, d, s] * x[n, d, s] for n in 1:n_nurses, d in 1:n_days, s in 1:n_shifts))
@@ -795,5 +898,5 @@ register_variant(
     :nurse_scheduling,
     :standard,
     NurseSchedulingProblem,
-    "Nurse scheduling with skill mix, shift coverage, and realistic labor-contract rules",
+    "Nurse scheduling MIP with skill mix, shift coverage, and realistic labor-contract rules",
 )
