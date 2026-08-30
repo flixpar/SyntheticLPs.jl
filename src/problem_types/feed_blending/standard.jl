@@ -211,10 +211,13 @@ function _feed_reference_recipe(
     end
 
     remaining = batch_size - sum(recipe)
-    priority = sortperm(
-        1:n;
-        by=i -> costs[i] * rand(rng, Uniform(0.85, 1.15)),
-    )
+    # Draw one jitter per ingredient up front. `sortperm(...; by=f)` evaluates
+    # `f` inside the comparator, so sampling there would redraw an ingredient's
+    # key on every comparison (an inconsistent ordering) and make the number of
+    # RNG draws depend on Base's sorting algorithm, breaking seed reproducibility
+    # across Julia versions.
+    jittered_costs = [costs[i] * rand(rng, Uniform(0.85, 1.15)) for i in 1:n]
+    priority = sortperm(jittered_costs)
     for i in priority
         remaining <= 1e-10 * max(1.0, batch_size) && break
         capacity = isfinite(availabilities[i]) ?

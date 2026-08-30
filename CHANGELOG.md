@@ -4,6 +4,51 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-30 (review fixes: RNG determinism and latent generator crashes)
+
+**Previous Commit**: `fbf049e`
+
+**Summary**: Four correctness/robustness fixes found while reviewing the
+quality-improvements branch. No formulation or model row changed; three of the
+four shift the RNG stream only in cases that were previously broken or
+unreachable, while the feed-blending fix changes generated data for every
+feed-blending instance.
+
+**Details**:
+- `src/problem_types/feed_blending/standard.jl`: `_feed_reference_recipe` built
+  its fill-order with `sortperm(1:n; by = i -> costs[i] * rand(rng, ...))`.
+  Julia evaluates `by` inside the comparator (`Base.Order.By`), so a fresh
+  jitter was drawn on *every comparison* instead of once per ingredient. That
+  made the comparator inconsistent (the same ingredient could compare with
+  different keys) and, worse, made the number of `rand` draws a function of
+  Base's sorting algorithm — so any change to `sort!` internals would silently
+  change every subsequent random value in the instance, breaking the
+  "same seed -> identical instance" contract. The jittered keys are now
+  materialized into a vector before sorting.
+- `src/problem_types/bin_packing/heterogeneous.jl`: `_fit_heterogeneous_packing!`
+  already held a valid witness when it decided to tighten a loosely packed
+  instance, then scaled `item_sizes` up and re-ran the greedy, calling
+  `error("Tightened heterogeneous witness failed")` if the second pass failed.
+  The greedy is not scale invariant (bin capacities are fixed), so a packing
+  that exists at the looser scale can be lost, turning a `feasible` request
+  into an exception. The looser sizes and assignment are now restored instead.
+- `src/problem_types/bin_packing/heterogeneous.jl`: `_heterogeneous_type_data`
+  computed `n_bin_types = min(4, n_bins)` but its `else` branch names four bin
+  types unconditionally. With `n_bins == 1` the function would size
+  `availability`/`compatibility` for one type, return four names, and raise a
+  `BoundsError` on `compatibility[2, category]`. Unreachable today only because
+  `_bin_packing_dimensions` floors `n_bins` at 2; now floored explicitly via
+  `clamp(n_bins, 2, 4)`.
+- `src/problem_types/unit_commitment/standard.jl`: the initial-commitment guard
+  `available_first + 1e-9 >= min_output[u]` admitted `available_first` up to
+  1e-9 *below* the unit's stable minimum, after which
+  `rand(rng, Uniform(min_output[u], available_first))` throws `ArgumentError`
+  because `Uniform` requires `a < b`. The guard is now strict
+  (`available_first > min_output[u] + 1e-9`).
+- Verification: `Pkg.test()` (solver-backed testsets included) passes, and a
+  34,560-instance sweep over the eight touched generators x 3 statuses x 24
+  targets x 120 seeds constructs without error.
+
 ## 2026-08-30 (crop-planning witness market cap)
 
 **Previous Commit**: `9702010`

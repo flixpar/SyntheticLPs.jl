@@ -36,7 +36,10 @@ end
 
 function _heterogeneous_type_data(rng::AbstractRNG, n_bins::Int,
                                   n_categories::Int, base_capacity::Float64)
-    n_bin_types = min(4, n_bins)
+    # The `else` branch below emits four types, so the count must never fall
+    # under two: a one-slot fleet would otherwise size `availability` and
+    # `compatibility` for one type while naming four and indexing row 2.
+    n_bin_types = clamp(n_bins, 2, 4)
     if n_bin_types == 2
         names = ["Standard", "Controlled_Specialty"]
         capacity_factors = [1.00, 0.86]
@@ -161,12 +164,21 @@ function _fit_heterogeneous_packing!(
         for bin in eachindex(bin_types)
     )
     if maximum_utilization < 0.74
+        loose_sizes = copy(item_sizes)
         item_sizes .*= 0.80 / maximum_utilization
-        assignment, loads = _heterogeneous_greedy_packing(
+        tightened, _ = _heterogeneous_greedy_packing(
             item_sizes, item_categories, incompatible_pairs, bin_types,
             type_capacities, compatibility,
         )
-        assignment === nothing && error("Tightened heterogeneous witness failed")
+        if tightened === nothing
+            # Bin capacities are fixed, so the greedy is not scale invariant:
+            # scaling the sizes up can defeat it even though the looser packing
+            # in hand is still a valid witness. Keep that one rather than
+            # failing a request that already has an answer.
+            item_sizes .= loose_sizes
+        else
+            assignment = tightened
+        end
     end
     return assignment
 end

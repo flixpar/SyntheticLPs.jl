@@ -314,7 +314,9 @@ function UnitCommitmentProblem(target_variables::Int, feasibility_status::Feasib
             preferred_on = profile.type in (:nuclear, :coal) ? rand(rng) < 0.8 :
                            profile.type == :wind ? true : rand(rng) < 0.6
             available_first = cap * availability[1]
-            initial_on[u] = preferred_on && available_first + 1e-9 >= min_output[u] ? 1.0 : 0.0
+            # Strict: `Uniform(min_output, available_first)` below throws unless
+            # the unit has real headroom above its stable minimum.
+            initial_on[u] = preferred_on && available_first > min_output[u] + 1e-9 ? 1.0 : 0.0
             initial_generation[u] = initial_on[u] > 0.5 ?
                 rand(rng, Uniform(min_output[u], available_first)) : 0.0
         end
