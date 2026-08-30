@@ -4,6 +4,157 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-30 14:40 UTC (hub location tests moved to the per-category file)
+
+**Previous Commit**: `5a67821`
+
+**Summary**: Relocated the `Hub Location` testset from `test/runtests.jl` into
+`test/problem_types/hub_location.jl`, adopting the per-category test-file
+convention that arrived on `main` in the quality-improvements pass. No test
+was added, removed, or changed: the suite still reports 124,728 passing tests.
+
+**Details**:
+- `test/runtests.jl`: dropped the 338-line inline `@testset "Hub Location"`
+  block that had sat directly after the `test/problem_types/*.jl` include
+  loop. It was inline only because the hub-location branch predated the
+  per-category convention and the two met in a rebase conflict.
+- `test/problem_types/hub_location.jl`: the same testset, dedented one level
+  and prefixed with a header comment naming what it covers (registry shape,
+  exact variable-count formulas, sizing, benchmark data conventions, witness
+  and certificate arithmetic, reproducibility, and the HiGHS feasibility
+  contracts on both the LP relaxation and the unrelaxed integer models).
+- The file follows the ambient-scope style of `crop_planning.jl` rather than
+  the self-contained style of `bin_packing.jl`/`land_use.jl`: `include` runs
+  at module top level, so `MOI`, `HAS_HIGHS`, and the `using` imports from
+  `runtests.jl` remain visible and are used as before. Sorted include order
+  places it between `feed_blending.jl` and `land_use.jl`.
+
+## 2026-08-30 (hub location review fixes)
+
+**Previous Commit**: `ef092ef`
+
+**Summary**: Code-review fixes for the `hub_location` family: the
+`hub_network` feasible witness is now genuinely feasible, `_hub_greedy_hubs`
+no longer always places its first hub on node 1, and `_hub_gravity_flows` no
+longer rounds tiny volumes back to exactly zero. Plus docstring corrections.
+
+**Details**:
+- `hub_network`: `_build_hub_network` sized the backbone by routing the
+  planted traffic with `_hub_tree_link_loads(..., links)` - the *full*
+  candidate link set, which includes extra links incident to candidates the
+  planted design leaves closed. Since the model forbids backbone flow on a
+  link with a closed endpoint (`t <= w_j * y_k`, `t <= w_j * y_m`), part of
+  the traffic was charged to links the witness cannot use and the gateway
+  links were under-sized. Loads (and the witness `backbone`) are now computed
+  over `planted_backbone`, the subgraph induced by the open gateways.
+  Demonstrated: fixing `y`/`z`/`b` to the stored witness made the LP
+  INFEASIBLE at `hub_network` targets 5000/seed 0, 5000/seed 5 and
+  60000/seed 0; all three are OPTIMAL after the fix. (The *models* were
+  always feasible - the solver can open extra hubs - so only the witness
+  metadata and the README/docs witness guarantee were wrong. The existing
+  witness test could not catch this: it recomputed the loads with the same
+  over-broad graph.)
+- `_hub_greedy_hubs`: `best` was initialised to `Inf`, so every candidate
+  scored an infinite gain in the first round and `gain > best_gain` was false
+  for all but `k = 1`; the first (and most influential) hub was therefore
+  always node 1, regardless of the flow weights the docstring says drive the
+  placement. In `clustered`/`archipelago` geographies node 1 is always a
+  group anchor, so the bias was systematic. `best` now starts at the instance
+  diameter, making the first pick the weighted 1-median.
+- `_hub_gravity_flows`: the `max(..., 0.001)` floor and the diagonal reset ran
+  *before* the volume normalisation and the final `round(...; digits=3)`, so
+  small entries were rounded back to exactly `0.0` - contradicting the stated
+  "keep every ordered pair positive (the AP matrix has no zero entries)"
+  invariant and silently dropping the supply/demand row (and the hub opening
+  it forces) for those OD pairs. Measured over 63 instances per variant:
+  21 zero entries in `multiple_allocation`, 12 in `capacitated`, 144 in
+  `hub_network`, 9 in `budgeted_backbone`; zero after the fix. The CAB-scale
+  variants (`p_hub_median`, `r_allocation`, `compact_single_allocation`) were
+  never affected. The floor is applied after the volume normalisation, so it
+  can inflate the normalised total by at most `0.001 * n^2` - negligible
+  against the `scale * n^2` target.
+- Docstrings: `_hub_separated_centers` referenced a nonexistent
+  `_hub_region_groups`; `_hub_reach_admissible` claimed every list contains
+  the node itself and is nonempty, which is false once `candidates` restricts
+  the hub sites (the actual usage in `multiple_allocation`/`hub_network`),
+  and its `candidates` keyword was undocumented; `_hub_ring_centers` said
+  `q <= 8` where `p_hub_median`/`r_allocation` pass `q = p + 1 <= 9`;
+  `_hub_tree_link_loads` said "unique tree path" but is called with graphs
+  that may contain cycles.
+- `_hub_capacitated_assignment` now looks hub positions up through a
+  precomputed dictionary instead of a `findfirst` scan inside the packing
+  loop.
+- Verification: full suite (39,309 tests) passes; sizing stays within
+  tolerance across 8 variants x 8 targets x 3 statuses x 6 seeds; the LP
+  feasibility contract holds on 480 solved instances; the unrelaxed MIP
+  contract holds on 240.
+
+## 2026-08-30 (hub cover farthest-first duplicate fix)
+
+**Previous Commit**: `a50f6a1`
+
+**Summary**: Fixed `_hub_cover_hubs` so its farthest-first branch never
+re-selects an already chosen hub when `r > 1` (PR review feedback on #45).
+
+**Details**:
+- Bug: with `r >= 2` and instances large enough to skip the exhaustive subset
+  search (`n > 26` or `binomial(n, p) > 30,000`), a selected node's `r`-th
+  nearest *chosen* hub distance stays at the maximum, so `argmax(nth)` could
+  pick it again. Empirically 600/600 such runs produced duplicated hubs, and
+  23/100 sampled large `r_allocation` `feasible` requests carried a corrupted
+  `HubBackupWitness` (fewer than `p` distinct open hubs, fewer than `r`
+  distinct backups per node) and a cover radius computed from a multiset with
+  repeats, breaking the documented `reach >= cover` admissibility guarantee.
+  The relaxed models sampled stayed feasible (HiGHS, 36/36 OPTIMAL) because
+  the admissible-set top-up loop and the free choice of extra open hubs
+  rescue solvability, but the planted witness was invalid as a solution
+  record and the feasibility argument no longer held.
+- Fix: selected hubs are scored `-Inf` before each update sweep (mirroring
+  the `k in chosen && continue` guard in `_hub_greedy_hubs`), so
+  `argmax` only ever considers unselected nodes; the docstring now states
+  the returned hub vector always holds `p` distinct nodes.
+- The `r = 1` path (`p_hub_median`) is bit-identical after the fix
+  (witness fingerprint over 160 seed/target/status combinations unchanged);
+  `r_allocation` instances with duplicated hubs now select distinct hubs.
+- Strengthened the r-allocation witness test: hubs/backups must be *distinct*
+  (`length(unique(...))`), and the test now also runs a 20,000-variable
+  target that exercises the farthest-first branch, not just the exhaustive
+  one (the old `length(...) == p` check passed even with duplicates).
+
+## 2026-08-30 (hub location combination and canonical formulations)
+
+**Previous Commit**: `ebb1ba3`
+
+**Summary**: Combined the strongest complementary ideas from the three hub
+location branches on branch A. The category now has eight variants: A's five
+benchmark-grounded formulations, a compact origin-indexed p-hub median, hub
+set covering under OD service thresholds, and budgeted capacitated backbone
+investment.
+
+**Details**:
+- Added `compact_single_allocation`, an exact `n^3` origin-indexed formulation
+  that retains the full directed OD matrix in its flow balances and supports
+  passenger, freight, and telecom data profiles.
+- Added `hub_covering`, a sparse multiple-allocation hub set-covering model
+  minimizing opening costs while every ordered OD pair has a two-hub path
+  inside its service threshold. Feasible requests plant an all-open cover;
+  infeasible requests record an uncovered OD pair.
+- Added `budgeted_backbone`, integrating exact-p hub opening and self-anchored
+  terminal assignment with binary physical links, an investment budget,
+  shared both-direction link capacities, and origin-indexed routing.
+- Corrected the classical single-allocation semantics throughout A's
+  `p_hub_median`, `r_allocation`, `capacitated`, and `hub_network` models:
+  every open candidate hub must allocate its own node to itself. The
+  capacitated witness constructor now reserves candidate-node demand before
+  packing spokes, so its proof matches the strengthened model.
+- Added exact variable-count, sizing, data-contract, witness/certificate,
+  self-allocation, reproducibility, LP-relaxation, and unrelaxed-MIP tests for
+  all eight variants. HiGHS confirms every requested feasible/infeasible
+  status across the committed seed matrix; the full suite passes 39,303 tests.
+- Updated the generator notes, README, contributor guidance, and offline HTML
+  explainer. Corrected the shared flow-data description from
+  "doubly-constrained" to the implemented production/attraction gravity model.
+
 ## 2026-08-30 (review fixes: RNG determinism and latent generator crashes)
 
 **Previous Commit**: `fbf049e`
@@ -303,6 +454,83 @@ false feasible label.
   determinism, market-row coefficients, the former target-300/seed-4 regression,
   and multi-scale HiGHS status sweeps. A 20-seed standalone sweep passed at
   targets 30, 300, and 1,200 for both requested statuses.
+
+## 2026-08-29 18:39 UTC (hub location and hub-and-spoke network design)
+
+**Previous Commit**: `72d63a9`
+
+**Summary**: New `hub_location` category with five variants covering the
+classical hub-location problem family: single-allocation p-hub median,
+r-allocation with backup hubs, fixed-charge multiple allocation, capacitated
+single allocation, and single allocation over an incomplete (designed) hub
+backbone. The package now has 43 categories.
+
+**Details**:
+- Formulations and data conventions are grounded in the literature and in the
+  published benchmark files, which were downloaded and measured directly:
+  O'Kelly (1987) and Campbell (1994) for the problem classes; Skorin-Kapov,
+  Skorin-Kapov & O'Kelly (1996) for the tight four-index path-flow
+  linearisation; Ernst & Krishnamoorthy (1996/1999) for the AP dataset and
+  per-destination flow formulations; Peiró-Corberán-Martí (2014) for
+  r-allocation; Yaman (2009), Yoon & Current (2008) and Yaman & Carello
+  (2005) for incomplete hub networks and modular link capacities; Correia,
+  Nickel & Saldanha-da-Gama (2010) for the corrected capacity rows; Alumur &
+  Kara (2009) and Campbell & O'Kelly (2012) surveys; Brimberg et al. (2021)
+  for the efficient flow models.
+- Measured benchmark conventions baked into the generators: CAB has symmetric
+  flows spanning 565..205,088 (median ~7,000) with network (non-metric)
+  costs, alpha in [0.2, 1.0], chi = delta = 1; AP has 200 nodes, asymmetric
+  flows (63% of ordered pairs, CV ~5) with the published cost parameters
+  chi = 3 (collection), alpha = 0.75 (transfer), delta = 2 (distribution) and
+  loose/tight capacity files bounding hub inflow. Telecom-flavored variants
+  reuse the OC-3/12/48/192/768 module ladder and distance-proportional build
+  costs of `telecom_network_design`.
+- `p_hub_median` (default): USA*pHMP with allocation reach windows using the
+  tight four-index path-flow formulation with disaggregated equality linking.
+  `feasible` plants a minimum-cover-radius hub set with the reach window just
+  above it (`HubAssignmentWitness`); `infeasible` builds p+1 island groups
+  with pairwise disjoint admissible sets (`DisjointRegionCertificate`),
+  refuting the relaxation via the exact-p row; `unknown` samples the window
+  around the covering radius.
+- `r_allocation`: UrApHMP - each node keeps r primary/backup hubs; same
+  four-index structure with inequality linking and r-cover-based windows
+  (`HubBackupWitness`).
+- `multiple_allocation`: fixed-charge MA hub location (parcel/LTL) with
+  feeder windows and an opening budget; per-destination multicommodity flows.
+  `feasible` plants a greedy candidate cover within budget
+  (`HubCoverWitness`); `infeasible` sets the budget below
+  groups x min fixed cost (`BudgetCoverCertificate`).
+- `capacitated`: CSAHLP with collection-inflow capacities in `:loose`/`:tight`
+  profiles mirroring the AP capacity files; single-allocation coupling rows.
+  `feasible` plants a distance-best-fit capacity-respecting assignment
+  (`HubCapacitatedWitness`); `infeasible` puts total capacity below total
+  flow (`CapacityShortfallCertificate`), which contradicts the summed
+  capacity rows already in the relaxation.
+- `hub_network`: single allocation over an incomplete hub network (telecom
+  backbone): reach-windowed regional gateways, candidate backbone links with
+  build binaries and module capacities shared by both directions. `feasible`
+  plants gateways plus a sized spanning backbone whose exact routed loads fit
+  (`HubNetworkWitness`); `infeasible` shrinks a regional gateway cut below
+  its crossing traffic (`BackboneCutCertificate`).
+- Shared `_hub_` data helpers generate clustered/corridor/archipelago
+  geographies with anchor cities, ring-separated island groups for
+  certificates, Euclidean metric distances, CAB-style detour-perturbed
+  costs, lognormal populations, and production/attraction gravity flows with
+  lognormal scatter (symmetrised for the airline variants, asymmetric for
+  postal/parcel/telecom). All constructors use local `MersenneTwister`s.
+- Sizing uses iterative re-sizing loops with exact variable-count formulas
+  (documented per variant); independent node/candidate-count hints for the
+  flow variants. Verified across targets 50..3000 x all statuses x seeds:
+  within the corpus tolerance everywhere, and HiGHS confirms the feasibility
+  contract (OPTIMAL/INFEASIBLE) for every feasible/infeasible request on the
+  LP relaxation. Unknown requests are a genuine mix on every variant
+  (measured opt/inf splits: 31/17, 20/28, 13/35, 40/8, 21/27).
+- New `docs/hub_location.md` generator notes (variant table, formulation
+  summary, data grounding, certificate catalogue, references); README,
+  CLAUDE.md, and docs index updated; bespoke "Hub Location" testset covering
+  registry, exact count formulas, sizing matrix, data contracts, witness and
+  certificate arithmetic, reproducibility/RNG isolation, HiGHS feasibility
+  contracts, and the unknown-status mix. Full result: 38,887 tests passed.
 
 ## 2026-08-29 14:01 UTC (operating room scheduling refinement and combination)
 

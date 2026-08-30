@@ -15,7 +15,7 @@ This package provides:
 
 ## Problem Types
 
-The package includes generators for 42 common LP/MIP problem categories, all
+The package includes generators for 43 common LP/MIP problem categories, all
 unified with a standardized interface. Each category groups one or more
 **variants** — concrete formulations with their own data generation and model
 structure (see [Categories and Variants](#categories-and-variants)). Categories
@@ -39,6 +39,7 @@ with more than one variant are annotated below.
 - Feed Blending
 - Generic MILP
 - Graph Optimization — variants: `independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`
+- Hub Location — variants: `p_hub_median` (tight four-index single allocation), `compact_single_allocation` (origin-indexed `O(n^3)` formulation), `r_allocation` (primary/backup hubs), `multiple_allocation` (fixed-charge AP-style routing), `capacitated` (loose/tight AP profiles), `hub_covering` (OD service thresholds), `hub_network` (modular regional links), `budgeted_backbone` (exact-p capacitated link investment); see [generator notes](docs/hub_location.md)
 - Inventory — variants: `standard`, `lot_sizing`, `multi_item`, `multi_echelon`
 - Job Shop Scheduling
 - Land Use
@@ -77,6 +78,17 @@ Its status metadata is explicit: only feasible requests store a
 `nominal_scenario`. Unknown scenarios preserve local lane service while varying
 network-wide production/resource conditions, so they naturally include both
 feasible and infeasible instances without acting as a hidden infeasible mode.
+
+The `hub_location` family follows the same status discipline, grounded in the
+classical benchmark datasets (CAB airline passengers; AP postal volumes with
+`chi = 3`, `alpha = 0.75`, `delta = 2` leg costs). Feasible requests plant a
+witness (hub set plus allocations, or a sized backbone) and infeasible requests
+store a relaxation-proof certificate — disjoint reach regions that need more
+than `p` hubs, an impossible exact hub count, an uncovered service-threshold
+OD pair, an opening/link budget below a valid lower bound, total hub capacity
+below total flow, or a regional gateway cut whose crossing capacity cannot
+carry the inter-regional traffic. Every certificate refutes the LP relaxation,
+not just the MIP.
 
 ## Usage
 

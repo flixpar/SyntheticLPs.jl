@@ -47,6 +47,7 @@ META = {
     "multi_commodity_flow":  dict(family="network",   sense="Min",     vclass="Continuous", tag="Several commodities sharing arc capacities"),
     "load_balancing":        dict(family="network",   sense="Min-max", vclass="Continuous", tag="Minimize the most-utilized link"),
     "telecom_network_design":dict(family="network",   sense="Min",     vclass="Mixed",      tag="Install links + route traffic under a budget"),
+    "hub_location":          dict(family="network",   sense="Min",     vclass="Mixed",      tag="Open hubs, consolidate OD traffic, and design hub-and-spoke backbones"),
     "facility_location":     dict(family="facility",  sense="Min",     vclass="Mixed",      tag="Open capacitated facilities, then serve demand"),
     "supply_chain":          dict(family="facility",  sense="Min",     vclass="Mixed",      tag="Open facilities + multi-mode shipping"),
     "blending":              dict(family="blending",  sense="Min",     vclass="Continuous", tag="Hit quality bands at minimum ingredient cost"),
