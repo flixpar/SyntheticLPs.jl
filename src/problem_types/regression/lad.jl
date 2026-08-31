@@ -43,14 +43,14 @@ Construct a LAD regression instance. Variables: `beta` (n_features) plus one
 residual `e` per sample, for a total of `n_features + n_samples`.
 """
 function LADRegressionProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Variables = n + m, with an overdetermined system (m > n).
-    ratio = rand(Uniform(3.0, 8.0))                       # samples per feature
+    ratio = rand(rng, Uniform(3.0, 8.0))                       # samples per feature
     n_features = max(2, round(Int, target_variables / (1 + ratio)))
     n_samples = max(n_features + 1, round(Int, ratio * n_features))
 
-    data = generate_regression_data(n_features, n_samples, feasibility_status)
+    data = generate_regression_data(rng, n_features, n_samples, feasibility_status)
 
     return LADRegressionProblem(n_samples, n_features, data.X, data.y,
                                 data.beta_lower, data.beta_upper,

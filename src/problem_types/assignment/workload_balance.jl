@@ -80,13 +80,13 @@ balancing is non-trivial.
 - `unknown`: natural capacities, biased toward feasibility but not forced.
 """
 function WorkloadBalanceAssignmentProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Dimension sizing: total = W*T + 1, with T > W ---
     # Pick a worker:task ratio r = T/W in (1.5, 3.0). Then W*T = r*W^2 ≈ target-1
     # => W ≈ sqrt((target-1)/r), T ≈ r*W.
     eff = max(4, target_variables - 1)
-    ratio = 1.5 + 1.5 * rand()  # tasks are 1.5x .. 3.0x the worker count
+    ratio = 1.5 + 1.5 * rand(rng)  # tasks are 1.5x .. 3.0x the worker count
     n_workers = max(2, round(Int, sqrt(eff / ratio)))
     n_tasks = max(n_workers + 1, round(Int, eff / n_workers))
 
@@ -103,10 +103,10 @@ function WorkloadBalanceAssignmentProblem(target_variables::Int, feasibility_sta
     # --- Task loads (log-normal-ish spread within the tier for realism) ---
     loads = Vector{Float64}(undef, n_tasks)
     for j in 1:n_tasks
-        base = load_lo + (load_hi - load_lo) * rand()
+        base = load_lo + (load_hi - load_lo) * rand(rng)
         # Occasional heavy task to make balancing meaningful.
-        if rand() < 0.15
-            base *= 1.3 + 0.7 * rand()
+        if rand(rng) < 0.15
+            base *= 1.3 + 0.7 * rand(rng)
         end
         loads[j] = round(base, digits=2)
     end
@@ -114,9 +114,9 @@ function WorkloadBalanceAssignmentProblem(target_variables::Int, feasibility_sta
     max_load = maximum(loads)
 
     # --- Skill groups drive eligibility ---
-    n_groups = max(1, min(n_workers, rand(2:max(2, round(Int, sqrt(n_workers) + 1)))))
-    worker_group = [rand(1:n_groups) for _ in 1:n_workers]
-    task_group = [rand(1:n_groups) for _ in 1:n_tasks]
+    n_groups = max(1, min(n_workers, rand(rng, 2:max(2, round(Int, sqrt(n_workers) + 1)))))
+    worker_group = [rand(rng, 1:n_groups) for _ in 1:n_workers]
+    task_group = [rand(rng, 1:n_groups) for _ in 1:n_tasks]
 
     # In-group eligibility is high; cross-group eligibility is a smaller chance
     # (cross-training). Generous in the feasible case so coverage is easy.
@@ -129,7 +129,7 @@ function WorkloadBalanceAssignmentProblem(target_variables::Int, feasibility_sta
     eligible = falses(n_workers, n_tasks)
     for w in 1:n_workers, j in 1:n_tasks
         p = (worker_group[w] == task_group[j]) ? p_in : p_out
-        eligible[w, j] = rand() < p
+        eligible[w, j] = rand(rng) < p
     end
 
     # Every task needs at least one eligible worker (always — even infeasible
@@ -137,7 +137,7 @@ function WorkloadBalanceAssignmentProblem(target_variables::Int, feasibility_sta
     # so the contradiction is the clean, intended reason).
     for j in 1:n_tasks
         if !any(@view eligible[:, j])
-            eligible[rand(1:n_workers), j] = true
+            eligible[rand(rng, 1:n_workers), j] = true
         end
     end
 
@@ -147,11 +147,11 @@ function WorkloadBalanceAssignmentProblem(target_variables::Int, feasibility_sta
     if feasibility_status == infeasible
         # Pigeonhole: total capacity strictly below total load.
         # total_cap = frac * total_load with frac in [0.70, 0.90].
-        frac = 0.70 + 0.20 * rand()
+        frac = 0.70 + 0.20 * rand(rng)
         total_cap = frac * total_load
         # Distribute total_cap across workers with mild heterogeneity, then rescale
         # exactly so the sum equals total_cap (keeps the strict inequality intact).
-        raw = [0.7 + 0.6 * rand() for _ in 1:n_workers]
+        raw = [0.7 + 0.6 * rand(rng) for _ in 1:n_workers]
         s = sum(raw)
         for w in 1:n_workers
             capacities[w] = total_cap * raw[w] / s
@@ -169,7 +169,7 @@ function WorkloadBalanceAssignmentProblem(target_variables::Int, feasibility_sta
         # Capacity headroom factor; feasible gets more slack than unknown.
         head_lo, head_hi = feasibility_status == feasible ? (1.6, 2.4) : (1.1, 1.8)
         for w in 1:n_workers
-            head = head_lo + (head_hi - head_lo) * rand()
+            head = head_lo + (head_hi - head_lo) * rand(rng)
             capacities[w] = max(max_load, avg * head)
         end
 

@@ -91,46 +91,46 @@ requested `target_variables`. We approximate
 - `seed`: Random seed for reproducibility
 """
 function MultiProductSupplyChainProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Pick products / modes / density first, then size the network ---
     # n_vars = n_facilities + n_arcs * n_products,  n_arcs ≈ n_fac * n_cust * n_modes * density
     if target_variables <= 250
-        n_products = rand(2:3)
-        n_transport_modes = rand(DiscreteUniform(1, 2))
-        grid_width = rand(Uniform(200.0, 800.0))
-        grid_height = rand(Uniform(200.0, 800.0))
-        infrastructure_density = rand(Beta(5, 2)) * 0.3 + 0.7  # 0.7-1.0
-        clustering_factor = rand(Beta(3, 2)) * 0.6 + 0.25
-        min_fixed_cost = max(100000.0, rand(LogNormal(log(300000), 0.5)))
-        max_fixed_cost = min_fixed_cost * rand(Uniform(1.8, 3.5))
-        base_demand = rand(Uniform(80.0, 150.0))
+        n_products = rand(rng, 2:3)
+        n_transport_modes = rand(rng, DiscreteUniform(1, 2))
+        grid_width = rand(rng, Uniform(200.0, 800.0))
+        grid_height = rand(rng, Uniform(200.0, 800.0))
+        infrastructure_density = rand(rng, Beta(5, 2)) * 0.3 + 0.7  # 0.7-1.0
+        clustering_factor = rand(rng, Beta(3, 2)) * 0.6 + 0.25
+        min_fixed_cost = max(100000.0, rand(rng, LogNormal(log(300000), 0.5)))
+        max_fixed_cost = min_fixed_cost * rand(rng, Uniform(1.8, 3.5))
+        base_demand = rand(rng, Uniform(80.0, 150.0))
         min_demand = base_demand
-        max_demand = base_demand * rand(Uniform(3.0, 8.0))
+        max_demand = base_demand * rand(rng, Uniform(3.0, 8.0))
     elseif target_variables <= 1000
-        n_products = rand(2:4)
-        n_transport_modes = rand(DiscreteUniform(2, 3))
-        grid_width = rand(Uniform(800.0, 2000.0))
-        grid_height = rand(Uniform(800.0, 2000.0))
-        infrastructure_density = rand(Beta(3, 2)) * 0.4 + 0.5  # 0.5-0.9
-        clustering_factor = rand(Beta(2, 3)) * 0.5 + 0.2
-        min_fixed_cost = max(300000.0, rand(LogNormal(log(800000), 0.6)))
-        max_fixed_cost = min_fixed_cost * rand(Uniform(2.0, 4.0))
-        base_demand = rand(Uniform(150.0, 300.0))
+        n_products = rand(rng, 2:4)
+        n_transport_modes = rand(rng, DiscreteUniform(2, 3))
+        grid_width = rand(rng, Uniform(800.0, 2000.0))
+        grid_height = rand(rng, Uniform(800.0, 2000.0))
+        infrastructure_density = rand(rng, Beta(3, 2)) * 0.4 + 0.5  # 0.5-0.9
+        clustering_factor = rand(rng, Beta(2, 3)) * 0.5 + 0.2
+        min_fixed_cost = max(300000.0, rand(rng, LogNormal(log(800000), 0.6)))
+        max_fixed_cost = min_fixed_cost * rand(rng, Uniform(2.0, 4.0))
+        base_demand = rand(rng, Uniform(150.0, 300.0))
         min_demand = base_demand
-        max_demand = base_demand * rand(Uniform(4.0, 12.0))
+        max_demand = base_demand * rand(rng, Uniform(4.0, 12.0))
     else
-        n_products = rand(3:4)
-        n_transport_modes = rand(DiscreteUniform(3, 4))
-        grid_width = rand(Uniform(2000.0, 5000.0))
-        grid_height = rand(Uniform(2000.0, 5000.0))
-        infrastructure_density = rand(Beta(2, 3)) * 0.4 + 0.4  # 0.4-0.8
-        clustering_factor = rand(Beta(1, 3)) * 0.4 + 0.15
-        min_fixed_cost = max(500000.0, rand(LogNormal(log(1500000), 0.7)))
-        max_fixed_cost = min_fixed_cost * rand(Uniform(2.5, 5.0))
-        base_demand = rand(Uniform(300.0, 600.0))
+        n_products = rand(rng, 3:4)
+        n_transport_modes = rand(rng, DiscreteUniform(3, 4))
+        grid_width = rand(rng, Uniform(2000.0, 5000.0))
+        grid_height = rand(rng, Uniform(2000.0, 5000.0))
+        infrastructure_density = rand(rng, Beta(2, 3)) * 0.4 + 0.4  # 0.4-0.8
+        clustering_factor = rand(rng, Beta(1, 3)) * 0.4 + 0.15
+        min_fixed_cost = max(500000.0, rand(rng, LogNormal(log(1500000), 0.7)))
+        max_fixed_cost = min_fixed_cost * rand(rng, Uniform(2.5, 5.0))
+        base_demand = rand(rng, Uniform(300.0, 600.0))
         min_demand = base_demand
-        max_demand = base_demand * rand(Uniform(6.0, 20.0))
+        max_demand = base_demand * rand(rng, Uniform(6.0, 20.0))
     end
 
     # Effective per-arc density: only available routes get a flow variable.
@@ -138,15 +138,15 @@ function MultiProductSupplyChainProblem(target_variables::Int, feasibility_statu
     # arc density can be calibrated for the actual chosen modes).
     all_transport_modes = ["truck", "rail", "ship", "air"]
     transport_base_costs = Dict(
-        "truck" => rand(Gamma(4, 0.25)),
-        "rail" => rand(Gamma(3, 0.2)),
-        "ship" => rand(Gamma(2, 0.15)),
-        "air" => rand(Gamma(6, 0.5)),
+        "truck" => rand(rng, Gamma(4, 0.25)),
+        "rail" => rand(rng, Gamma(3, 0.2)),
+        "ship" => rand(rng, Gamma(2, 0.15)),
+        "air" => rand(rng, Gamma(6, 0.5)),
     )
-    transport_modes = sample(all_transport_modes, min(n_transport_modes, length(all_transport_modes)), replace=false)
+    transport_modes = sample(rng, all_transport_modes, min(n_transport_modes, length(all_transport_modes)), replace=false)
 
-    capacity_factor = rand(Uniform(1.2, 2.2))
-    mode_capacity_factor = rand(Uniform(0.25, 0.65))
+    capacity_factor = rand(rng, Uniform(1.2, 2.2))
+    mode_capacity_factor = rand(rng, Uniform(0.25, 0.65))
 
     # --- Calibrate realized arc density ---
     # An arc (f,c,m) gets a flow variable only if its infrastructure roll
@@ -198,32 +198,32 @@ function MultiProductSupplyChainProblem(target_variables::Int, feasibility_statu
 
     # Geographic clusters
     n_clusters = max(2, round(Int, sqrt(n_customers) * clustering_factor))
-    cluster_centers = [(grid_width * rand(), grid_height * rand()) for _ in 1:n_clusters]
+    cluster_centers = [(grid_width * rand(rng), grid_height * rand(rng)) for _ in 1:n_clusters]
 
     # Facility locations
     facility_locs = Vector{Tuple{Float64,Float64}}()
     for _ in 1:n_facilities
-        if rand() < 0.4
-            center = rand(cluster_centers)
-            x = clamp(center[1] + rand(Normal(0, grid_width * 0.12)), 0, grid_width)
-            y = clamp(center[2] + rand(Normal(0, grid_height * 0.12)), 0, grid_height)
+        if rand(rng) < 0.4
+            center = rand(rng, cluster_centers)
+            x = clamp(center[1] + rand(rng, Normal(0, grid_width * 0.12)), 0, grid_width)
+            y = clamp(center[2] + rand(rng, Normal(0, grid_height * 0.12)), 0, grid_height)
         else
-            x = grid_width * rand(Beta(1.5, 1.5))
-            y = grid_height * rand(Beta(1.5, 1.5))
+            x = grid_width * rand(rng, Beta(1.5, 1.5))
+            y = grid_height * rand(rng, Beta(1.5, 1.5))
         end
         push!(facility_locs, (x, y))
     end
 
     # Customer locations
-    cluster_weights = rand(Dirichlet(ones(n_clusters)))
+    cluster_weights = rand(rng, Dirichlet(ones(n_clusters)))
     customer_locs = Vector{Tuple{Float64,Float64}}()
     for _ in 1:n_customers
-        cluster_idx = sample(1:n_clusters, Weights(cluster_weights))
+        cluster_idx = sample(rng, 1:n_clusters, Weights(cluster_weights))
         center = cluster_centers[cluster_idx]
         base_spread = grid_width * (1 - clustering_factor) * 0.08
-        spread = rand(LogNormal(log(base_spread), 0.3))
-        x = clamp(center[1] + rand(Normal(0, spread)), 0, grid_width)
-        y = clamp(center[2] + rand(Normal(0, spread)), 0, grid_height)
+        spread = rand(rng, LogNormal(log(base_spread), 0.3))
+        x = clamp(center[1] + rand(rng, Normal(0, spread)), 0, grid_width)
+        y = clamp(center[2] + rand(rng, Normal(0, spread)), 0, grid_height)
         push!(customer_locs, (x, y))
     end
 
@@ -233,7 +233,7 @@ function MultiProductSupplyChainProblem(target_variables::Int, feasibility_statu
         distances = [sqrt((facility_locs[f][1] - c[1])^2 + (facility_locs[f][2] - c[2])^2) for c in customer_locs]
         market_potential = sum(exp.(-distances ./ (grid_width * 0.2)))
         base_cost = min_fixed_cost + (max_fixed_cost - min_fixed_cost) * (0.2 + 0.5 * market_potential / n_customers)
-        fixed_costs[f] = base_cost * rand(LogNormal(log(1.0), 0.25))
+        fixed_costs[f] = base_cost * rand(rng, LogNormal(log(1.0), 0.25))
     end
 
     # Aggregate customer demands (cluster-size correlated)
@@ -242,7 +242,7 @@ function MultiProductSupplyChainProblem(target_variables::Int, feasibility_statu
         distances = [sqrt((customer_locs[c][1] - center[1])^2 + (customer_locs[c][2] - center[2])^2) for center in cluster_centers]
         _, cluster_idx = findmin(distances)
         base_demand_val = min_demand + (max_demand - min_demand) * (0.2 + 0.8 * cluster_weights[cluster_idx])
-        demands[c] = base_demand_val * rand(LogNormal(log(1.0), 0.4))
+        demands[c] = base_demand_val * rand(rng, LogNormal(log(1.0), 0.4))
     end
 
     total_demand = sum(values(demands))
@@ -254,7 +254,7 @@ function MultiProductSupplyChainProblem(target_variables::Int, feasibility_statu
     fc_max = maximum(values(fixed_costs))
     for f in 1:n_facilities
         relative_cost = (fixed_costs[f] - fc_min) / max(1.0, fc_max - fc_min)
-        capacities[f] = avg_capacity * (0.6 + 0.8 * relative_cost) * rand(Gamma(3, 1/3))
+        capacities[f] = avg_capacity * (0.6 + 0.8 * relative_cost) * rand(rng, Gamma(3, 1/3))
     end
 
     # Transport costs and infrastructure availability
@@ -274,12 +274,12 @@ function MultiProductSupplyChainProblem(target_variables::Int, feasibility_statu
                 else  # air
                     distance > sqrt(grid_width^2 + grid_height^2) * 0.3 ? 0.7 : 0.2
                 end
-                infrastructure[(f, c, mode)] = rand() < prob_available * infrastructure_density
+                infrastructure[(f, c, mode)] = rand(rng) < prob_available * infrastructure_density
                 if infrastructure[(f, c, mode)]
                     base_cost = get(transport_base_costs, mode, 1.0)
-                    terrain_factor = rand(LogNormal(log(1.0), 0.15))
+                    terrain_factor = rand(rng, LogNormal(log(1.0), 0.15))
                     volume_factor = 1.0 - 0.25 * (demands[c] / max_demand_val)
-                    efficiency_factor = rand(Beta(3, 2)) * 0.4 + 0.8
+                    efficiency_factor = rand(rng, Beta(3, 2)) * 0.4 + 0.8
                     transport_costs[(f, c, mode)] = base_cost * distance * terrain_factor * volume_factor * efficiency_factor
                 end
             end
@@ -291,13 +291,13 @@ function MultiProductSupplyChainProblem(target_variables::Int, feasibility_statu
     for mode in transport_modes
         base_capacity = total_demand * mode_capacity_factor
         mult = if mode == "truck"
-            rand(Gamma(4, 0.25))
+            rand(rng, Gamma(4, 0.25))
         elseif mode == "rail"
-            rand(Gamma(6, 0.33))
+            rand(rng, Gamma(6, 0.33))
         elseif mode == "ship"
-            rand(Gamma(9, 0.33))
+            rand(rng, Gamma(9, 0.33))
         else
-            rand(Gamma(2, 0.25))
+            rand(rng, Gamma(2, 0.25))
         end
         mode_capacities[mode] = base_capacity * mult
     end
@@ -305,16 +305,16 @@ function MultiProductSupplyChainProblem(target_variables::Int, feasibility_statu
     transport_costs = Dict(k => v for (k, v) in transport_costs if infrastructure[k])
 
     # Per-(customer, product) demands via a product split
-    product_split = rand(Dirichlet(ones(n_products)))
+    product_split = rand(rng, Dirichlet(ones(n_products)))
     product_demands = Dict{Tuple{Int,Int}, Float64}()
     for c in 1:n_customers, p in 1:n_products
-        product_demands[(c, p)] = demands[c] * product_split[p] * rand(Uniform(0.8, 1.2))
+        product_demands[(c, p)] = demands[c] * product_split[p] * rand(rng, Uniform(0.8, 1.2))
     end
 
     # Per-(facility, product) capacities
     product_capacities = Dict{Tuple{Int,Int}, Float64}()
     for f in 1:n_facilities, p in 1:n_products
-        product_capacities[(f, p)] = capacities[f] / n_products * rand(Uniform(0.8, 1.2))
+        product_capacities[(f, p)] = capacities[f] / n_products * rand(rng, Uniform(0.8, 1.2))
     end
 
     # --- Feasibility handling ---
@@ -329,9 +329,9 @@ function MultiProductSupplyChainProblem(target_variables::Int, feasibility_statu
             for f in nearest_idxs
                 if !haskey(transport_costs, (f, c, fallback_mode))
                     base_cost = get(transport_base_costs, fallback_mode, 1.0)
-                    terrain_factor = rand(LogNormal(log(1.0), 0.15))
+                    terrain_factor = rand(rng, LogNormal(log(1.0), 0.15))
                     volume_factor = 1.0 - 0.25 * (demands[c] / max_demand_val)
-                    efficiency_factor = rand(Beta(3, 2)) * 0.4 + 0.8
+                    efficiency_factor = rand(rng, Beta(3, 2)) * 0.4 + 0.8
                     transport_costs[(f, c, fallback_mode)] = base_cost * dvec[f] * terrain_factor * volume_factor * efficiency_factor
                 end
                 push!(customers_linked_to_facility[f], c)
@@ -413,7 +413,7 @@ function MultiProductSupplyChainProblem(target_variables::Int, feasibility_statu
         # Deterministic contradiction: total facility throughput cannot meet
         # total demand. Shrink shared per-facility capacities (and per-product
         # caps) so their sum is strictly below total demand with a margin.
-        desired_ratio = rand(Uniform(0.6, 0.8))
+        desired_ratio = rand(rng, Uniform(0.6, 0.8))
         cur_total = sum(values(capacities))
         scale = desired_ratio * total_demand / max(cur_total, eps())
         for f in 1:n_facilities

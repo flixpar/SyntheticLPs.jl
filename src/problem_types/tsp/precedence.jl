@@ -18,25 +18,25 @@ end
 function TSPPrecedenceProblem(target_variables::Int,
                               feasibility_status::FeasibilityStatus,
                               seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
     n = max(5, round(Int, sqrt(target_variables + 1)))
-    locations = _tsp_stops(n)
-    dist = _tsp_distance(locations)
+    locations = _tsp_stops(rng, n)
+    dist = _tsp_distance(rng, locations)
 
     pairs = Tuple{Int,Int}[]
     if feasibility_status == infeasible
-        cycle_nodes = shuffle(collect(2:n))[1:3]
+        cycle_nodes = shuffle(rng, collect(2:n))[1:3]
         push!(pairs, (cycle_nodes[1], cycle_nodes[2]))
         push!(pairs, (cycle_nodes[2], cycle_nodes[3]))
         push!(pairs, (cycle_nodes[3], cycle_nodes[1]))
     else
-        witness_order = shuffle(collect(2:n))
+        witness_order = shuffle(rng, collect(2:n))
         candidates = [(witness_order[a], witness_order[b])
                       for a in 1:length(witness_order)-1
                       for b in a+1:length(witness_order)]
-        density = feasibility_status == feasible ? 0.25 : 0.15 + 0.35 * rand()
+        density = feasibility_status == feasible ? 0.25 : 0.15 + 0.35 * rand(rng)
         n_pairs = clamp(round(Int, density * (n - 1)), 1, length(candidates))
-        pairs = shuffle(candidates)[1:n_pairs]
+        pairs = shuffle(rng, candidates)[1:n_pairs]
     end
 
     return TSPPrecedenceProblem(n, locations, dist, pairs)

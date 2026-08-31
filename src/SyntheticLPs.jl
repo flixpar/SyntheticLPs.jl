@@ -599,14 +599,14 @@ function generate_random_problem(target_variables::Int;
                                  bounds_to_constraints::Bool=false, seed::Int=0,
                                  optimizer=nothing, max_feasibility_retries::Int=10,
                                  feasibility_timeout::Float64=10.0)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     problems = list_problems()
     if isempty(problems)
         error("No problem types registered. Include problem type files first.")
     end
 
-    ref = rand(problems)
+    ref = rand(rng, problems)
     model, problem = generate_problem(ref, target_variables, feasibility_status, seed;
                                       relax_integer=relax_integer,
                                       bounds_to_constraints=bounds_to_constraints,

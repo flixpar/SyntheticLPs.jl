@@ -71,7 +71,7 @@ flow), f2[w,c] (warehouse→customer flow). Total variable count:
 Dimensions are sized in the constructor to hit `target_variables`.
 """
 function TwoEchelonFacilityLocationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Determine scale
     if target_variables <= 150
@@ -79,28 +79,28 @@ function TwoEchelonFacilityLocationProblem(target_variables::Int, feasibility_st
         min_supp, max_supp = 2, 10
         min_cust, max_cust = 3, 20
         n_size_options = 3
-        grid_size = rand(100.0:20.0:300.0)
+        grid_size = rand(rng, 100.0:20.0:300.0)
         demand_range = (10.0, 100.0)
         supply_range = (50.0, 500.0)
-        transport_cost = rand(0.5:0.1:1.5)
+        transport_cost = rand(rng, 0.5:0.1:1.5)
     elseif target_variables <= 800
         min_wh, max_wh = 5, 30
         min_supp, max_supp = 3, 20
         min_cust, max_cust = 10, 50
         n_size_options = 4
-        grid_size = rand(200.0:50.0:600.0)
+        grid_size = rand(rng, 200.0:50.0:600.0)
         demand_range = (20.0, 200.0)
         supply_range = (100.0, 1000.0)
-        transport_cost = rand(0.8:0.1:2.0)
+        transport_cost = rand(rng, 0.8:0.1:2.0)
     else
         min_wh, max_wh = 10, 100
         min_supp, max_supp = 5, 50
         min_cust, max_cust = 20, 150
         n_size_options = 5
-        grid_size = rand(500.0:100.0:1500.0)
+        grid_size = rand(rng, 500.0:100.0:1500.0)
         demand_range = (50.0, 500.0)
         supply_range = (200.0, 3000.0)
-        transport_cost = rand(1.0:0.2:3.0)
+        transport_cost = rand(rng, 1.0:0.2:3.0)
     end
 
     # Solve for dimensions to hit target.
@@ -117,7 +117,7 @@ function TwoEchelonFacilityLocationProblem(target_variables::Int, feasibility_st
         end
 
         # Split flow variables between suppliers and customers
-        ratio = rand(0.3:0.1:0.7)
+        ratio = rand(rng, 0.3:0.1:0.7)
         n_supp = clamp(round(Int, target_flows * ratio), min_supp, max_supp)
         n_cust = clamp(round(Int, target_flows * (1 - ratio)), min_cust, max_cust)
 
@@ -133,27 +133,27 @@ function TwoEchelonFacilityLocationProblem(target_variables::Int, feasibility_st
     n_warehouses, n_suppliers, n_customers = best_config
 
     # Generate warehouse locations (uniform over grid)
-    warehouse_locations = [(grid_size * rand(), grid_size * rand()) for _ in 1:n_warehouses]
+    warehouse_locations = [(grid_size * rand(rng), grid_size * rand(rng)) for _ in 1:n_warehouses]
 
     # Suppliers clustered (e.g. manufacturing zones)
     n_supp_clusters = max(1, n_suppliers ÷ 5)
-    supp_centers = [(grid_size * rand(), grid_size * rand()) for _ in 1:n_supp_clusters]
+    supp_centers = [(grid_size * rand(rng), grid_size * rand(rng)) for _ in 1:n_supp_clusters]
     supplier_locations = Tuple{Float64,Float64}[]
     for _ in 1:n_suppliers
-        center = rand(supp_centers)
-        x = clamp(center[1] + randn() * grid_size / 10, 0.0, grid_size)
-        y = clamp(center[2] + randn() * grid_size / 10, 0.0, grid_size)
+        center = rand(rng, supp_centers)
+        x = clamp(center[1] + randn(rng) * grid_size / 10, 0.0, grid_size)
+        y = clamp(center[2] + randn(rng) * grid_size / 10, 0.0, grid_size)
         push!(supplier_locations, (x, y))
     end
 
     # Customers clustered (e.g. cities)
     n_cust_clusters = max(2, n_customers ÷ 8)
-    cust_centers = [(grid_size * rand(), grid_size * rand()) for _ in 1:n_cust_clusters]
+    cust_centers = [(grid_size * rand(rng), grid_size * rand(rng)) for _ in 1:n_cust_clusters]
     customer_locations = Tuple{Float64,Float64}[]
     for _ in 1:n_customers
-        center = rand(cust_centers)
-        x = clamp(center[1] + randn() * grid_size / 8, 0.0, grid_size)
-        y = clamp(center[2] + randn() * grid_size / 8, 0.0, grid_size)
+        center = rand(rng, cust_centers)
+        x = clamp(center[1] + randn(rng) * grid_size / 8, 0.0, grid_size)
+        y = clamp(center[2] + randn(rng) * grid_size / 8, 0.0, grid_size)
         push!(customer_locations, (x, y))
     end
 
@@ -161,14 +161,14 @@ function TwoEchelonFacilityLocationProblem(target_variables::Int, feasibility_st
     min_demand, max_demand = demand_range
     log_mean = log(sqrt(min_demand * max_demand))
     log_std = log(max_demand / min_demand) / 4
-    customer_demands = [clamp(exp(rand(Normal(log_mean, log_std))), min_demand, max_demand) for _ in 1:n_customers]
+    customer_demands = [clamp(exp(rand(rng, Normal(log_mean, log_std))), min_demand, max_demand) for _ in 1:n_customers]
     customer_demands = round.(customer_demands, digits=2)
 
     total_demand = sum(customer_demands)
 
     # Supplier capacities
     min_supply, max_supply = supply_range
-    supplier_capacities = [rand(Uniform(min_supply, max_supply)) for _ in 1:n_suppliers]
+    supplier_capacities = [rand(rng, Uniform(min_supply, max_supply)) for _ in 1:n_suppliers]
     supplier_capacities = round.(supplier_capacities, digits=2)
 
     # Ensure ample total supply >= total demand by default (feasibility baseline)
@@ -185,12 +185,12 @@ function TwoEchelonFacilityLocationProblem(target_variables::Int, feasibility_st
     warehouse_size_options = [round(base_capacity * mult, digits=2) for mult in all_mults[1:n_size_options]]
 
     # Sublinear size costs (economies of scale)
-    base_size_cost = rand(5000.0:1000.0:20000.0)
+    base_size_cost = rand(rng, 5000.0:1000.0:20000.0)
     warehouse_size_costs = [round(base_size_cost * (cap / warehouse_size_options[1])^0.85, digits=2)
                             for cap in warehouse_size_options]
 
     # Fixed warehouse opening costs (location-dependent)
-    warehouse_fixed_costs = [rand(Uniform(10000.0, 50000.0)) * (1 + 0.3 * rand()) for _ in 1:n_warehouses]
+    warehouse_fixed_costs = [rand(rng, Uniform(10000.0, 50000.0)) * (1 + 0.3 * rand(rng)) for _ in 1:n_warehouses]
     warehouse_fixed_costs = round.(warehouse_fixed_costs, digits=2)
 
     # Distance-based transport costs
@@ -199,17 +199,17 @@ function TwoEchelonFacilityLocationProblem(target_variables::Int, feasibility_st
     supplier_warehouse_costs = zeros(n_suppliers, n_warehouses)
     for i in 1:n_suppliers, j in 1:n_warehouses
         dist = calc_distance(supplier_locations[i], warehouse_locations[j])
-        supplier_warehouse_costs[i, j] = round(dist * transport_cost * (0.9 + 0.2 * rand()), digits=2)
+        supplier_warehouse_costs[i, j] = round(dist * transport_cost * (0.9 + 0.2 * rand(rng)), digits=2)
     end
 
     warehouse_customer_costs = zeros(n_warehouses, n_customers)
     for i in 1:n_warehouses, j in 1:n_customers
         dist = calc_distance(warehouse_locations[i], customer_locations[j])
-        warehouse_customer_costs[i, j] = round(dist * transport_cost * (0.9 + 0.2 * rand()), digits=2)
+        warehouse_customer_costs[i, j] = round(dist * transport_cost * (0.9 + 0.2 * rand(rng)), digits=2)
     end
 
     # Handling costs at warehouses
-    handling_costs = round.([rand(Uniform(0.5, 2.5)) for _ in 1:n_warehouses], digits=2)
+    handling_costs = round.([rand(rng, Uniform(0.5, 2.5)) for _ in 1:n_warehouses], digits=2)
 
     # --- Feasibility handling ---
     actual_status = feasibility_status
@@ -240,7 +240,7 @@ function TwoEchelonFacilityLocationProblem(target_variables::Int, feasibility_st
         # Aggregate maximum warehouse throughput (all opened at largest size) is
         # forced strictly below total demand with a clear margin, so the customer
         # demand constraints cannot all be satisfied regardless of supply or sizing.
-        target_cap_fraction = rand(0.7:0.05:0.9)  # 70%-90% of demand
+        target_cap_fraction = rand(rng, 0.7:0.05:0.9)  # 70%-90% of demand
         target_total_cap = total_demand * target_cap_fraction
         max_size = target_total_cap / n_warehouses
         # Build size options strictly bounded by max_size so even all-largest-size

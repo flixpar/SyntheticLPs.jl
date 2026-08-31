@@ -45,7 +45,7 @@ Construct a network flow problem instance.
 - `seed`: Random seed for reproducibility
 """
 function NetworkFlowProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Determine problem scale
     if target_variables <= 100
@@ -74,7 +74,7 @@ function NetworkFlowProblem(target_variables::Int, feasibility_status::Feasibili
     sink_node = n_nodes
 
     # Generate network topology ensuring connectivity
-    arcs = generate_connected_network(n_nodes, target_variables, source_node, sink_node)
+    arcs = generate_connected_network(rng, n_nodes, target_variables, source_node, sink_node)
 
     # Generate capacities and costs
     min_capacity, max_capacity = capacity_range
@@ -83,12 +83,12 @@ function NetworkFlowProblem(target_variables::Int, feasibility_status::Feasibili
     costs = Dict{Tuple{Int,Int}, Float64}()
 
     for arc in arcs
-        capacities[arc] = round(rand() * (max_capacity - min_capacity) + min_capacity, digits=2)
-        costs[arc] = round(rand() * (max_cost - min_cost) + min_cost, digits=2)
+        capacities[arc] = round(rand(rng) * (max_capacity - min_capacity) + min_capacity, digits=2)
+        costs[arc] = round(rand(rng) * (max_cost - min_cost) + min_cost, digits=2)
     end
 
     # Determine objective type
-    flow_objective = target_variables <= 100 ? (rand() < 0.7 ? :max_flow : :min_cost) : (rand() < 0.4 ? :max_flow : :min_cost)
+    flow_objective = target_variables <= 100 ? (rand(rng) < 0.7 ? :max_flow : :min_cost) : (rand(rng) < 0.4 ? :max_flow : :min_cost)
 
     # Calculate max flow using bottleneck capacity on source-to-sink path
     # Simple approximation: sum of capacities of arcs leaving source
@@ -98,7 +98,7 @@ function NetworkFlowProblem(target_variables::Int, feasibility_status::Feasibili
     # Handle feasibility
     actual_status = feasibility_status
     if feasibility_status == unknown
-        actual_status = rand() < 0.7 ? feasible : infeasible
+        actual_status = rand(rng) < 0.7 ? feasible : infeasible
     end
 
     # Set target flow for min_cost objective
@@ -106,28 +106,28 @@ function NetworkFlowProblem(target_variables::Int, feasibility_status::Feasibili
     if flow_objective == :min_cost
         if actual_status == feasible
             # Ensure target flow is achievable
-            target_flow = max_flow_estimate * (0.1 + 0.3 * rand())
+            target_flow = max_flow_estimate * (0.1 + 0.3 * rand(rng))
         elseif actual_status == infeasible
             # Set target flow above max flow to guarantee infeasibility
-            target_flow = max_flow_estimate * (1.2 + 0.5 * rand())
+            target_flow = max_flow_estimate * (1.2 + 0.5 * rand(rng))
         else
             target_flow = minimum(values(capacities)) * 0.8
         end
     elseif actual_status == infeasible
         # For max_flow with infeasibility: switch to min_cost with impossible target
         flow_objective = :min_cost
-        target_flow = max_flow_estimate * (1.2 + 0.5 * rand())
+        target_flow = max_flow_estimate * (1.2 + 0.5 * rand(rng))
     end
 
     return NetworkFlowProblem(n_nodes, source_node, sink_node, arcs, capacities, costs, flow_objective, target_flow)
 end
 
 """
-    generate_connected_network(n_nodes::Int, n_arcs::Int, source::Int, sink::Int)
+    generate_connected_network(rng::AbstractRNG, n_nodes::Int, n_arcs::Int, source::Int, sink::Int)
 
 Generate a connected network with the specified number of nodes and arcs.
 """
-function generate_connected_network(n_nodes::Int, n_arcs::Int, source::Int, sink::Int)
+function generate_connected_network(rng::AbstractRNG, n_nodes::Int, n_arcs::Int, source::Int, sink::Int)
     arcs = Set{Tuple{Int,Int}}()
 
     # Create path from source to sink
@@ -137,10 +137,10 @@ function generate_connected_network(n_nodes::Int, n_arcs::Int, source::Int, sink
 
     # Add some connections back to source and to sink for realism
     for i in 2:n_nodes
-        if i != source && i != sink && rand() < 0.3
+        if i != source && i != sink && rand(rng) < 0.3
             push!(arcs, (source, i))
         end
-        if i != source && i != sink && rand() < 0.3
+        if i != source && i != sink && rand(rng) < 0.3
             push!(arcs, (i, sink))
         end
     end
@@ -148,7 +148,7 @@ function generate_connected_network(n_nodes::Int, n_arcs::Int, source::Int, sink
     # Add additional random arcs
     all_possible_arcs = [(i, j) for i in 1:n_nodes for j in 1:n_nodes if i != j]
     remaining_arcs = [arc for arc in all_possible_arcs if arc ∉ arcs]
-    shuffle!(remaining_arcs)
+    shuffle!(rng, remaining_arcs)
 
     for arc in remaining_arcs
         if length(arcs) >= n_arcs

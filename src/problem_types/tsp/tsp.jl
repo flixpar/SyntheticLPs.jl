@@ -14,38 +14,38 @@ register_category(:tsp,
 
 # --- Shared data helpers -----------------------------------------------------
 # Used by every tsp variant; names live in the module's namespace, hence the
-# `_tsp_` prefix. All of them consume the global RNG, so call them from
-# constructors only — never from build_model.
+# `_tsp_` prefix. Each randomised helper takes the caller's `rng` explicitly,
+# so call them from constructors only — never from build_model.
 
 # Sample `n` stop locations (index 1 = home base / depot): a depot near the
 # centre of a scale-tiered service region, most stops clustered in a few towns
 # (Gaussian spread), and ~20% uniform rural scatter between them.
-function _tsp_stops(n::Int)
+function _tsp_stops(rng::AbstractRNG, n::Int)
     if n <= 9
-        grid_size = rand(15.0:5.0:40.0)
-        n_clusters = rand(1:2)
+        grid_size = rand(rng, 15.0:5.0:40.0)
+        n_clusters = rand(rng, 1:2)
     elseif n <= 25
-        grid_size = rand(30.0:10.0:80.0)
-        n_clusters = rand(2:4)
+        grid_size = rand(rng, 30.0:10.0:80.0)
+        n_clusters = rand(rng, 2:4)
     else
-        grid_size = rand(60.0:20.0:150.0)
-        n_clusters = rand(3:6)
+        grid_size = rand(rng, 60.0:20.0:150.0)
+        n_clusters = rand(rng, 3:6)
     end
-    depot = (grid_size * (0.4 + 0.2 * rand()), grid_size * (0.4 + 0.2 * rand()))
-    cluster_centers = [(grid_size * rand(), grid_size * rand()) for _ in 1:n_clusters]
+    depot = (grid_size * (0.4 + 0.2 * rand(rng)), grid_size * (0.4 + 0.2 * rand(rng)))
+    cluster_centers = [(grid_size * rand(rng), grid_size * rand(rng)) for _ in 1:n_clusters]
     cluster_spread = grid_size / (4.0 * n_clusters)
     n_customers = n - 1
     n_rural = max(1, round(Int, 0.2 * n_customers))   # ~20% rural scatter
     n_town = n_customers - n_rural
     stops = Tuple{Float64,Float64}[]
     for _ in 1:n_town
-        center = rand(cluster_centers)
-        x = clamp(center[1] + randn() * cluster_spread, 0.0, grid_size)
-        y = clamp(center[2] + randn() * cluster_spread, 0.0, grid_size)
+        center = rand(rng, cluster_centers)
+        x = clamp(center[1] + randn(rng) * cluster_spread, 0.0, grid_size)
+        y = clamp(center[2] + randn(rng) * cluster_spread, 0.0, grid_size)
         push!(stops, (x, y))
     end
     for _ in 1:n_rural
-        push!(stops, (grid_size * rand(), grid_size * rand()))
+        push!(stops, (grid_size * rand(rng), grid_size * rand(rng)))
     end
     return vcat([depot], stops)
 end
@@ -56,10 +56,10 @@ end
 # up to 2-digit rounding (unlike the CVRP's deliberate per-arc asymmetry) and
 # makes symmetry exact. `min_dist` floors distinct-stop distances so clamped or
 # coincident coordinates can never produce a zero-length leg.
-function _tsp_distance(locations::Vector{Tuple{Float64,Float64}},
+function _tsp_distance(rng::AbstractRNG, locations::Vector{Tuple{Float64,Float64}},
                        min_dist::Float64 = 0.5)
     n = length(locations)
-    circuity = rand(1.15:0.05:1.45)
+    circuity = rand(rng, 1.15:0.05:1.45)
     dist = zeros(n, n)
     for i in 1:n, j in i+1:n
         a, b = locations[i], locations[j]
@@ -94,9 +94,9 @@ end
 # `u`), so the relaxed model would stay feasible.
 #
 # Requires `2k - 1 ≤ n - 1` (the sets must fit in the non-depot nodes).
-function _tsp_hall_block(n::Int, k::Int)
+function _tsp_hall_block(rng::AbstractRNG, n::Int, k::Int)
     @assert 2 * k - 1 <= n - 1 "Hall block needs 2k-1 <= n-1 (got k=$k, n=$n)"
-    order = shuffle(collect(2:n))
+    order = shuffle(rng, collect(2:n))
     S = sort(order[1:k])
     T = sort(order[k+1:2k-1])
     arc_ok = _tsp_full_support(n)
@@ -129,9 +129,9 @@ end
 # unless infeasible), and for an `infeasible` request size `n` against the
 # *delivered* variable count — `delivered(n, k)` is the variant's variable
 # count at dimension `n` once the block has deleted `k*(n-k)` arcs.
-function _tsp_plan_dimensions(n0::Int, target::Int,
+function _tsp_plan_dimensions(rng::AbstractRNG, n0::Int, target::Int,
                               status::FeasibilityStatus, delivered::Function)
-    k = n0 >= 8 ? rand(2:3) : 2
+    k = n0 >= 8 ? rand(rng, 2:3) : 2
     n = status == infeasible ?
         _tsp_pick_n(n0, target, k, m -> delivered(m, k)) : n0
     return n, k
@@ -139,8 +139,8 @@ end
 
 # Arc support for the requested status: complete support unless infeasible, in
 # which case the Hall-deficit block (see `_tsp_hall_block`).
-function _tsp_arc_support(n::Int, k::Int, status::FeasibilityStatus)
-    status == infeasible && return _tsp_hall_block(n, k)
+function _tsp_arc_support(rng::AbstractRNG, n::Int, k::Int, status::FeasibilityStatus)
+    status == infeasible && return _tsp_hall_block(rng, n, k)
     return _tsp_full_support(n), Int[], Int[]
 end
 

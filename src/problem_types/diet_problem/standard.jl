@@ -73,31 +73,31 @@ requirement to 200-300% of maximum with large margin to avoid numerical issues.
 - `seed`: Random seed for reproducibility
 """
 function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     n_foods = target_variables
 
     # Scale nutrients based on problem size
     if target_variables <= 100
-        n_nutrients = rand(5:min(25, max(5, Int(target_variables ÷ 4))))
-        cost_range = (rand(0.5:0.1:2.0), rand(3.0:0.5:8.0))
-        nutrient_range = (rand(0.05:0.01:0.15), rand(1.5:0.1:3.0))
+        n_nutrients = rand(rng, 5:min(25, max(5, Int(target_variables ÷ 4))))
+        cost_range = (rand(rng, 0.5:0.1:2.0), rand(rng, 3.0:0.5:8.0))
+        nutrient_range = (rand(rng, 0.05:0.01:0.15), rand(rng, 1.5:0.1:3.0))
     elseif target_variables <= 1000
-        n_nutrients = rand(15:min(75, max(15, Int(target_variables ÷ 8))))
-        cost_range = (rand(0.1:0.05:1.0), rand(2.0:0.5:10.0))
-        nutrient_range = (rand(0.01:0.005:0.1), rand(1.0:0.2:4.0))
+        n_nutrients = rand(rng, 15:min(75, max(15, Int(target_variables ÷ 8))))
+        cost_range = (rand(rng, 0.1:0.05:1.0), rand(rng, 2.0:0.5:10.0))
+        nutrient_range = (rand(rng, 0.01:0.005:0.1), rand(rng, 1.0:0.2:4.0))
     else
-        n_nutrients = rand(25:min(150, max(25, Int(target_variables ÷ 15))))
-        cost_range = (rand(0.05:0.01:0.5), rand(1.0:0.2:15.0))
-        nutrient_range = (rand(0.005:0.001:0.05), rand(0.5:0.1:5.0))
+        n_nutrients = rand(rng, 25:min(150, max(25, Int(target_variables ÷ 15))))
+        cost_range = (rand(rng, 0.05:0.01:0.5), rand(rng, 1.0:0.2:15.0))
+        nutrient_range = (rand(rng, 0.005:0.001:0.05), rand(rng, 0.5:0.1:5.0))
     end
 
     # Generate basic food data
     min_cost, max_cost = cost_range
-    c = rand(min_cost:0.1:max_cost, n_foods)
+    c = rand(rng, min_cost:0.1:max_cost, n_foods)
 
     min_nutrient, max_nutrient = nutrient_range
-    a = rand(min_nutrient:0.1:max_nutrient, n_foods, n_nutrients)
+    a = rand(rng, min_nutrient:0.1:max_nutrient, n_foods, n_nutrients)
 
     # Initialize constraint variables
     b = zeros(n_nutrients)
@@ -109,7 +109,7 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
     # Determine actual feasibility status
     actual_status = feasibility_status
     if feasibility_status == unknown
-        actual_status = rand() < 0.75 ? feasible : infeasible
+        actual_status = rand(rng) < 0.75 ? feasible : infeasible
     end
 
     if actual_status == feasible
@@ -136,14 +136,14 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
         for i in primary_foods
             effectiveness_weight = cost_effectiveness[i] / sum(cost_effectiveness[primary_foods])
             baseline_amount = primary_total * effectiveness_weight
-            baseline_diet[i] = baseline_amount * (0.7 + rand() * 0.6)
+            baseline_diet[i] = baseline_amount * (0.7 + rand(rng) * 0.6)
         end
 
         secondary_foods = effectiveness_order[(primary_count + 1):end]
         if !isempty(secondary_foods)
             secondary_total = base_consumption * 0.25
             for i in secondary_foods
-                baseline_diet[i] = secondary_total / length(secondary_foods) * (0.5 + rand())
+                baseline_diet[i] = secondary_total / length(secondary_foods) * (0.5 + rand(rng))
             end
         end
 
@@ -157,18 +157,18 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
         end
 
         # Step 4: Set challenging nutrient requirements
-        tolerance_scenario = rand(1:3)
+        tolerance_scenario = rand(rng, 1:3)
         tolerance_level = if tolerance_scenario == 1
-            0.02 + rand() * 0.03  # 2-5% tolerance
+            0.02 + rand(rng) * 0.03  # 2-5% tolerance
         elseif tolerance_scenario == 2
-            0.05 + rand() * 0.05  # 5-10% tolerance
+            0.05 + rand(rng) * 0.05  # 5-10% tolerance
         else
-            0.08 + rand() * 0.04  # 8-12% tolerance
+            0.08 + rand(rng) * 0.04  # 8-12% tolerance
         end
 
         for j in 1:n_nutrients
             tolerance = tolerance_level
-            position_in_band = 0.7 + rand() * 0.15
+            position_in_band = 0.7 + rand(rng) * 0.15
 
             total_range = 2 * tolerance * achieved_nutrients[j] / (1 - 2 * tolerance + 2 * tolerance * position_in_band)
             lower_bound = achieved_nutrients[j] - total_range * position_in_band
@@ -177,15 +177,15 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
         end
 
         # Step 5: Add realistic supply constraints
-        supply_scenario = rand(1:3)
+        supply_scenario = rand(rng, 1:3)
         if supply_scenario == 1
             # Seasonal availability
             critical_foods = primary_foods[1:max(2, div(length(primary_foods), 3))]
             for i in 1:n_foods
                 if i in critical_foods
-                    food_supply_limits[i] = baseline_diet[i] * (1.1 + rand() * 0.3)
+                    food_supply_limits[i] = baseline_diet[i] * (1.1 + rand(rng) * 0.3)
                 else
-                    food_supply_limits[i] = baseline_diet[i] * (1.5 + rand())
+                    food_supply_limits[i] = baseline_diet[i] * (1.5 + rand(rng))
                 end
             end
         elseif supply_scenario == 2
@@ -193,51 +193,51 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
             expensive_foods = sortperm(c, rev=true)[1:max(2, div(n_foods, 4))]
             for i in 1:n_foods
                 if i in expensive_foods
-                    food_supply_limits[i] = baseline_diet[i] * (1.2 + rand() * 0.4)
+                    food_supply_limits[i] = baseline_diet[i] * (1.2 + rand(rng) * 0.4)
                 else
-                    food_supply_limits[i] = baseline_diet[i] * (2.0 + rand() * 2.0)
+                    food_supply_limits[i] = baseline_diet[i] * (2.0 + rand(rng) * 2.0)
                 end
             end
         else
             # Normal supply
             for i in 1:n_foods
-                food_supply_limits[i] = baseline_diet[i] * (3.0 + rand() * 2.0)
+                food_supply_limits[i] = baseline_diet[i] * (3.0 + rand(rng) * 2.0)
             end
         end
 
         # Step 6: Set challenging cost budget
         baseline_cost = sum(c[i] * baseline_diet[i] for i in 1:n_foods)
-        cost_pressure = rand(1:3)
+        cost_pressure = rand(rng, 1:3)
         if cost_pressure == 1
-            cost_budget = baseline_cost * (1.05 + rand() * 0.10)
+            cost_budget = baseline_cost * (1.05 + rand(rng) * 0.10)
         elseif cost_pressure == 2
-            cost_budget = baseline_cost * (1.10 + rand() * 0.15)
+            cost_budget = baseline_cost * (1.10 + rand(rng) * 0.15)
         else
-            cost_budget = baseline_cost * (1.5 + rand() * 0.5)
+            cost_budget = baseline_cost * (1.5 + rand(rng) * 0.5)
         end
 
         # Step 7: Add realistic consumption preferences
-        if rand() < 0.7
-            preferred_foods = randperm(n_foods)[1:max(1, div(n_foods, 6))]
+        if rand(rng) < 0.7
+            preferred_foods = randperm(rng, n_foods)[1:max(1, div(n_foods, 6))]
             for i in preferred_foods
-                min_food_amounts[i] = baseline_diet[i] * (0.6 + rand() * 0.3)
+                min_food_amounts[i] = baseline_diet[i] * (0.6 + rand(rng) * 0.3)
             end
 
-            limited_foods = randperm(n_foods)[1:max(1, div(n_foods, 5))]
+            limited_foods = randperm(rng, n_foods)[1:max(1, div(n_foods, 5))]
             for i in limited_foods
-                max_food_amounts[i] = baseline_diet[i] * (1.3 + rand() * 0.4)
+                max_food_amounts[i] = baseline_diet[i] * (1.3 + rand(rng) * 0.4)
             end
         end
 
     else  # :infeasible - Create verified mathematical impossibilities
 
-        scenario = rand(1:4)
+        scenario = rand(rng, 1:4)
 
         if scenario == 1
             # SCENARIO 1: Verified nutrient impossibility conflict
             base_supply = 100.0
             for i in 1:n_foods
-                food_supply_limits[i] = base_supply * (0.5 + rand() * 1.5)
+                food_supply_limits[i] = base_supply * (0.5 + rand(rng) * 1.5)
             end
 
             max_achievable_nutrients = zeros(n_nutrients)
@@ -245,12 +245,12 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
                 max_achievable_nutrients[j] = sum(a[i, j] * food_supply_limits[i] for i in 1:n_foods)
             end
 
-            target_nutrient = rand(1:n_nutrients)
-            b[target_nutrient] = max_achievable_nutrients[target_nutrient] * (1.2 + rand() * 0.3)
+            target_nutrient = rand(rng, 1:n_nutrients)
+            b[target_nutrient] = max_achievable_nutrients[target_nutrient] * (1.2 + rand(rng) * 0.3)
 
             for j in 1:n_nutrients
                 if j != target_nutrient
-                    b[j] = max_achievable_nutrients[j] * (0.3 + rand() * 0.4)
+                    b[j] = max_achievable_nutrients[j] * (0.3 + rand(rng) * 0.4)
                 end
             end
 
@@ -269,7 +269,7 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
 
             for j in 1:n_nutrients
                 best_content = maximum(a[:, j])
-                target_units = 20.0 + rand() * 30.0
+                target_units = 20.0 + rand(rng) * 30.0
                 b[j] = best_content * target_units
             end
 
@@ -289,7 +289,7 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
             end
 
             if proven_min_cost > 0
-                cost_budget = proven_min_cost * (0.7 + rand() * 0.2)
+                cost_budget = proven_min_cost * (0.7 + rand(rng) * 0.2)
             else
                 avg_cost = sum(c) / n_foods
                 cost_budget = avg_cost * 5.0
@@ -317,16 +317,16 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
             # SCENARIO 3: Verified supply shortage conflict
             for j in 1:n_nutrients
                 best_content = maximum(a[:, j])
-                target_units = 30.0 + rand() * 30.0
+                target_units = 30.0 + rand(rng) * 30.0
                 b[j] = best_content * target_units
             end
 
             base_supply = 200.0
             for i in 1:n_foods
-                food_supply_limits[i] = base_supply * (0.8 + rand() * 0.4)
+                food_supply_limits[i] = base_supply * (0.8 + rand(rng) * 0.4)
             end
 
-            target_nutrient = rand(1:n_nutrients)
+            target_nutrient = rand(rng, 1:n_nutrients)
             current_max = sum(a[i, target_nutrient] * food_supply_limits[i] for i in 1:n_foods)
 
             nutrient_contributions = [(a[i, target_nutrient] * food_supply_limits[i], i) for i in 1:n_foods]
@@ -354,7 +354,7 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
 
             final_max = sum(a[i, target_nutrient] * food_supply_limits[i] for i in 1:n_foods)
             if final_max >= b[target_nutrient] * 0.99
-                b[target_nutrient] = final_max * (1.1 + rand() * 0.1)
+                b[target_nutrient] = final_max * (1.1 + rand(rng) * 0.1)
             end
 
             cost_budget = sum(c[i] * food_supply_limits[i] for i in 1:n_foods) * 1.5
@@ -370,7 +370,7 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
 
             for i in 1:n_foods
                 base_share = cost_effectiveness[i] / total_effectiveness
-                baseline_diet[i] = baseline_consumption * base_share * (0.5 + rand())
+                baseline_diet[i] = baseline_consumption * base_share * (0.5 + rand(rng))
             end
 
             total_baseline = sum(baseline_diet)
@@ -378,22 +378,22 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
 
             for j in 1:n_nutrients
                 baseline_achievement = sum(a[i, j] * baseline_diet[i] for i in 1:n_foods)
-                b[j] = baseline_achievement * (1.1 + rand() * 0.2)
+                b[j] = baseline_achievement * (1.1 + rand(rng) * 0.2)
             end
 
             for i in 1:n_foods
-                food_supply_limits[i] = baseline_diet[i] * (1.2 + rand() * 0.6)
+                food_supply_limits[i] = baseline_diet[i] * (1.2 + rand(rng) * 0.6)
             end
 
             baseline_cost = sum(c[i] * baseline_diet[i] for i in 1:n_foods)
-            cost_budget = baseline_cost * (1.1 + rand() * 0.2)
+            cost_budget = baseline_cost * (1.1 + rand(rng) * 0.2)
 
             expensive_foods = sortperm(c, rev=true)[1:max(2, div(n_foods, 5))]
             num_required = max(1, div(length(expensive_foods), 2))
             required_foods = expensive_foods[1:num_required]
 
             for i in required_foods
-                min_food_amounts[i] = baseline_diet[i] * (1.3 + rand() * 0.4)
+                min_food_amounts[i] = baseline_diet[i] * (1.3 + rand(rng) * 0.4)
             end
 
             nutritious_foods = []
@@ -409,12 +409,12 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
                 restricted_foods = nutritious_foods[1:min(num_restricted, length(nutritious_foods))]
 
                 for i in restricted_foods
-                    max_food_amounts[i] = baseline_diet[i] * (0.8 + rand() * 0.3)
+                    max_food_amounts[i] = baseline_diet[i] * (0.8 + rand(rng) * 0.3)
                 end
             end
 
             # Force mathematical impossibility
-            target_nutrient = rand(1:n_nutrients)
+            target_nutrient = rand(rng, 1:n_nutrients)
 
             max_achievable_target = 0.0
             for i in 1:n_foods
@@ -429,7 +429,7 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
                 max_achievable_target += a[i, target_nutrient] * feasible_max
             end
 
-            b[target_nutrient] = max_achievable_target * (1.2 + rand() * 0.2)
+            b[target_nutrient] = max_achievable_target * (1.2 + rand(rng) * 0.2)
 
             for j in 1:n_nutrients
                 if j != target_nutrient
@@ -440,7 +440,7 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
                         feasible_max = max(0.0, min(max_usage, max(min_usage, max_usage)))
                         max_achievable_j += a[i, j] * feasible_max
                     end
-                    b[j] = max_achievable_j * (0.7 + rand() * 0.2)
+                    b[j] = max_achievable_j * (0.7 + rand(rng) * 0.2)
                 end
             end
         end
@@ -487,9 +487,9 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
         end
 
         if verified_max_achievable[target_nutrient_final] > 0
-            b[target_nutrient_final] = verified_max_achievable[target_nutrient_final] * (2.0 + rand())
+            b[target_nutrient_final] = verified_max_achievable[target_nutrient_final] * (2.0 + rand(rng))
         else
-            b[target_nutrient_final] = 100.0 + rand() * 100.0
+            b[target_nutrient_final] = 100.0 + rand(rng) * 100.0
         end
     end
 

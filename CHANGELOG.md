@@ -4,6 +4,82 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-31 03:11 UTC (constructor-local RNG for every generator)
+
+**Previous Commit**: `87e6b40`
+
+**Commits**: (pending)
+
+**Summary**: The 61 generator files that still opened their constructor with
+`Random.seed!(seed)` now draw from a constructor-local
+`rng = MersenneTwister(seed)` instead, matching the newer generators. Seeding
+the global stream had two defects: it clobbered whatever RNG state the caller
+had set up (generating an instance silently reset the caller's stream), and it
+was not thread-safe — two tasks generating concurrently interleaved draws on the
+shared stream, so neither instance was reproducible. With a local RNG the seed
+is the only input that determines an instance. Corpus-wide verification over
+every registered variant x {feasible, infeasible, unknown} confirms no generator
+reads or advances the global stream and every one is byte-identical across
+repeated calls with the same seed. Suite grew from 156,135 to 156,502 passing
+tests (`Pkg.test()`, HiGHS included).
+
+**Details**:
+
+- **Constructors** (61 files under `src/problem_types/`): `Random.seed!(seed)`
+  replaced by `rng = MersenneTwister(seed)`, with `rng` threaded explicitly into
+  every draw — `rand(rng, …)`, `randn(rng)`, `randperm(rng, …)`,
+  `shuffle(rng, …)`, `sample(rng, …)`.
+- **Helpers gained an `rng::AbstractRNG` first parameter** wherever randomness
+  lived outside the constructor, and their call sites and docstring signatures
+  were updated to match:
+  - `tsp/tsp.jl` (shared across all eight tsp variants): `_tsp_stops`,
+    `_tsp_distance`, `_tsp_hall_block`, `_tsp_plan_dimensions`,
+    `_tsp_arc_support`. `_tsp_full_support` and `_tsp_pick_n` are deterministic
+    and unchanged.
+  - `regression/regression.jl`: `generate_regression_data`, called by the `lad`,
+    `quantile` and `chebyshev` variants.
+  - `cutting_stock`: `generate_cutting_patterns`, `adjust_for_feasibility`,
+    `calculate_demand_scaling_factors` (standard), `generate_due_dates_patterns`,
+    `generate_setup_cost_patterns`.
+  - `multi_commodity_flow/standard.jl`: `sample_parameters_mcf`,
+    `generate_connected_mcf_network`, `generate_commodity_pairs`, `create_path`,
+    `enforce_infeasibility_mcf!`, `enforce_source_bottleneck!`,
+    `enforce_sink_bottleneck!`, `redistribute_capacity!`.
+  - `nurse_scheduling/standard.jl`: thirteen `sample_nurse_*` / `build_nurse_*` /
+    `select_nurse` / `finalize_nurse_demand` / `inject_nurse_infeasibility!`
+    helpers, plus `build_nurse_assignments` (which forwards to `select_nurse`).
+  - `job_shop_scheduling/standard.jl`: `sample_operations_per_job`,
+    `build_routings`.
+  - `network_flow`: `generate_connected_network` (standard),
+    `_generalized_flow_topology` (generalized_flow).
+- **`sample_parameters_mcf` lost its `seed` parameter.** It took a seed only to
+  re-run `Random.seed!(seed)` with the same value the constructor had just used,
+  a redundant reset that is meaningless with a threaded RNG; it now takes the
+  caller's `rng`.
+- **`scheduling/standard.jl`**: dropped two `rng = Random.default_rng()` locals
+  that shadowed nothing useful — the constructor's own `rng` now covers both
+  blocks.
+- **`generate_random_problem`** (`src/SyntheticLPs.jl`) picked its variant with
+  `Random.seed!(seed)` + `rand(problems)`, so choosing a random problem type
+  reset the caller's global stream. It now uses a local `MersenneTwister(seed)`.
+- **`job_shop_scheduling/standard.jl` docstring fix**: the
+  `sample_operations_per_job` signature line listed a stale `rng_ok` argument the
+  function never had; it now matches the real signature.
+- **New `Global RNG Isolation` testset** (`test/runtests.jl`): for every
+  registered variant, generates twice under a fixed global seed and asserts (a)
+  the global stream is untouched by generation and (b) the two models print
+  identically, so a future generator cannot silently reintroduce global seeding.
+- **Docs**: `README.md` (the "Adding New Problem Types" template and key
+  principles, plus a reproducibility note) and `CLAUDE.md` (the generator pattern
+  and both key-principles lists) now state the local-RNG requirement and the
+  `helper(rng::AbstractRNG, …)` threading convention.
+
+**Instance values change.** `MersenneTwister` is a different generator from the
+task-local `Xoshiro` that `Random.seed!` seeds, so a given `(variant, target,
+status, seed)` triple produces a different — equally valid — instance than
+before. Reproducibility per seed is unchanged, and is now stronger: it no longer
+depends on the caller's global RNG state.
+
 ## 2026-08-30 17:35 UTC (generator realism and feasibility calibration)
 
 **Previous Commit**: `fc0620e`

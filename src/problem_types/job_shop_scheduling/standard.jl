@@ -56,30 +56,30 @@ struct JobShopSchedulingProblem <: ProblemGenerator
 end
 
 """
-    sample_operations_per_job(n_jobs, mean_ops, max_ops, n_machines, rng_ok)
+    sample_operations_per_job(rng, n_jobs, mean_ops, max_ops, n_machines)
 
 Sample the number of operations for each of `n_jobs` jobs from a Normal centered at
 `mean_ops`, clamped to `[2, min(max_ops, n_machines + 2)]`. Returns a `Vector{Int}`.
 """
-function sample_operations_per_job(n_jobs::Int, mean_ops::Float64, max_ops::Int, n_machines::Int)
+function sample_operations_per_job(rng::AbstractRNG, n_jobs::Int, mean_ops::Float64, max_ops::Int, n_machines::Int)
     min_ops = 2
     cap = min(max_ops, n_machines + 2)
     ops = Vector{Int}(undef, n_jobs)
     for j in 1:n_jobs
-        candidate = round(Int, rand(Normal(mean_ops, max(1.0, 0.35 * mean_ops))))
+        candidate = round(Int, rand(rng, Normal(mean_ops, max(1.0, 0.35 * mean_ops))))
         ops[j] = clamp(candidate, min_ops, cap)
     end
     return ops
 end
 
 """
-    build_routings(operations_per_job, n_machines)
+    build_routings(rng, operations_per_job, n_machines)
 
 Build a random machine routing and processing-time vector for each job. Consecutive
 operations within a job are forced onto distinct machines. Returns
 `(machine_sequences, processing_times)`.
 """
-function build_routings(operations_per_job::Vector{Int}, n_machines::Int)
+function build_routings(rng::AbstractRNG, operations_per_job::Vector{Int}, n_machines::Int)
     n_jobs = length(operations_per_job)
     machine_sequences = Vector{Vector{Int}}(undef, n_jobs)
     processing_times = Vector{Vector{Float64}}(undef, n_jobs)
@@ -87,11 +87,11 @@ function build_routings(operations_per_job::Vector{Int}, n_machines::Int)
 
     for (j, job_ops) in enumerate(operations_per_job)
         machines = Vector{Int}(undef, job_ops)
-        perm = randperm(n_machines)
+        perm = randperm(rng, n_machines)
         idx = 1
         for op in 1:job_ops
             if idx > length(perm)
-                perm = randperm(n_machines)
+                perm = randperm(rng, n_machines)
                 idx = 1
             end
             machines[op] = perm[idx]
@@ -104,8 +104,8 @@ function build_routings(operations_per_job::Vector{Int}, n_machines::Int)
 
         times = Float64[]
         for mach in machines
-            scale = base_scales[mach] * rand(Uniform(0.8, 1.2))
-            push!(times, rand(Gamma(2.5, 0.8 * scale)) + rand(Uniform(0.1, 0.6)))
+            scale = base_scales[mach] * rand(rng, Uniform(0.8, 1.2))
+            push!(times, rand(rng, Gamma(2.5, 0.8 * scale)) + rand(rng, Uniform(0.1, 0.6)))
         end
         processing_times[j] = times
     end
@@ -149,7 +149,7 @@ the candidate closest to the target.
 - `seed`: Random seed for reproducibility
 """
 function JobShopSchedulingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Resolve status: 'unknown' produces a natural (non-forced) instance, so we
     # treat it like 'feasible' for data generation (no forced infeasibility).
@@ -171,8 +171,8 @@ function JobShopSchedulingProblem(target_variables::Int, feasibility_status::Fea
         max_ops = 14
     end
 
-    n_machines = rand(mach_range)
-    mean_ops = rand(Uniform(mean_ops_range...))
+    n_machines = rand(rng, mach_range)
+    mean_ops = rand(rng, Uniform(mean_ops_range...))
 
     # Each job contributes ~mean_ops start vars + 2 (completion + tardiness), and the
     # machine pairs grow ~quadratically. Start with a rough estimate from the
@@ -198,8 +198,8 @@ function JobShopSchedulingProblem(target_variables::Int, feasibility_status::Fea
 
     for _ in 1:80
         n_jobs = max(2, n_jobs)
-        ops_per_job = sample_operations_per_job(n_jobs, mean_ops, max_ops, n_machines)
-        machine_sequences, processing_times = build_routings(ops_per_job, n_machines)
+        ops_per_job = sample_operations_per_job(rng, n_jobs, mean_ops, max_ops, n_machines)
+        machine_sequences, processing_times = build_routings(rng, ops_per_job, n_machines)
         vc = total_vars_for(machine_sequences)
         gap = abs(vc - target) / target
         if gap < best_gap
@@ -269,15 +269,15 @@ function JobShopSchedulingProblem(target_variables::Int, feasibility_status::Fea
     horizon = total_processing + release_span + 1.0
 
     for j in 1:n_jobs
-        release_times[j] = rand(Uniform(0, release_span))
+        release_times[j] = rand(rng, Uniform(0, release_span))
         jtot = job_total_processing[j]
         # Soft due date: a natural (possibly tight) target. Lateness is penalized,
         # not forbidden, so this never makes the model infeasible.
-        tight_factor = rand(Uniform(0.9, 1.6))
+        tight_factor = rand(rng, Uniform(0.9, 1.6))
         due_dates[j] = release_times[j] + jtot * tight_factor
         # Tardiness weight in [1, 5], lightly scaled by job size (longer jobs
         # matter slightly more). Clear, simple multiplier.
-        weights[j] = rand(Uniform(1.0, 5.0)) * (1.0 + jtot / total_processing)
+        weights[j] = rand(rng, Uniform(1.0, 5.0)) * (1.0 + jtot / total_processing)
         horizon = max(horizon, due_dates[j] + jtot)
     end
 

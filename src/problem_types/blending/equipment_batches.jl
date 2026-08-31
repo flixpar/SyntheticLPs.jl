@@ -56,14 +56,14 @@ number of ingredients is sized as round(target / n_batches) to hit the target.
 - `seed`: Random seed for reproducibility
 """
 function EquipmentBatchBlendingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
     # Var count formula: vars = n_ingredients * n_batches.
     # Choose n_batches first, then set n_ingredients = round(target / n_batches).
-    n_batches = max(2, rand(3:6))
+    n_batches = max(2, rand(rng, 3:6))
     n_ingredients = max(3, round(Int, target_variables / n_batches))
-    n_attributes = rand(2:min(8, max(2, n_ingredients ÷ 3)))
+    n_attributes = rand(rng, 2:min(8, max(2, n_ingredients ÷ 3)))
 
     # --- Base ingredient data ---
     cost_range = (10, 100)
@@ -71,18 +71,18 @@ function EquipmentBatchBlendingProblem(target_variables::Int, feasibility_status
     min_cost, max_cost = cost_range
     min_attr, max_attr = attribute_range
 
-    costs = rand(min_cost:max_cost, n_ingredients)
-    attributes = rand(min_attr:0.01:max_attr, n_ingredients, n_attributes)
+    costs = rand(rng, min_cost:max_cost, n_ingredients)
+    attributes = rand(rng, min_attr:0.01:max_attr, n_ingredients, n_attributes)
 
-    min_blend_amount = Float64(rand(100:20000))
+    min_blend_amount = Float64(rand(rng, 100:20000))
 
     # --- Base (average) quality bounds per attribute ---
     base_lower = zeros(n_attributes)
     base_upper = zeros(n_attributes)
     for j in 1:n_attributes
         avg_attr = sum(attributes[:, j]) / n_ingredients
-        base_lower[j] = avg_attr * rand(Uniform(0.6, 0.85))
-        base_upper[j] = avg_attr * rand(Uniform(1.15, 1.4))
+        base_lower[j] = avg_attr * rand(rng, Uniform(0.6, 0.85))
+        base_upper[j] = avg_attr * rand(rng, Uniform(1.15, 1.4))
     end
 
     # --- Per-batch quality bounds (vary targets across batches to reduce symmetry) ---
@@ -93,8 +93,8 @@ function EquipmentBatchBlendingProblem(target_variables::Int, feasibility_status
     for b in 1:n_batches
         for j in 1:n_attributes
             avg_attr = sum(attributes[:, j]) / n_ingredients
-            lb = base_lower[j] * rand(Uniform(0.92, 1.0))
-            ub = base_upper[j] * rand(Uniform(1.0, 1.08))
+            lb = base_lower[j] * rand(rng, Uniform(0.92, 1.0))
+            ub = base_upper[j] * rand(rng, Uniform(1.0, 1.08))
             # Keep the average strictly inside [lb, ub] so a uniform mix is feasible.
             lb = min(lb, avg_attr * 0.95)
             ub = max(ub, avg_attr * 1.05)
@@ -105,15 +105,15 @@ function EquipmentBatchBlendingProblem(target_variables::Int, feasibility_status
 
     # --- Equipment (mixer) capacity and supply ---
     # Mixer capacity is sized so a single batch holds a meaningful fraction of demand.
-    mixer_capacity = (min_blend_amount / n_batches) * rand(Uniform(1.1, 1.6))
+    mixer_capacity = (min_blend_amount / n_batches) * rand(rng, Uniform(1.1, 1.6))
 
     # Per-ingredient supply across all batches.
-    supply_limits = [min_blend_amount * rand(Uniform(0.4, 1.2)) for _ in 1:n_ingredients]
+    supply_limits = [min_blend_amount * rand(rng, Uniform(0.4, 1.2)) for _ in 1:n_ingredients]
 
     # --- Feasibility handling ---
     actual_status = feasibility_status
     if feasibility_status == unknown
-        actual_status = rand() < 0.7 ? feasible : infeasible
+        actual_status = rand(rng) < 0.7 ? feasible : infeasible
     end
 
     if actual_status == feasible

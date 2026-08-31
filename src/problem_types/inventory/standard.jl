@@ -49,7 +49,7 @@ Construct an inventory control problem instance with sophisticated feasibility c
 - `seed`: Random seed for reproducibility
 """
 function InventoryProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Determine business scale by target size
     scale = target_variables <= 250 ? :small :
@@ -57,7 +57,7 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
 
     # Backlog incidence increases with scale
     backlog_prob = scale == :small ? 0.2 : (scale == :medium ? 0.4 : 0.6)
-    backlog_allowed = rand(Bernoulli(backlog_prob))
+    backlog_allowed = rand(rng, Bernoulli(backlog_prob))
 
     # Choose n_periods from variable-budget formula
     if backlog_allowed
@@ -83,84 +83,84 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
 
     # Scale-specific ranges
     if scale == :small
-        prod_capacity = round(Int, rand(Uniform(50, 500)))
-        demand_base = round(Int, rand(Uniform(10, 100)))
-        demand_vol = rand(Uniform(0.2, 0.5))
+        prod_capacity = round(Int, rand(rng, Uniform(50, 500)))
+        demand_base = round(Int, rand(rng, Uniform(10, 100)))
+        demand_vol = rand(rng, Uniform(0.2, 0.5))
         demand_min = max(1, round(Int, demand_base * (1 - demand_vol)))
         demand_max = round(Int, demand_base * (1 + demand_vol))
 
         avgd = (demand_min + demand_max) / 2
-        initial_inventory = round(Int, avgd * rand(Uniform(0.1, 0.5)))
+        initial_inventory = round(Int, avgd * rand(rng, Uniform(0.1, 0.5)))
 
-        prod_cost_base = rand(Uniform(10, 100))
-        prod_cost_spread = rand(Uniform(0.1, 0.3))
+        prod_cost_base = rand(rng, Uniform(10, 100))
+        prod_cost_spread = rand(rng, Uniform(0.1, 0.3))
         prod_cost_min = round(Int, prod_cost_base * (1 - prod_cost_spread))
         prod_cost_max = round(Int, prod_cost_base * (1 + prod_cost_spread))
 
-        holding_rate = rand(Uniform(0.05, 0.25)) / 12
+        holding_rate = rand(rng, Uniform(0.05, 0.25)) / 12
         holding_cost_min = max(0.01, round(prod_cost_base * holding_rate * 0.8, digits=2))
         holding_cost_max = round(prod_cost_base * holding_rate * 1.2, digits=2)
 
     elseif scale == :medium
-        prod_capacity = round(Int, rand(Uniform(200, 2000)))
-        demand_base = round(Int, rand(Uniform(50, 1000)))
-        demand_vol = rand(Uniform(0.15, 0.4))
+        prod_capacity = round(Int, rand(rng, Uniform(200, 2000)))
+        demand_base = round(Int, rand(rng, Uniform(50, 1000)))
+        demand_vol = rand(rng, Uniform(0.15, 0.4))
         demand_min = max(1, round(Int, demand_base * (1 - demand_vol)))
         demand_max = round(Int, demand_base * (1 + demand_vol))
 
         avgd = (demand_min + demand_max) / 2
-        initial_inventory = round(Int, avgd * rand(Uniform(0.05, 0.4)))
+        initial_inventory = round(Int, avgd * rand(rng, Uniform(0.05, 0.4)))
 
-        prod_cost_base = rand(Uniform(5, 200))
-        prod_cost_spread = rand(Uniform(0.05, 0.25))
+        prod_cost_base = rand(rng, Uniform(5, 200))
+        prod_cost_spread = rand(rng, Uniform(0.05, 0.25))
         prod_cost_min = round(Int, prod_cost_base * (1 - prod_cost_spread))
         prod_cost_max = round(Int, prod_cost_base * (1 + prod_cost_spread))
 
-        holding_rate = rand(Uniform(0.03, 0.20)) / 12
+        holding_rate = rand(rng, Uniform(0.03, 0.20)) / 12
         holding_cost_min = max(0.01, round(prod_cost_base * holding_rate * 0.8, digits=2))
         holding_cost_max = round(prod_cost_base * holding_rate * 1.2, digits=2)
 
     else # :large
-        prod_capacity = round(Int, rand(Uniform(1000, 50000)))
-        demand_base = round(Int, rand(Uniform(100, 10000)))
-        demand_vol = rand(Uniform(0.1, 0.3))
+        prod_capacity = round(Int, rand(rng, Uniform(1000, 50000)))
+        demand_base = round(Int, rand(rng, Uniform(100, 10000)))
+        demand_vol = rand(rng, Uniform(0.1, 0.3))
         demand_min = max(1, round(Int, demand_base * (1 - demand_vol)))
         demand_max = round(Int, demand_base * (1 + demand_vol))
 
         avgd = (demand_min + demand_max) / 2
-        initial_inventory = round(Int, avgd * rand(Uniform(0.02, 0.3)))
+        initial_inventory = round(Int, avgd * rand(rng, Uniform(0.02, 0.3)))
 
-        prod_cost_base = rand(Uniform(1, 500))
-        prod_cost_spread = rand(Uniform(0.02, 0.20))
+        prod_cost_base = rand(rng, Uniform(1, 500))
+        prod_cost_spread = rand(rng, Uniform(0.02, 0.20))
         prod_cost_min = round(Int, prod_cost_base * (1 - prod_cost_spread))
         prod_cost_max = round(Int, prod_cost_base * (1 + prod_cost_spread))
 
-        holding_rate = rand(Uniform(0.01, 0.15)) / 12
+        holding_rate = rand(rng, Uniform(0.01, 0.15)) / 12
         holding_cost_min = max(0.01, round(prod_cost_base * holding_rate * 0.8, digits=2))
         holding_cost_max = round(prod_cost_base * holding_rate * 1.2, digits=2)
     end
 
-    backlog_cost_factor = rand(Uniform(1.5, 5.0))
+    backlog_cost_factor = rand(rng, Uniform(1.5, 5.0))
 
     # Base stochastic series with seasonality & trends
     demand_mean = (demand_min + demand_max) / 2
     demand_std = (demand_max - demand_min) / 4
-    base_demands = rand(Normal(demand_mean, demand_std), n_periods)
+    base_demands = rand(rng, Normal(demand_mean, demand_std), n_periods)
     demands = round.(Int, clamp.(base_demands, demand_min, demand_max))
 
     # Production & holding costs with mild dispersion and optional trends
     prod_cost_mean = (prod_cost_min + prod_cost_max) / 2
     prod_cost_std = (prod_cost_max - prod_cost_min) / 4
-    production_costs = clamp.(rand(Normal(prod_cost_mean, prod_cost_std), n_periods),
+    production_costs = clamp.(rand(rng, Normal(prod_cost_mean, prod_cost_std), n_periods),
                               prod_cost_min, prod_cost_max)
 
     holding_cost_mean = (holding_cost_min + holding_cost_max) / 2
     holding_cost_std = (holding_cost_max - holding_cost_min) / 4
-    holding_costs = clamp.(rand(Normal(holding_cost_mean, holding_cost_std), n_periods),
+    holding_costs = clamp.(rand(rng, Normal(holding_cost_mean, holding_cost_std), n_periods),
                            holding_cost_min, holding_cost_max)
 
     # Seasonality patterns
-    if rand() < 0.6
+    if rand(rng) < 0.6
         if n_periods >= 12
             annual = 1.0 .+ 0.2 * sin.(2π .* (1:n_periods) ./ 12)
             demands = round.(Int, demands .* annual)
@@ -176,25 +176,25 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
     end
 
     # Cost trends
-    if rand() < 0.4
-        dir = rand() < 0.7 ? 1 : -1
-        strength = rand(Uniform(0.001, 0.01))
+    if rand(rng) < 0.4
+        dir = rand(rng) < 0.7 ? 1 : -1
+        strength = rand(rng, Uniform(0.001, 0.01))
         trend = [exp(dir * strength * t) for t in 1:n_periods]
         production_costs = production_costs .* trend
     end
-    if rand() < 0.3
-        dir = rand() < 0.6 ? 1 : -1
-        strength = rand(Uniform(0.0005, 0.005))
+    if rand(rng) < 0.3
+        dir = rand(rng) < 0.6 ? 1 : -1
+        strength = rand(rng, Uniform(0.0005, 0.005))
         trend = [exp(dir * strength * t) for t in 1:n_periods]
         holding_costs = holding_costs .* trend
     end
 
     # Occasional demand disruptions
-    if rand() < 0.2
-        n_disruptions = rand(Poisson(max(1, n_periods ÷ 20)))
+    if rand(rng) < 0.2
+        n_disruptions = rand(rng, Poisson(max(1, n_periods ÷ 20)))
         for _ in 1:n_disruptions
-            t = rand(1:n_periods)
-            f = rand() < 0.5 ? rand(Uniform(0.3, 0.7)) : rand(Uniform(1.4, 2.0))
+            t = rand(rng, 1:n_periods)
+            f = rand(rng) < 0.5 ? rand(rng, Uniform(0.3, 0.7)) : rand(rng, Uniform(1.4, 2.0))
             demands[t] = round(Int, demands[t] * f)
         end
     end
@@ -237,12 +237,12 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
     if solution_status == :feasible
         # Realistic operator-side actions
         if !backlog_allowed
-            r = rand()
+            r = rand(rng)
             if r < 0.30
-                prod_capacity = round(Int, prod_capacity * rand(Uniform(1.10, 1.25)))
+                prod_capacity = round(Int, prod_capacity * rand(rng, Uniform(1.10, 1.25)))
             elseif r < 0.60
                 avgd = mean(demands)
-                ss = round(Int, avgd * rand(Uniform(0.20, 0.40)))
+                ss = round(Int, avgd * rand(rng, Uniform(0.20, 0.40)))
                 initial_inventory = max(initial_inventory, ss)
             elseif r < 0.80
                 backlog_allowed = true
@@ -258,7 +258,7 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
                         if t < n_periods
                             demands[t+1] += round(Int, excess * 0.3)
                         end
-                        if rand() < 0.5
+                        if rand(rng) < 0.5
                             prod_capacity = round(Int, prod_capacity * 1.05)
                         end
                     end
@@ -278,9 +278,9 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
                 extra_inv_needed = sf
 
                 uplift_ratio = min_cap_needed > 0 ? min_cap_needed / max(1, prod_capacity) : 1.0
-                if uplift_ratio <= 1.5 && rand() < 0.6
+                if uplift_ratio <= 1.5 && rand(rng) < 0.6
                     prod_capacity = max(prod_capacity, min_cap_needed)
-                elseif extra_inv_needed <= round(Int, max(10, 2 * (demand_min + demand_max) / 2)) && rand() < 0.5
+                elseif extra_inv_needed <= round(Int, max(10, 2 * (demand_min + demand_max) / 2)) && rand(rng) < 0.5
                     initial_inventory += extra_inv_needed
                 else
                     backlog_allowed = true
@@ -295,28 +295,28 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
         end
 
         # Create diverse causes of trouble
-        scenario = rand()
+        scenario = rand(rng)
         if scenario < 0.25
             # Sustained high demand
-            start = rand(1:max(1, n_periods - 3))
-            dur = min(rand(2:4), n_periods - start + 1)
-            surge = rand(Uniform(1.5, 2.0))
+            start = rand(rng, 1:max(1, n_periods - 3))
+            dur = min(rand(rng, 2:4), n_periods - start + 1)
+            surge = rand(rng, Uniform(1.5, 2.0))
             for t in start:start+dur-1
                 demands[t] = round(Int, demands[t] * surge)
             end
         elseif scenario < 0.50
             # Capacity cut + lower starting stock
-            prod_capacity = round(Int, prod_capacity * rand(Uniform(0.6, 0.8)))
+            prod_capacity = round(Int, prod_capacity * rand(rng, Uniform(0.6, 0.8)))
             initial_inventory = round(Int, max(0, initial_inventory * 0.5))
         elseif scenario < 0.75
             # Supplier disruptions
-            ndis = rand(1:min(3, n_periods ÷ 4))
+            ndis = rand(rng, 1:min(3, n_periods ÷ 4))
             for _ in 1:ndis
-                tp = rand(1:n_periods)
-                sev = rand(Uniform(0.3, 0.6))
+                tp = rand(rng, 1:n_periods)
+                sev = rand(rng, Uniform(0.3, 0.6))
                 if tp <= n_periods ÷ 2
                     for t in tp:n_periods
-                        demands[t] = round(Int, demands[t] * rand(Uniform(1.1, 1.3)))
+                        demands[t] = round(Int, demands[t] * rand(rng, Uniform(1.1, 1.3)))
                     end
                 else
                     demands[tp] = round(Int, demands[tp] / sev)
@@ -327,10 +327,10 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
             # Very low starting stock + high variability
             initial_inventory = max(1, round(Int, initial_inventory * 0.1))
             for t in 1:n_periods
-                demands[t] = round(Int, demands[t] * rand(Uniform(0.7, 1.4)))
+                demands[t] = round(Int, demands[t] * rand(rng, Uniform(0.7, 1.4)))
             end
-            crisis = rand(ceil(Int, n_periods/3):n_periods)
-            demands[crisis] = max(demands[crisis], round(Int, prod_capacity * rand(Uniform(1.2, 1.5))))
+            crisis = rand(rng, ceil(Int, n_periods/3):n_periods)
+            demands[crisis] = max(demands[crisis], round(Int, prod_capacity * rand(rng, Uniform(1.2, 1.5))))
         end
 
         demands = max.(demands, 1)
@@ -342,7 +342,7 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
         if sf <= 0
             required_caps = [ceil(Int, max(0, cum_demands[t] - initial_inventory) / t) for t in 1:n_periods]
             min_cap_needed = maximum(required_caps)
-            margin = rand(1:max(1, round(Int, 0.1 * max(1, min_cap_needed))))
+            margin = rand(rng, 1:max(1, round(Int, 0.1 * max(1, min_cap_needed))))
             new_cap = max(0, min_cap_needed - margin)
             if max_shortfall(new_cap) <= 0
                 new_cap = max(0, min_cap_needed - 1)

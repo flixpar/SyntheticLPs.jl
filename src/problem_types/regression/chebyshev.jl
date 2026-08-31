@@ -42,13 +42,13 @@ Construct a Chebyshev regression instance. Variables: `beta` (n_features) plus a
 single bound `t`, for a total of `n_features + 1`.
 """
 function ChebyshevRegressionProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Variables = n + 1; the system is heavily overdetermined in the rows.
     n_features = max(2, target_variables - 1)
-    n_samples = max(n_features + 1, round(Int, n_features * rand(Uniform(3.0, 8.0))))
+    n_samples = max(n_features + 1, round(Int, n_features * rand(rng, Uniform(3.0, 8.0))))
 
-    data = generate_regression_data(n_features, n_samples, feasibility_status)
+    data = generate_regression_data(rng, n_features, n_samples, feasibility_status)
 
     return ChebyshevRegressionProblem(n_samples, n_features, data.X, data.y,
                                       data.beta_lower, data.beta_upper,

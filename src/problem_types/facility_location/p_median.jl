@@ -84,27 +84,27 @@ Dimensions `n_facilities` and `n_customers` are sized in the constructor to hit
   relaxation is infeasible.
 """
 function PMedianFacilityLocationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Scale-tiered ranges
     if target_variables <= 100
         min_facilities, max_facilities = 2, 20
         min_customers, max_customers = 2, 40
-        grid_width = rand(200.0:50.0:800.0)
-        grid_height = rand(200.0:50.0:800.0)
-        min_demand, max_demand = rand(5.0:1.0:20.0), rand(50.0:10.0:150.0)
+        grid_width = rand(rng, 200.0:50.0:800.0)
+        grid_height = rand(rng, 200.0:50.0:800.0)
+        min_demand, max_demand = rand(rng, 5.0:1.0:20.0), rand(rng, 50.0:10.0:150.0)
     elseif target_variables <= 1000
         min_facilities, max_facilities = 3, 100
         min_customers, max_customers = 5, 200
-        grid_width = rand(500.0:100.0:2000.0)
-        grid_height = rand(500.0:100.0:2000.0)
-        min_demand, max_demand = rand(10.0:2.0:30.0), rand(80.0:20.0:200.0)
+        grid_width = rand(rng, 500.0:100.0:2000.0)
+        grid_height = rand(rng, 500.0:100.0:2000.0)
+        min_demand, max_demand = rand(rng, 10.0:2.0:30.0), rand(rng, 80.0:20.0:200.0)
     else
         min_facilities, max_facilities = 5, 500
         min_customers, max_customers = 10, 2000
-        grid_width = rand(1000.0:200.0:5000.0)
-        grid_height = rand(1000.0:200.0:5000.0)
-        min_demand, max_demand = rand(20.0:5.0:60.0), rand(150.0:50.0:500.0)
+        grid_width = rand(rng, 1000.0:200.0:5000.0)
+        grid_height = rand(rng, 1000.0:200.0:5000.0)
+        min_demand, max_demand = rand(rng, 20.0:5.0:60.0), rand(rng, 150.0:50.0:500.0)
     end
 
     # Size n_facilities, n_customers so F*(C+1) ~ target_variables.
@@ -140,7 +140,7 @@ function PMedianFacilityLocationProblem(target_variables::Int, feasibility_statu
     p_hi = max(2, fld(n_facilities, 3))
     p_hi = min(p_hi, n_facilities)
     p_lo = min(2, p_hi)
-    p = p_lo == p_hi ? p_lo : rand(p_lo:p_hi)
+    p = p_lo == p_hi ? p_lo : rand(rng, p_lo:p_hi)
 
     # For the infeasible mode the pigeonhole needs p < C (so that even
     # count_cap=1 yields p*count_cap < C). Shrink p if necessary — allow p down to
@@ -152,23 +152,23 @@ function PMedianFacilityLocationProblem(target_variables::Int, feasibility_statu
     end
 
     # Facility candidate sites: uniform over the grid.
-    facility_locs = [(grid_width * rand(), grid_height * rand()) for _ in 1:n_facilities]
+    facility_locs = [(grid_width * rand(rng), grid_height * rand(rng)) for _ in 1:n_facilities]
 
     # Customers clustered into "cities".
     n_clusters = max(2, div(n_customers, 15))
-    cluster_centers = [(grid_width * rand(), grid_height * rand()) for _ in 1:n_clusters]
+    cluster_centers = [(grid_width * rand(rng), grid_height * rand(rng)) for _ in 1:n_clusters]
     customer_locs = Tuple{Float64,Float64}[]
     for _ in 1:n_customers
-        center = rand(cluster_centers)
-        x = clamp(center[1] + randn() * (grid_width / 10), 0.0, grid_width)
-        y = clamp(center[2] + randn() * (grid_height / 10), 0.0, grid_height)
+        center = rand(rng, cluster_centers)
+        x = clamp(center[1] + randn(rng) * (grid_width / 10), 0.0, grid_width)
+        y = clamp(center[2] + randn(rng) * (grid_height / 10), 0.0, grid_height)
         push!(customer_locs, (x, y))
     end
 
     # Log-normal demands.
     log_mean = log(sqrt(min_demand * max_demand))
     log_std = log(max_demand / min_demand) / 4
-    demands = [clamp(exp(rand(Normal(log_mean, log_std))), min_demand, max_demand) for _ in 1:n_customers]
+    demands = [clamp(exp(rand(rng, Normal(log_mean, log_std))), min_demand, max_demand) for _ in 1:n_customers]
     demands = round.(demands, digits=2)
 
     # Euclidean distances facility→customer.
@@ -187,7 +187,7 @@ function PMedianFacilityLocationProblem(target_variables::Int, feasibility_statu
         # Generous capacity: the p open facilities can collectively serve all C
         # customers with a margin. count_cap >= ceil(C / p) * slack, capped at C.
         base = ceil(Int, n_customers / p)
-        slack = rand(1.2:0.1:1.8)
+        slack = rand(rng, 1.2:0.1:1.8)
         count_cap = min(n_customers, max(base, ceil(Int, base * slack)))
         # Guarantee p * count_cap >= C with margin (defensive).
         while p * count_cap < n_customers
@@ -195,7 +195,7 @@ function PMedianFacilityLocationProblem(target_variables::Int, feasibility_statu
         end
     else
         # Pigeonhole infeasibility: p * count_cap < C.
-        f = rand(0.6:0.05:0.9)
+        f = rand(rng, 0.6:0.05:0.9)
         count_cap = max(1, fld(round(Int, n_customers * f), p))
         # Defensive: ensure strict shortfall p * count_cap < C.
         while p * count_cap >= n_customers && count_cap > 1

@@ -46,16 +46,16 @@ positive/negative residual parts `u`, `v` per sample, for a total of
 `n_features + 2 * n_samples`.
 """
 function QuantileRegressionProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Variables = n + 2m, with an overdetermined system (m > n).
-    ratio = rand(Uniform(2.0, 6.0))                       # samples per feature
+    ratio = rand(rng, Uniform(2.0, 6.0))                       # samples per feature
     n_features = max(2, round(Int, target_variables / (1 + 2 * ratio)))
     n_samples = max(n_features + 1, round(Int, ratio * n_features))
 
-    tau = rand(Uniform(0.1, 0.9))
+    tau = rand(rng, Uniform(0.1, 0.9))
 
-    data = generate_regression_data(n_features, n_samples, feasibility_status)
+    data = generate_regression_data(rng, n_features, n_samples, feasibility_status)
 
     return QuantileRegressionProblem(n_samples, n_features, tau, data.X, data.y,
                                      data.beta_lower, data.beta_upper,

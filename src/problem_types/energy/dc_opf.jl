@@ -76,12 +76,12 @@ a total of `n_generators + n_buses + n_lines`.
 - `seed`: Random seed for reproducibility
 """
 function DCOptimalPowerFlowProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
     # Variables = n_generators + n_buses + n_lines ≈ B * (1 + edge_factor + gen_frac).
-    edge_factor = rand(Uniform(1.3, 2.2))   # lines per bus (meshed but sparse)
-    gen_frac = rand(Uniform(0.3, 0.5))      # generators per bus
+    edge_factor = rand(rng, Uniform(1.3, 2.2))   # lines per bus (meshed but sparse)
+    gen_frac = rand(rng, Uniform(0.3, 0.5))      # generators per bus
     n_buses = max(3, round(Int, target_variables / (1 + edge_factor + gen_frac)))
 
     n_lines = max(n_buses - 1, round(Int, edge_factor * n_buses))
@@ -104,28 +104,28 @@ function DCOptimalPowerFlowProblem(target_variables::Int, feasibility_status::Fe
     end
 
     for k in 2:B
-        add_edge!(k, rand(1:(k - 1)))   # connect each new bus to an existing one
+        add_edge!(k, rand(rng, 1:(k - 1)))   # connect each new bus to an existing one
     end
     attempts = 0
     while length(line_from) < n_lines && attempts < 50 * n_lines
-        add_edge!(rand(1:B), rand(1:B))
+        add_edge!(rand(rng, 1:B), rand(rng, 1:B))
         attempts += 1
     end
     n_lines = length(line_from)
 
-    susceptance = rand(Uniform(5.0, 30.0), n_lines)
+    susceptance = rand(rng, Uniform(5.0, 30.0), n_lines)
 
     # --- Generators ---
-    gen_bus = rand(1:B, n_generators)
-    pmin = rand(Uniform(0.0, 5.0), n_generators)
-    pmax = pmin .+ rand(Uniform(20.0, 80.0), n_generators)
-    gen_cost = rand(Uniform(10.0, 60.0), n_generators)
+    gen_bus = rand(rng, 1:B, n_generators)
+    pmin = rand(rng, Uniform(0.0, 5.0), n_generators)
+    pmax = pmin .+ rand(rng, Uniform(20.0, 80.0), n_generators)
+    gen_cost = rand(rng, Uniform(10.0, 60.0), n_generators)
 
     sum_pmin = sum(pmin)
     sum_pmax = sum(pmax)
 
     # --- Base load shape (scaled later to a target total demand) ---
-    base_demand = rand(Uniform(1.0, 12.0), B)
+    base_demand = rand(rng, Uniform(1.0, 12.0), B)
     base_total = sum(base_demand)
 
     ref_bus = 1
@@ -133,22 +133,22 @@ function DCOptimalPowerFlowProblem(target_variables::Int, feasibility_status::Fe
     # --- Feasibility handling (governed by generation–load balance) ---
     actual_status = feasibility_status
     if feasibility_status == unknown
-        actual_status = rand() < 0.7 ? feasible : infeasible
+        actual_status = rand(rng) < 0.7 ? feasible : infeasible
     end
 
     if actual_status == feasible
-        frac = rand(Uniform(0.3, 0.7))
+        frac = rand(rng, Uniform(0.3, 0.7))
         total_demand = sum_pmin + frac * (sum_pmax - sum_pmin)
     else
         # Demand exceeds total generation capacity => balance is unsatisfiable.
-        total_demand = sum_pmax * rand(Uniform(1.1, 1.4))
+        total_demand = sum_pmax * rand(rng, Uniform(1.1, 1.4))
     end
 
     demand = base_demand .* (total_demand / base_total)
 
     # --- Line limits ---
-    base_limit = [(total_demand / max(1, n_lines)) * rand(Uniform(2.0, 6.0)) +
-                  rand(Uniform(1.0, 5.0)) for _ in 1:n_lines]
+    base_limit = [(total_demand / max(1, n_lines)) * rand(rng, Uniform(2.0, 6.0)) +
+                  rand(rng, Uniform(1.0, 5.0)) for _ in 1:n_lines]
     line_limit = copy(base_limit)
 
     if actual_status == feasible
@@ -190,7 +190,7 @@ function DCOptimalPowerFlowProblem(target_variables::Int, feasibility_status::Fe
 
         for l in 1:n_lines
             f_w = susceptance[l] * (θ[line_from[l]] - θ[line_to[l]])
-            line_limit[l] = max(base_limit[l], abs(f_w) * rand(Uniform(1.2, 2.0)))
+            line_limit[l] = max(base_limit[l], abs(f_w) * rand(rng, Uniform(1.2, 2.0)))
         end
     end
 

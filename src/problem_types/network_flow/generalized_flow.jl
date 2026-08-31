@@ -51,7 +51,7 @@ struct GeneralizedFlowProblem <: ProblemGenerator
 end
 
 """
-    _generalized_flow_topology(n_nodes::Int, n_arcs::Int)
+    _generalized_flow_topology(rng::AbstractRNG, n_nodes::Int, n_arcs::Int)
 
 Build a connected directed network on `1:n_nodes` with the source→…→sink backbone
 path `1→2→…→n_nodes` always present, plus extra random arcs until roughly `n_arcs`
@@ -59,7 +59,7 @@ arcs exist. Returns `(arcs, backbone)` where `backbone` is the ordered list of
 backbone arcs. Named distinctly so it does not clash with `standard.jl`'s
 `generate_connected_network`.
 """
-function _generalized_flow_topology(n_nodes::Int, n_arcs::Int)
+function _generalized_flow_topology(rng::AbstractRNG, n_nodes::Int, n_arcs::Int)
     arcs = Set{Tuple{Int,Int}}()
     backbone = Tuple{Int,Int}[]
 
@@ -76,17 +76,17 @@ function _generalized_flow_topology(n_nodes::Int, n_arcs::Int)
     # Forward "shortcut" arcs (i -> j with i < j) for realism; keep DAG-like to
     # avoid trivial gain cycles (gains <= 1 already preclude unbounded cycles).
     for i in 2:(n_nodes - 1)
-        if rand() < 0.35
+        if rand(rng) < 0.35
             push!(arcs, (source, i))
         end
-        if rand() < 0.35
+        if rand(rng) < 0.35
             push!(arcs, (i, sink))
         end
     end
 
     # Fill in additional forward arcs until we reach the target arc count.
     forward_candidates = [(i, j) for i in 1:n_nodes for j in 1:n_nodes if i < j]
-    shuffle!(forward_candidates)
+    shuffle!(rng, forward_candidates)
     for arc in forward_candidates
         length(arcs) >= n_arcs && break
         push!(arcs, arc)
@@ -128,7 +128,7 @@ arc count IS the variable count.
 - `seed`: Random seed for reproducibility
 """
 function GeneralizedFlowProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Scale-tiered parameter ranges ---
     if target_variables <= 100
@@ -165,26 +165,26 @@ function GeneralizedFlowProblem(target_variables::Int, feasibility_status::Feasi
     sink_node = n_nodes
 
     # --- Topology (backbone path is known explicitly) ---
-    arcs, backbone = _generalized_flow_topology(n_nodes, target_variables)
+    arcs, backbone = _generalized_flow_topology(rng, n_nodes, target_variables)
 
     # --- Gains in (0.85, 1.0]: lossy arcs, never amplifying (no unbounded cycles) ---
     gains = Dict{Tuple{Int,Int},Float64}()
     for arc in arcs
-        gains[arc] = round(0.85 + 0.15 * rand(), digits=4)
+        gains[arc] = round(0.85 + 0.15 * rand(rng), digits=4)
     end
 
     # --- Costs ---
     cmin, cmax = cost_range
     costs = Dict{Tuple{Int,Int},Float64}()
     for arc in arcs
-        costs[arc] = round(cmin + (cmax - cmin) * rand(), digits=3)
+        costs[arc] = round(cmin + (cmax - cmin) * rand(rng), digits=3)
     end
 
     # --- Baseline capacities (sampled; refined below per feasibility intent) ---
     capmin, capmax = cap_range
     capacities = Dict{Tuple{Int,Int},Float64}()
     for arc in arcs
-        capacities[arc] = round(capmin + (capmax - capmin) * rand(), digits=2)
+        capacities[arc] = round(capmin + (capmax - capmin) * rand(rng), digits=2)
     end
 
     # Product of gains along the backbone (always > 0, <= 1).
@@ -202,7 +202,7 @@ function GeneralizedFlowProblem(target_variables::Int, feasibility_status::Feasi
 
     if status == feasible
         # Pick a modest demand, then guarantee the backbone can deliver it.
-        demand = round(nominal_deliverable * (0.4 + 0.4 * rand()), digits=2)
+        demand = round(nominal_deliverable * (0.4 + 0.4 * rand(rng)), digits=2)
         demand = max(demand, capmin)  # keep it meaningfully positive
 
         # Sent amount on the backbone to deliver `demand`: s = demand / P.
@@ -219,8 +219,8 @@ function GeneralizedFlowProblem(target_variables::Int, feasibility_status::Feasi
         # Cap the post-gain inflow into the sink strictly below demand.
         # Choose demand first (any positive scale), then set sink in-arc caps so
         # sum(g * cap) = demand * alpha with alpha < 1.
-        demand = round(max(nominal_deliverable, capmin) * (0.5 + 0.5 * rand()), digits=2)
-        alpha = 0.7 + 0.2 * rand()  # 0.7 .. 0.9
+        demand = round(max(nominal_deliverable, capmin) * (0.5 + 0.5 * rand(rng)), digits=2)
+        alpha = 0.7 + 0.2 * rand(rng)  # 0.7 .. 0.9
         target_inflow_cap = demand * alpha
 
         if isempty(sink_in_arcs)
@@ -230,7 +230,7 @@ function GeneralizedFlowProblem(target_variables::Int, feasibility_status::Feasi
         end
 
         # Distribute the allowed post-gain inflow budget across sink in-arcs.
-        weights = [rand() for _ in sink_in_arcs]
+        weights = [rand(rng) for _ in sink_in_arcs]
         wsum = sum(weights)
         for (k, arc) in enumerate(sink_in_arcs)
             share = (weights[k] / wsum) * target_inflow_cap
@@ -241,7 +241,7 @@ function GeneralizedFlowProblem(target_variables::Int, feasibility_status::Feasi
         source_supply = round(demand / backbone_gain_product * 2.0, digits=2)
 
     else  # unknown: natural instance, biased feasible (backbone sized to deliver).
-        demand = round(nominal_deliverable * (0.3 + 0.3 * rand()), digits=2)
+        demand = round(nominal_deliverable * (0.3 + 0.3 * rand(rng)), digits=2)
         demand = max(demand, capmin)
         send_amount = demand / backbone_gain_product * 1.1
         for a in backbone

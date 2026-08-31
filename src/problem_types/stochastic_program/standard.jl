@@ -71,21 +71,21 @@ for a total of `n_facilities + n_scenarios * (n_facilities * n_customers + n_cus
 - `seed`: Random seed for reproducibility
 """
 function StochasticProgramProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
     # Variable count is dominated by the scenario blocks: S * (I*J + J). Choose
     # small facility/customer counts first, then set the scenario count last to
     # hit the target (so rounding error is not amplified by S).
     if target_variables < 200
-        n_facilities = rand(2:4)
-        n_customers = rand(2:5)
+        n_facilities = rand(rng, 2:4)
+        n_customers = rand(rng, 2:5)
     elseif target_variables < 1000
-        n_facilities = rand(3:6)
-        n_customers = rand(4:8)
+        n_facilities = rand(rng, 3:6)
+        n_customers = rand(rng, 4:8)
     else
-        n_facilities = rand(5:10)
-        n_customers = rand(6:12)
+        n_facilities = rand(rng, 5:10)
+        n_customers = rand(rng, 6:12)
     end
 
     I = n_facilities
@@ -95,40 +95,40 @@ function StochasticProgramProblem(target_variables::Int, feasibility_status::Fea
     S = n_scenarios
 
     # --- First-stage data ---
-    build_cost = rand(Uniform(5.0, 20.0), I)
-    resource_use = rand(Uniform(0.5, 2.0), I)
-    capacity_min = rand(Uniform(1.0, 5.0), I)
-    capacity_max = capacity_min .+ rand(Uniform(20.0, 60.0), I)
+    build_cost = rand(rng, Uniform(5.0, 20.0), I)
+    resource_use = rand(rng, Uniform(0.5, 2.0), I)
+    capacity_min = rand(rng, Uniform(1.0, 5.0), I)
+    capacity_max = capacity_min .+ rand(rng, Uniform(20.0, 60.0), I)
 
     required_resource = sum(resource_use .* capacity_min)
 
     # --- Second-stage data ---
-    ship_cost = rand(Uniform(1.0, 10.0), I, J)
+    ship_cost = rand(rng, Uniform(1.0, 10.0), I, J)
     # Shortfall must be more expensive than shipping so recourse prefers serving demand.
-    shortfall_cost = [maximum(ship_cost[:, j]) * rand(Uniform(2.0, 5.0)) for j in 1:J]
+    shortfall_cost = [maximum(ship_cost[:, j]) * rand(rng, Uniform(2.0, 5.0)) for j in 1:J]
 
     # Scenario probabilities (random, normalized).
-    raw_p = rand(Uniform(0.5, 1.5), S)
+    raw_p = rand(rng, Uniform(0.5, 1.5), S)
     scenario_prob = raw_p ./ sum(raw_p)
 
     # Per-customer base demand, perturbed per scenario (log-normal multiplier).
-    base_demand = rand(Uniform(5.0, 25.0), J)
+    base_demand = rand(rng, Uniform(5.0, 25.0), J)
     demand = zeros(Float64, J, S)
     for s in 1:S, j in 1:J
-        demand[j, s] = base_demand[j] * rand(LogNormal(0.0, 0.35))
+        demand[j, s] = base_demand[j] * rand(rng, LogNormal(0.0, 0.35))
     end
 
     # --- Feasibility handling (controlled by the first stage only) ---
     actual_status = feasibility_status
     if feasibility_status == unknown
-        actual_status = rand() < 0.7 ? feasible : infeasible
+        actual_status = rand(rng) < 0.7 ? feasible : infeasible
     end
 
     if actual_status == feasible
-        resource_budget = required_resource * rand(Uniform(1.2, 2.0))
+        resource_budget = required_resource * rand(rng, Uniform(1.2, 2.0))
     else
         # Budget strictly below the minimum required => no feasible first stage.
-        resource_budget = required_resource * rand(Uniform(0.6, 0.9))
+        resource_budget = required_resource * rand(rng, Uniform(0.6, 0.9))
     end
 
     return StochasticProgramProblem(

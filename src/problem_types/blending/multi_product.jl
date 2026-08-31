@@ -57,29 +57,29 @@ product lands near `target_variables`.
 - `seed`: Random seed for reproducibility
 """
 function MultiProductBlendingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
     # Var-count formula: n_ingredients * n_products.
     # Choose n_products first, then size n_ingredients = round(target / n_products)
     # so the product of dimensions is close to target_variables.
-    n_products = rand(2:4)
+    n_products = rand(rng, 2:4)
     n_ingredients = max(3, round(Int, target_variables / n_products))
-    n_attributes = rand(2:min(10, max(2, n_ingredients ÷ 3)))
+    n_attributes = rand(rng, 2:min(10, max(2, n_ingredients ÷ 3)))
 
-    min_blend_amount = Float64(rand(100:20000))
+    min_blend_amount = Float64(rand(rng, 100:20000))
 
     # Ingredient costs and per-unit attribute values
-    costs = rand(10:100, n_ingredients)
+    costs = rand(rng, 10:100, n_ingredients)
     min_attr, max_attr = 0.1, 0.9
-    attributes = rand(min_attr:0.01:max_attr, n_ingredients, n_attributes)
+    attributes = rand(rng, min_attr:0.01:max_attr, n_ingredients, n_attributes)
 
     # Column (attribute) averages over ingredients -> the equal-weight blend
     # achieves exactly these averages, giving us a known feasible quality point.
     attr_avg = [sum(attributes[:, j]) / n_ingredients for j in 1:n_attributes]
 
     # Per-product required amounts
-    product_amounts = [min_blend_amount / n_products * rand(Uniform(0.8, 1.2)) for _ in 1:n_products]
+    product_amounts = [min_blend_amount / n_products * rand(rng, Uniform(0.8, 1.2)) for _ in 1:n_products]
     total_needed = sum(product_amounts)
 
     # Per-product quality bands around the attribute averages. Because the band
@@ -88,25 +88,25 @@ function MultiProductBlendingProblem(target_variables::Int, feasibility_status::
     product_quality_upper = zeros(n_products, n_attributes)
     for p in 1:n_products
         for j in 1:n_attributes
-            product_quality_lower[p, j] = attr_avg[j] * rand(Uniform(0.6, 0.85))
-            product_quality_upper[p, j] = attr_avg[j] * rand(Uniform(1.15, 1.4))
+            product_quality_lower[p, j] = attr_avg[j] * rand(rng, Uniform(0.6, 0.85))
+            product_quality_upper[p, j] = attr_avg[j] * rand(rng, Uniform(1.15, 1.4))
         end
     end
 
     # Shared per-ingredient supply. Sum of supplies must comfortably exceed total
     # product demand for a feasible allocation to exist.
-    supply_limits = [rand(Uniform(0.3, 1.5)) for _ in 1:n_ingredients]
+    supply_limits = [rand(rng, Uniform(0.3, 1.5)) for _ in 1:n_ingredients]
     supply_scale = (total_needed / sum(supply_limits)) * 1.5
     supply_limits .*= supply_scale
 
     # Cost budget sized off the average cost of the total production.
     avg_cost = sum(costs) / n_ingredients
-    cost_budget = avg_cost * total_needed * rand(Uniform(1.3, 1.8))
+    cost_budget = avg_cost * total_needed * rand(rng, Uniform(1.3, 1.8))
 
     # --- Feasibility handling ---
     actual_status = feasibility_status
     if feasibility_status == unknown
-        actual_status = rand() < 0.7 ? feasible : infeasible
+        actual_status = rand(rng) < 0.7 ? feasible : infeasible
     end
 
     if actual_status == feasible

@@ -46,7 +46,7 @@ end
 Helper: generate feasible single-piece and mixed cutting patterns for a stock length.
 (Self-contained name to avoid clashing with the standard variant's helper.)
 """
-function generate_due_dates_patterns(standard_length, piece_lengths, max_patterns, waste_factor=0.1)
+function generate_due_dates_patterns(rng::AbstractRNG, standard_length, piece_lengths, max_patterns, waste_factor=0.1)
     patterns = Vector{Vector{Int}}()
 
     # Single-piece patterns (guarantee every piece type is producible)
@@ -70,13 +70,13 @@ function generate_due_dates_patterns(standard_length, piece_lengths, max_pattern
         indices = collect(1:length(piece_lengths))
 
         num_types_to_use = min(length(piece_lengths),
-                               max(1, round(Int, rand(Exponential(2.0)))))
+                               max(1, round(Int, rand(rng, Exponential(2.0)))))
 
-        selected_indices = sample(indices, num_types_to_use, replace=false)
+        selected_indices = sample(rng, indices, num_types_to_use, replace=false)
 
         while !isempty(selected_indices)
             weights = [standard_length / piece_lengths[i] for i in selected_indices]
-            idx = sample(selected_indices, Weights(weights))
+            idx = sample(rng, selected_indices, Weights(weights))
 
             if piece_lengths[idx] <= remaining_length
                 new_pattern[idx] += 1
@@ -135,33 +135,33 @@ Dimensions are sized in the constructor to hit `target_variables`.
 - `seed`: Random seed for reproducibility
 """
 function DueDatesCuttingStockProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Scale-dependent parameters ---
     if target_variables <= 250
-        n_periods = rand(3:5)
-        stock_length = rand(Uniform(3.0, 8.0))
-        demand_min = rand(5:20)
-        demand_max = rand(40:120)
+        n_periods = rand(rng, 3:5)
+        stock_length = rand(rng, Uniform(3.0, 8.0))
+        demand_min = rand(rng, 5:20)
+        demand_max = rand(rng, 40:120)
         common_lengths = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
-        common_length_prob = rand(Uniform(0.3, 0.6))
-        waste_factor = rand(Uniform(0.05, 0.15))
+        common_length_prob = rand(rng, Uniform(0.3, 0.6))
+        waste_factor = rand(rng, Uniform(0.05, 0.15))
     elseif target_variables <= 1000
-        n_periods = rand(4:7)
-        stock_length = rand(Uniform(6.0, 12.0))
-        demand_min = rand(20:80)
-        demand_max = rand(150:600)
+        n_periods = rand(rng, 4:7)
+        stock_length = rand(rng, Uniform(6.0, 12.0))
+        demand_min = rand(rng, 20:80)
+        demand_max = rand(rng, 150:600)
         common_lengths = [1.0, 1.2, 1.5, 2.0, 2.4, 3.0, 4.0, 6.0]
-        common_length_prob = rand(Uniform(0.4, 0.7))
-        waste_factor = rand(Uniform(0.03, 0.10))
+        common_length_prob = rand(rng, Uniform(0.4, 0.7))
+        waste_factor = rand(rng, Uniform(0.03, 0.10))
     else
-        n_periods = rand(6:10)
-        stock_length = rand(Uniform(8.0, 20.0))
-        demand_min = rand(100:400)
-        demand_max = rand(800:5000)
+        n_periods = rand(rng, 6:10)
+        stock_length = rand(rng, Uniform(8.0, 20.0))
+        demand_min = rand(rng, 100:400)
+        demand_max = rand(rng, 800:5000)
         common_lengths = [1.0, 1.2, 1.5, 2.0, 2.4, 3.0, 4.0, 6.0, 8.0, 10.0, 12.0]
-        common_length_prob = rand(Uniform(0.5, 0.8))
-        waste_factor = rand(Uniform(0.02, 0.08))
+        common_length_prob = rand(rng, Uniform(0.5, 0.8))
+        waste_factor = rand(rng, Uniform(0.02, 0.08))
     end
 
     # --- Dimension sizing to hit target ---
@@ -180,17 +180,17 @@ function DueDatesCuttingStockProblem(target_variables::Int, feasibility_status::
     effective_max_length = min(stock_length * 0.95, stock_length - 0.1)
 
     for _ in 1:n_pieces
-        if rand() < common_length_prob && !isempty(common_lengths)
-            base_length = rand(common_lengths)
+        if rand(rng) < common_length_prob && !isempty(common_lengths)
+            base_length = rand(rng, common_lengths)
             if base_length > effective_max_length
                 valid_lengths = filter(x -> x <= effective_max_length, common_lengths)
-                base_length = isempty(valid_lengths) ? effective_max_length * 0.8 : rand(valid_lengths)
+                base_length = isempty(valid_lengths) ? effective_max_length * 0.8 : rand(rng, valid_lengths)
             end
-            variation = rand(Normal(0, 0.02))
+            variation = rand(rng, Normal(0, 0.02))
             len = clamp(base_length + variation, 0.1, effective_max_length)
             push!(piece_lengths, round(len, digits=2))
         else
-            normalized = rand(Beta(2.0, 3.0))
+            normalized = rand(rng, Beta(2.0, 3.0))
             len = 0.1 + (effective_max_length - 0.1) * normalized
             precision = stock_length > 10 ? 0.1 : 0.05
             len = round(len / precision) * precision
@@ -207,12 +207,12 @@ function DueDatesCuttingStockProblem(target_variables::Int, feasibility_status::
     n_patterns = max(n_pieces, round(Int, remaining / n_periods))
 
     # --- Generate cutting patterns ---
-    patterns = generate_due_dates_patterns(stock_length, piece_lengths, n_patterns, waste_factor)
+    patterns = generate_due_dates_patterns(rng, stock_length, piece_lengths, n_patterns, waste_factor)
     n_patterns = length(patterns)
 
     # --- Holding costs (small relative to a stock piece; keeps temporal structure
     #     active but not dominant) ---
-    holding_costs = [rand(Uniform(0.01, 0.1)) for _ in 1:n_pieces]
+    holding_costs = [rand(rng, Uniform(0.01, 0.1)) for _ in 1:n_pieces]
 
     # --- Best single-period throughput per piece (pieces cut per stock used) ---
     best_eff = zeros(Int, n_pieces)
@@ -228,14 +228,14 @@ function DueDatesCuttingStockProblem(target_variables::Int, feasibility_status::
     period_demands = zeros(Int, n_pieces, n_periods)
     for i in 1:n_pieces
         for t in 1:n_periods
-            period_demands[i, t] = rand(demand_min:demand_max)
+            period_demands[i, t] = rand(rng, demand_min:demand_max)
         end
     end
 
     # --- Feasibility handling ---
     actual_status = feasibility_status
     if feasibility_status == unknown
-        actual_status = rand() < 0.6 ? feasible : infeasible
+        actual_status = rand(rng) < 0.6 ? feasible : infeasible
     end
 
     # A loose, safe per-period stock cap: enough to cut everything due in any one
@@ -254,7 +254,7 @@ function DueDatesCuttingStockProblem(target_variables::Int, feasibility_status::
         # Generous cap so demand is always producible within its due period.
         # This also guards against a late-period demand spike vs the per-period cap:
         # the cap covers the worst single period plus a comfortable margin.
-        period_stock_cap = ceil(Int, baseline_cap * rand(Uniform(1.5, 2.5))) + n_pieces
+        period_stock_cap = ceil(Int, baseline_cap * rand(rng, Uniform(1.5, 2.5))) + n_pieces
 
     elseif actual_status == infeasible
         # REAL infeasibility: an early-period due demand that cannot be met even by
@@ -269,10 +269,10 @@ function DueDatesCuttingStockProblem(target_variables::Int, feasibility_status::
         target_piece = argmin(piece_lengths)  # smallest piece -> highest yield, but we beat it
 
         # Set a modest, binding per-period cap.
-        period_stock_cap = max(1, ceil(Int, baseline_cap * rand(Uniform(0.4, 0.7))))
+        period_stock_cap = max(1, ceil(Int, baseline_cap * rand(rng, Uniform(0.4, 0.7))))
 
         max_producible_p1 = period_stock_cap * best_eff[target_piece]
-        margin = max(1, round(Int, max_producible_p1 * rand(Uniform(0.3, 0.8))))
+        margin = max(1, round(Int, max_producible_p1 * rand(rng, Uniform(0.3, 0.8))))
         period_demands[target_piece, 1] = max_producible_p1 + margin
     else
         # Should not reach here, but keep a sane default.

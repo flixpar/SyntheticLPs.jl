@@ -79,60 +79,60 @@ Construct a scheduling problem instance with sophisticated consecutive-day capac
 - `seed`: Random seed for reproducibility
 """
 function SchedulingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Determine problem dimensions
     if target_variables <= 250
         # Small: department stores, small restaurants, clinics
-        n_workers = round(Int, rand(Uniform(4, 12)))
-        n_shifts = round(Int, rand(Uniform(2, 4)))
-        n_days = round(Int, rand(Uniform(3, 7)))
-        min_staffing = round(Int, rand(Uniform(1, 2)))
-        max_staffing = min_staffing + round(Int, rand(Uniform(1, 3)))
-        availability_density = rand(Beta(8, 2))
-        min_worker_shifts = round(Int, rand(Uniform(2, 4)))
-        max_worker_shifts = min_worker_shifts + round(Int, rand(Uniform(1, 3)))
-        max_consecutive_shifts = round(Int, rand(Uniform(2, 3)))
-        min_cost = rand(Uniform(15, 25))
-        max_cost = min_cost + rand(Uniform(20, 40))
-        skill_based = rand() < 0.2
+        n_workers = round(Int, rand(rng, Uniform(4, 12)))
+        n_shifts = round(Int, rand(rng, Uniform(2, 4)))
+        n_days = round(Int, rand(rng, Uniform(3, 7)))
+        min_staffing = round(Int, rand(rng, Uniform(1, 2)))
+        max_staffing = min_staffing + round(Int, rand(rng, Uniform(1, 3)))
+        availability_density = rand(rng, Beta(8, 2))
+        min_worker_shifts = round(Int, rand(rng, Uniform(2, 4)))
+        max_worker_shifts = min_worker_shifts + round(Int, rand(rng, Uniform(1, 3)))
+        max_consecutive_shifts = round(Int, rand(rng, Uniform(2, 3)))
+        min_cost = rand(rng, Uniform(15, 25))
+        max_cost = min_cost + rand(rng, Uniform(20, 40))
+        skill_based = rand(rng) < 0.2
     elseif target_variables <= 1000
         # Medium: hospitals, call centers, retail chains
-        n_workers = round(Int, rand(Uniform(8, 25)))
-        n_shifts = round(Int, rand(Uniform(3, 6)))
-        n_days = round(Int, rand(Uniform(5, 14)))
-        min_staffing = round(Int, rand(Uniform(2, 4)))
-        max_staffing = min_staffing + round(Int, rand(Uniform(2, 5)))
-        availability_density = rand(Beta(6, 3))
-        min_worker_shifts = round(Int, rand(Uniform(3, 5)))
-        max_worker_shifts = min_worker_shifts + round(Int, rand(Uniform(2, 4)))
-        max_consecutive_shifts = round(Int, rand(Uniform(2, 4)))
-        min_cost = rand(Uniform(20, 35))
-        max_cost = min_cost + rand(Uniform(25, 60))
-        skill_based = rand() < 0.4
+        n_workers = round(Int, rand(rng, Uniform(8, 25)))
+        n_shifts = round(Int, rand(rng, Uniform(3, 6)))
+        n_days = round(Int, rand(rng, Uniform(5, 14)))
+        min_staffing = round(Int, rand(rng, Uniform(2, 4)))
+        max_staffing = min_staffing + round(Int, rand(rng, Uniform(2, 5)))
+        availability_density = rand(rng, Beta(6, 3))
+        min_worker_shifts = round(Int, rand(rng, Uniform(3, 5)))
+        max_worker_shifts = min_worker_shifts + round(Int, rand(rng, Uniform(2, 4)))
+        max_consecutive_shifts = round(Int, rand(rng, Uniform(2, 4)))
+        min_cost = rand(rng, Uniform(20, 35))
+        max_cost = min_cost + rand(rng, Uniform(25, 60))
+        skill_based = rand(rng) < 0.4
     else
         # Large: airlines, large hospitals, manufacturing
-        n_workers = round(Int, rand(Uniform(25, 80)))
-        n_shifts = round(Int, rand(Uniform(4, 8)))
-        n_days = round(Int, rand(Uniform(7, 30)))
-        min_staffing = round(Int, rand(Uniform(3, 6)))
-        max_staffing = min_staffing + round(Int, rand(Uniform(3, 8)))
-        availability_density = rand(Beta(4, 3))
-        min_worker_shifts = round(Int, rand(Uniform(4, 6)))
-        max_worker_shifts = min_worker_shifts + round(Int, rand(Uniform(2, 5)))
-        max_consecutive_shifts = round(Int, rand(Uniform(3, 5)))
-        min_cost = rand(Uniform(25, 50))
-        max_cost = min_cost + rand(Uniform(30, 100))
-        skill_based = rand() < 0.6
+        n_workers = round(Int, rand(rng, Uniform(25, 80)))
+        n_shifts = round(Int, rand(rng, Uniform(4, 8)))
+        n_days = round(Int, rand(rng, Uniform(7, 30)))
+        min_staffing = round(Int, rand(rng, Uniform(3, 6)))
+        max_staffing = min_staffing + round(Int, rand(rng, Uniform(3, 8)))
+        availability_density = rand(rng, Beta(4, 3))
+        min_worker_shifts = round(Int, rand(rng, Uniform(4, 6)))
+        max_worker_shifts = min_worker_shifts + round(Int, rand(rng, Uniform(2, 5)))
+        max_consecutive_shifts = round(Int, rand(rng, Uniform(3, 5)))
+        min_cost = rand(rng, Uniform(25, 50))
+        max_cost = min_cost + rand(rng, Uniform(30, 100))
+        skill_based = rand(rng) < 0.6
     end
 
     # Variables = n_workers * n_shifts * n_days. n_shifts and n_days are picked
     # above for realistic horizon structure; solve for n_workers to hit target.
     n_workers = max(1, round(Int, target_variables / (n_shifts * n_days)))
 
-    n_skills = skill_based ? (target_variables <= 250 ? round(Int, rand(Uniform(2, 3))) :
-                              target_variables <= 1000 ? round(Int, rand(Uniform(3, 5))) :
-                              round(Int, rand(Uniform(4, 8)))) : 0
+    n_skills = skill_based ? (target_variables <= 250 ? round(Int, rand(rng, Uniform(2, 3))) :
+                              target_variables <= 1000 ? round(Int, rand(rng, Uniform(3, 5))) :
+                              round(Int, rand(rng, Uniform(4, 8)))) : 0
 
     total_shifts = n_shifts * n_days
 
@@ -147,14 +147,14 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
 
         mean_staffing = (min_staffing + max_staffing) / 2 * peak_factor * weekend_factor
         staffing_req[s] = max(min_staffing, min(max_staffing,
-                             round(Int, rand(Poisson(mean_staffing)))))
+                             round(Int, rand(rng, Poisson(mean_staffing)))))
     end
 
     # Generate worker availability
     availability = zeros(Int, n_workers, total_shifts)
 
     for w in 1:n_workers
-        worker_type = rand() < 0.6 ? :full_time : :part_time
+        worker_type = rand(rng) < 0.6 ? :full_time : :part_time
 
         for s in 1:total_shifts
             day_idx = div(s-1, n_shifts) + 1
@@ -178,7 +178,7 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
                 end
             end
 
-            availability[w, s] = rand() < min(1.0, base_prob) ? 1 : 0
+            availability[w, s] = rand(rng) < min(1.0, base_prob) ? 1 : 0
         end
     end
 
@@ -189,8 +189,8 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
     if skill_based
         worker_skills = zeros(Int, n_workers, n_skills)
         for w in 1:n_workers
-            num_skills = rand(1:min(3, n_skills))
-            skill_indices = sample(1:n_skills, num_skills, replace=false)
+            num_skills = rand(rng, 1:min(3, n_skills))
+            skill_indices = sample(rng, 1:n_skills, num_skills, replace=false)
             for s in skill_indices
                 worker_skills[w, s] = 1
             end
@@ -198,7 +198,7 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
 
         shift_skill_req = zeros(Int, total_shifts, n_skills)
         for s in 1:total_shifts
-            required_skill = rand(1:n_skills)
+            required_skill = rand(rng, 1:n_skills)
             shift_skill_req[s, required_skill] = 1
         end
 
@@ -219,16 +219,16 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
 
     # Generate costs
     costs = zeros(n_workers, total_shifts)
-    worker_tiers = rand([:junior, :regular, :senior], n_workers)
+    worker_tiers = rand(rng, [:junior, :regular, :senior], n_workers)
 
     for w in 1:n_workers
         tier = worker_tiers[w]
         if tier == :junior
-            base_cost = min_cost + rand(Normal(0, (max_cost - min_cost) * 0.1))
+            base_cost = min_cost + rand(rng, Normal(0, (max_cost - min_cost) * 0.1))
         elseif tier == :regular
-            base_cost = (min_cost + max_cost) / 2 + rand(Normal(0, (max_cost - min_cost) * 0.15))
+            base_cost = (min_cost + max_cost) / 2 + rand(rng, Normal(0, (max_cost - min_cost) * 0.15))
         else  # senior
-            base_cost = max_cost + rand(Normal(0, (max_cost - min_cost) * 0.1))
+            base_cost = max_cost + rand(rng, Normal(0, (max_cost - min_cost) * 0.1))
         end
 
         if skill_based
@@ -254,7 +254,7 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
                 shift_premium *= 1.25
             end
 
-            random_factor = rand(LogNormal(0, 0.1))
+            random_factor = rand(rng, LogNormal(0, 0.1))
             costs[w, s] = base_cost * shift_premium * random_factor
         end
     end
@@ -312,7 +312,6 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
         max_worker_shifts = min(max_worker_shifts, n_days)
 
         # Randomized slack factors
-        rng = Random.default_rng()
         per_shift_alpha = [clamp(rand(rng, Beta(8, 2)), 0.6, 1.0) for _ in 1:total_shifts]
         per_day_reserve = [clamp(rand(rng, Beta(2, 12)), 0.05, 0.35) for _ in 1:n_days]
         global_reserve = clamp(rand(rng, Beta(2, 10)), 0.03, 0.25)
@@ -522,7 +521,6 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
 
     elseif feasibility_status == infeasible
         # Diverse infeasibility modes
-        rng = Random.default_rng()
         modes = [:shift_blackout, :day_overload, :min_over_cap]
         mode = rand(rng, modes)
 

@@ -243,6 +243,12 @@ model2, problem2 = generate_problem(:knapsack, 50, unknown, seed)
 @assert problem1.n_items == problem2.n_items
 ```
 
+Every generator draws from a constructor-local `MersenneTwister(seed)`, so
+generation neither reads nor advances the caller's global RNG. The seed is the
+only thing that determines an instance: surrounding `Random.seed!` calls, other
+generation happening on the same task, and concurrent generation on other
+threads cannot perturb it.
+
 ### Random Problem Generation
 
 ```julia
@@ -387,9 +393,10 @@ Construct a problem instance.
 - `seed`: Random seed for reproducibility
 """
 function YourProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
-    # Sample all parameters based on target_variables
+    # Sample all parameters based on target_variables (draw from `rng`, never
+    # from the global stream: `rand(rng, ...)`, `randn(rng)`, `shuffle(rng, ...)`)
     # Generate all deterministic data
     # Handle feasibility status
     # ...
@@ -431,6 +438,9 @@ include("your_variant.jl")
 Key principles:
 - The struct stores ALL data needed to deterministically build the model
 - ALL randomness goes in the constructor
+- Randomness comes from a constructor-local `MersenneTwister(seed)`, never from
+  `Random.seed!` and the global stream. Thread that `rng` explicitly through any
+  helper the constructor calls (`helper(rng::AbstractRNG, ...)`)
 - `build_model` must be completely deterministic (no RNG calls)
 - Handle `feasible`, `infeasible`, and `unknown` feasibility statuses
 

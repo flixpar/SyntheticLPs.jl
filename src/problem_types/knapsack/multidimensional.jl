@@ -72,7 +72,7 @@ constraints.
 - `seed`: Random seed for reproducibility
 """
 function MultidimensionalKnapsackProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # One binary variable per item.
     n_items = max(2, target_variables)
@@ -80,17 +80,17 @@ function MultidimensionalKnapsackProblem(target_variables::Int, feasibility_stat
     # --- Scale-tiered ranges ---
     # Number of resource dimensions and parameter magnitudes grow with size.
     if n_items <= 100
-        n_resources = rand(2:3)
+        n_resources = rand(rng, 2:3)
         size_lo, size_hi = 5.0, 30.0            # per-item base "size" factor
         intensity_lo, intensity_hi = 0.5, 2.5   # per-resource intensity multiplier
         value_base_lo, value_base_hi = 10.0, 120.0
     elseif n_items <= 1000
-        n_resources = rand(3:4)
+        n_resources = rand(rng, 3:4)
         size_lo, size_hi = 10.0, 60.0
         intensity_lo, intensity_hi = 0.6, 3.0
         value_base_lo, value_base_hi = 20.0, 300.0
     else
-        n_resources = rand(4:5)
+        n_resources = rand(rng, 4:5)
         size_lo, size_hi = 20.0, 120.0
         intensity_lo, intensity_hi = 0.8, 3.5
         value_base_lo, value_base_hi = 50.0, 700.0
@@ -99,18 +99,18 @@ function MultidimensionalKnapsackProblem(target_variables::Int, feasibility_stat
     D = n_resources
 
     # Per-resource intensity: how heavily each resource is consumed in general.
-    resource_intensity = intensity_lo .+ (intensity_hi - intensity_lo) .* rand(D)
+    resource_intensity = intensity_lo .+ (intensity_hi - intensity_lo) .* rand(rng, D)
 
     # Per-item base "size": a latent factor driving usage across ALL resources,
     # which is what makes the resource columns correlated.
-    item_size = size_lo .+ (size_hi - size_lo) .* rand(n_items)
+    item_size = size_lo .+ (size_hi - size_lo) .* rand(rng, n_items)
 
     # Resource usage: size * intensity * lognormal-ish noise (always positive).
     # usage[r, i] = item_size[i] * resource_intensity[r] * noise
     usage = zeros(Float64, D, n_items)
     for i in 1:n_items
         for r in 1:D
-            noise = exp(0.30 * randn())          # multiplicative noise, mean ~1
+            noise = exp(0.30 * randn(rng))          # multiplicative noise, mean ~1
             usage[r, i] = item_size[i] * resource_intensity[r] * noise
             usage[r, i] = max(usage[r, i], 0.1)  # strictly positive
         end
@@ -123,9 +123,9 @@ function MultidimensionalKnapsackProblem(target_variables::Int, feasibility_stat
     mean_use = sum(total_use) / n_items
     values = zeros(Float64, n_items)
     for i in 1:n_items
-        base = value_base_lo + (value_base_hi - value_base_lo) * rand()
+        base = value_base_lo + (value_base_hi - value_base_lo) * rand(rng)
         # density-correlated term: heavier items tend to be worth more, with noise
-        density_term = (total_use[i] / mean_use) * base * (0.6 + 0.8 * rand())
+        density_term = (total_use[i] / mean_use) * base * (0.6 + 0.8 * rand(rng))
         values[i] = max(1.0, 0.4 * base + 0.6 * density_term)
     end
 
@@ -133,7 +133,7 @@ function MultidimensionalKnapsackProblem(target_variables::Int, feasibility_stat
     capacities = zeros(Float64, D)
     for r in 1:D
         total_r = sum(usage[r, i] for i in 1:n_items)
-        cap_ratio = 0.40 + 0.30 * rand()
+        cap_ratio = 0.40 + 0.30 * rand(rng)
         capacities[r] = total_r * cap_ratio
     end
 

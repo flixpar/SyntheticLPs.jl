@@ -58,7 +58,7 @@ integer lot count `n_lots[t]`. The total variable count is therefore
 - `seed`: Random seed for reproducibility
 """
 function LotSizingInventoryProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Variable count = x[1:n] + I[0:n] + y[1:n] (Bin) + n_lots[1:n] (Int)
     #               = n + (n+1) + n + n = 4*n + 1
@@ -71,31 +71,31 @@ function LotSizingInventoryProblem(target_variables::Int, feasibility_status::Fe
 
     # Scale-specific ranges
     if scale == :small
-        prod_capacity = round(Int, rand(Uniform(50, 500)))
-        demand_base = round(Int, rand(Uniform(10, 100)))
-        demand_vol = rand(Uniform(0.2, 0.5))
-        prod_cost_base = rand(Uniform(10, 100))
-        holding_rate = rand(Uniform(0.05, 0.25)) / 12
+        prod_capacity = round(Int, rand(rng, Uniform(50, 500)))
+        demand_base = round(Int, rand(rng, Uniform(10, 100)))
+        demand_vol = rand(rng, Uniform(0.2, 0.5))
+        prod_cost_base = rand(rng, Uniform(10, 100))
+        holding_rate = rand(rng, Uniform(0.05, 0.25)) / 12
     elseif scale == :medium
-        prod_capacity = round(Int, rand(Uniform(200, 2000)))
-        demand_base = round(Int, rand(Uniform(50, 1000)))
-        demand_vol = rand(Uniform(0.15, 0.4))
-        prod_cost_base = rand(Uniform(5, 200))
-        holding_rate = rand(Uniform(0.03, 0.20)) / 12
+        prod_capacity = round(Int, rand(rng, Uniform(200, 2000)))
+        demand_base = round(Int, rand(rng, Uniform(50, 1000)))
+        demand_vol = rand(rng, Uniform(0.15, 0.4))
+        prod_cost_base = rand(rng, Uniform(5, 200))
+        holding_rate = rand(rng, Uniform(0.03, 0.20)) / 12
     else
-        prod_capacity = round(Int, rand(Uniform(1000, 50000)))
-        demand_base = round(Int, rand(Uniform(100, 10000)))
-        demand_vol = rand(Uniform(0.1, 0.3))
-        prod_cost_base = rand(Uniform(1, 500))
-        holding_rate = rand(Uniform(0.01, 0.15)) / 12
+        prod_capacity = round(Int, rand(rng, Uniform(1000, 50000)))
+        demand_base = round(Int, rand(rng, Uniform(100, 10000)))
+        demand_vol = rand(rng, Uniform(0.1, 0.3))
+        prod_cost_base = rand(rng, Uniform(1, 500))
+        holding_rate = rand(rng, Uniform(0.01, 0.15)) / 12
     end
 
     demand_min = max(1, round(Int, demand_base * (1 - demand_vol)))
     demand_max = round(Int, demand_base * (1 + demand_vol))
     avgd = (demand_min + demand_max) / 2
-    initial_inventory = round(Int, avgd * rand(Uniform(0.1, 0.5)))
+    initial_inventory = round(Int, avgd * rand(rng, Uniform(0.1, 0.5)))
 
-    prod_cost_spread = rand(Uniform(0.1, 0.3))
+    prod_cost_spread = rand(rng, Uniform(0.1, 0.3))
     prod_cost_min = prod_cost_base * (1 - prod_cost_spread)
     prod_cost_max = prod_cost_base * (1 + prod_cost_spread)
 
@@ -105,10 +105,10 @@ function LotSizingInventoryProblem(target_variables::Int, feasibility_status::Fe
     # Generate base demands with seasonality
     demand_mean = (demand_min + demand_max) / 2
     demand_std = (demand_max - demand_min) / 4
-    demands = round.(Int, clamp.(rand(Normal(demand_mean, demand_std), n_periods), demand_min, demand_max))
+    demands = round.(Int, clamp.(rand(rng, Normal(demand_mean, demand_std), n_periods), demand_min, demand_max))
 
     # Add seasonality
-    if rand() < 0.6 && n_periods >= 12
+    if rand(rng) < 0.6 && n_periods >= 12
         annual = 1.0 .+ 0.2 * sin.(2π .* (1:n_periods) ./ 12)
         demands = round.(Int, demands .* annual)
     end
@@ -116,12 +116,12 @@ function LotSizingInventoryProblem(target_variables::Int, feasibility_status::Fe
     # Production and holding costs
     prod_cost_mean = (prod_cost_min + prod_cost_max) / 2
     prod_cost_std = (prod_cost_max - prod_cost_min) / 4
-    production_costs = clamp.(rand(Normal(prod_cost_mean, prod_cost_std), n_periods),
+    production_costs = clamp.(rand(rng, Normal(prod_cost_mean, prod_cost_std), n_periods),
                               prod_cost_min, prod_cost_max)
 
     holding_cost_mean = (holding_cost_min + holding_cost_max) / 2
     holding_cost_std = (holding_cost_max - holding_cost_min) / 4
-    holding_costs = clamp.(rand(Normal(holding_cost_mean, holding_cost_std), n_periods),
+    holding_costs = clamp.(rand(rng, Normal(holding_cost_mean, holding_cost_std), n_periods),
                            holding_cost_min, holding_cost_max)
 
     # Keep demands positive
@@ -129,9 +129,9 @@ function LotSizingInventoryProblem(target_variables::Int, feasibility_status::Fe
 
     # --- Lot-sizing specific data ---
     lot_size_options = [5, 10, 20, 25, 50, 100]
-    base_lot_size = rand(lot_size_options)
+    base_lot_size = rand(rng, lot_size_options)
     lot_sizes = fill(base_lot_size, n_periods)
-    setup_costs = production_costs .* rand(Uniform(10.0, 50.0))
+    setup_costs = production_costs .* rand(rng, Uniform(10.0, 50.0))
 
     # --- Feasibility handling ---
     # No backlogging: inventory must always cover cumulative demand. Production

@@ -22,29 +22,29 @@ end
 function TSPPrizeCollectingProblem(target_variables::Int,
                                    feasibility_status::FeasibilityStatus,
                                    seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # x and f on every directed arc, plus one y per non-depot stop:
     # 2n(n-1) + (n-1) = 2n^2 - n - 1.
     n = max(5, round(Int, (1 + sqrt(8 * target_variables + 9)) / 4))
-    locations = _tsp_stops(n)
-    dist = _tsp_distance(locations)
+    locations = _tsp_stops(rng, n)
+    dist = _tsp_distance(rng, locations)
 
     prizes = zeros(n)
     penalties = zeros(n)
     for j in 2:n
-        prizes[j] = round(clamp(exp(log(35.0) + 0.6 * randn()), 10.0, 150.0), digits=2)
-        penalties[j] = round(prizes[j] * (0.35 + 0.55 * rand()), digits=2)
+        prizes[j] = round(clamp(exp(log(35.0) + 0.6 * randn(rng)), 10.0, 150.0), digits=2)
+        penalties[j] = round(prizes[j] * (0.35 + 0.55 * rand(rng)), digits=2)
     end
     total_prize = sum(prizes)
     prize_quota = if feasibility_status == feasible
-        round(total_prize * (0.45 + 0.25 * rand()), digits=2)
+        round(total_prize * (0.45 + 0.25 * rand(rng)), digits=2)
     elseif feasibility_status == infeasible
         # y <= 1 implies collected prize <= total_prize, even after relaxation.
-        round(total_prize * (1.10 + 0.20 * rand()), digits=2)
+        round(total_prize * (1.10 + 0.20 * rand(rng)), digits=2)
     else
         # A naturally demanding but attainable commercial target.
-        round(total_prize * (0.60 + 0.35 * rand()), digits=2)
+        round(total_prize * (0.60 + 0.35 * rand(rng)), digits=2)
     end
 
     return TSPPrizeCollectingProblem(

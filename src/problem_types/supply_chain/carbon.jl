@@ -105,7 +105,7 @@ a feasible (lower-emission) assignment always exists by construction.
 - `seed`: Random seed for reproducibility
 """
 function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Determine problem dimensions based on target variables.
     # VARIABLE COUNT FORMULA:
@@ -117,34 +117,34 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
     # chosen so that nf + nf*nc*nm*eff_density ≈ target.
     if target_variables <= 250
         n_transport_modes = 1
-        grid_width = rand(Uniform(200.0, 800.0))
-        grid_height = rand(Uniform(200.0, 800.0))
-        infrastructure_density = rand(Beta(5, 2)) * 0.2 + 0.8  # 0.8-1.0
-        clustering_factor = rand(Beta(3, 2)) * 0.6 + 0.25
-        min_fixed_cost = max(100000.0, rand(LogNormal(log(300000), 0.5)))
-        max_fixed_cost = min_fixed_cost * rand(Uniform(1.8, 3.5))
-        base_demand = rand(Uniform(80.0, 150.0))
+        grid_width = rand(rng, Uniform(200.0, 800.0))
+        grid_height = rand(rng, Uniform(200.0, 800.0))
+        infrastructure_density = rand(rng, Beta(5, 2)) * 0.2 + 0.8  # 0.8-1.0
+        clustering_factor = rand(rng, Beta(3, 2)) * 0.6 + 0.25
+        min_fixed_cost = max(100000.0, rand(rng, LogNormal(log(300000), 0.5)))
+        max_fixed_cost = min_fixed_cost * rand(rng, Uniform(1.8, 3.5))
+        base_demand = rand(rng, Uniform(80.0, 150.0))
     elseif target_variables <= 1000
         n_transport_modes = 2
-        grid_width = rand(Uniform(800.0, 2000.0))
-        grid_height = rand(Uniform(800.0, 2000.0))
-        infrastructure_density = rand(Beta(3, 2)) * 0.3 + 0.6  # 0.6-0.9
-        clustering_factor = rand(Beta(2, 3)) * 0.5 + 0.2
-        min_fixed_cost = max(300000.0, rand(LogNormal(log(800000), 0.6)))
-        max_fixed_cost = min_fixed_cost * rand(Uniform(2.0, 4.0))
-        base_demand = rand(Uniform(150.0, 300.0))
+        grid_width = rand(rng, Uniform(800.0, 2000.0))
+        grid_height = rand(rng, Uniform(800.0, 2000.0))
+        infrastructure_density = rand(rng, Beta(3, 2)) * 0.3 + 0.6  # 0.6-0.9
+        clustering_factor = rand(rng, Beta(2, 3)) * 0.5 + 0.2
+        min_fixed_cost = max(300000.0, rand(rng, LogNormal(log(800000), 0.6)))
+        max_fixed_cost = min_fixed_cost * rand(rng, Uniform(2.0, 4.0))
+        base_demand = rand(rng, Uniform(150.0, 300.0))
     else
         n_transport_modes = 3
-        grid_width = rand(Uniform(2000.0, 5000.0))
-        grid_height = rand(Uniform(2000.0, 5000.0))
-        infrastructure_density = rand(Beta(2, 3)) * 0.3 + 0.5  # 0.5-0.8
-        clustering_factor = rand(Beta(1, 3)) * 0.4 + 0.15
-        min_fixed_cost = max(500000.0, rand(LogNormal(log(1500000), 0.7)))
-        max_fixed_cost = min_fixed_cost * rand(Uniform(2.5, 5.0))
-        base_demand = rand(Uniform(300.0, 600.0))
+        grid_width = rand(rng, Uniform(2000.0, 5000.0))
+        grid_height = rand(rng, Uniform(2000.0, 5000.0))
+        infrastructure_density = rand(rng, Beta(2, 3)) * 0.3 + 0.5  # 0.5-0.8
+        clustering_factor = rand(rng, Beta(1, 3)) * 0.4 + 0.15
+        min_fixed_cost = max(500000.0, rand(rng, LogNormal(log(1500000), 0.7)))
+        max_fixed_cost = min_fixed_cost * rand(rng, Uniform(2.5, 5.0))
+        base_demand = rand(rng, Uniform(300.0, 600.0))
     end
     min_demand = base_demand
-    max_demand = base_demand * rand(Uniform(3.0, 8.0))
+    max_demand = base_demand * rand(rng, Uniform(3.0, 8.0))
 
     # Estimated effective fill of the (f,c,mode) arc tensor (empirically
     # calibrated). Truck (always present) fills ~0.55*density of its slice;
@@ -157,7 +157,7 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
     # Solve nf + nf*nc*nm*eff_density = target with a balanced aspect ratio.
     # Choose nf ≈ sqrt(target / (nm*eff_density)) * ratio, then nc from target.
     arc_target = max(1.0, target_variables - 0.0)  # binaries are a small share
-    ratio = 0.5 + rand() * 0.6  # 0.5-1.1
+    ratio = 0.5 + rand(rng) * 0.6  # 0.5-1.1
     n_facilities = max(2, round(Int, sqrt(arc_target / (n_transport_modes * eff_density)) * ratio))
     n_customers = max(3, round(Int,
         (target_variables - n_facilities) / (n_facilities * n_transport_modes * eff_density)))
@@ -165,8 +165,8 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
     n_customers = min(n_customers, 400)
 
     # Additional parameters
-    capacity_factor = rand(Uniform(1.2, 2.2))
-    mode_capacity_factor = rand(Uniform(0.25, 0.65))
+    capacity_factor = rand(rng, Uniform(1.2, 2.2))
+    mode_capacity_factor = rand(rng, Uniform(0.25, 0.65))
 
     # Mode-specific carbon emission rates (per unit per distance).
     emission_rate(mode) = mode == "truck" ? 0.1 :
@@ -176,48 +176,48 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
     # Transport modes and costs
     all_transport_modes = ["truck", "rail", "ship", "air"]
     transport_base_costs = Dict(
-        "truck" => rand(Gamma(4, 0.25)),
-        "rail" => rand(Gamma(3, 0.2)),
-        "ship" => rand(Gamma(2, 0.15)),
-        "air" => rand(Gamma(6, 0.5))
+        "truck" => rand(rng, Gamma(4, 0.25)),
+        "rail" => rand(rng, Gamma(3, 0.2)),
+        "ship" => rand(rng, Gamma(2, 0.15)),
+        "air" => rand(rng, Gamma(6, 0.5))
     )
 
     # Select transport modes. Truck (the high-availability backbone) is always
     # included so the available-arc count is predictable; additional, sparser
     # modes are sampled from the rest.
-    extra_modes = sample(["rail", "ship", "air"], min(n_transport_modes - 1, 3), replace=false)
+    extra_modes = sample(rng, ["rail", "ship", "air"], min(n_transport_modes - 1, 3), replace=false)
     transport_modes = vcat(["truck"], extra_modes)
 
     # Geographic clusters
     n_clusters = max(2, round(Int, sqrt(n_customers) * clustering_factor))
-    cluster_centers = [(grid_width * rand(), grid_height * rand()) for _ in 1:n_clusters]
+    cluster_centers = [(grid_width * rand(rng), grid_height * rand(rng)) for _ in 1:n_clusters]
 
     # Facility locations (more dispersed than customers)
     facility_locs = Vector{Tuple{Float64,Float64}}()
     for _ in 1:n_facilities
-        if rand() < 0.4
-            center = rand(cluster_centers)
+        if rand(rng) < 0.4
+            center = rand(rng, cluster_centers)
             spread_x = grid_width * 0.12
             spread_y = grid_height * 0.12
-            x = clamp(center[1] + rand(Normal(0, spread_x)), 0, grid_width)
-            y = clamp(center[2] + rand(Normal(0, spread_y)), 0, grid_height)
+            x = clamp(center[1] + rand(rng, Normal(0, spread_x)), 0, grid_width)
+            y = clamp(center[2] + rand(rng, Normal(0, spread_y)), 0, grid_height)
         else
-            x = grid_width * rand(Beta(1.5, 1.5))
-            y = grid_height * rand(Beta(1.5, 1.5))
+            x = grid_width * rand(rng, Beta(1.5, 1.5))
+            y = grid_height * rand(rng, Beta(1.5, 1.5))
         end
         push!(facility_locs, (x, y))
     end
 
     # Customer locations (more clustered)
     customer_locs = Vector{Tuple{Float64,Float64}}()
-    cluster_weights = rand(Dirichlet(ones(n_clusters)))
+    cluster_weights = rand(rng, Dirichlet(ones(n_clusters)))
     for _ in 1:n_customers
-        cluster_idx = sample(1:n_clusters, Weights(cluster_weights))
+        cluster_idx = sample(rng, 1:n_clusters, Weights(cluster_weights))
         center = cluster_centers[cluster_idx]
         base_spread = grid_width * (1 - clustering_factor) * 0.08
-        spread = rand(LogNormal(log(base_spread), 0.3))
-        x = clamp(center[1] + rand(Normal(0, spread)), 0, grid_width)
-        y = clamp(center[2] + rand(Normal(0, spread)), 0, grid_height)
+        spread = rand(rng, LogNormal(log(base_spread), 0.3))
+        x = clamp(center[1] + rand(rng, Normal(0, spread)), 0, grid_width)
+        y = clamp(center[2] + rand(rng, Normal(0, spread)), 0, grid_height)
         push!(customer_locs, (x, y))
     end
 
@@ -233,7 +233,7 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
         location_factor = (facility_locs[f][1] / grid_width + facility_locs[f][2] / grid_height) / 2
         base_cost = min_fixed_cost + (max_fixed_cost - min_fixed_cost) *
                    (0.2 + 0.5 * market_potential / n_customers + 0.3 * location_factor)
-        fixed_costs[f] = base_cost * rand(LogNormal(log(1.0), 0.25))
+        fixed_costs[f] = base_cost * rand(rng, LogNormal(log(1.0), 0.25))
     end
 
     # Customer demands (correlated with cluster size)
@@ -246,7 +246,7 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
         _, cluster_idx = findmin(distances_to_clusters)
         cluster_influence = cluster_weights[cluster_idx]
         base_demand_val = min_demand + (max_demand - min_demand) * (0.2 + 0.8 * cluster_influence)
-        demands[c] = base_demand_val * rand(LogNormal(log(1.0), 0.4))
+        demands[c] = base_demand_val * rand(rng, LogNormal(log(1.0), 0.4))
     end
 
     # Facility capacities
@@ -257,7 +257,7 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
         relative_cost = (fixed_costs[f] - minimum(values(fixed_costs))) /
                        max(1.0, maximum(values(fixed_costs)) - minimum(values(fixed_costs)))
         base_capacity = avg_capacity * (0.6 + 0.8 * relative_cost)
-        capacities[f] = base_capacity * rand(Gamma(3, 1/3))
+        capacities[f] = base_capacity * rand(rng, Gamma(3, 1/3))
     end
 
     # Transport costs, emissions, and infrastructure availability
@@ -280,15 +280,15 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
                     distance > sqrt(grid_width^2 + grid_height^2) * 0.3 ? 0.7 : 0.2
                 end
 
-                infrastructure[(f,c,mode)] = rand() < prob_available * infrastructure_density
+                infrastructure[(f,c,mode)] = rand(rng) < prob_available * infrastructure_density
 
                 if infrastructure[(f,c,mode)]
                     base_cost = get(transport_base_costs, mode, 1.0)
-                    terrain_factor = rand(LogNormal(log(1.0), 0.15))
+                    terrain_factor = rand(rng, LogNormal(log(1.0), 0.15))
                     volume_factor = 1.0 - 0.25 * (demands[c] / max_demand_val)
-                    efficiency_factor = rand(Beta(3, 2)) * 0.4 + 0.8
+                    efficiency_factor = rand(rng, Beta(3, 2)) * 0.4 + 0.8
                     transport_costs[(f,c,mode)] = base_cost * distance * terrain_factor * volume_factor * efficiency_factor
-                    carbon_emissions[(f,c,mode)] = emission_rate(mode) * distance * rand(Uniform(0.9, 1.1))
+                    carbon_emissions[(f,c,mode)] = emission_rate(mode) * distance * rand(rng, Uniform(0.9, 1.1))
                 end
             end
         end
@@ -299,13 +299,13 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
     for mode in transport_modes
         base_capacity = total_demand * mode_capacity_factor
         capacity_multiplier = if mode == "truck"
-            rand(Gamma(4, 0.25))
+            rand(rng, Gamma(4, 0.25))
         elseif mode == "rail"
-            rand(Gamma(6, 0.33))
+            rand(rng, Gamma(6, 0.33))
         elseif mode == "ship"
-            rand(Gamma(9, 0.33))
+            rand(rng, Gamma(9, 0.33))
         else  # air
-            rand(Gamma(2, 0.25))
+            rand(rng, Gamma(2, 0.25))
         end
         mode_capacities[mode] = base_capacity * capacity_multiplier
     end
@@ -327,12 +327,12 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
                 if !haskey(transport_costs, (f, c, fallback_mode))
                     distance = dvec[f]
                     base_cost = get(transport_base_costs, fallback_mode, 1.0)
-                    terrain_factor = rand(LogNormal(log(1.0), 0.15))
+                    terrain_factor = rand(rng, LogNormal(log(1.0), 0.15))
                     volume_factor = 1.0 - 0.25 * (demands[c] / max_demand_val)
-                    efficiency_factor = rand(Beta(3, 2)) * 0.4 + 0.8
+                    efficiency_factor = rand(rng, Beta(3, 2)) * 0.4 + 0.8
                     infrastructure[(f, c, fallback_mode)] = true
                     transport_costs[(f, c, fallback_mode)] = base_cost * distance * terrain_factor * volume_factor * efficiency_factor
-                    carbon_emissions[(f, c, fallback_mode)] = emission_rate(fallback_mode) * distance * rand(Uniform(0.9, 1.1))
+                    carbon_emissions[(f, c, fallback_mode)] = emission_rate(fallback_mode) * distance * rand(rng, Uniform(0.9, 1.1))
                 end
                 push!(customers_linked_to_facility[f], c)
             end
@@ -406,7 +406,7 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
         # Strictly below the lower bound (with margin) -> no feasible flow can
         # respect the budget, so the carbon constraint is the binding
         # contradiction (facility/mode capacities were already relaxed above).
-        carbon_limit = emission_lower_bound * rand(Uniform(0.5, 0.8))
+        carbon_limit = emission_lower_bound * rand(rng, Uniform(0.5, 0.8))
     elseif feasibility_status == feasible
         # Make the MINIMUM-EMISSION single-source assignment (each customer on its
         # globally cleanest arc) capacity-feasible by relaxing facility and mode
@@ -432,7 +432,7 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
                 mode_capacities[m] = mode_need[m] * 1.05
             end
         end
-        carbon_limit = emission_lower_bound * rand(Uniform(1.01, 1.05))
+        carbon_limit = emission_lower_bound * rand(rng, Uniform(1.01, 1.05))
     else
         # unknown: natural instance, no forced infeasibility. Anchor the cap on a
         # capacity-respecting greedy reference flow and leave generous slack so the
@@ -450,7 +450,7 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
             remaining_mode[m] = max(0.0, remaining_mode[m] - d)
             ref_emissions += d * e
         end
-        carbon_limit = max(emission_lower_bound, ref_emissions) * rand(Uniform(1.3, 2.5))
+        carbon_limit = max(emission_lower_bound, ref_emissions) * rand(rng, Uniform(1.3, 2.5))
     end
 
     return CarbonSupplyChainProblem(

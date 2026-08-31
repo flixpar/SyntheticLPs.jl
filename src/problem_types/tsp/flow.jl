@@ -92,7 +92,7 @@ arc) and sizes `n` against the *delivered* count.
 - `unknown`: a natural instance, identical to the feasible branch.
 """
 function TSPFlowProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
     # total = 2 * n * (n - 1)  =>  solve 2n^2 - 2n - target = 0 for the positive
@@ -103,15 +103,15 @@ function TSPFlowProblem(target_variables::Int, feasibility_status::FeasibilitySt
     # the infeasible branch sizes n against the delivered count
     # 2*(n^2 - n) - 2*k*(n - k) (the block removes both x and f on each of its
     # k*(n-k) deleted arcs).
-    n, k = _tsp_plan_dimensions(n0, target_variables, feasibility_status,
+    n, k = _tsp_plan_dimensions(rng, n0, target_variables, feasibility_status,
                                 (m, kk) -> 2 * (m^2 - m) - 2 * kk * (m - kk))
 
     # --- Geography and symmetric road distances (shared with tsp/standard) ---
-    locations = _tsp_stops(n)
-    dist = _tsp_distance(locations)
+    locations = _tsp_stops(rng, n)
+    dist = _tsp_distance(rng, locations)
 
     # --- Resolve feasibility intent ---
-    arc_ok, S, T = _tsp_arc_support(n, k, feasibility_status)
+    arc_ok, S, T = _tsp_arc_support(rng, n, k, feasibility_status)
 
     return TSPFlowProblem(n, locations, dist, arc_ok, S, T)
 end

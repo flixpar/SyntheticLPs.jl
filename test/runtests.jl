@@ -133,6 +133,26 @@ end
         @test unknown isa FeasibilityStatus
     end
 
+    # Every generator must own a local RNG: generation may neither read nor
+    # advance the caller's global stream, and must stay reproducible per seed.
+    @testset "Global RNG Isolation" begin
+        for ref in list_problems()
+            Random.seed!(5171)
+            expected = rand(3)
+
+            Random.seed!(5171)
+            m1, _ = generate_problem(ref, 60, feasible, 11)
+            @test rand(3) == expected
+
+            Random.seed!(5171)
+            m2, _ = generate_problem(ref, 60, feasible, 11)
+            @test rand(3) == expected
+
+            # Same seed, different global state before the call => same model.
+            @test sprint(print, m1) == sprint(print, m2)
+        end
+    end
+
     # Test the category/variant interface
     @testset "Variant Interface" begin
         cats = list_categories()

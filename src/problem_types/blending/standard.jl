@@ -52,12 +52,12 @@ Construct a blending problem instance.
 - `seed`: Random seed for reproducibility
 """
 function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # For blending, variables = n_ingredients
     n_ingredients = max(3, min(500, target_variables))
-    n_attributes = rand(2:15)
-    min_blend_amount = Float64(rand(100:20000))
+    n_attributes = rand(rng, 2:15)
+    min_blend_amount = Float64(rand(rng, 100:20000))
 
     cost_range = (10, 100)
     attribute_range = (0.1, 0.9)
@@ -66,15 +66,15 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
     min_attr, max_attr = attribute_range
 
     # Generate data
-    costs = rand(min_cost:max_cost, n_ingredients)
-    attributes = rand(min_attr:0.01:max_attr, n_ingredients, n_attributes)
+    costs = rand(rng, min_cost:max_cost, n_ingredients)
+    attributes = rand(rng, min_attr:0.01:max_attr, n_ingredients, n_attributes)
 
     # Determine actual status
     solution_status = feasibility_status == feasible ? :feasible :
                      feasibility_status == infeasible ? :infeasible : :all
     actual_status = solution_status
     if solution_status == :all
-        actual_status = rand() < 0.5 ? :feasible : :infeasible
+        actual_status = rand(rng) < 0.5 ? :feasible : :infeasible
     end
 
     # Initialize
@@ -103,14 +103,14 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
         for i in primary_ingredients
             efficiency_weight = cost_efficiency[i] / sum(cost_efficiency[primary_ingredients])
             base_amount = primary_total * efficiency_weight
-            blend_amounts[i] = base_amount * (0.8 + rand() * 0.4)
+            blend_amounts[i] = base_amount * (0.8 + rand(rng) * 0.4)
         end
 
         secondary_total = min_blend_amount * 0.2
         secondary_ingredients = efficiency_order[(primary_count + 1):end]
         for i in secondary_ingredients
             if !isempty(secondary_ingredients)
-                blend_amounts[i] = secondary_total / length(secondary_ingredients) * (0.5 + rand())
+                blend_amounts[i] = secondary_total / length(secondary_ingredients) * (0.5 + rand(rng))
             end
         end
 
@@ -124,18 +124,18 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
         end
 
         # Set tight quality bounds
-        scenario = rand(1:3)
+        scenario = rand(rng, 1:3)
         tolerance_level = if scenario == 1
-            0.025 + rand() * 0.025
+            0.025 + rand(rng) * 0.025
         elseif scenario == 2
-            0.04 + rand() * 0.03
+            0.04 + rand(rng) * 0.03
         else
-            0.06 + rand() * 0.02
+            0.06 + rand(rng) * 0.02
         end
 
         for j in 1:n_attributes
             tolerance = tolerance_level
-            position_in_band = 0.6 + rand() * 0.2
+            position_in_band = 0.6 + rand(rng) * 0.2
 
             total_range = 2 * tolerance * achieved_qualities[j] / (1 - 2 * tolerance + 2 * tolerance * position_in_band)
             lower_bound = achieved_qualities[j] - total_range * position_in_band
@@ -150,38 +150,38 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
 
         for i in 1:n_ingredients
             if i in critical_ingredients
-                supply_limits[i] = blend_amounts[i] * (1.1 + rand() * 0.2)
+                supply_limits[i] = blend_amounts[i] * (1.1 + rand(rng) * 0.2)
             else
-                supply_limits[i] = blend_amounts[i] * (1.3 + rand() * 0.4)
+                supply_limits[i] = blend_amounts[i] * (1.3 + rand(rng) * 0.4)
             end
         end
 
         # Cost budget
         actual_cost = sum(costs[i] * blend_amounts[i] for i in 1:n_ingredients)
-        cost_pressure = rand(1:3)
+        cost_pressure = rand(rng, 1:3)
         if cost_pressure == 1
-            cost_budget = actual_cost * (1.06 + rand() * 0.06)
+            cost_budget = actual_cost * (1.06 + rand(rng) * 0.06)
         elseif cost_pressure == 2
-            cost_budget = actual_cost * (1.10 + rand() * 0.06)
+            cost_budget = actual_cost * (1.10 + rand(rng) * 0.06)
         else
-            cost_budget = actual_cost * (1.15 + rand() * 0.10)
+            cost_budget = actual_cost * (1.15 + rand(rng) * 0.10)
         end
 
         # Additional constraints
-        required_ingredients = randperm(n_ingredients)[1:max(1, div(n_ingredients, 4))]
+        required_ingredients = randperm(rng, n_ingredients)[1:max(1, div(n_ingredients, 4))]
         for i in required_ingredients
-            min_required = blend_amounts[i] * (0.7 + rand() * 0.2)
+            min_required = blend_amounts[i] * (0.7 + rand(rng) * 0.2)
             min_usage_required[i] = min_required
         end
 
-        limited_ingredients = randperm(n_ingredients)[1:max(1, div(n_ingredients, 3))]
+        limited_ingredients = randperm(rng, n_ingredients)[1:max(1, div(n_ingredients, 3))]
         for i in limited_ingredients
-            max_limit = blend_amounts[i] * (1.2 + rand() * 0.3)
+            max_limit = blend_amounts[i] * (1.2 + rand(rng) * 0.3)
             max_usage_limits[i] = max_limit
         end
 
     else  # :infeasible
-        scenario = rand(1:4)
+        scenario = rand(rng, 1:4)
 
         if scenario == 1
             # Supply shortage conflict
@@ -242,7 +242,7 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
                 min_total_cost = maximum(costs) * min_blend_amount
             end
 
-            cost_budget = min_total_cost * (0.6 + rand() * 0.3)
+            cost_budget = min_total_cost * (0.6 + rand(rng) * 0.3)
 
             for i in 1:n_ingredients
                 supply_limits[i] = min_blend_amount * 3.0
@@ -253,7 +253,7 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
             if n_attributes >= 2
                 for j in 1:min(n_attributes, 3)
                     max_possible = maximum(attributes[:, j])
-                    lower_bounds[j] = max(min_attr, max_possible * (0.98 + rand() * 0.02))
+                    lower_bounds[j] = max(min_attr, max_possible * (0.98 + rand(rng) * 0.02))
                     upper_bounds[j] = min(max_attr, lower_bounds[j] * 1.01)
                 end
 

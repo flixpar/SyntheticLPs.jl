@@ -26,11 +26,11 @@ end
 function TSPMultipleSalespersonsProblem(target_variables::Int,
                                         feasibility_status::FeasibilityStatus,
                                         seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
     n = max(5, round(Int, sqrt(target_variables + 1)))
     n_customers = n - 1
     max_fleet = min(6, max(2, fld(n_customers, 2)))
-    n_salespersons = rand(2:max_fleet)
+    n_salespersons = rand(rng, 2:max_fleet)
     quotient, remainder = divrem(n_customers, n_salespersons)
 
     if feasibility_status == infeasible
@@ -46,8 +46,8 @@ function TSPMultipleSalespersonsProblem(target_variables::Int,
         max_stops = min(n_customers, quotient + (remainder > 0) + 2)
     end
 
-    locations = _tsp_stops(n)
-    dist = _tsp_distance(locations)
+    locations = _tsp_stops(rng, n)
+    dist = _tsp_distance(rng, locations)
     return TSPMultipleSalespersonsProblem(
         n, n_salespersons, min_stops, max_stops, locations, dist,
     )

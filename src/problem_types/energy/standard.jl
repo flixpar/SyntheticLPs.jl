@@ -50,7 +50,7 @@ Construct an energy generation mix problem instance.
 - `seed`: Random seed for reproducibility
 """
 function EnergyProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Determine scale
     if target_variables < 250
@@ -101,29 +101,29 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
 
     # Sample parameters based on scale
     if scale == :small
-        renewable_fraction_target = rand(Beta(2, 3))
-        demand_variation = rand(Beta(2, 3))
-        peak_demand = rand(Uniform(peak_demand_range...))
-        base_generation_cost = rand(LogNormal(log(60.0), 0.4))
-        renewable_cost_factor = rand(Gamma(3, 0.4))
-        capacity_margin = max(1.15, min(1.6, rand(Normal(1.35, 0.08))))
-        emission_limit = rand(Beta(2, 2))
+        renewable_fraction_target = rand(rng, Beta(2, 3))
+        demand_variation = rand(rng, Beta(2, 3))
+        peak_demand = rand(rng, Uniform(peak_demand_range...))
+        base_generation_cost = rand(rng, LogNormal(log(60.0), 0.4))
+        renewable_cost_factor = rand(rng, Gamma(3, 0.4))
+        capacity_margin = max(1.15, min(1.6, rand(rng, Normal(1.35, 0.08))))
+        emission_limit = rand(rng, Beta(2, 2))
     elseif scale == :medium
-        renewable_fraction_target = rand(Beta(3, 4))
-        demand_variation = rand(Beta(3, 5))
-        peak_demand = rand(Uniform(peak_demand_range...))
-        base_generation_cost = rand(LogNormal(log(45.0), 0.3))
-        renewable_cost_factor = rand(Gamma(2.5, 0.35))
-        capacity_margin = max(1.1, min(1.5, rand(Normal(1.25, 0.05))))
-        emission_limit = rand(Beta(3, 3))
+        renewable_fraction_target = rand(rng, Beta(3, 4))
+        demand_variation = rand(rng, Beta(3, 5))
+        peak_demand = rand(rng, Uniform(peak_demand_range...))
+        base_generation_cost = rand(rng, LogNormal(log(45.0), 0.3))
+        renewable_cost_factor = rand(rng, Gamma(2.5, 0.35))
+        capacity_margin = max(1.1, min(1.5, rand(rng, Normal(1.25, 0.05))))
+        emission_limit = rand(rng, Beta(3, 3))
     else
-        renewable_fraction_target = rand(Beta(4, 5))
-        demand_variation = rand(Beta(4, 8))
-        peak_demand = rand(Uniform(peak_demand_range...))
-        base_generation_cost = rand(LogNormal(log(35.0), 0.25))
-        renewable_cost_factor = rand(Gamma(2, 0.3))
-        capacity_margin = max(1.05, min(1.3, rand(Normal(1.15, 0.04))))
-        emission_limit = rand(Beta(4, 6))
+        renewable_fraction_target = rand(rng, Beta(4, 5))
+        demand_variation = rand(rng, Beta(4, 8))
+        peak_demand = rand(rng, Uniform(peak_demand_range...))
+        base_generation_cost = rand(rng, LogNormal(log(35.0), 0.25))
+        renewable_cost_factor = rand(rng, Gamma(2, 0.3))
+        capacity_margin = max(1.05, min(1.3, rand(rng, Normal(1.15, 0.04))))
+        emission_limit = rand(rng, Beta(4, 6))
     end
 
     # Source types
@@ -147,8 +147,8 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
     n_renewables = min(n_renewables, length(renewable_indices))
     n_conventional = min(n_conventional, length(conventional_indices))
 
-    renewable_sources = source_types[sample(renewable_indices, n_renewables, replace=false)]
-    conventional_sources = source_types[sample(conventional_indices, n_conventional, replace=false)]
+    renewable_sources = source_types[sample(rng, renewable_indices, n_renewables, replace=false)]
+    conventional_sources = source_types[sample(rng, conventional_indices, n_conventional, replace=false)]
     selected_sources = vcat(renewable_sources, conventional_sources)
 
     sources = [s[1] for s in selected_sources]
@@ -163,13 +163,13 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
         end
 
         variation = if name in ["coal", "gas"]
-            rand(LogNormal(log(1.0), 0.15))
+            rand(rng, LogNormal(log(1.0), 0.15))
         elseif name == "nuclear"
-            rand(Normal(1.0, 0.08))
+            rand(rng, Normal(1.0, 0.08))
         elseif name in ["solar", "wind"]
-            rand(Gamma(8, 0.12))
+            rand(rng, Gamma(8, 0.12))
         else
-            rand(Normal(1.0, 0.12))
+            rand(rng, Normal(1.0, 0.12))
         end
 
         generation_costs[name] = base_cost * max(0.3, variation)
@@ -182,19 +182,19 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
     capacity_shares = Float64[]
     for (name, is_renewable, availability, capacity_factor, _) in selected_sources
         share = if name == "coal"
-            rand(Gamma(2, 0.25))
+            rand(rng, Gamma(2, 0.25))
         elseif name == "gas"
-            rand(Gamma(3, 0.15))
+            rand(rng, Gamma(3, 0.15))
         elseif name == "nuclear"
-            rand(Gamma(1.5, 0.4))
+            rand(rng, Gamma(1.5, 0.4))
         elseif name == "solar"
-            rand(Beta(2, 4))
+            rand(rng, Beta(2, 4))
         elseif name == "wind"
-            rand(Beta(3, 3))
+            rand(rng, Beta(3, 3))
         elseif name == "hydro"
-            rand(LogNormal(log(0.3), 0.6))
+            rand(rng, LogNormal(log(0.3), 0.6))
         else
-            rand(Beta(2, 5))
+            rand(rng, Beta(2, 5))
         end
 
         push!(capacity_shares, share)
@@ -228,10 +228,10 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
         for h in 1:24
             pattern_demand = base_demand + (peak_demand - base_demand) * hour_factors[h]
 
-            weather_effect = rand(Normal(1.0, 0.03))
-            economic_effect = rand(Normal(1.0, 0.02))
-            random_effect = rand(Normal(1.0, 0.025))
-            seasonal_effect = rand(Normal(1.0, 0.01))
+            weather_effect = rand(rng, Normal(1.0, 0.03))
+            economic_effect = rand(rng, Normal(1.0, 0.02))
+            random_effect = rand(rng, Normal(1.0, 0.025))
+            seasonal_effect = rand(rng, Normal(1.0, 0.01))
 
             total_effect = weather_effect * economic_effect * random_effect * seasonal_effect
             demand = pattern_demand * max(0.7, min(1.4, total_effect))
@@ -250,10 +250,10 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
 
             variability_scale = sqrt(24 / n_periods)
 
-            weather_effect = rand(Normal(1.0, 0.03 * variability_scale))
-            economic_effect = rand(Normal(1.0, 0.02 * variability_scale))
-            random_effect = rand(Normal(1.0, 0.025 * variability_scale))
-            seasonal_effect = rand(Normal(1.0, 0.01 * variability_scale))
+            weather_effect = rand(rng, Normal(1.0, 0.03 * variability_scale))
+            economic_effect = rand(rng, Normal(1.0, 0.02 * variability_scale))
+            random_effect = rand(rng, Normal(1.0, 0.025 * variability_scale))
+            seasonal_effect = rand(rng, Normal(1.0, 0.01 * variability_scale))
 
             total_effect = weather_effect * economic_effect * random_effect * seasonal_effect
             demand = pattern_demand * max(0.7, min(1.4, total_effect))
@@ -283,17 +283,17 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
                      feasibility_status == infeasible ? :infeasible : :all
     actual_status = solution_status
     if solution_status == :all
-        actual_status = rand() < 0.7 ? :feasible : :infeasible
+        actual_status = rand(rng) < 0.7 ? :feasible : :infeasible
     end
 
     renewable_fraction = renewable_fraction_target
 
     if actual_status == :infeasible
-        scenario = rand(1:4)
+        scenario = rand(rng, 1:4)
 
         if scenario == 1
             # Capacity crisis
-            reduction_factor = 0.6 + rand() * 0.2
+            reduction_factor = 0.6 + rand(rng) * 0.2
             target_total_capacity = peak_demand * reduction_factor
             current_total_capacity = sum(values(capacities))
             capacity_scale = target_total_capacity / current_total_capacity
@@ -304,13 +304,13 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
 
         elseif scenario == 2
             # Renewable intermittency
-            renewable_fraction = 0.7 + rand() * 0.2
+            renewable_fraction = 0.7 + rand(rng) * 0.2
 
             renewable_sources_list = [s for s in sources if emission_limits[s] == 0.0]
             total_renewable_capacity = sum(capacities[s] for s in renewable_sources_list)
 
             required_renewable_capacity = peak_demand * renewable_fraction
-            target_renewable_capacity = required_renewable_capacity * (0.4 + rand() * 0.2)
+            target_renewable_capacity = required_renewable_capacity * (0.4 + rand(rng) * 0.2)
 
             if total_renewable_capacity > 0
                 renewable_scale = target_renewable_capacity / total_renewable_capacity
@@ -321,7 +321,7 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
 
         elseif scenario == 3
             # Emission impossibility
-            new_emission_limit = emission_limit * (0.01 + rand() * 0.05)
+            new_emission_limit = emission_limit * (0.01 + rand(rng) * 0.05)
 
             for (name, is_renewable, _, _, _) in selected_sources
                 if !is_renewable && name != "nuclear"
@@ -332,7 +332,7 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
             clean_sources = [s for s in sources if emission_limits[s] == 0.0]
             total_clean_capacity = sum(capacities[s] for s in clean_sources)
 
-            target_clean_capacity = peak_demand * (0.5 + rand() * 0.2)
+            target_clean_capacity = peak_demand * (0.5 + rand(rng) * 0.2)
 
             if total_clean_capacity > target_clean_capacity
                 clean_scale = target_clean_capacity / total_clean_capacity
@@ -345,7 +345,7 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
             # Demand surge
             current_total_capacity = sum(values(capacities))
 
-            surge_factor = (current_total_capacity * (1.1 + rand() * 0.2)) / peak_demand
+            surge_factor = (current_total_capacity * (1.1 + rand(rng) * 0.2)) / peak_demand
 
             for i in 1:length(demands)
                 demands[i] *= surge_factor
@@ -432,10 +432,10 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
             remaining_demand <= 0 && break
         end
         minimum_intensity = minimum_emissions / max_demand
-        slack_fraction = rand(Uniform(0.05, 0.25))
+        slack_fraction = rand(rng, Uniform(0.05, 0.25))
         minimum_intensity + slack_fraction * (max_emission - minimum_intensity)
     else
-        max_emission * rand(Uniform(0.7, 0.95))
+        max_emission * rand(rng, Uniform(0.7, 0.95))
     end
 
     return EnergyProblem(n_sources, n_periods, sources, time_periods, generation_costs, capacities,

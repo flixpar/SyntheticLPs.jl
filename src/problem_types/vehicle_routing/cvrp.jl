@@ -115,7 +115,7 @@ So `N ≈ round(sqrt(target_variables / 2))` (clamped to `N ≥ 3`). For
 - `unknown`: a natural instance, biased toward feasible but not forced.
 """
 function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
     # total = 2 * (N + 1) * N  ≈ 2 * N^2  for large N  =>  N ≈ sqrt(target / 2).
@@ -124,40 +124,40 @@ function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatu
     # --- Scale-tiered parameter ranges ---
     total_vars = 2 * (N + 1) * N
     if total_vars <= 250
-        grid_size = rand(40.0:5.0:120.0)
+        grid_size = rand(rng, 40.0:5.0:120.0)
         demand_lo, demand_hi = 5.0, 45.0
-        cost_per_km = rand(0.8:0.1:1.8)
-        n_clusters = rand(2:3)
+        cost_per_km = rand(rng, 0.8:0.1:1.8)
+        n_clusters = rand(rng, 2:3)
     elseif total_vars <= 1000
-        grid_size = rand(100.0:20.0:300.0)
+        grid_size = rand(rng, 100.0:20.0:300.0)
         demand_lo, demand_hi = 10.0, 90.0
-        cost_per_km = rand(1.0:0.1:2.5)
-        n_clusters = rand(3:5)
+        cost_per_km = rand(rng, 1.0:0.1:2.5)
+        n_clusters = rand(rng, 3:5)
     else
-        grid_size = rand(250.0:50.0:700.0)
+        grid_size = rand(rng, 250.0:50.0:700.0)
         demand_lo, demand_hi = 20.0, 200.0
-        cost_per_km = rand(1.5:0.2:3.5)
-        n_clusters = rand(5:8)
+        cost_per_km = rand(rng, 1.5:0.2:3.5)
+        n_clusters = rand(rng, 5:8)
     end
 
     # --- Depot near grid center ---
-    depot_location = (grid_size * (0.4 + 0.2 * rand()), grid_size * (0.4 + 0.2 * rand()))
+    depot_location = (grid_size * (0.4 + 0.2 * rand(rng)), grid_size * (0.4 + 0.2 * rand(rng)))
 
     # --- Customers clustered into a few neighborhoods ---
-    cluster_centers = [(grid_size * rand(), grid_size * rand()) for _ in 1:n_clusters]
+    cluster_centers = [(grid_size * rand(rng), grid_size * rand(rng)) for _ in 1:n_clusters]
     cluster_spread = grid_size / (2.5 * n_clusters)
     customer_locations = Tuple{Float64,Float64}[]
     for _ in 1:N
-        center = rand(cluster_centers)
-        x = clamp(center[1] + randn() * cluster_spread, 0.0, grid_size)
-        y = clamp(center[2] + randn() * cluster_spread, 0.0, grid_size)
+        center = rand(rng, cluster_centers)
+        x = clamp(center[1] + randn(rng) * cluster_spread, 0.0, grid_size)
+        y = clamp(center[2] + randn(rng) * cluster_spread, 0.0, grid_size)
         push!(customer_locations, (x, y))
     end
 
     # --- Log-normal demands (few large shipments, many small) ---
     log_mean = log(sqrt(demand_lo * demand_hi))
     log_std = log(demand_hi / demand_lo) / 4
-    demands = [clamp(exp(rand(Normal(log_mean, log_std))), demand_lo, demand_hi) for _ in 1:N]
+    demands = [clamp(exp(rand(rng, Normal(log_mean, log_std))), demand_lo, demand_hi) for _ in 1:N]
     demands = round.(demands, digits=2)
 
     total_demand = sum(demands)
@@ -165,14 +165,14 @@ function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatu
     max_demand = maximum(demands)
 
     # --- Vehicle capacity: a vehicle serves ~3-6 customers on average ---
-    serve_count = 3.0 + 3.0 * rand()           # 3..6 customers per vehicle
+    serve_count = 3.0 + 3.0 * rand(rng)           # 3..6 customers per vehicle
     vehicle_capacity = avg_demand * serve_count
     # Every single customer must fit in a vehicle (for feasible/unknown).
     vehicle_capacity = max(vehicle_capacity, max_demand * 1.1)
     vehicle_capacity = round(vehicle_capacity, digits=2)
 
     # --- Fleet size: enough vehicles to cover demand, clamped to N ---
-    slack = 1.15 + 0.15 * rand()               # 1.15 .. 1.30
+    slack = 1.15 + 0.15 * rand(rng)               # 1.15 .. 1.30
     n_vehicles = max(2, ceil(Int, total_demand / vehicle_capacity * slack))
     n_vehicles = min(n_vehicles, N)            # require K <= N
 
@@ -188,7 +188,7 @@ function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatu
             b = all_locs[j]
             d = sqrt((a[1] - b[1])^2 + (a[2] - b[2])^2)
             # small asymmetric per-arc variation for realism
-            dist[i, j] = round(d * cost_per_km * (0.95 + 0.1 * rand()), digits=2)
+            dist[i, j] = round(d * cost_per_km * (0.95 + 0.1 * rand(rng)), digits=2)
         end
     end
 
@@ -220,7 +220,7 @@ function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatu
         # LP relaxation because depot net-outflow = total_demand but is bounded
         # by Q * K. (Some individual demands may exceed Q, which only reinforces
         # infeasibility.)
-        overload = 1.1 + 0.2 * rand()          # 1.10 .. 1.30
+        overload = 1.1 + 0.2 * rand(rng)          # 1.10 .. 1.30
         target_total = n_vehicles * vehicle_capacity * overload
         scale = target_total / total_demand
         demands = round.(demands .* scale, digits=2)
