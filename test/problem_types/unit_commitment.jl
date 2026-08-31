@@ -203,3 +203,16 @@ const UNIT_COMMITMENT_REF = "unit_commitment/standard"
         @info "HiGHS unavailable; skipping unit-commitment solve checks"
     end
 end
+
+@testset "Unit Commitment Feasibility Contracts" begin
+    if HAS_HIGHS
+        # unit_commitment/standard feasible-request: previously ~8% came back
+        # infeasible (documented heuristic). The optimizer guard rejects those.
+        for s in 1:10
+            m, _ = generate_problem("unit_commitment/standard", 120, feasible, s;
+                                    optimizer = HiGHS.Optimizer)
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            @test termination_status(m) == MOI.OPTIMAL
+        end
+    end
+end

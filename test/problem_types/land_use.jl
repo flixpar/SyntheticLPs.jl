@@ -223,3 +223,10 @@ end
         end
     end
 end
+
+# The smallest formulations used to crash with an empty-range rand when
+# n_parcels == 2.
+@testset "Land Use Tiny Target Robustness" begin
+    @test_nowarn generate_problem("land_use/standard", 3, unknown, 1)
+    @test_nowarn generate_problem("land_use/standard", 4, unknown, 1)
+end
