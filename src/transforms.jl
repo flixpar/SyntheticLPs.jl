@@ -43,3 +43,88 @@ function bounds_to_constraints!(model::Model)
     end
     return model
 end
+
+"""
+    dualize_model(model) -> Model
+
+Return a new JuMP model containing the conic dual of the continuous `model`.
+The input model is not modified. Dual variables and constraints are named from
+their corresponding primal constraints and variables using the prefixes
+`dual_var_` and `dual_con_`.
+
+Integer and binary variables must be relaxed before dualization because a
+mixed-integer problem has no LP/conic dual. [`generate_problem`](@ref) does this
+automatically with its default `relax_integer=true`; direct callers can use
+JuMP's `relax_integrality` first.
+"""
+function dualize_model(model::Model)
+    discrete_variables = [x for x in all_variables(model) if is_binary(x) || is_integer(x)]
+    if !isempty(discrete_variables)
+        throw(ArgumentError(
+            "Cannot dualize a model with integer or binary variables. " *
+            "Call `relax_integrality(model)` first, or generate the model with " *
+            "`relax_integer=true`.",
+        ))
+    end
+
+    # Dualization does not accept ranged affine rows directly. Split each
+    # interval into its equivalent lower and upper inequalities on a copy so
+    # the caller's primal remains untouched.
+    dualization_input = _split_affine_intervals(model)
+    dual = Dualization.dualize(
+        dualization_input;
+        dual_names = Dualization.DualNames("dual_var_", "dual_con_"),
+    )
+    dual.ext[:SyntheticLPs_dual_reformulation] = true
+    return dual
+end
+
+function _split_affine_intervals(model::Model)
+    interval_type = MOI.Interval{Float64}
+    isempty(all_constraints(model, AffExpr, interval_type)) && return model
+
+    reformulated = copy(model)
+    for constraint in all_constraints(reformulated, AffExpr, interval_type)
+        object = constraint_object(constraint)
+        base_name = name(constraint)
+        delete(reformulated, constraint)
+
+        lower = @constraint(reformulated, object.func >= object.set.lower)
+        upper = @constraint(reformulated, object.func <= object.set.upper)
+        if !isempty(base_name)
+            set_name(lower, base_name * "_lower")
+            set_name(upper, base_name * "_upper")
+        end
+    end
+    return reformulated
+end
+
+"""
+    dual_reformulation(model) -> Model
+
+Alias for [`dualize_model`](@ref).
+"""
+dual_reformulation(model::Model) = dualize_model(model)
+
+"""
+    is_dual_reformulation(model) -> Bool
+
+Return whether `model` was produced by [`dualize_model`](@ref), including when
+dualization was selected probabilistically by [`generate_random_problem`](@ref).
+"""
+is_dual_reformulation(model::Model) =
+    get(model.ext, :SyntheticLPs_dual_reformulation, false)::Bool
+
+function _validate_dualize_probability(probability::Real)
+    0 <= probability <= 1 || throw(ArgumentError(
+        "dualize_probability must be between 0 and 1 (got $probability).",
+    ))
+    return Float64(probability)
+end
+
+function _should_dualize(rng::AbstractRNG, force::Bool, probability::Float64)
+    force && return true
+    probability == 0.0 && return false
+    probability == 1.0 && return true
+    return rand(rng) < probability
+end

@@ -4,6 +4,31 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-31 (dual reformulation)
+
+**Summary**: Added an opt-in dual reformulation for generated LPs and raised the
+minimum supported Julia version to 1.11.
+
+**Details**:
+
+- Added `dualize_model(model)` and its `dual_reformulation(model)` alias. The
+  transform returns a new, named dual model, rejects integer/binary variables,
+  and non-destructively splits ranged affine rows before dualization.
+- Added `dualize=false` across `generate_problem`, `generate_random_problem`,
+  and `generate_dataset`, plus `--dualize` to both CLI scripts. Random and dataset
+  generation also accept `dualize_probability=0.0` (CLI:
+  `--dualize-probability`) for reproducible per-instance formulation diversity;
+  the zero default keeps the transformation disabled. `GeneratedInstance` and
+  manifest entries record each sampled choice; `is_dual_reformulation(model)`
+  exposes the choice for individual models. Dataset size matching,
+  materialization, and quality filtering describe the model actually returned.
+- Feasibility-contract verification remains attached to the source primal,
+  because an infeasible primal may have either an infeasible or unbounded dual.
+- Added Dualization 0.7 as a dependency, set `julia = "1.11"`, and documented the
+  new package floor.
+- Added structural, ranged-row, integration, manifest, and strong-duality tests.
+  `Pkg.test()` passes all 156,542 assertions.
+
 ## 2026-08-31 04:42 UTC (remaining per-category tests moved out of runtests.jl)
 
 **Previous Commit**: `700fc60`

@@ -11,6 +11,8 @@
 #   julia --project=@. scripts/generate_problem.jl knapsack 50 --feasible --solve
 #   julia --project=@. scripts/generate_problem.jl diet_problem 100 --infeasible
 #   julia --project=@. scripts/generate_problem.jl knapsack 50 --bounds-to-constraints
+#   julia --project=@. scripts/generate_problem.jl transportation 100 --dualize
+#   julia --project=@. scripts/generate_problem.jl random 100 --dualize-probability=0.5
 #   julia --project=@. scripts/generate_problem.jl list
 
 using Pkg
@@ -30,12 +32,15 @@ output_file = nothing
 feasibility_status = unknown
 seed = 0
 bounds_to_constraints = false
+dualize = false
+dualize_probability = 0.0
 
 # Parse optional arguments. `global` is required because this loop runs at the
 # script's top level (soft scope), so assignments would otherwise create locals
 # and silently leave these globals at their defaults.
 for arg in ARGS[3:end]
-    global feasibility_status, seed, output_file, bounds_to_constraints
+    global feasibility_status, seed, output_file, bounds_to_constraints, dualize,
+           dualize_probability
     if arg == "--solve"
         # Handled later
     elseif arg == "--feasible"
@@ -46,6 +51,10 @@ for arg in ARGS[3:end]
         feasibility_status = unknown
     elseif arg == "--bounds-to-constraints"
         bounds_to_constraints = true
+    elseif arg == "--dualize"
+        dualize = true
+    elseif startswith(arg, "--dualize-probability=")
+        dualize_probability = parse(Float64, split(arg, "=", limit = 2)[2])
     elseif startswith(arg, "--seed=")
         seed = parse(Int, split(arg, "=")[2])
     elseif !startswith(arg, "--")
@@ -67,9 +76,19 @@ if problem_arg == "list"
 elseif problem_arg == "random"
     println("Generating a random problem targeting ~$target_variables variables")
     println("Feasibility status: $feasibility_status")
-    model, selected_ref, problem = generate_random_problem(target_variables; feasibility_status=feasibility_status, bounds_to_constraints=bounds_to_constraints, seed=seed)
+    model, selected_ref, problem = generate_random_problem(
+        target_variables;
+        feasibility_status = feasibility_status,
+        bounds_to_constraints = bounds_to_constraints,
+        dualize = dualize,
+        dualize_probability = dualize_probability,
+        seed = seed,
+    )
     println("Problem selected: $selected_ref")
+    println("Dual reformulation: $(is_dual_reformulation(model))")
 else
+    dualize_probability == 0.0 ||
+        error("--dualize-probability is only valid when problem is `random`.")
     # Accept a category (default variant) or an explicit `category/variant`.
     parts = split(problem_arg, '/')
     if length(parts) > 2
@@ -93,7 +112,11 @@ else
 
     println("Generating $ref problem targeting ~$target_variables variables")
     println("Feasibility status: $feasibility_status")
-    model, problem = generate_problem(ref, target_variables, feasibility_status, seed; bounds_to_constraints=bounds_to_constraints)
+    model, problem = generate_problem(
+        ref, target_variables, feasibility_status, seed;
+        bounds_to_constraints = bounds_to_constraints,
+        dualize = dualize,
+    )
 end
 
 # Print summary
