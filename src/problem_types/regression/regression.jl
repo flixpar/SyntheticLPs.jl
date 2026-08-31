@@ -15,7 +15,7 @@ using Random
 using Distributions
 
 """
-    generate_regression_data(n_features, n_samples, feasibility_status)
+    generate_regression_data(rng, n_features, n_samples, feasibility_status)
 
 Generate the shared data for a constrained regression LP: a dense design matrix
 `X` (n_samples × n_features), a response `y`, per-coefficient box bounds
@@ -32,20 +32,20 @@ controlled through the side constraint relative to the coefficient box:
 
 Returns a `NamedTuple` `(X, y, beta_lower, beta_upper, side_coef, side_rhs)`.
 """
-function generate_regression_data(n_features::Int, n_samples::Int,
+function generate_regression_data(rng::AbstractRNG, n_features::Int, n_samples::Int,
                                   feasibility_status::FeasibilityStatus)
     n = n_features
     m = n_samples
 
     # Ground-truth coefficients and a dense Gaussian design matrix.
-    true_beta = rand(Uniform(-2.0, 2.0), n)
-    X = rand(Normal(0.0, 1.0), m, n)
-    noise = rand(Normal(0.0, rand(Uniform(0.1, 0.5))), m)
+    true_beta = rand(rng, Uniform(-2.0, 2.0), n)
+    X = rand(rng, Normal(0.0, 1.0), m, n)
+    noise = rand(rng, Normal(0.0, rand(rng, Uniform(0.1, 0.5))), m)
     y = X * true_beta .+ noise
 
     # Coefficient box bounds, generous around the truth so the unconstrained
     # optimum is interior (keeps the feasible/unknown cases realistic).
-    half_width = rand(Uniform(3.0, 6.0), n)
+    half_width = rand(rng, Uniform(3.0, 6.0), n)
     beta_lower = true_beta .- half_width
     beta_upper = true_beta .+ half_width
 
@@ -57,13 +57,13 @@ function generate_regression_data(n_features::Int, n_samples::Int,
 
     actual_status = feasibility_status
     if feasibility_status == unknown
-        actual_status = rand() < 0.7 ? feasible : infeasible
+        actual_status = rand(rng) < 0.7 ? feasible : infeasible
     end
 
     if actual_status == feasible
-        side_rhs = lo + rand(Uniform(0.4, 0.9)) * span
+        side_rhs = lo + rand(rng, Uniform(0.4, 0.9)) * span
     else
-        side_rhs = lo - rand(Uniform(1.0, 3.0))     # strictly below the minimum sum
+        side_rhs = lo - rand(rng, Uniform(1.0, 3.0))     # strictly below the minimum sum
     end
 
     return (X = X, y = y, beta_lower = beta_lower, beta_upper = beta_upper,

@@ -179,14 +179,14 @@ function nurse_early_shift_indices(n_shifts::Int)
     return indices
 end
 
-function sample_nurse_types(n_nurses::Int, scenario::Symbol)
+function sample_nurse_types(rng::AbstractRNG, n_nurses::Int, scenario::Symbol)
     probs = scenario == :small ? [0.55, 0.18, 0.17, 0.10] :
             scenario == :medium ? [0.5, 0.2, 0.2, 0.1] :
             [0.48, 0.27, 0.18, 0.07]
     types = [:core, :float_pool, :part_time, :day_only]
     assignments = Vector{Symbol}(undef, n_nurses)
     for n in 1:n_nurses
-        r = rand()
+        r = rand(rng)
         cumulative = 0.0
         for (idx, p) in enumerate(probs)
             cumulative += p
@@ -199,37 +199,37 @@ function sample_nurse_types(n_nurses::Int, scenario::Symbol)
     return assignments
 end
 
-function sample_nurse_base_rates(nurse_types::Vector{Symbol}, scenario::Symbol)
+function sample_nurse_base_rates(rng::AbstractRNG, nurse_types::Vector{Symbol}, scenario::Symbol)
     base_range = scenario == :small ? (32.0, 45.0) :
                  scenario == :medium ? (35.0, 52.0) :
                  (38.0, 60.0)
     rates = zeros(Float64, length(nurse_types))
     for (idx, t) in enumerate(nurse_types)
         premium = t == :float_pool ? 1.08 : t == :part_time ? 0.95 : 1.0
-        rates[idx] = rand(Uniform(base_range[1], base_range[2])) * premium
+        rates[idx] = rand(rng, Uniform(base_range[1], base_range[2])) * premium
     end
     return rates
 end
 
-function sample_nurse_skill_matrix(n_nurses::Int, n_skills::Int, scenario::Symbol)
+function sample_nurse_skill_matrix(rng::AbstractRNG, n_nurses::Int, n_skills::Int, scenario::Symbol)
     skills = zeros(Int, n_nurses, n_skills)
     skills[:, 1] .= 1  # every nurse has the base skill
     base_prob = scenario == :small ? 0.25 : scenario == :medium ? 0.32 : 0.4
     for n in 1:n_nurses
         for k in 2:n_skills
-            prob = base_prob * rand(Uniform(0.8, 1.2))
-            if rand() < min(0.95, prob)
+            prob = base_prob * rand(rng, Uniform(0.8, 1.2))
+            if rand(rng) < min(0.95, prob)
                 skills[n, k] = 1
             end
         end
         if n_skills > 1 && all(skills[n, 2:end] .== 0)
-            idx = rand(2:n_skills)
+            idx = rand(rng, 2:n_skills)
             skills[n, idx] = 1
         end
     end
     for k in 2:n_skills
         if all(skills[:, k] .== 0)
-            idx = rand(1:n_nurses)
+            idx = rand(rng, 1:n_nurses)
             skills[idx, k] = 1
         end
     end
@@ -237,6 +237,7 @@ function sample_nurse_skill_matrix(n_nurses::Int, n_skills::Int, scenario::Symbo
 end
 
 function build_nurse_availability(
+    rng::AbstractRNG,
     n_nurses::Int, n_days::Int, n_shifts::Int,
     shift_labels::Vector{Symbol}, nurse_types::Vector{Symbol},
     night_qualified::Vector{Bool},
@@ -247,7 +248,7 @@ function build_nurse_availability(
         "(got $n_nurses)"))
     availability = zeros(Int, n_nurses, n_days, n_shifts)
     for n in 1:n_nurses
-        base_density = rand(Beta(7, 2))
+        base_density = rand(rng, Beta(7, 2))
         for d in 1:n_days
             weekend_flag = is_nurse_weekend(d)
             for s in 1:n_shifts
@@ -269,7 +270,7 @@ function build_nurse_availability(
                     prob *= 0.8
                 end
                 prob = clamp(prob, 0.02, 0.98)
-                availability[n, d, s] = rand() < prob ? 1 : 0
+                availability[n, d, s] = rand(rng) < prob ? 1 : 0
             end
         end
     end
@@ -286,7 +287,7 @@ function build_nurse_availability(
         needed = NURSE_MIN_AVAILABLE_PER_SHIFT - current
         needed <= 0 && continue
         pool = [n for n in 1:n_nurses if availability[n, d, s] == 0]
-        for idx in pool[randperm(length(pool))[1:needed]]
+        for idx in pool[randperm(rng, length(pool))[1:needed]]
             availability[idx, d, s] = 1
         end
     end
@@ -299,7 +300,7 @@ function build_nurse_availability(
     if !isempty(night_pool)
         for d in 1:n_days, s in 1:n_shifts
             if shift_labels[s] == :night && !any(availability[n, d, s] == 1 for n in night_pool)
-                availability[night_pool[rand(1:length(night_pool))], d, s] = 1
+                availability[night_pool[rand(rng, 1:length(night_pool))], d, s] = 1
             end
         end
     end
@@ -307,6 +308,7 @@ function build_nurse_availability(
 end
 
 function build_base_nurse_demand(
+    rng::AbstractRNG,
     n_days::Int, n_shifts::Int, n_nurses::Int,
     shift_labels::Vector{Symbol}, scenario::Symbol,
 )
@@ -319,7 +321,7 @@ function build_base_nurse_demand(
             label = shift_labels[s]
             shift_factor = label == :day ? 1.1 : label == :night ? 0.7 : 0.9
             base = n_nurses * avg_ratio * season * weekend_factor * shift_factor
-            noise = rand(Uniform(0.85, 1.15))
+            noise = rand(rng, Uniform(0.85, 1.15))
             demand[d, s] = max(1, round(Int, base * noise))
         end
         total_day = sum(demand[d, :])
@@ -331,7 +333,7 @@ function build_base_nurse_demand(
     return demand
 end
 
-function select_nurse(candidates::Vector{Int}, assigned_total::Vector{Int}, targets::Vector{Int})
+function select_nurse(rng::AbstractRNG, candidates::Vector{Int}, assigned_total::Vector{Int}, targets::Vector{Int})
     best_score = -typemax(Int)
     best = candidates[1]
     for n in candidates
@@ -339,7 +341,7 @@ function select_nurse(candidates::Vector{Int}, assigned_total::Vector{Int}, targ
         if score == best_score
             if assigned_total[n] < assigned_total[best]
                 best = n
-            elseif assigned_total[n] == assigned_total[best] && rand() < 0.5
+            elseif assigned_total[n] == assigned_total[best] && rand(rng) < 0.5
                 best = n
             end
         elseif score > best_score
@@ -355,6 +357,7 @@ end
 # pattern is used to set demand/skill/labor parameters so that a feasible point
 # provably exists.
 function build_nurse_assignments(
+    rng::AbstractRNG,
     base_demand::Matrix{Int},
     availability::Array{Int,3},
     shift_labels::Vector{Symbol},
@@ -404,7 +407,7 @@ function build_nurse_assignments(
                 if isempty(eligible)
                     break
                 end
-                chosen = select_nurse(eligible, assigned_total, target_totals)
+                chosen = select_nurse(rng, eligible, assigned_total, target_totals)
                 assignments[chosen, d, s] = 1
                 worked_today[chosen] = true
                 assigned_total[chosen] += 1
@@ -432,7 +435,7 @@ function build_nurse_assignments(
                     end
                 end
                 if !isempty(fallback)
-                    chosen = select_nurse(fallback, assigned_total, target_totals)
+                    chosen = select_nurse(rng, fallback, assigned_total, target_totals)
                     assignments[chosen, d, s] = 1
                     worked_today[chosen] = true
                     assigned_total[chosen] += 1
@@ -462,7 +465,7 @@ end
 # A slot the heuristic could not staff (coverage 0 — e.g. a night slot with no available
 # qualified nurse) gets demand 0; forcing it to >= 1 would make the requested-feasible
 # instance infeasible, since demand must never exceed the achievable coverage.
-function finalize_nurse_demand(assignments::Array{Int,3})
+function finalize_nurse_demand(rng::AbstractRNG, assignments::Array{Int,3})
     _, n_days, n_shifts = size(assignments)
     demand = zeros(Int, n_days, n_shifts)
     for d in 1:n_days, s in 1:n_shifts
@@ -470,7 +473,7 @@ function finalize_nurse_demand(assignments::Array{Int,3})
         if coverage == 0
             continue
         end
-        slack = rand(Uniform(0.85, 0.98))
+        slack = rand(rng, Uniform(0.85, 0.98))
         demand[d, s] = max(1, min(coverage, round(Int, coverage * slack)))
     end
     return demand
@@ -547,21 +550,21 @@ function build_nurse_weekend_bounds(weekend_counts::Vector{Int})
     return bounds
 end
 
-function build_nurse_target_totals(n_nurses::Int, n_days::Int, nurse_types::Vector{Symbol})
+function build_nurse_target_totals(rng::AbstractRNG, n_nurses::Int, n_days::Int, nurse_types::Vector{Symbol})
     targets = zeros(Int, n_nurses)
     for n in 1:n_nurses
-        ratio = nurse_types[n] == :core ? rand(Uniform(0.65, 0.9)) :
-                nurse_types[n] == :float_pool ? rand(Uniform(0.55, 0.8)) :
-                nurse_types[n] == :part_time ? rand(Uniform(0.3, 0.6)) :
-                rand(Uniform(0.4, 0.55))
+        ratio = nurse_types[n] == :core ? rand(rng, Uniform(0.65, 0.9)) :
+                nurse_types[n] == :float_pool ? rand(rng, Uniform(0.55, 0.8)) :
+                nurse_types[n] == :part_time ? rand(rng, Uniform(0.3, 0.6)) :
+                rand(rng, Uniform(0.4, 0.55))
         targets[n] = max(1, min(n_days, round(Int, ratio * n_days)))
     end
     return targets
 end
 
-function build_nurse_night_qualification(nurse_types::Vector{Symbol}, shift_labels::Vector{Symbol})
+function build_nurse_night_qualification(rng::AbstractRNG, nurse_types::Vector{Symbol}, shift_labels::Vector{Symbol})
     has_night = any(label -> label == :night, shift_labels)
-    quals = [has_night && nurse_types[n] != :day_only && rand() < 0.8 for n in 1:length(nurse_types)]
+    quals = [has_night && nurse_types[n] != :day_only && rand(rng) < 0.8 for n in 1:length(nurse_types)]
     if has_night && all(!q for q in quals)
         idx = findfirst(t -> t != :day_only, nurse_types)
         if idx === nothing
@@ -572,19 +575,19 @@ function build_nurse_night_qualification(nurse_types::Vector{Symbol}, shift_labe
     return quals
 end
 
-function build_nurse_consecutive_limits(n_nurses::Int, n_days::Int, nurse_types::Vector{Symbol})
+function build_nurse_consecutive_limits(rng::AbstractRNG, n_nurses::Int, n_days::Int, nurse_types::Vector{Symbol})
     limits = zeros(Int, n_nurses)
     for n in 1:n_nurses
-        base = nurse_types[n] == :core ? rand(3:5) : nurse_types[n] == :float_pool ? rand(2:4) : rand(2:3)
+        base = nurse_types[n] == :core ? rand(rng, 3:5) : nurse_types[n] == :float_pool ? rand(rng, 2:4) : rand(rng, 2:3)
         limits[n] = min(max(2, base), n_days)
     end
     return limits
 end
 
-function build_nurse_rest_requirements(n_nurses::Int, night_qualified::Vector{Bool})
+function build_nurse_rest_requirements(rng::AbstractRNG, n_nurses::Int, night_qualified::Vector{Bool})
     rest = zeros(Int, n_nurses)
     for n in 1:n_nurses
-        rest[n] = night_qualified[n] ? rand(1:2) : 0
+        rest[n] = night_qualified[n] ? rand(rng, 1:2) : 0
     end
     return rest
 end
@@ -623,11 +626,11 @@ function finalize_nurse_shift_bounds(assigned_total::Vector{Int}, n_days::Int)
     return min_shifts, max_shifts
 end
 
-function build_nurse_night_limits(night_counts::Vector{Int}, night_qualified::Vector{Bool})
+function build_nurse_night_limits(rng::AbstractRNG, night_counts::Vector{Int}, night_qualified::Vector{Bool})
     limits = zeros(Int, length(night_counts))
     for n in 1:length(night_counts)
         if night_qualified[n]
-            limits[n] = night_counts[n] + (night_counts[n] == 0 ? 1 : rand(0:1))
+            limits[n] = night_counts[n] + (night_counts[n] == 0 ? 1 : rand(rng, 0:1))
         else
             limits[n] = 0
         end
@@ -640,15 +643,16 @@ end
 # bounded above by 1, the skill-mix row is violated by any point of the LP relaxation as
 # well, so the instance is infeasible for both model classes. Returns the certificate.
 function inject_nurse_infeasibility!(
+    rng::AbstractRNG,
     demand::Matrix{Int},
     skill_requirements::Array{Int,3},
     nurse_skills::Matrix{Int},
 )
     n_days, n_shifts = size(demand)
     n_skills = size(nurse_skills, 2)
-    day = rand(1:n_days)
-    shift = rand(1:n_shifts)
-    skill = n_skills > 1 ? rand(2:n_skills) : 1
+    day = rand(rng, 1:n_days)
+    shift = rand(rng, 1:n_shifts)
+    skill = n_skills > 1 ? rand(rng, 2:n_skills) : 1
     available = sum(nurse_skills[:, skill])
     skill_requirements[day, shift, skill] = available + 1
     demand[day, shift] = min(size(nurse_skills, 1), demand[day, shift] + max(1, available))
@@ -691,9 +695,9 @@ Every `(day, shift)` slot is guaranteed to have at least `min_available_per_shif
 - `seed`: Random seed for reproducibility
 """
 function NurseSchedulingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
-    actual_status = feasibility_status == unknown ? (rand() < 0.5 ? feasible : infeasible) : feasibility_status
+    actual_status = feasibility_status == unknown ? (rand(rng) < 0.5 ? feasible : infeasible) : feasibility_status
 
     n_nurses, n_days, n_shifts = select_nurse_dimensions(target_variables)
     total_shifts = n_days * n_shifts
@@ -703,17 +707,18 @@ function NurseSchedulingProblem(target_variables::Int, feasibility_status::Feasi
     weekend_days = [d for d in 1:n_days if is_nurse_weekend(d)]
     scenario = actual_vars <= 600 ? :small : actual_vars <= 4000 ? :medium : :large
 
-    nurse_types = sample_nurse_types(n_nurses, scenario)
-    base_rates = sample_nurse_base_rates(nurse_types, scenario)
-    nurse_skills = sample_nurse_skill_matrix(n_nurses, scenario == :large ? 4 : 3, scenario)
-    night_qualified = build_nurse_night_qualification(nurse_types, shift_labels)
-    rest_after_night = build_nurse_rest_requirements(n_nurses, night_qualified)
-    max_consecutive_days = build_nurse_consecutive_limits(n_nurses, n_days, nurse_types)
-    availability = build_nurse_availability(n_nurses, n_days, n_shifts, shift_labels, nurse_types, night_qualified)
-    base_demand = build_base_nurse_demand(n_days, n_shifts, n_nurses, shift_labels, scenario)
-    target_totals = build_nurse_target_totals(n_nurses, n_days, nurse_types)
+    nurse_types = sample_nurse_types(rng, n_nurses, scenario)
+    base_rates = sample_nurse_base_rates(rng, nurse_types, scenario)
+    nurse_skills = sample_nurse_skill_matrix(rng, n_nurses, scenario == :large ? 4 : 3, scenario)
+    night_qualified = build_nurse_night_qualification(rng, nurse_types, shift_labels)
+    rest_after_night = build_nurse_rest_requirements(rng, n_nurses, night_qualified)
+    max_consecutive_days = build_nurse_consecutive_limits(rng, n_nurses, n_days, nurse_types)
+    availability = build_nurse_availability(rng, n_nurses, n_days, n_shifts, shift_labels, nurse_types, night_qualified)
+    base_demand = build_base_nurse_demand(rng, n_days, n_shifts, n_nurses, shift_labels, scenario)
+    target_totals = build_nurse_target_totals(rng, n_nurses, n_days, nurse_types)
 
     assignments, assigned_total, night_counts, weekend_counts = build_nurse_assignments(
+        rng,
         base_demand,
         availability,
         shift_labels,
@@ -727,17 +732,17 @@ function NurseSchedulingProblem(target_variables::Int, feasibility_status::Feasi
     observed = observed_nurse_consecutive_days(assignments)
     max_consecutive_days = max.(max_consecutive_days, observed)
 
-    demand = finalize_nurse_demand(assignments)
+    demand = finalize_nurse_demand(rng, assignments)
     skill_requirements = compute_nurse_skill_requirements(demand, assignments, nurse_skills, scenario)
     min_shifts, max_shifts = finalize_nurse_shift_bounds(assigned_total, n_days)
     weekend_bounds = build_nurse_weekend_bounds(weekend_counts)
-    night_limits = build_nurse_night_limits(night_counts, night_qualified)
+    night_limits = build_nurse_night_limits(rng, night_counts, night_qualified)
     costs = build_nurse_cost_tensor(base_rates, n_days, n_shifts, shift_labels, weekend_days, nurse_types)
 
     witness = nothing
     certificate = nothing
     if actual_status == infeasible
-        certificate = inject_nurse_infeasibility!(demand, skill_requirements, nurse_skills)
+        certificate = inject_nurse_infeasibility!(rng, demand, skill_requirements, nurse_skills)
     else
         # The planted roster satisfies every row of the integer model: coverage and skill
         # requirements are capped at what it achieves, availability gated its choices, and

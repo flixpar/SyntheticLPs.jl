@@ -52,13 +52,13 @@ Variables: x[i, j] (lane flows). Total = n_sources * n_destinations, sized to
 - `seed`: Random seed for reproducibility
 """
 function EmissionConstrainedTransportationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
     # Var-count formula: total variables = n_sources * n_destinations.
     # Size n_sources ~ sqrt(target) and n_destinations to hit the target product.
     sqrt_target = sqrt(target_variables)
-    ratio = 0.5 + rand() * 1.0  # ratio between 0.5 and 1.5
+    ratio = 0.5 + rand(rng) * 1.0  # ratio between 0.5 and 1.5
 
     n_sources = max(2, round(Int, sqrt_target * ratio))
     n_destinations = max(2, round(Int, target_variables / n_sources))
@@ -82,29 +82,29 @@ function EmissionConstrainedTransportationProblem(target_variables::Int, feasibi
     # --- Scale-dependent parameter ranges ---
     total_vars = n_sources * n_destinations
     if total_vars <= 250
-        supply_range = (rand(50:100), rand(200:500))
-        demand_range = (rand(30:80), rand(150:300))
-        cost_range = (rand(5.0:0.5:15.0), rand(25.0:0.5:60.0))
+        supply_range = (rand(rng, 50:100), rand(rng, 200:500))
+        demand_range = (rand(rng, 30:80), rand(rng, 150:300))
+        cost_range = (rand(rng, 5.0:0.5:15.0), rand(rng, 25.0:0.5:60.0))
     elseif total_vars <= 1000
-        supply_range = (rand(100:500), rand(1000:5000))
-        demand_range = (rand(80:300), rand(800:3000))
-        cost_range = (rand(10.0:0.5:30.0), rand(50.0:0.5:150.0))
+        supply_range = (rand(rng, 100:500), rand(rng, 1000:5000))
+        demand_range = (rand(rng, 80:300), rand(rng, 800:3000))
+        cost_range = (rand(rng, 10.0:0.5:30.0), rand(rng, 50.0:0.5:150.0))
     else
-        supply_range = (rand(500:2000), rand(5000:50000))
-        demand_range = (rand(300:1500), rand(3000:30000))
-        cost_range = (rand(20.0:0.5:100.0), rand(100.0:0.5:500.0))
+        supply_range = (rand(rng, 500:2000), rand(rng, 5000:50000))
+        demand_range = (rand(rng, 300:1500), rand(rng, 3000:30000))
+        cost_range = (rand(rng, 20.0:0.5:100.0), rand(rng, 100.0:0.5:500.0))
     end
 
     # --- Base supplies and demands ---
     min_supply, max_supply = supply_range
-    supplies = rand(min_supply:max_supply, n_sources)
+    supplies = rand(rng, min_supply:max_supply, n_sources)
 
     min_demand, max_demand = demand_range
-    demands = rand(min_demand:max_demand, n_destinations)
+    demands = rand(rng, min_demand:max_demand, n_destinations)
 
     # --- Geographic positions for distance-based costs and emissions ---
-    source_positions = [(rand() * 100.0, rand() * 100.0) for _ in 1:n_sources]
-    dest_positions = [(rand() * 100.0, rand() * 100.0) for _ in 1:n_destinations]
+    source_positions = [(rand(rng) * 100.0, rand(rng) * 100.0) for _ in 1:n_sources]
+    dest_positions = [(rand(rng) * 100.0, rand(rng) * 100.0) for _ in 1:n_destinations]
 
     distances = zeros(n_sources, n_destinations)
     for i in 1:n_sources, j in 1:n_destinations
@@ -119,20 +119,20 @@ function EmissionConstrainedTransportationProblem(target_variables::Int, feasibi
     costs = zeros(n_sources, n_destinations)
     for i in 1:n_sources, j in 1:n_destinations
         base_cost = min_cost + distances[i, j] * cost_per_distance
-        costs[i, j] = base_cost * (0.8 + 0.4 * rand())
+        costs[i, j] = base_cost * (0.8 + 0.4 * rand(rng))
     end
 
     # --- Emission rates: proportional to distance with vehicle-type variation ---
     # Ensure a strictly positive floor so emissions scale with shipped volume.
     emission_rates = zeros(n_sources, n_destinations)
     for i in 1:n_sources, j in 1:n_destinations
-        emission_rates[i, j] = (distances[i, j] + 1.0) * rand(Uniform(0.01, 0.05))
+        emission_rates[i, j] = (distances[i, j] + 1.0) * rand(rng, Uniform(0.01, 0.05))
     end
 
     # --- Resolve feasibility status ---
     actual_status = feasibility_status
     if feasibility_status == unknown
-        actual_status = rand() < 0.7 ? feasible : infeasible
+        actual_status = rand(rng) < 0.7 ? feasible : infeasible
     end
 
     # Helper: distribute integer additions across a vector
@@ -140,12 +140,12 @@ function EmissionConstrainedTransportationProblem(target_variables::Int, feasibi
         if amount <= 0
             return
         end
-        w = rand(length(vec))
+        w = rand(rng, length(vec))
         w_sum = sum(w)
         base = floor.(Int, (w ./ w_sum) .* amount)
         remainder = amount - sum(base)
         if remainder > 0
-            for idx in randperm(length(vec))[1:min(remainder, length(vec))]
+            for idx in randperm(rng, length(vec))[1:min(remainder, length(vec))]
                 base[idx] += 1
             end
         end
@@ -220,7 +220,7 @@ function EmissionConstrainedTransportationProblem(target_variables::Int, feasibi
         # Use the achievable greedy-flow emissions inflated by a comfortable
         # margin so the feasible point provably satisfies the budget.
         base_ref = ref_ok ? ref_emissions : maximum(emission_rates) * sum(demands)
-        emission_limit = base_ref * rand(Uniform(1.3, 2.0))
+        emission_limit = base_ref * rand(rng, Uniform(1.3, 2.0))
     end
 
     return EmissionConstrainedTransportationProblem(

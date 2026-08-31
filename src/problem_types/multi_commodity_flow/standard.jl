@@ -55,10 +55,10 @@ For multi-commodity flow: target_variables = n_commodities × n_arcs
 We optimize for realistic combinations of commodities and arcs that yield the target.
 """
 function MultiCommodityFlow(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Sample parameters based on target_variables
-    params = sample_parameters_mcf(target_variables, seed)
+    params = sample_parameters_mcf(rng, target_variables)
 
     n_nodes = params[:n_nodes]
     n_arcs = params[:n_arcs]
@@ -74,7 +74,7 @@ function MultiCommodityFlow(target_variables::Int, feasibility_status::Feasibili
     end
 
     # Generate network topology ensuring connectivity
-    arcs = generate_connected_mcf_network(n_nodes, n_arcs)
+    arcs = generate_connected_mcf_network(rng, n_nodes, n_arcs)
 
     # Generate arc capacities using log-normal distribution for realism
     min_capacity, max_capacity = capacity_range
@@ -87,13 +87,13 @@ function MultiCommodityFlow(target_variables::Int, feasibility_status::Feasibili
 
     for arc in arcs
         # Generate capacity with log-normal distribution
-        capacity = exp(rand(Normal(log_mean, log_std)))
+        capacity = exp(rand(rng, Normal(log_mean, log_std)))
         capacity = clamp(capacity, min_capacity, max_capacity)
         capacities[arc] = round(capacity, digits=2)
     end
 
     # Generate commodity source-sink pairs ensuring diversity
-    commodities = generate_commodity_pairs(n_nodes, n_commodities, arcs)
+    commodities = generate_commodity_pairs(rng, n_nodes, n_commodities, arcs)
 
     # Generate commodity demands using log-normal distribution
     # (realistic: some high-demand commodities, many lower-demand ones)
@@ -104,7 +104,7 @@ function MultiCommodityFlow(target_variables::Int, feasibility_status::Feasibili
     log_demand_std = log(max_demand / min_demand) / 3
 
     for k in 1:n_commodities
-        demand = exp(rand(Normal(log_demand_mean, log_demand_std)))
+        demand = exp(rand(rng, Normal(log_demand_mean, log_demand_std)))
         demand = clamp(demand, min_demand, max_demand)
         demands[k] = round(demand, digits=2)
     end
@@ -114,7 +114,7 @@ function MultiCommodityFlow(target_variables::Int, feasibility_status::Feasibili
     costs = Dict{Tuple{Int,Int},Float64}()
 
     for arc in arcs
-        base_cost = rand() * (max_cost - min_cost) + min_cost
+        base_cost = rand(rng) * (max_cost - min_cost) + min_cost
         # Add congestion factor based on capacity (lower capacity = higher cost)
         congestion_factor = 1.0 + 0.3 * (1.0 - (capacities[arc] - min_capacity) / (max_capacity - min_capacity))
         costs[arc] = round(base_cost * congestion_factor, digits=2)
@@ -146,13 +146,13 @@ function MultiCommodityFlow(target_variables::Int, feasibility_status::Feasibili
             source, sink = commodities[k]
             if !has_path(arcs, source, sink, n_nodes)
                 # Add a direct or indirect path
-                new_arcs = create_path(source, sink, arcs, n_nodes)
+                new_arcs = create_path(rng, source, sink, arcs, n_nodes)
                 for new_arc in new_arcs
                     if new_arc ∉ arcs
                         push!(arcs, new_arc)
                         # Add capacity and cost for new arc
-                        capacities[new_arc] = round(rand() * (max_capacity - min_capacity) + min_capacity, digits=2)
-                        costs[new_arc] = round(rand() * (max_cost - min_cost) + min_cost, digits=2)
+                        capacities[new_arc] = round(rand(rng) * (max_capacity - min_capacity) + min_capacity, digits=2)
+                        costs[new_arc] = round(rand(rng) * (max_cost - min_cost) + min_cost, digits=2)
                     end
                 end
             end
@@ -160,22 +160,22 @@ function MultiCommodityFlow(target_variables::Int, feasibility_status::Feasibili
 
     elseif solution_status == :infeasible
         # Create infeasibility by reducing capacity or increasing demand
-        if rand() < 0.5
+        if rand(rng) < 0.5
             # Option 1: Reduce arc capacities to create bottleneck
-            scale_factor = rand(Uniform(0.3, 0.7))  # Reduce to 30-70% of current
+            scale_factor = rand(rng, Uniform(0.3, 0.7))  # Reduce to 30-70% of current
             for arc in arcs
                 capacities[arc] = round(capacities[arc] * scale_factor, digits=2)
             end
         else
             # Option 2: Increase demands beyond network capacity
-            scale_factor = rand(Uniform(1.5, 2.5))  # Increase to 150-250%
+            scale_factor = rand(rng, Uniform(1.5, 2.5))  # Increase to 150-250%
             for k in 1:n_commodities
                 demands[k] = round(demands[k] * scale_factor, digits=2)
             end
         end
 
         # Add targeted disruptions so at least one commodity cannot be satisfied
-        enforce_infeasibility_mcf!(commodities, arcs, capacities, demands)
+        enforce_infeasibility_mcf!(rng, commodities, arcs, capacities, demands)
     end
     # else :all - keep natural randomness
 
@@ -243,7 +243,7 @@ end
 # Helper functions
 
 """
-    sample_parameters_mcf(target_variables::Int, seed::Int)
+    sample_parameters_mcf(rng::AbstractRNG, target_variables::Int)
 
 Sample realistic parameters for a multi-commodity flow problem targeting approximately
 the specified number of variables.
@@ -251,8 +251,7 @@ the specified number of variables.
 For multi-commodity flow: target_variables = n_commodities × n_arcs
 We optimize for realistic combinations of commodities and arcs that yield the target.
 """
-function sample_parameters_mcf(target_variables::Int, seed::Int)
-    Random.seed!(seed)
+function sample_parameters_mcf(rng::AbstractRNG, target_variables::Int)
 
     params = Dict{Symbol,Any}()
 
@@ -325,11 +324,11 @@ function sample_parameters_mcf(target_variables::Int, seed::Int)
     if best_error > 0.1
         # Use square root heuristic
         if target_variables <= 100
-            n_commodities = rand(2:5)
+            n_commodities = rand(rng, 2:5)
         elseif target_variables <= 500
-            n_commodities = rand(5:15)
+            n_commodities = rand(rng, 5:15)
         else
-            n_commodities = rand(10:50)
+            n_commodities = rand(rng, 10:50)
         end
 
         target_arcs = round(Int, target_variables / n_commodities)
@@ -375,23 +374,23 @@ function sample_parameters_mcf(target_variables::Int, seed::Int)
 
     # Capacity utilization: higher for smaller problems (more efficient), lower for larger (more complex)
     params[:capacity_utilization] = if target_variables <= 100
-        rand(Uniform(0.6, 0.8))
+        rand(rng, Uniform(0.6, 0.8))
     elseif target_variables <= 500
-        rand(Uniform(0.5, 0.7))
+        rand(rng, Uniform(0.5, 0.7))
     else
-        rand(Uniform(0.4, 0.6))
+        rand(rng, Uniform(0.4, 0.6))
     end
 
     return params
 end
 
 """
-    generate_connected_mcf_network(n_nodes::Int, n_arcs::Int)
+    generate_connected_mcf_network(rng::AbstractRNG, n_nodes::Int, n_arcs::Int)
 
 Generate a connected directed network with the specified number of nodes and arcs.
 Ensures strong connectivity for multi-commodity flow.
 """
-function generate_connected_mcf_network(n_nodes::Int, n_arcs::Int)
+function generate_connected_mcf_network(rng::AbstractRNG, n_nodes::Int, n_arcs::Int)
     arcs = Set{Tuple{Int,Int}}()
 
     # Create a cycle to ensure strong connectivity (every node can reach every other node)
@@ -403,7 +402,7 @@ function generate_connected_mcf_network(n_nodes::Int, n_arcs::Int)
     # Add some reverse arcs for bidirectional flow
     n_reverse = min(n_nodes ÷ 2, max(0, n_arcs - n_nodes))
     reverse_candidates = [((i % n_nodes) + 1, i) for i in 1:n_nodes]
-    shuffle!(reverse_candidates)
+    shuffle!(rng, reverse_candidates)
 
     for i in 1:min(n_reverse, length(reverse_candidates))
         arc = (reverse_candidates[i][1], reverse_candidates[i][2])
@@ -419,8 +418,8 @@ function generate_connected_mcf_network(n_nodes::Int, n_arcs::Int)
             break
         end
         # Create shortcuts between distant nodes
-        i = rand(1:n_nodes)
-        j = (i + rand(2:max(2, n_nodes-1))) % n_nodes + 1
+        i = rand(rng, 1:n_nodes)
+        j = (i + rand(rng, 2:max(2, n_nodes-1))) % n_nodes + 1
         arc = (i, j)
         if arc ∉ arcs && i != j
             push!(arcs, arc)
@@ -431,7 +430,7 @@ function generate_connected_mcf_network(n_nodes::Int, n_arcs::Int)
     all_possible_arcs = [(i, j) for i in 1:n_nodes for j in 1:n_nodes if i != j]
     remaining_arcs = [arc for arc in all_possible_arcs if arc ∉ arcs]
 
-    shuffle!(remaining_arcs)
+    shuffle!(rng, remaining_arcs)
     for arc in remaining_arcs
         if length(arcs) >= n_arcs
             break
@@ -443,12 +442,12 @@ function generate_connected_mcf_network(n_nodes::Int, n_arcs::Int)
 end
 
 """
-    generate_commodity_pairs(n_nodes::Int, n_commodities::Int, arcs::Vector{Tuple{Int,Int}})
+    generate_commodity_pairs(rng::AbstractRNG, n_nodes::Int, n_commodities::Int, arcs::Vector{Tuple{Int,Int}})
 
 Generate diverse source-sink pairs for commodities.
 Ensures variety in distances and different traffic patterns.
 """
-function generate_commodity_pairs(n_nodes::Int, n_commodities::Int, arcs::Vector{Tuple{Int,Int}})
+function generate_commodity_pairs(rng::AbstractRNG, n_nodes::Int, n_commodities::Int, arcs::Vector{Tuple{Int,Int}})
     commodities = Vector{Tuple{Int,Int}}()
     used_pairs = Set{Tuple{Int,Int}}()
 
@@ -456,17 +455,17 @@ function generate_commodity_pairs(n_nodes::Int, n_commodities::Int, arcs::Vector
         # Try to find a unique source-sink pair
         max_attempts = 100
         for attempt in 1:max_attempts
-            source = rand(1:n_nodes)
+            source = rand(rng, 1:n_nodes)
 
             # Choose sink with varying distances for realism
             # Mix of short-haul (nearby) and long-haul (distant) commodities
-            if rand() < 0.4  # 40% short-haul
+            if rand(rng) < 0.4  # 40% short-haul
                 # Nearby destination (within 30% of network)
-                offset = rand(1:max(1, n_nodes ÷ 3))
+                offset = rand(rng, 1:max(1, n_nodes ÷ 3))
                 sink = ((source + offset - 1) % n_nodes) + 1
             else  # 60% long-haul
                 # More distant destination
-                offset = rand((n_nodes ÷ 3):n_nodes)
+                offset = rand(rng, (n_nodes ÷ 3):n_nodes)
                 sink = ((source + offset - 1) % n_nodes) + 1
             end
 
@@ -480,8 +479,8 @@ function generate_commodity_pairs(n_nodes::Int, n_commodities::Int, arcs::Vector
 
     # If we couldn't generate enough unique pairs, just create simple pairs
     while length(commodities) < n_commodities
-        source = rand(1:n_nodes)
-        sink = rand(1:n_nodes)
+        source = rand(rng, 1:n_nodes)
+        sink = rand(rng, 1:n_nodes)
         if source != sink
             push!(commodities, (source, sink))
         end
@@ -529,18 +528,18 @@ function has_path(arcs::Vector{Tuple{Int,Int}}, source::Int, sink::Int, n_nodes:
 end
 
 """
-    create_path(source::Int, sink::Int, existing_arcs::Vector{Tuple{Int,Int}}, n_nodes::Int)
+    create_path(rng::AbstractRNG, source::Int, sink::Int, existing_arcs::Vector{Tuple{Int,Int}}, n_nodes::Int)
 
 Create a simple path from source to sink.
 """
-function create_path(source::Int, sink::Int, existing_arcs::Vector{Tuple{Int,Int}}, n_nodes::Int)
+function create_path(rng::AbstractRNG, source::Int, sink::Int, existing_arcs::Vector{Tuple{Int,Int}}, n_nodes::Int)
     # Create a simple 1 or 2-hop path
-    if rand() < 0.5
+    if rand(rng) < 0.5
         # Direct path
         return [(source, sink)]
     else
         # 2-hop path through intermediate node
-        intermediate = rand(1:n_nodes)
+        intermediate = rand(rng, 1:n_nodes)
         if intermediate != source && intermediate != sink
             return [(source, intermediate), (intermediate, sink)]
         else
@@ -550,13 +549,14 @@ function create_path(source::Int, sink::Int, existing_arcs::Vector{Tuple{Int,Int
 end
 
 """
-    enforce_infeasibility_mcf!(commodities, arcs, capacities, demands)
+    enforce_infeasibility_mcf!(rng, commodities, arcs, capacities, demands)
 
 Introduce bottlenecks so that at least one commodity cannot satisfy its demand.
 Keeps randomness by selecting different commodities and disruption styles while
 guaranteeing an infeasible configuration.
 """
 function enforce_infeasibility_mcf!(
+    rng::AbstractRNG,
     commodities::Vector{Tuple{Int,Int}},
     arcs::Vector{Tuple{Int,Int}},
     capacities::Dict{Tuple{Int,Int},Float64},
@@ -566,26 +566,26 @@ function enforce_infeasibility_mcf!(
         return
     end
 
-    commodity_indices = shuffle(collect(eachindex(commodities)))
+    commodity_indices = shuffle(rng, collect(eachindex(commodities)))
     max_targets = max(1, min(length(commodity_indices), 3))
-    n_targets = rand(1:max_targets)
+    n_targets = rand(rng, 1:max_targets)
     selected = commodity_indices[1:n_targets]
 
     success = false
 
     for idx in selected
-        choice = rand()
+        choice = rand(rng)
         if choice < 0.45
-            success |= enforce_source_bottleneck!(idx, commodities, arcs, capacities, demands)
+            success |= enforce_source_bottleneck!(rng, idx, commodities, arcs, capacities, demands)
         elseif choice < 0.9
-            success |= enforce_sink_bottleneck!(idx, commodities, arcs, capacities, demands)
+            success |= enforce_sink_bottleneck!(rng, idx, commodities, arcs, capacities, demands)
         else
-            source_hit = enforce_source_bottleneck!(idx, commodities, arcs, capacities, demands)
-            sink_hit = enforce_sink_bottleneck!(idx, commodities, arcs, capacities, demands)
+            source_hit = enforce_source_bottleneck!(rng, idx, commodities, arcs, capacities, demands)
+            sink_hit = enforce_sink_bottleneck!(rng, idx, commodities, arcs, capacities, demands)
             success |= (source_hit || sink_hit)
         end
 
-        if success && rand() < 0.6
+        if success && rand(rng) < 0.6
             break
         end
     end
@@ -593,20 +593,21 @@ function enforce_infeasibility_mcf!(
     if !success
         # Deterministic fallback: cripple the first commodity
         idx = commodity_indices[1]
-        source_hit = enforce_source_bottleneck!(idx, commodities, arcs, capacities, demands)
-        sink_hit = enforce_sink_bottleneck!(idx, commodities, arcs, capacities, demands)
+        source_hit = enforce_source_bottleneck!(rng, idx, commodities, arcs, capacities, demands)
+        sink_hit = enforce_sink_bottleneck!(rng, idx, commodities, arcs, capacities, demands)
         success = source_hit || sink_hit
 
         if !success
             # As a last resort, inflate demand beyond total network capacity
             total_capacity = sum(values(capacities))
-            boost = total_capacity <= 0 ? 50.0 : total_capacity * rand(Uniform(1.2, 1.6))
+            boost = total_capacity <= 0 ? 50.0 : total_capacity * rand(rng, Uniform(1.2, 1.6))
             demands[idx] = round(max(demands[idx], boost), digits=2)
         end
     end
 end
 
 function enforce_source_bottleneck!(
+    rng::AbstractRNG,
     commodity_index::Int,
     commodities::Vector{Tuple{Int,Int}},
     arcs::Vector{Tuple{Int,Int}},
@@ -626,11 +627,11 @@ function enforce_source_bottleneck!(
     end
 
     target_total = min(
-        demands[commodity_index] * rand(Uniform(0.1, 0.6)),
-        current_total * rand(Uniform(0.15, 0.5))
+        demands[commodity_index] * rand(rng, Uniform(0.1, 0.6)),
+        current_total * rand(rng, Uniform(0.15, 0.5))
     )
 
-    redistribute_capacity!(outgoing, capacities, target_total)
+    redistribute_capacity!(rng, outgoing, capacities, target_total)
 
     new_total = sum(capacities[arc] for arc in outgoing)
     if new_total <= 1e-6
@@ -638,7 +639,7 @@ function enforce_source_bottleneck!(
     end
 
     if new_total >= demands[commodity_index]
-        scale = min(0.95, (demands[commodity_index] * rand(Uniform(0.2, 0.6))) / new_total)
+        scale = min(0.95, (demands[commodity_index] * rand(rng, Uniform(0.2, 0.6))) / new_total)
         for arc in outgoing
             capacities[arc] = round(capacities[arc] * scale, digits=2)
         end
@@ -649,6 +650,7 @@ function enforce_source_bottleneck!(
 end
 
 function enforce_sink_bottleneck!(
+    rng::AbstractRNG,
     commodity_index::Int,
     commodities::Vector{Tuple{Int,Int}},
     arcs::Vector{Tuple{Int,Int}},
@@ -668,11 +670,11 @@ function enforce_sink_bottleneck!(
     end
 
     target_total = min(
-        demands[commodity_index] * rand(Uniform(0.1, 0.6)),
-        current_total * rand(Uniform(0.15, 0.5))
+        demands[commodity_index] * rand(rng, Uniform(0.1, 0.6)),
+        current_total * rand(rng, Uniform(0.15, 0.5))
     )
 
-    redistribute_capacity!(incoming, capacities, target_total)
+    redistribute_capacity!(rng, incoming, capacities, target_total)
 
     new_total = sum(capacities[arc] for arc in incoming)
     if new_total <= 1e-6
@@ -680,7 +682,7 @@ function enforce_sink_bottleneck!(
     end
 
     if new_total >= demands[commodity_index]
-        scale = min(0.95, (demands[commodity_index] * rand(Uniform(0.2, 0.6))) / new_total)
+        scale = min(0.95, (demands[commodity_index] * rand(rng, Uniform(0.2, 0.6))) / new_total)
         for arc in incoming
             capacities[arc] = round(capacities[arc] * scale, digits=2)
         end
@@ -691,6 +693,7 @@ function enforce_sink_bottleneck!(
 end
 
 function redistribute_capacity!(
+    rng::AbstractRNG,
     arc_subset::Vector{Tuple{Int,Int}},
     capacities::Dict{Tuple{Int,Int},Float64},
     target_total::Float64
@@ -712,7 +715,7 @@ function redistribute_capacity!(
         return
     end
 
-    weights = rand(Dirichlet(fill(1.5, length(arc_subset))))
+    weights = rand(rng, Dirichlet(fill(1.5, length(arc_subset))))
     for (arc, weight) in zip(arc_subset, weights)
         capacities[arc] = round(min(capacities[arc], target_total * weight), digits=2)
     end

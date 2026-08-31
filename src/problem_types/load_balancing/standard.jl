@@ -51,7 +51,7 @@ Construct a load balancing problem instance.
 - `seed`: Random seed for reproducibility
 """
 function LoadBalancingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Scale-dependent magnitude ranges (capacities/demands only).
     if target_variables <= 250
@@ -77,8 +77,8 @@ function LoadBalancingProblem(target_variables::Int, feasibility_status::Feasibi
     connected = [1]
     remaining = collect(2:n_nodes)
     while !isempty(remaining)
-        from = rand(connected)
-        idx = rand(1:length(remaining))
+        from = rand(rng, connected)
+        idx = rand(rng, 1:length(remaining))
         to = remaining[idx]
         deleteat!(remaining, idx)
         push!(links, (from, to))
@@ -86,25 +86,25 @@ function LoadBalancingProblem(target_variables::Int, feasibility_status::Feasibi
         push!(connected, to)
     end
     links = unique(links)
-    extras = shuffle!([a for a in possible_links if !(a in links)])
+    extras = shuffle!(rng, [a for a in possible_links if !(a in links)])
     for a in extras
         length(links) >= n_links && break
         push!(links, a)
     end
 
     # Capacities (truncated normal).
-    min_cap = max(10.0, rand(truncated(Normal(capacity_mean * 0.3, capacity_std * 0.2), 10.0, capacity_mean)))
-    max_cap = min_cap + rand(truncated(Normal(capacity_mean * 1.2, capacity_std), capacity_mean * 0.5, capacity_mean * 3.0))
+    min_cap = max(10.0, rand(rng, truncated(Normal(capacity_mean * 0.3, capacity_std * 0.2), 10.0, capacity_mean)))
+    max_cap = min_cap + rand(rng, truncated(Normal(capacity_mean * 1.2, capacity_std), capacity_mean * 0.5, capacity_mean * 3.0))
     cap_dist = truncated(Normal((min_cap + max_cap) / 2, (max_cap - min_cap) / 6), min_cap, max_cap)
-    capacities = Dict(a => rand(cap_dist) for a in links)
+    capacities = Dict(a => rand(rng, cap_dist) for a in links)
 
     # Demands: a random set of (source, target) => amount pairs.
-    n_demands = max(1, round(Int, n_nodes * (n_nodes - 1) * rand(Uniform(0.3, 0.7))))
-    demand_pairs = unique([(rand(1:n_nodes), rand(1:n_nodes)) for _ in 1:n_demands])
+    n_demands = max(1, round(Int, n_nodes * (n_nodes - 1) * rand(rng, Uniform(0.3, 0.7))))
+    demand_pairs = unique([(rand(rng, 1:n_nodes), rand(rng, 1:n_nodes)) for _ in 1:n_demands])
     filter!(p -> p[1] != p[2], demand_pairs)
 
-    dmin = max(1.0, rand(truncated(Normal(demand_mean * 0.2, demand_std * 0.1), 1.0, demand_mean * 0.5)))
-    dmax = dmin + rand(truncated(Normal(demand_mean * 0.8, demand_std), demand_mean * 0.3, demand_mean * 2.0))
+    dmin = max(1.0, rand(rng, truncated(Normal(demand_mean * 0.2, demand_std * 0.1), 1.0, demand_mean * 0.5)))
+    dmax = dmin + rand(rng, truncated(Normal(demand_mean * 0.8, demand_std), demand_mean * 0.3, demand_mean * 2.0))
     dmean = (dmin + dmax) / 2
     dscale = max((dmax - dmin) / 6, 1e-6)
     dshape = max(dmean / dscale, 1.0)
@@ -112,7 +112,7 @@ function LoadBalancingProblem(target_variables::Int, feasibility_status::Feasibi
 
     demands = Dict{Tuple{Int,Int},Float64}()
     for p in demand_pairs
-        demands[p] = rand(demand_dist)
+        demands[p] = rand(rng, demand_dist)
     end
 
     # Net injection per node (supply at sources, withdrawal at sinks).
@@ -122,7 +122,7 @@ function LoadBalancingProblem(target_variables::Int, feasibility_status::Feasibi
         net_injection[t] -= amount
     end
 
-    actual_status = feasibility_status == unknown ? (rand() < 0.7 ? feasible : infeasible) : feasibility_status
+    actual_status = feasibility_status == unknown ? (rand(rng) < 0.7 ? feasible : infeasible) : feasibility_status
 
     if actual_status == feasible
         # Keep the optimal utilization realistic: every net-source node's outgoing
@@ -132,7 +132,7 @@ function LoadBalancingProblem(target_variables::Int, feasibility_status::Feasibi
                 out_links = [a for a in links if a[1] == n]
                 isempty(out_links) && continue
                 out_cap = sum(capacities[a] for a in out_links)
-                needed = net_injection[n] * (1.5 + 0.5 * rand())
+                needed = net_injection[n] * (1.5 + 0.5 * rand(rng))
                 if out_cap < needed
                     scale = needed / max(out_cap, 1e-6)
                     for a in out_links
@@ -147,7 +147,7 @@ function LoadBalancingProblem(target_variables::Int, feasibility_status::Feasibi
         # the node must emit its net injection). Independent of u, so it cannot be
         # "solved away" by growing utilization.
         sources = [n for n in 1:n_nodes if net_injection[n] > 0]
-        n = rand(sources)
+        n = rand(rng, sources)
         for a in links
             if a[1] == n
                 capacities[a] = 0.0

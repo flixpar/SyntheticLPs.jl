@@ -121,6 +121,13 @@ SyntheticLPs uses a type-based dispatch system for generating realistic linear p
   - A `register_variant(:category, :variant, VariantStruct, "description")` call (which lazily creates the category if needed)
 - Structs store ALL data needed to build the model (costs, capacities, demands, etc.)
 - Constructors contain ALL randomness; `build_model` is completely deterministic
+- Randomness comes from a constructor-local `rng = MersenneTwister(seed)`, never
+  from `Random.seed!` and the global stream (which would clobber the caller's
+  RNG and is not thread-safe). Every draw passes it explicitly — `rand(rng, …)`,
+  `randn(rng)`, `shuffle(rng, …)`, `sample(rng, …)` — and any helper a
+  constructor calls takes it as its first parameter, `helper(rng::AbstractRNG, …)`.
+  The `Global RNG Isolation` testset in `test/runtests.jl` enforces this across
+  every registered variant.
 - `supply_chain/network_planning` is capped at a documented 1,000,000-variable
   target because each sparse shipment coordinate is represented in multiple
   dictionaries and JuMP structures; larger targets raise `ArgumentError`
@@ -190,7 +197,8 @@ register_variant(:category, :standard, VariantStruct, "Description")
 ### Key Design Principles
 
 1. **Separation of Concerns**: Randomness (constructor) vs. determinism (build_model)
-2. **Reproducibility**: Same seed → identical problem instance → identical model
+2. **Reproducibility**: Same seed → identical problem instance → identical model,
+   independent of the caller's global RNG state or concurrent generation
 3. **Feasibility Control**: Generators can produce guaranteed feasible/infeasible problems
 4. **Type Safety**: Each problem is a distinct type with its own data structure
 5. **Dispatch**: Use Julia's multiple dispatch for clean, extensible interface
@@ -299,6 +307,7 @@ integer schedules.
 
 Key principles:
 - Struct stores ALL generated data needed to build the model
-- Constructor contains ALL randomness and parameter sampling
+- Constructor contains ALL randomness and parameter sampling, drawn from a local
+  `MersenneTwister(seed)` threaded explicitly into every helper
 - `build_model` must be completely deterministic (no RNG calls)
 - Handle all three feasibility statuses appropriately

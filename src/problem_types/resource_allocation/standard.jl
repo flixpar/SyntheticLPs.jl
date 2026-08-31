@@ -41,20 +41,20 @@ Construct a resource allocation problem instance.
 - `seed`: Random seed for reproducibility
 """
 function ResourceAllocationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # For resource allocation, variables = n_activities
     n_activities = max(3, min(2000, target_variables))
-    n_resources = rand(2:50)
-    min_resource = rand(50:1000)
-    max_resource = rand(200:10000)
-    min_profit = rand(0.1:0.1:2.0)
-    max_profit = rand(5.0:5.0:100.0)
-    min_usage = rand(0.01:0.01:0.5)
-    max_usage = rand(1.0:1.0:20.0)
-    correlation_strength = rand(0.5:0.1:0.9)
-    add_min_constraints = rand() < 0.7
-    min_level_prob = rand(0.2:0.1:0.5)
+    n_resources = rand(rng, 2:50)
+    min_resource = rand(rng, 50:1000)
+    max_resource = rand(rng, 200:10000)
+    min_profit = rand(rng, 0.1:0.1:2.0)
+    max_profit = rand(rng, 5.0:5.0:100.0)
+    min_usage = rand(rng, 0.01:0.01:0.5)
+    max_usage = rand(rng, 1.0:1.0:20.0)
+    correlation_strength = rand(rng, 0.5:0.1:0.9)
+    add_min_constraints = rand(rng) < 0.7
+    min_level_prob = rand(rng, 0.2:0.1:0.5)
 
     # Override for infeasible case
     solution_status = feasibility_status == feasible ? :feasible :
@@ -64,10 +64,10 @@ function ResourceAllocationProblem(target_variables::Int, feasibility_status::Fe
     end
 
     # Generate quality factors
-    quality_factors = rand(n_activities)
+    quality_factors = rand(rng, n_activities)
 
     # Generate profits correlated with quality
-    base_profit = rand(n_activities) .* (max_profit - min_profit) .+ min_profit
+    base_profit = rand(rng, n_activities) .* (max_profit - min_profit) .+ min_profit
     quality_profit = quality_factors .* (max_profit - min_profit)
     profits = base_profit + correlation_strength * quality_profit
 
@@ -76,7 +76,7 @@ function ResourceAllocationProblem(target_variables::Int, feasibility_status::Fe
 
     for i in 1:n_activities
         for j in 1:n_resources
-            base_usage = rand() * (max_usage - min_usage) + min_usage
+            base_usage = rand(rng) * (max_usage - min_usage) + min_usage
             quality_usage = quality_factors[i] * (max_usage - min_usage)
             usage[i, j] = base_usage + correlation_strength * quality_usage
         end
@@ -114,15 +114,15 @@ function ResourceAllocationProblem(target_variables::Int, feasibility_status::Fe
     if solution_status == :all
         # Original stochastic construction
         expected_usage = sum(usage, dims=1) / n_activities
-        resources = vec(expected_usage) .* rand(n_resources) .* n_activities ./ 2
+        resources = vec(expected_usage) .* rand(rng, n_resources) .* n_activities ./ 2
         resources = max.(resources, min_resource)
         resources = min.(resources, max_resource)
 
         if add_min_constraints
             for i in 1:n_activities
-                if rand() < min_level_prob
+                if rand(rng) < min_level_prob
                     max_possible = minimum([resources[j] / usage[i, j] for j in 1:n_resources])
-                    min_levels[i] = rand(0.1:0.05:0.3) * max_possible
+                    min_levels[i] = rand(rng, 0.1:0.05:0.3) * max_possible
                 end
             end
         end
@@ -133,9 +133,9 @@ function ResourceAllocationProblem(target_variables::Int, feasibility_status::Fe
 
         for j in 1:n_resources
             if solution_status == :feasible
-                capacity_anchor_theta = 1.10 + 0.40 * rand()
+                capacity_anchor_theta = 1.10 + 0.40 * rand(rng)
             else
-                capacity_anchor_theta = 0.95 + 0.15 * rand()
+                capacity_anchor_theta = 0.95 + 0.15 * rand(rng)
             end
             resources[j] = cons[j] * capacity_anchor_theta
             resources[j] = max(resources[j], min_resource)
@@ -144,24 +144,24 @@ function ResourceAllocationProblem(target_variables::Int, feasibility_status::Fe
 
         cons_post = vec(sum(usage .* demand_x, dims=1))
         scale_to_fit = minimum([resources[j] / max(cons_post[j], 1e-12) for j in 1:n_resources])
-        fill_fraction = solution_status == :feasible ? (0.75 + 0.2 * rand()) : (0.7 + 0.2 * rand())
+        fill_fraction = solution_status == :feasible ? (0.75 + 0.2 * rand(rng)) : (0.7 + 0.2 * rand(rng))
         baseline_x = demand_x .* max(scale_to_fit * fill_fraction, 0.0)
 
         if add_min_constraints
             selected = falses(n_activities)
             for i in 1:n_activities
-                if rand() < min_level_prob && baseline_x[i] > 0
+                if rand(rng) < min_level_prob && baseline_x[i] > 0
                     selected[i] = true
-                    min_levels[i] = rand(0.1:0.05:0.3) * baseline_x[i]
+                    min_levels[i] = rand(rng, 0.1:0.05:0.3) * baseline_x[i]
                 end
             end
 
             if count(selected) == 0
                 idxs = findall(x -> x > 0, baseline_x)
                 if !isempty(idxs)
-                    pick = rand(idxs)
+                    pick = rand(rng, idxs)
                     selected[pick] = true
-                    min_levels[pick] = rand(0.1:0.05:0.3) * baseline_x[pick]
+                    min_levels[pick] = rand(rng, 0.1:0.05:0.3) * baseline_x[pick]
                 end
             end
 
@@ -169,9 +169,9 @@ function ResourceAllocationProblem(target_variables::Int, feasibility_status::Fe
                 idxs = setdiff(collect(1:n_activities), findall(selected))
                 idxs = [i for i in idxs if baseline_x[i] > 0]
                 if !isempty(idxs)
-                    pick2 = rand(idxs)
+                    pick2 = rand(rng, idxs)
                     selected[pick2] = true
-                    min_levels[pick2] = rand(0.1:0.05:0.3) * baseline_x[pick2]
+                    min_levels[pick2] = rand(rng, 0.1:0.05:0.3) * baseline_x[pick2]
                 end
             end
         end
@@ -188,12 +188,12 @@ function ResourceAllocationProblem(target_variables::Int, feasibility_status::Fe
                 end
             end
 
-            k_viol = n_resources == 1 ? 1 : (rand() < 0.5 ? 1 : (rand() < 0.6 ? min(2, n_resources) : min(3, n_resources)))
+            k_viol = n_resources == 1 ? 1 : (rand(rng) < 0.5 ? 1 : (rand(rng) < 0.6 ? min(2, n_resources) : min(3, n_resources)))
             min_cons = [sum(usage[i, j] * min_levels[i] for i in 1:n_activities) for j in 1:n_resources]
             ratios = [min_cons[j] / max(resources[j], eps()) for j in 1:n_resources]
             order_r = sortperm(ratios; rev=true)
             violated_resources = order_r[1:k_viol]
-            deltas = [0.05 + 0.20 * rand() for _ in 1:k_viol]
+            deltas = [0.05 + 0.20 * rand(rng) for _ in 1:k_viol]
             targets = [resources[r] * (1.0 + deltas[idx]) for (idx, r) in enumerate(violated_resources)]
 
             S = findall(i -> min_levels[i] > 0, 1:n_activities)

@@ -37,7 +37,7 @@ Construct an assignment problem instance.
 - `seed`: Random seed for reproducibility
 """
 function AssignmentProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Determine problem characteristics based on size
     if target_variables <= 250
@@ -58,7 +58,7 @@ function AssignmentProblem(target_variables::Int, feasibility_status::Feasibilit
     end
 
     # Determine if balanced
-    balanced = rand() < balanced_prob
+    balanced = rand(rng) < balanced_prob
 
     # Calculate dimensions
     if balanced
@@ -72,7 +72,7 @@ function AssignmentProblem(target_variables::Int, feasibility_status::Feasibilit
         n_tasks = n_workers
     else
         sqrt_target = sqrt(target_variables)
-        ratio = 0.5 + rand() * 1.5
+        ratio = 0.5 + rand(rng) * 1.5
 
         n_workers = max(5, round(Int, sqrt_target * sqrt(ratio)))
         n_tasks = max(5, round(Int, target_variables / n_workers))
@@ -107,8 +107,8 @@ function AssignmentProblem(target_variables::Int, feasibility_status::Feasibilit
     if solution_status == :feasible
         if n_workers < n_tasks
             add = n_tasks - n_workers
-            if rand() < feas_slack_prob
-                add += rand(1:max(1, Int(feas_slack_max)))
+            if rand(rng) < feas_slack_prob
+                add += rand(rng, 1:max(1, Int(feas_slack_max)))
             end
             n_workers = n_workers + add
         end
@@ -116,7 +116,7 @@ function AssignmentProblem(target_variables::Int, feasibility_status::Feasibilit
         balanced = false
         if n_workers >= n_tasks
             cap_low, cap_high = cap_gap_rng
-            gap_ratio = clamp(rand() * (cap_high - cap_low) + cap_low, 0.01, 0.9)
+            gap_ratio = clamp(rand(rng) * (cap_high - cap_low) + cap_low, 0.01, 0.9)
             extra = max(1, ceil(Int, gap_ratio * n_workers))
             n_tasks = n_workers + extra
         end
@@ -124,7 +124,7 @@ function AssignmentProblem(target_variables::Int, feasibility_status::Feasibilit
 
     # Generate costs
     min_cost, max_cost = cost_base
-    range_multiplier = 0.8 + rand() * 0.4
+    range_multiplier = 0.8 + rand(rng) * 0.4
     adjusted_max = max(min_cost + 5, round(Int, max_cost * range_multiplier))
 
     costs = zeros(Int, n_workers, n_tasks)
@@ -137,9 +137,9 @@ function AssignmentProblem(target_variables::Int, feasibility_status::Feasibilit
 
     # Skill groups
     gmax = min(6, max(2, round(Int, sqrt(min(n_workers, n_tasks)))))
-    n_groups = rand(2:gmax)
-    worker_groups = [rand(1:n_groups) for _ in 1:n_workers]
-    task_groups = [rand(1:n_groups) for _ in 1:n_tasks]
+    n_groups = rand(rng, 2:gmax)
+    worker_groups = [rand(rng, 1:n_groups) for _ in 1:n_workers]
+    task_groups = [rand(rng, 1:n_groups) for _ in 1:n_tasks]
 
     p_in = min(0.98, base_density)
     p_out = max(0.02, 0.3 * base_density)
@@ -148,21 +148,21 @@ function AssignmentProblem(target_variables::Int, feasibility_status::Feasibilit
     if apply_compat
         for i in 1:n_workers, j in 1:n_tasks
             pij = task_groups[j] == worker_groups[i] ? p_in : p_out
-            allowed[i, j] = rand() < pij
+            allowed[i, j] = rand(rng) < pij
         end
     end
 
     # Infeasibility logic
     infeas_hall_prob = 0.4
     if solution_status == :infeasible
-        use_capacity_shortfall = rand() >= infeas_hall_prob
+        use_capacity_shortfall = rand(rng) >= infeas_hall_prob
         if !use_capacity_shortfall
             # Hall violation
             k = max(2, min(n_tasks, round(Int, 0.3 * n_tasks)))
-            k = rand(max(2, round(Int, 0.2*n_tasks)) : max(2, min(n_tasks, round(Int, 0.5*n_tasks))))
-            hall_tasks = sort(randperm(n_tasks)[1:k])
-            m = max(1, min(n_workers-1, rand(max(1, round(Int, 0.2*k)) : max(1, k-1))))
-            hall_workers = sort(randperm(n_workers)[1:m])
+            k = rand(rng, max(2, round(Int, 0.2*n_tasks)) : max(2, min(n_tasks, round(Int, 0.5*n_tasks))))
+            hall_tasks = sort(randperm(rng, n_tasks)[1:k])
+            m = max(1, min(n_workers-1, rand(rng, max(1, round(Int, 0.2*k)) : max(1, k-1))))
+            hall_workers = sort(randperm(rng, n_workers)[1:m])
             for j in hall_tasks
                 for i in 1:n_workers
                     allowed[i, j] = (i in hall_workers)
@@ -175,7 +175,7 @@ function AssignmentProblem(target_variables::Int, feasibility_status::Feasibilit
     if solution_status == :feasible
         if apply_compat
             used = falses(n_workers)
-            task_order = randperm(n_tasks)
+            task_order = randperm(rng, n_tasks)
             for jj in task_order
                 cands = [i for i in 1:n_workers if allowed[i, jj] && !used[i]]
                 if isempty(cands)
@@ -186,11 +186,11 @@ function AssignmentProblem(target_variables::Int, feasibility_status::Feasibilit
                     if isempty(pref)
                         pref = collect(1:n_workers)
                     end
-                    chosen = rand(pref)
+                    chosen = rand(rng, pref)
                     allowed[chosen, jj] = true
                     used[chosen] = true
                 else
-                    chosen = rand(cands)
+                    chosen = rand(rng, cands)
                     used[chosen] = true
                 end
             end
@@ -198,8 +198,8 @@ function AssignmentProblem(target_variables::Int, feasibility_status::Feasibilit
     end
 
     # Cost generation
-    specialization = rand() < specialization_prob
-    variation_choice = rand()
+    specialization = rand(rng) < specialization_prob
+    variation_choice = rand(rng)
     cost_variation = if variation_choice < cost_variation_weights[1]
         :low
     elseif variation_choice < cost_variation_weights[1] + cost_variation_weights[2]
@@ -210,14 +210,14 @@ function AssignmentProblem(target_variables::Int, feasibility_status::Feasibilit
 
     if specialization
         for i in 1:n_workers
-            n_specializations = rand(1:min(3, n_tasks))
-            specialized_tasks = randperm(n_tasks)[1:n_specializations]
+            n_specializations = rand(rng, 1:min(3, n_tasks))
+            specialized_tasks = randperm(rng, n_tasks)[1:n_specializations]
 
             for j in 1:n_tasks
                 if j in specialized_tasks
-                    costs[i, j] = rand(min_cost:round(Int, min_cost + 0.3 * (adjusted_max - min_cost)))
+                    costs[i, j] = rand(rng, min_cost:round(Int, min_cost + 0.3 * (adjusted_max - min_cost)))
                 else
-                    costs[i, j] = rand(round(Int, min_cost + 0.5 * (adjusted_max - min_cost)):adjusted_max)
+                    costs[i, j] = rand(rng, round(Int, min_cost + 0.5 * (adjusted_max - min_cost)):adjusted_max)
                 end
             end
         end
@@ -230,26 +230,26 @@ function AssignmentProblem(target_variables::Int, feasibility_status::Feasibilit
                 high = min(adjusted_max, round(Int, mean_cost + range_factor * (adjusted_max - min_cost)))
                 bias = (worker_groups[i] == task_groups[j]) ? -0.1 : 0.1
                 low_adj = clamp(round(Int, low + bias * (high - low)), min_cost, high)
-                costs[i, j] = rand(low_adj:high)
+                costs[i, j] = rand(rng, low_adj:high)
             end
         elseif cost_variation == :high
             for i in 1:n_workers, j in 1:n_tasks
-                if rand() < 0.1
-                    costs[i, j] = rand() < 0.5 ? min_cost : adjusted_max
+                if rand(rng) < 0.1
+                    costs[i, j] = rand(rng) < 0.5 ? min_cost : adjusted_max
                 else
                     if worker_groups[i] == task_groups[j]
-                        costs[i, j] = rand(min_cost:round(Int, min_cost + 0.6 * (adjusted_max - min_cost)))
+                        costs[i, j] = rand(rng, min_cost:round(Int, min_cost + 0.6 * (adjusted_max - min_cost)))
                     else
-                        costs[i, j] = rand(round(Int, min_cost + 0.3 * (adjusted_max - min_cost)):adjusted_max)
+                        costs[i, j] = rand(rng, round(Int, min_cost + 0.3 * (adjusted_max - min_cost)):adjusted_max)
                     end
                 end
             end
         else  # :medium
             for i in 1:n_workers, j in 1:n_tasks
                 if worker_groups[i] == task_groups[j]
-                    costs[i, j] = rand(min_cost:round(Int, min_cost + 0.7 * (adjusted_max - min_cost)))
+                    costs[i, j] = rand(rng, min_cost:round(Int, min_cost + 0.7 * (adjusted_max - min_cost)))
                 else
-                    costs[i, j] = rand(round(Int, min_cost + 0.2 * (adjusted_max - min_cost)):adjusted_max)
+                    costs[i, j] = rand(rng, round(Int, min_cost + 0.2 * (adjusted_max - min_cost)):adjusted_max)
                 end
             end
         end

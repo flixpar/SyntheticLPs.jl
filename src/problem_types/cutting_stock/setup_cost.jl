@@ -58,7 +58,7 @@ number of generated patterns is sized to roughly `target_variables / 2`.
 - `seed`: Random seed for reproducibility
 """
 function SetupCostCuttingStockProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Variable count = n_patterns (x) + n_patterns (y) = 2 * n_patterns.
     # Size the number of patterns to hit the target variable count.
@@ -77,28 +77,28 @@ function SetupCostCuttingStockProblem(target_variables::Int, feasibility_status:
 
     if target_variables <= 250
         n_piece_types = clamp(base_piece_types, 6, 40)
-        stock_length = rand(Uniform(6.0, 10.0))
-        demand_min = rand(5:20)
-        demand_max = rand(50:200)
+        stock_length = rand(rng, Uniform(6.0, 10.0))
+        demand_min = rand(rng, 5:20)
+        demand_max = rand(rng, 50:200)
         common_lengths = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
-        common_length_prob = rand(Uniform(0.3, 0.6))
-        waste_factor = rand(Uniform(0.05, 0.15))
+        common_length_prob = rand(rng, Uniform(0.3, 0.6))
+        waste_factor = rand(rng, Uniform(0.05, 0.15))
     elseif target_variables <= 1000
         n_piece_types = clamp(base_piece_types, 12, 80)
-        stock_length = rand(Uniform(8.0, 14.0))
-        demand_min = rand(20:100)
-        demand_max = rand(200:1000)
+        stock_length = rand(rng, Uniform(8.0, 14.0))
+        demand_min = rand(rng, 20:100)
+        demand_max = rand(rng, 200:1000)
         common_lengths = [1.0, 1.2, 1.5, 2.0, 2.4, 3.0, 4.0, 6.0]
-        common_length_prob = rand(Uniform(0.4, 0.7))
-        waste_factor = rand(Uniform(0.03, 0.10))
+        common_length_prob = rand(rng, Uniform(0.4, 0.7))
+        waste_factor = rand(rng, Uniform(0.03, 0.10))
     else
         n_piece_types = clamp(base_piece_types, 25, 200)
-        stock_length = rand(Uniform(10.0, 20.0))
-        demand_min = rand(100:500)
-        demand_max = rand(1000:10000)
+        stock_length = rand(rng, Uniform(10.0, 20.0))
+        demand_min = rand(rng, 100:500)
+        demand_max = rand(rng, 1000:10000)
         common_lengths = [1.0, 1.2, 1.5, 2.0, 2.4, 3.0, 4.0, 6.0, 8.0, 10.0, 12.0]
-        common_length_prob = rand(Uniform(0.5, 0.8))
-        waste_factor = rand(Uniform(0.02, 0.08))
+        common_length_prob = rand(rng, Uniform(0.5, 0.8))
+        waste_factor = rand(rng, Uniform(0.02, 0.08))
     end
 
     # Generate realistic piece lengths (all must fit in stock)
@@ -106,18 +106,18 @@ function SetupCostCuttingStockProblem(target_variables::Int, feasibility_status:
     effective_max_length = min(stock_length * 0.95, stock_length - 0.1)
 
     for i in 1:n_piece_types
-        if rand() < common_length_prob && !isempty(common_lengths)
-            base_length = rand(common_lengths)
+        if rand(rng) < common_length_prob && !isempty(common_lengths)
+            base_length = rand(rng, common_lengths)
             if base_length > effective_max_length
                 valid_lengths = filter(x -> x <= effective_max_length, common_lengths)
-                base_length = isempty(valid_lengths) ? effective_max_length * 0.8 : rand(valid_lengths)
+                base_length = isempty(valid_lengths) ? effective_max_length * 0.8 : rand(rng, valid_lengths)
             end
-            variation = rand(Normal(0, 0.02))
+            variation = rand(rng, Normal(0, 0.02))
             length = clamp(base_length + variation, 0.1, effective_max_length)
             push!(piece_lengths, round(length, digits=2))
         else
             α, β = 2.0, 3.0
-            normalized = rand(Beta(α, β))
+            normalized = rand(rng, Beta(α, β))
             length = 0.1 + (effective_max_length - 0.1) * normalized
             precision = stock_length > 10 ? 0.1 : 0.05
             length = round(length / precision) * precision
@@ -139,7 +139,7 @@ function SetupCostCuttingStockProblem(target_variables::Int, feasibility_status:
             σ = 0.7
         end
 
-        base_demand = rand(LogNormal(μ, σ))
+        base_demand = rand(rng, LogNormal(μ, σ))
         if base_demand < 50
             base_demand = round(base_demand / 5) * 5
         elseif base_demand < 200
@@ -154,13 +154,13 @@ function SetupCostCuttingStockProblem(target_variables::Int, feasibility_status:
     # Always generate a full set of feasible patterns (single-piece + mixed) so
     # that demand is satisfiable in principle; feasibility is then controlled
     # purely through the stock limit.
-    patterns = generate_setup_cost_patterns(stock_length, piece_lengths, max_patterns, waste_factor)
+    patterns = generate_setup_cost_patterns(rng, stock_length, piece_lengths, max_patterns, waste_factor)
     n_patterns = length(patterns)
 
     # Apply demand variation (realistic manufacturing scenario).
     demands = copy(base_demands)
     for i in 1:length(demands)
-        variation = rand(Uniform(0.8, 1.2))
+        variation = rand(rng, Uniform(0.8, 1.2))
         demands[i] = max(1, round(Int, demands[i] * variation))
     end
 
@@ -201,7 +201,7 @@ function SetupCostCuttingStockProblem(target_variables::Int, feasibility_status:
         # of which patterns are activated. The largest single-piece requirement
         # is the dominant lower bound.
         hardest = maximum(min_rolls_per_piece)
-        stock_limit = max(1, floor(Int, hardest * rand(Uniform(0.5, 0.7))))
+        stock_limit = max(1, floor(Int, hardest * rand(rng, Uniform(0.5, 0.7))))
         # Guarantee the contradiction with a safety margin.
         stock_limit = min(stock_limit, hardest - 1)
         stock_limit = max(1, stock_limit)
@@ -221,7 +221,7 @@ function SetupCostCuttingStockProblem(target_variables::Int, feasibility_status:
         # per-pattern jitter so ties are broken deterministically. Kept modest
         # (sub-handful of rolls) so the setup term does not dominate the objective
         # and the MILP's LP relaxation stays tight and fast to prove optimal.
-        setup_costs[j] = 1.0 + 2.0 * trim_fraction + rand(Uniform(0.0, 0.3))
+        setup_costs[j] = 1.0 + 2.0 * trim_fraction + rand(rng, Uniform(0.0, 0.3))
     end
 
     # Valid PER-PATTERN big-M. Overproduction is allowed (the demand
@@ -255,7 +255,7 @@ Produces direct single-piece patterns (guaranteeing demand is satisfiable in
 principle) plus sampled mixed patterns up to `max_patterns`. Self-contained so it
 does not collide with helpers defined in sibling variant files.
 """
-function generate_setup_cost_patterns(standard_length, piece_lengths, max_patterns, waste_factor=0.1)
+function generate_setup_cost_patterns(rng::AbstractRNG, standard_length, piece_lengths, max_patterns, waste_factor=0.1)
     patterns = Vector{Vector{Int}}()
 
     # Single-piece patterns
@@ -277,13 +277,13 @@ function generate_setup_cost_patterns(standard_length, piece_lengths, max_patter
         indices = collect(1:length(piece_lengths))
 
         num_types_to_use = min(length(piece_lengths),
-                               max(1, round(Int, rand(Exponential(2.0)))))
+                               max(1, round(Int, rand(rng, Exponential(2.0)))))
 
-        selected_indices = sample(indices, num_types_to_use, replace=false)
+        selected_indices = sample(rng, indices, num_types_to_use, replace=false)
 
         while !isempty(selected_indices)
             weights = [standard_length / piece_lengths[i] for i in selected_indices]
-            idx = sample(selected_indices, Weights(weights))
+            idx = sample(rng, selected_indices, Weights(weights))
 
             if piece_lengths[idx] <= remaining_length
                 new_pattern[idx] += 1

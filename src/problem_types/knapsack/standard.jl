@@ -38,45 +38,45 @@ Construct a knapsack problem instance.
 - `seed`: Random seed for reproducibility
 """
 function KnapsackProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # For knapsack, target_variables = n_items
     n_items = target_variables
 
     # Scale value and weight ranges based on problem size
     if target_variables <= 100
-        value_range = (rand(5:20), rand(80:150))
-        weight_range = (rand(3:8), rand(15:25))
+        value_range = (rand(rng, 5:20), rand(rng, 80:150))
+        weight_range = (rand(rng, 3:8), rand(rng, 15:25))
     elseif target_variables <= 1000
-        value_range = (rand(10:30), rand(100:300))
-        weight_range = (rand(5:15), rand(20:40))
+        value_range = (rand(rng, 10:30), rand(rng, 100:300))
+        weight_range = (rand(rng, 5:15), rand(rng, 20:40))
     else
-        value_range = (rand(20:50), rand(200:500))
-        weight_range = (rand(10:25), rand(30:60))
+        value_range = (rand(rng, 20:50), rand(rng, 200:500))
+        weight_range = (rand(rng, 10:25), rand(rng, 30:60))
     end
 
     # Generate item values and weights
     min_value, max_value = value_range
-    values = rand(min_value:max_value, n_items)
+    values = rand(rng, min_value:max_value, n_items)
 
     min_weight, max_weight = weight_range
-    weights = rand(min_weight:max_weight, n_items)
+    weights = rand(rng, min_weight:max_weight, n_items)
 
     # Calculate total average weight
     total_avg_weight = sum(weights)
 
     # Determine capacity based on feasibility status
     # Set capacity to 30-70% of total weight for interesting problems
-    capacity_ratio = 0.3 + rand() * 0.4
+    capacity_ratio = 0.3 + rand(rng) * 0.4
     capacity = round(Int, total_avg_weight * capacity_ratio)
-    capacity = max(1, capacity + rand(-50:50))
+    capacity = max(1, capacity + rand(rng, -50:50))
 
     # Handle feasibility
     min_value = 0.0
 
     actual_status = feasibility_status
     if feasibility_status == unknown
-        actual_status = rand() < 0.7 ? feasible : infeasible
+        actual_status = rand(rng) < 0.7 ? feasible : infeasible
     end
 
     if actual_status == infeasible
@@ -95,7 +95,7 @@ function KnapsackProblem(target_variables::Int, feasibility_status::FeasibilityS
             end
         end
         # Require more value than achievable
-        min_value = max_achievable * (1.1 + 0.3 * rand())
+        min_value = max_achievable * (1.1 + 0.3 * rand(rng))
     end
 
     return KnapsackProblem(n_items, capacity, values, weights, min_value)

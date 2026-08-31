@@ -61,7 +61,7 @@ reserve, non-spinning reserve), so the dimensions are sized as
 - `seed`: Random seed for reproducibility
 """
 function ReservesEnergyProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Variable count = 3 * n_sources * n_periods (gen + spin + nonspin per source-period).
     # Size dimensions so that n_sources * n_periods ≈ target_variables / 3.
@@ -113,12 +113,12 @@ function ReservesEnergyProblem(target_variables::Int, feasibility_status::Feasib
     end
 
     # Sample high-level parameters
-    renewable_fraction_target = rand(Beta(2, 3))
-    demand_variation = rand(Beta(2, 3))
-    peak_demand = rand(Uniform(peak_demand_range...))
-    base_generation_cost = rand(LogNormal(log(50.0), 0.3))
-    renewable_cost_factor = rand(Gamma(2.5, 0.4))
-    capacity_margin = max(1.15, min(1.6, rand(Normal(1.3, 0.08))))
+    renewable_fraction_target = rand(rng, Beta(2, 3))
+    demand_variation = rand(rng, Beta(2, 3))
+    peak_demand = rand(rng, Uniform(peak_demand_range...))
+    base_generation_cost = rand(rng, LogNormal(log(50.0), 0.3))
+    renewable_cost_factor = rand(rng, Gamma(2.5, 0.4))
+    capacity_margin = max(1.15, min(1.6, rand(rng, Normal(1.3, 0.08))))
 
     # Candidate source types: (name, is_renewable, availability, capacity_factor, cost_factor)
     source_types = [
@@ -147,16 +147,16 @@ function ReservesEnergyProblem(target_variables::Int, feasibility_status::Feasib
     function build_fleet(indices, n)
         fleet = Tuple{String,String,Bool,Float64,Float64,Float64}[]
         (isempty(indices) || n <= 0) && return fleet
-        order = shuffle(indices)
+        order = shuffle(rng, indices)
         for k in 1:n
             base = source_types[order[((k - 1) % length(order)) + 1]]
             name_counter[base[1]] = get(name_counter, base[1], 0) + 1
             uname = name_counter[base[1]] == 1 ? base[1] :
                     string(base[1], "_", name_counter[base[1]])
             push!(fleet, (uname, base[1], base[2],
-                clamp(base[3] * rand(Uniform(0.97, 1.03)), 0.5, 1.0),
-                base[4] * rand(Uniform(0.9, 1.1)),
-                base[5] * rand(Uniform(0.9, 1.1))))
+                clamp(base[3] * rand(rng, Uniform(0.97, 1.03)), 0.5, 1.0),
+                base[4] * rand(rng, Uniform(0.9, 1.1)),
+                base[5] * rand(rng, Uniform(0.9, 1.1))))
         end
         return fleet
     end
@@ -174,7 +174,7 @@ function ReservesEnergyProblem(target_variables::Int, feasibility_status::Feasib
         if is_renewable
             base_cost *= renewable_cost_factor
         end
-        variation = rand(Normal(1.0, 0.12))
+        variation = rand(rng, Normal(1.0, 0.12))
         generation_costs[name] = max(5.0, base_cost * variation)
     end
 
@@ -184,15 +184,15 @@ function ReservesEnergyProblem(target_variables::Int, feasibility_status::Feasib
     capacity_shares = Float64[]
     for (_name, technology, _, _, _, _) in selected_sources
         share = if technology == "coal"
-            rand(Gamma(2, 0.25))
+            rand(rng, Gamma(2, 0.25))
         elseif technology == "gas"
-            rand(Gamma(3, 0.15))
+            rand(rng, Gamma(3, 0.15))
         elseif technology == "nuclear"
-            rand(Gamma(1.5, 0.4))
+            rand(rng, Gamma(1.5, 0.4))
         elseif technology in ("solar", "wind")
-            rand(Beta(2, 4))
+            rand(rng, Beta(2, 4))
         else
-            rand(Beta(2, 5))
+            rand(rng, Beta(2, 5))
         end
         push!(capacity_shares, share)
     end
@@ -211,13 +211,13 @@ function ReservesEnergyProblem(target_variables::Int, feasibility_status::Feasib
     for p in 1:n_periods
         hour_idx = 1 + (p - 1) % 24
         pattern_demand = base_demand + (peak_demand - base_demand) * hour_factors[hour_idx]
-        noise = rand(Normal(1.0, 0.05))
+        noise = rand(rng, Normal(1.0, 0.05))
         push!(demands, pattern_demand * max(0.7, min(1.3, noise)))
     end
 
     # Reserve requirements as fractions of demand
-    spin_fraction = rand(Uniform(0.05, 0.15))
-    nonspin_fraction = spin_fraction * rand(Uniform(0.5, 1.0))
+    spin_fraction = rand(rng, Uniform(0.05, 0.15))
+    nonspin_fraction = spin_fraction * rand(rng, Uniform(0.5, 1.0))
     spinning_reserve_req = demands .* spin_fraction
     non_spinning_reserve_req = demands .* nonspin_fraction
 
@@ -227,8 +227,8 @@ function ReservesEnergyProblem(target_variables::Int, feasibility_status::Feasib
     non_spinning_reserve_cost = Dict{String,Float64}()
     for name in sources
         gc = generation_costs[name]
-        spinning_reserve_cost[name] = gc * rand(Uniform(0.08, 0.20))
-        non_spinning_reserve_cost[name] = gc * rand(Uniform(0.02, 0.08))
+        spinning_reserve_cost[name] = gc * rand(rng, Uniform(0.08, 0.20))
+        non_spinning_reserve_cost[name] = gc * rand(rng, Uniform(0.02, 0.08))
     end
 
     # Feasibility handling.

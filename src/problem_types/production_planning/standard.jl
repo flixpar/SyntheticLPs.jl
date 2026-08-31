@@ -35,26 +35,26 @@ end
 Construct a production planning problem instance.
 """
 function ProductionPlanningProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Direct mapping: variables = products
     n_products = max(2, min(2000, target_variables))
     # Floor the resource count so the LP has real structure (with n_resources == 1
     # the model is a single-constraint fractional-knapsack that solves trivially).
     n_resources_hi = min(50, max(10, n_products ÷ 4))
-    n_resources = rand(5:n_resources_hi)
+    n_resources = rand(rng, 5:n_resources_hi)
 
     # Determine profit and usage ranges based on scale
     profit_range = (10, 500)
     usage_range = (0.1, 50.0)
-    resource_factor = rand(0.4:0.1:0.8)
+    resource_factor = rand(rng, 0.4:0.1:0.8)
 
     # Generate random data
     min_profit, max_profit = profit_range
-    profits = rand(min_profit:max_profit, n_products)
+    profits = rand(rng, min_profit:max_profit, n_products)
 
     min_usage, max_usage = usage_range
-    usage = rand(min_usage:max_usage, n_products, n_resources)
+    usage = rand(rng, min_usage:max_usage, n_products, n_resources)
 
     # Calculate resource availability
     resources = sum(usage, dims=1)[:] * resource_factor
@@ -64,7 +64,7 @@ function ProductionPlanningProblem(target_variables::Int, feasibility_status::Fe
 
     actual_status = feasibility_status
     if feasibility_status == unknown
-        actual_status = rand() < 0.7 ? feasible : infeasible
+        actual_status = rand(rng) < 0.7 ? feasible : infeasible
     end
 
     if actual_status == infeasible
@@ -72,17 +72,17 @@ function ProductionPlanningProblem(target_variables::Int, feasibility_status::Fe
         max_possible = [minimum(resources[j] / usage[i, j] for j in 1:n_resources) for i in 1:n_products]
 
         # Set minimum production for a subset of products
-        n_constrained = max(2, rand(max(1, n_products ÷ 4):max(2, n_products ÷ 2)))
-        selected = randperm(n_products)[1:n_constrained]
+        n_constrained = max(2, rand(rng, max(1, n_products ÷ 4):max(2, n_products ÷ 2)))
+        selected = randperm(rng, n_products)[1:n_constrained]
         for i in selected
-            min_production[i] = max_possible[i] * (0.3 + 0.3 * rand())
+            min_production[i] = max_possible[i] * (0.3 + 0.3 * rand(rng))
         end
 
         # Reduce the most stressed resource to create infeasibility
         required = [sum(usage[i, j] * min_production[i] for i in 1:n_products) for j in 1:n_resources]
         ratios = [required[j] / max(resources[j], eps()) for j in 1:n_resources]
         critical_j = argmax(ratios)
-        resources[critical_j] = required[critical_j] * (0.7 + 0.2 * rand())
+        resources[critical_j] = required[critical_j] * (0.7 + 0.2 * rand(rng))
     end
 
     return ProductionPlanningProblem(n_products, n_resources, profits, usage, resources, min_production)

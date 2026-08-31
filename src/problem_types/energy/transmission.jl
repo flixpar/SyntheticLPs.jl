@@ -70,21 +70,21 @@ n_zones^2 * n_periods) is explicitly accounted for so it is not ignored.
 - `seed`: Random seed for reproducibility
 """
 function TransmissionEnergyProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
     # Total vars = n_periods * (n_sources + n_zones^2).
     # Pick a modest number of zones, then a number of sources, then solve for periods
     # so the total matches target_variables (accounting for BOTH var sets).
     if target_variables < 250
-        n_zones = rand(2:3)
-        n_sources = rand(3:5)
+        n_zones = rand(rng, 2:3)
+        n_sources = rand(rng, 3:5)
     elseif target_variables < 1000
-        n_zones = rand(3:4)
-        n_sources = rand(5:8)
+        n_zones = rand(rng, 3:4)
+        n_sources = rand(rng, 5:8)
     else
-        n_zones = rand(4:5)
-        n_sources = rand(8:12)
+        n_zones = rand(rng, 4:5)
+        n_sources = rand(rng, 8:12)
     end
 
     # Cap sources at the number of distinct source types available (7).
@@ -103,21 +103,21 @@ function TransmissionEnergyProblem(target_variables::Int, feasibility_status::Fe
         ("wind", true, 0.4),
         ("solar", true, 0.3),
     ]
-    selected = source_catalog[sample(1:length(source_catalog), n_sources, replace=false)]
+    selected = source_catalog[sample(rng, 1:length(source_catalog), n_sources, replace=false)]
     sources = [s[1] for s in selected]
     time_periods = collect(1:n_periods)
 
     # --- Generation costs ---
-    base_generation_cost = rand(LogNormal(log(50.0), 0.3))
+    base_generation_cost = rand(rng, LogNormal(log(50.0), 0.3))
     generation_costs = Dict{String,Float64}()
     for (name, _, cost_factor) in selected
-        variation = rand(Normal(1.0, 0.12))
+        variation = rand(rng, Normal(1.0, 0.12))
         generation_costs[name] = max(5.0, base_generation_cost * cost_factor * variation)
     end
 
     # --- Demand profile ---
-    peak_demand = rand(Uniform(50.0, 500.0))
-    demand_variation = rand(Beta(2, 3))
+    peak_demand = rand(rng, Uniform(50.0, 500.0))
+    demand_variation = rand(rng, Beta(2, 3))
     base_demand = peak_demand * (1 - demand_variation)
     hour_factors = [0.6, 0.55, 0.5, 0.5, 0.55, 0.7, 0.85, 1.0, 0.95, 0.9,
                     0.85, 0.9, 0.95, 1.0, 0.9, 0.85, 0.9, 0.95, 1.0, 0.95, 0.9, 0.8, 0.7, 0.65]
@@ -125,7 +125,7 @@ function TransmissionEnergyProblem(target_variables::Int, feasibility_status::Fe
     for p in 1:n_periods
         hour_idx = 1 + (p - 1) % 24
         pattern_demand = base_demand + (peak_demand - base_demand) * hour_factors[hour_idx]
-        noise = rand(Normal(1.0, 0.05))
+        noise = rand(rng, Normal(1.0, 0.05))
         push!(demands, pattern_demand * max(0.7, min(1.3, noise)))
     end
 
@@ -137,31 +137,31 @@ function TransmissionEnergyProblem(target_variables::Int, feasibility_status::Fe
     end
 
     # --- Zone demands: split total demand across zones each period ---
-    zone_weights = rand(Dirichlet(ones(n_zones)))
+    zone_weights = rand(rng, Dirichlet(ones(n_zones)))
     zone_demands = zeros(n_zones, n_periods)
     for z in 1:n_zones, t in 1:n_periods
-        zone_demands[z, t] = demands[t] * zone_weights[z] * rand(Uniform(0.9, 1.1))
+        zone_demands[z, t] = demands[t] * zone_weights[z] * rand(rng, Uniform(0.9, 1.1))
     end
 
     # --- Generator capacities ---
     # Size capacities so that, system-wide, generation can comfortably cover peak
     # total demand plus a margin. Distribute capacity across sources by random shares.
-    capacity_margin = rand(Uniform(1.25, 1.6))
+    capacity_margin = rand(rng, Uniform(1.25, 1.6))
     max_total_demand = maximum(sum(zone_demands, dims=1))
     total_required_capacity = max_total_demand * capacity_margin
-    shares = rand(Dirichlet(ones(n_sources)))
+    shares = rand(rng, Dirichlet(ones(n_sources)))
     capacities = Dict{String,Float64}()
     for (i, name) in enumerate(sources)
         capacities[name] = max(10.0, total_required_capacity * shares[i])
     end
 
     # --- Transmission ---
-    transmission_loss = rand(Uniform(0.02, 0.05))  # 2-5% loss on delivered power
+    transmission_loss = rand(rng, Uniform(0.02, 0.05))  # 2-5% loss on delivered power
     avg_zone_demand = max_total_demand / n_zones
     transmission_capacity = zeros(n_zones, n_zones)
     for i in 1:n_zones, j in 1:n_zones
         if i != j
-            transmission_capacity[i, j] = avg_zone_demand * rand(Uniform(0.6, 1.2))
+            transmission_capacity[i, j] = avg_zone_demand * rand(rng, Uniform(0.6, 1.2))
         end
     end
 

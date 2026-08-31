@@ -74,7 +74,7 @@ Total = T + L*(T+1) + 2*(L-1)*T = T*(3L - 1) + L.
 - `seed`: Random seed for reproducibility
 """
 function MultiEchelonInventoryProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Business scale by target size
     scale = target_variables <= 250 ? :small :
@@ -82,11 +82,11 @@ function MultiEchelonInventoryProblem(target_variables::Int, feasibility_status:
 
     # Number of locations (central + retail). More for larger problems.
     if scale == :small
-        n_locations = rand(2:3)
+        n_locations = rand(rng, 2:3)
     elseif scale == :medium
-        n_locations = rand(3:5)
+        n_locations = rand(rng, 3:5)
     else
-        n_locations = rand(4:8)
+        n_locations = rand(rng, 4:8)
     end
 
     # Size n_periods to hit target var count.
@@ -113,23 +113,23 @@ function MultiEchelonInventoryProblem(target_variables::Int, feasibility_status:
 
     # Scale-specific parameter ranges
     if scale == :small
-        prod_capacity = round(Int, rand(Uniform(100, 800)))
-        demand_base = round(Int, rand(Uniform(10, 100)))
-        demand_vol = rand(Uniform(0.2, 0.5))
-        prod_cost_base = rand(Uniform(10, 100))
-        holding_rate = rand(Uniform(0.05, 0.25)) / 12
+        prod_capacity = round(Int, rand(rng, Uniform(100, 800)))
+        demand_base = round(Int, rand(rng, Uniform(10, 100)))
+        demand_vol = rand(rng, Uniform(0.2, 0.5))
+        prod_cost_base = rand(rng, Uniform(10, 100))
+        holding_rate = rand(rng, Uniform(0.05, 0.25)) / 12
     elseif scale == :medium
-        prod_capacity = round(Int, rand(Uniform(500, 4000)))
-        demand_base = round(Int, rand(Uniform(50, 800)))
-        demand_vol = rand(Uniform(0.15, 0.4))
-        prod_cost_base = rand(Uniform(5, 200))
-        holding_rate = rand(Uniform(0.03, 0.20)) / 12
+        prod_capacity = round(Int, rand(rng, Uniform(500, 4000)))
+        demand_base = round(Int, rand(rng, Uniform(50, 800)))
+        demand_vol = rand(rng, Uniform(0.15, 0.4))
+        prod_cost_base = rand(rng, Uniform(5, 200))
+        holding_rate = rand(rng, Uniform(0.03, 0.20)) / 12
     else
-        prod_capacity = round(Int, rand(Uniform(2000, 60000)))
-        demand_base = round(Int, rand(Uniform(100, 8000)))
-        demand_vol = rand(Uniform(0.1, 0.3))
-        prod_cost_base = rand(Uniform(1, 500))
-        holding_rate = rand(Uniform(0.01, 0.15)) / 12
+        prod_capacity = round(Int, rand(rng, Uniform(2000, 60000)))
+        demand_base = round(Int, rand(rng, Uniform(100, 8000)))
+        demand_vol = rand(rng, Uniform(0.1, 0.3))
+        prod_cost_base = rand(rng, Uniform(1, 500))
+        holding_rate = rand(rng, Uniform(0.01, 0.15)) / 12
     end
 
     demand_min = max(1, round(Int, demand_base * (1 - demand_vol)))
@@ -140,11 +140,11 @@ function MultiEchelonInventoryProblem(target_variables::Int, feasibility_status:
     # Per-location demands (each location gets a share of the base demand).
     location_demands = zeros(Int, n_locations, n_periods)
     for l in 1:n_locations
-        loc_base = demand_base * rand(Uniform(0.3, 1.2)) / n_locations
+        loc_base = demand_base * rand(rng, Uniform(0.3, 1.2)) / n_locations
         loc_std = max(1.0, loc_base * 0.3)
-        series = rand(Normal(loc_base, loc_std), n_periods)
+        series = rand(rng, Normal(loc_base, loc_std), n_periods)
         # Optional seasonality
-        if rand() < 0.5 && n_periods >= 12
+        if rand(rng) < 0.5 && n_periods >= 12
             annual = 1.0 .+ 0.2 * sin.(2π .* (1:n_periods) ./ 12)
             series = series .* annual
         end
@@ -153,19 +153,19 @@ function MultiEchelonInventoryProblem(target_variables::Int, feasibility_status:
     location_demands = max.(location_demands, 1)
 
     # Production & holding cost series
-    prod_cost_spread = rand(Uniform(0.1, 0.3))
+    prod_cost_spread = rand(rng, Uniform(0.1, 0.3))
     prod_cost_min = prod_cost_base * (1 - prod_cost_spread)
     prod_cost_max = prod_cost_base * (1 + prod_cost_spread)
     prod_cost_mean = (prod_cost_min + prod_cost_max) / 2
     prod_cost_std = (prod_cost_max - prod_cost_min) / 4
-    production_costs = clamp.(rand(Normal(prod_cost_mean, prod_cost_std), n_periods),
+    production_costs = clamp.(rand(rng, Normal(prod_cost_mean, prod_cost_std), n_periods),
                              prod_cost_min, prod_cost_max)
 
     holding_cost_min = max(0.01, prod_cost_base * holding_rate * 0.8)
     holding_cost_max = prod_cost_base * holding_rate * 1.2
     holding_cost_mean = (holding_cost_min + holding_cost_max) / 2
     holding_cost_std = (holding_cost_max - holding_cost_min) / 4
-    holding_costs = clamp.(rand(Normal(holding_cost_mean, holding_cost_std), n_periods),
+    holding_costs = clamp.(rand(rng, Normal(holding_cost_mean, holding_cost_std), n_periods),
                            holding_cost_min, holding_cost_max)
 
     # Transfer costs (per retail location, both directions). Index 1 unused (central).
@@ -173,8 +173,8 @@ function MultiEchelonInventoryProblem(target_variables::Int, feasibility_status:
     transfer_cost_to = zeros(n_locations)
     transfer_cost_from = zeros(n_locations)
     for l in 2:n_locations
-        transfer_cost_to[l] = mean_prod_cost * rand(Uniform(0.05, 0.20))
-        transfer_cost_from[l] = mean_prod_cost * rand(Uniform(0.05, 0.20))
+        transfer_cost_to[l] = mean_prod_cost * rand(rng, Uniform(0.05, 0.20))
+        transfer_cost_from[l] = mean_prod_cost * rand(rng, Uniform(0.05, 0.20))
     end
 
     # Initial inventory split across locations
@@ -182,14 +182,14 @@ function MultiEchelonInventoryProblem(target_variables::Int, feasibility_status:
     initial_inventory = zeros(Float64, n_locations)
     for l in 1:n_locations
         loc_avg = mean(location_demands[l, :])
-        initial_inventory[l] = loc_avg * rand(Uniform(0.1, 0.5))
+        initial_inventory[l] = loc_avg * rand(rng, Uniform(0.1, 0.5))
     end
 
     # Location storage capacities (multiple of that location's average demand)
     location_capacities = zeros(Float64, n_locations)
     for l in 1:n_locations
         loc_avg = mean(location_demands[l, :])
-        location_capacities[l] = loc_avg * rand(Uniform(3.0, 8.0))
+        location_capacities[l] = loc_avg * rand(rng, Uniform(3.0, 8.0))
     end
 
     # ---------- Feasibility handling ----------

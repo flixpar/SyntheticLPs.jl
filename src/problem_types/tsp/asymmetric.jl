@@ -148,14 +148,14 @@ role in feasibility.
 - `unknown`: a natural instance, identical to the feasible branch.
 """
 function TSPAsymmetricProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Dimension sizing (same law as tsp/standard) ---
     n0 = max(5, round(Int, sqrt(target_variables + 1)))
 
     # Block size k is drawn unconditionally (RNG alignment across statuses);
     # the infeasible branch sizes n against the delivered count.
-    n, k = _tsp_plan_dimensions(n0, target_variables, feasibility_status,
+    n, k = _tsp_plan_dimensions(rng, n0, target_variables, feasibility_status,
                                 (m, kk) -> m^2 - 1 - kk * (m - kk))
 
     # --- Explicit one-way street geography ---
@@ -163,14 +163,14 @@ function TSPAsymmetricProblem(target_variables::Int, feasibility_status::Feasibi
     depot_vertex = (div(grid_side, 2) - 1) * grid_side + div(grid_side, 2)
     fixed_vertices = [depot_vertex, 1, grid_side]
     remaining = [v for v in 1:(grid_side * grid_side) if !(v in fixed_vertices)]
-    city_vertices = vcat(fixed_vertices, shuffle(remaining)[1:(n - 3)])
+    city_vertices = vcat(fixed_vertices, shuffle(rng, remaining)[1:(n - 3)])
     city_coords = [
         (div(v - 1, grid_side) + 1, rem(v - 1, grid_side) + 1)
         for v in city_vertices
     ]
     locations = [(Float64(row), Float64(col)) for (row, col) in city_coords]
-    row_weight = rand(1:3, grid_side)
-    col_weight = rand(1:3, grid_side)
+    row_weight = rand(rng, 1:3, grid_side)
+    col_weight = rand(rng, 1:3, grid_side)
 
     # Directed shortest-path closure of the street network. The two fixed
     # endpoints on row 1 make asymmetry deterministic; the central depot and
@@ -194,7 +194,7 @@ function TSPAsymmetricProblem(target_variables::Int, feasibility_status::Feasibi
     @assert any(dist[i, j] != dist[j, i] for i in 1:n for j in i+1:n)
 
     # --- Resolve feasibility intent ---
-    arc_ok, blocked_set, gate_set = _tsp_arc_support(n, k, feasibility_status)
+    arc_ok, blocked_set, gate_set = _tsp_arc_support(rng, n, k, feasibility_status)
 
     return TSPAsymmetricProblem(
         n, locations, grid_side, row_weight, col_weight, dist, arc_ok,

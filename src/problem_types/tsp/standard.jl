@@ -95,7 +95,7 @@ against the *delivered* count.
   TSPs are always feasible; the bias is moot, but the branch is kept explicit).
 """
 function TSPStandardProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
     # total = n^2 - 1  =>  n ≈ sqrt(target + 1).
@@ -104,16 +104,16 @@ function TSPStandardProblem(target_variables::Int, feasibility_status::Feasibili
     # Block size k is drawn unconditionally (RNG alignment across statuses);
     # the infeasible branch sizes n against the delivered count
     # n^2 - 1 - k*(n - k), because the block deletes k*(n-k) arc variables.
-    n, k = _tsp_plan_dimensions(n0, target_variables, feasibility_status,
+    n, k = _tsp_plan_dimensions(rng, n0, target_variables, feasibility_status,
                                 (m, kk) -> m^2 - 1 - kk * (m - kk))
 
     # --- Geography and symmetric road distances ---
-    locations = _tsp_stops(n)
-    dist = _tsp_distance(locations)
+    locations = _tsp_stops(rng, n)
+    dist = _tsp_distance(rng, locations)
 
     # --- Resolve feasibility intent ---
     # feasible / unknown: complete support — see constructor docstring.
-    arc_ok, S, T = _tsp_arc_support(n, k, feasibility_status)
+    arc_ok, S, T = _tsp_arc_support(rng, n, k, feasibility_status)
 
     return TSPStandardProblem(n, locations, dist, arc_ok, S, T)
 end

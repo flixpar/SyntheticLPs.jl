@@ -38,11 +38,11 @@ Construct a transportation problem instance.
 - `seed`: Random seed for reproducibility
 """
 function TransportationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Calculate dimensions to achieve target number of variables
     sqrt_target = sqrt(target_variables)
-    ratio = 0.5 + rand() * 1.0  # ratio between 0.5 and 1.5
+    ratio = 0.5 + rand(rng) * 1.0  # ratio between 0.5 and 1.5
 
     n_sources = max(2, round(Int, sqrt_target * ratio))
     n_destinations = max(2, round(Int, target_variables / n_sources))
@@ -66,40 +66,40 @@ function TransportationProblem(target_variables::Int, feasibility_status::Feasib
     # Set realistic parameter ranges based on problem size
     total_vars = n_sources * n_destinations
     if total_vars <= 250
-        supply_range = (rand(50:100), rand(200:500))
-        demand_range = (rand(30:80), rand(150:300))
-        cost_range = (rand(5:15), rand(25:60))
+        supply_range = (rand(rng, 50:100), rand(rng, 200:500))
+        demand_range = (rand(rng, 30:80), rand(rng, 150:300))
+        cost_range = (rand(rng, 5:15), rand(rng, 25:60))
     elseif total_vars <= 1000
-        supply_range = (rand(100:500), rand(1000:5000))
-        demand_range = (rand(80:300), rand(800:3000))
-        cost_range = (rand(10:30), rand(50:150))
+        supply_range = (rand(rng, 100:500), rand(rng, 1000:5000))
+        demand_range = (rand(rng, 80:300), rand(rng, 800:3000))
+        cost_range = (rand(rng, 10:30), rand(rng, 50:150))
     else
-        supply_range = (rand(500:2000), rand(5000:50000))
-        demand_range = (rand(300:1500), rand(3000:30000))
-        cost_range = (rand(20:100), rand(100:500))
+        supply_range = (rand(rng, 500:2000), rand(rng, 5000:50000))
+        demand_range = (rand(rng, 300:1500), rand(rng, 3000:30000))
+        cost_range = (rand(rng, 20:100), rand(rng, 100:500))
     end
 
     # Generate random data
     min_supply, max_supply = supply_range
-    supplies = rand(min_supply:max_supply, n_sources)
+    supplies = rand(rng, min_supply:max_supply, n_sources)
 
     min_demand, max_demand = demand_range
-    demands = rand(min_demand:max_demand, n_destinations)
+    demands = rand(rng, min_demand:max_demand, n_destinations)
 
     min_cost, max_cost = cost_range
-    costs = rand(min_cost:max_cost, n_sources, n_destinations)
+    costs = rand(rng, min_cost:max_cost, n_sources, n_destinations)
 
     # Helper function to distribute additions across a vector
     function distribute_additions!(vec::Vector{Int}, amount::Int)
         if amount <= 0
             return
         end
-        w = rand(length(vec))
+        w = rand(rng, length(vec))
         w_sum = sum(w)
         base = floor.(Int, (w ./ w_sum) .* amount)
         remainder = amount - sum(base)
         if remainder > 0
-            for idx in randperm(length(vec))[1:remainder]
+            for idx in randperm(rng, length(vec))[1:remainder]
                 base[idx] += 1
             end
         end
@@ -118,7 +118,7 @@ function TransportationProblem(target_variables::Int, feasibility_status::Feasib
         end
     elseif feasibility_status == infeasible
         # Guarantee infeasibility: ensure total_demand > total_supply with margin
-        target_margin = max(1, round(Int, (0.02 + 0.08 * rand()) * max(total_supply, 1)))
+        target_margin = max(1, round(Int, (0.02 + 0.08 * rand(rng)) * max(total_supply, 1)))
         missing = (total_supply + target_margin) - total_demand
         if missing > 0
             distribute_additions!(demands, missing)

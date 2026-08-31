@@ -84,7 +84,7 @@ Dimensions are sized as `n_assets = max(5, round(target / 5))` and
   LP).
 """
 function TrackingErrorPortfolioProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Dimension sizing: total = n_assets + n_scenarios ---
     n_assets = max(5, round(Int, target_variables / 5))
@@ -92,14 +92,14 @@ function TrackingErrorPortfolioProblem(target_variables::Int, feasibility_status
 
     # --- Scale-tiered group sizes ---
     if target_variables <= 100
-        n_sectors = round(Int, rand(Uniform(3, 6)))
-        n_factors = round(Int, rand(Uniform(2, 4)))
+        n_sectors = round(Int, rand(rng, Uniform(3, 6)))
+        n_factors = round(Int, rand(rng, Uniform(2, 4)))
     elseif target_variables <= 500
-        n_sectors = round(Int, rand(Uniform(5, 9)))
-        n_factors = round(Int, rand(Uniform(3, 6)))
+        n_sectors = round(Int, rand(rng, Uniform(5, 9)))
+        n_factors = round(Int, rand(rng, Uniform(3, 6)))
     else
-        n_sectors = round(Int, rand(Uniform(8, 11)))
-        n_factors = round(Int, rand(Uniform(5, 8)))
+        n_sectors = round(Int, rand(rng, Uniform(8, 11)))
+        n_factors = round(Int, rand(rng, Uniform(5, 8)))
     end
 
     n_sectors = max(1, min(n_sectors, n_assets))
@@ -108,12 +108,12 @@ function TrackingErrorPortfolioProblem(target_variables::Int, feasibility_status
     # --- Balanced sector assignment (every sector gets at least one asset) ---
     function balanced_assign(n_items, n_groups)
         assignment = zeros(Int, n_items)
-        perm = randperm(n_items)
+        perm = randperm(rng, n_items)
         for g in 1:n_groups
             assignment[perm[g]] = g
         end
         for i in (n_groups + 1):n_items
-            assignment[perm[i]] = rand(1:n_groups)
+            assignment[perm[i]] = rand(rng, 1:n_groups)
         end
         return assignment
     end
@@ -121,23 +121,23 @@ function TrackingErrorPortfolioProblem(target_variables::Int, feasibility_status
     sector_assignments = balanced_assign(n_assets, n_sectors)
 
     # --- Factor loadings (sector-correlated) ---
-    factor_loadings = rand(Normal(0.0, 0.3), n_assets, n_factors)
+    factor_loadings = rand(rng, Normal(0.0, 0.3), n_assets, n_factors)
     for i in 1:n_assets
         primary_factor = (sector_assignments[i] - 1) % n_factors + 1
-        factor_loadings[i, primary_factor] += rand(Uniform(0.3, 0.7))
+        factor_loadings[i, primary_factor] += rand(rng, Uniform(0.3, 0.7))
     end
 
     # --- Scenario returns via factor model (common factors + idiosyncratic) ---
-    factor_returns = rand(Normal(0.0, 0.05), n_scenarios, n_factors)
-    idiosyncratic = rand(Normal(0.0, 0.02), n_scenarios, n_assets)
+    factor_returns = rand(rng, Normal(0.0, 0.05), n_scenarios, n_factors)
+    idiosyncratic = rand(rng, Normal(0.0, 0.02), n_scenarios, n_assets)
     scenario_returns = factor_returns * factor_loadings' + idiosyncratic
 
     # --- Expected returns: mean scenario return plus small alpha noise ---
     expected_returns = vec(mean(scenario_returns, dims=1))
-    expected_returns .+= rand(Normal(0.0, 0.01), n_assets)
+    expected_returns .+= rand(rng, Normal(0.0, 0.01), n_assets)
 
     # --- Benchmark weights (log-normal market-cap style, normalized) ---
-    raw_weights = rand(LogNormal(0.0, 0.8), n_assets)
+    raw_weights = rand(rng, LogNormal(0.0, 0.8), n_assets)
     benchmark = raw_weights ./ sum(raw_weights)
 
     # --- Position limits: at least the benchmark weight, with headroom ---
@@ -150,23 +150,23 @@ function TrackingErrorPortfolioProblem(target_variables::Int, feasibility_status
     ew = 1.0 / n_assets
     pos_lo = clamp(2.0 * ew, 0.005, 0.30)
     pos_hi = max(clamp(6.0 * ew, 0.02, 0.40), pos_lo * 1.5)
-    base_position = [rand(Uniform(pos_lo, pos_hi)) for _ in 1:n_assets]
-    max_position = [max(benchmark[i], base_position[i]) * rand(Uniform(1.1, 1.6)) for i in 1:n_assets]
+    base_position = [rand(rng, Uniform(pos_lo, pos_hi)) for _ in 1:n_assets]
+    max_position = [max(benchmark[i], base_position[i]) * rand(rng, Uniform(1.1, 1.6)) for i in 1:n_assets]
 
     # --- Sector deviation bands (two-sided, around benchmark) ---
-    sector_band = [rand(Uniform(0.03, 0.12)) for _ in 1:n_sectors]
+    sector_band = [rand(rng, Uniform(0.03, 0.12)) for _ in 1:n_sectors]
 
     # --- Tracking-error budget: a fraction of the benchmark's own scenario MAD ---
     # Reference MAD: average absolute deviation of the benchmark scenario return
     # from its own mean (a natural scale for an active-return budget).
     bench_scen = scenario_returns * benchmark
     bench_mad = mean(abs.(bench_scen .- mean(bench_scen)))
-    te_budget = bench_mad * rand(Uniform(0.15, 0.5))
+    te_budget = bench_mad * rand(rng, Uniform(0.15, 0.5))
 
     # --- Feasibility handling ---
     actual_status = feasibility_status
     if feasibility_status == unknown
-        actual_status = rand() < 0.75 ? feasible : infeasible
+        actual_status = rand(rng) < 0.75 ? feasible : infeasible
     end
 
     if actual_status == feasible
@@ -182,7 +182,7 @@ function TrackingErrorPortfolioProblem(target_variables::Int, feasibility_status
 
     elseif actual_status == infeasible
         # Make full investment impossible: scale position limits so their sum < 1.
-        target_sum = rand(Uniform(0.7, 0.9))
+        target_sum = rand(rng, Uniform(0.7, 0.9))
         max_position .*= (target_sum / sum(max_position))
         # (Aggregate contradiction: sum x_i <= sum max_position_i < 1 = required.)
     end

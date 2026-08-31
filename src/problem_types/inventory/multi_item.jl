@@ -76,7 +76,7 @@ Feasibility is controlled through the shared per-period capacity relative to the
 - `seed`: Random seed for reproducibility
 """
 function MultiItemInventoryProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Determine business scale by target size
     scale = target_variables <= 250 ? :small :
@@ -85,30 +85,30 @@ function MultiItemInventoryProblem(target_variables::Int, feasibility_status::Fe
     # --- Dimension sizing ---
     # Total variables = n_items * (2 * n_periods + 1) ≈ 2 * n_items * n_periods.
     # Sample n_items ONCE, then size n_periods to hit the target.
-    n_items = rand(max(2, target_variables ÷ 50):max(5, target_variables ÷ 20))
+    n_items = rand(rng, max(2, target_variables ÷ 50):max(5, target_variables ÷ 20))
     n_periods = max(2, min(500, round(Int, (target_variables / n_items - 1) / 2)))
 
     # Scale-specific demand / cost ranges
     if scale == :small
-        demand_base = round(Int, rand(Uniform(10, 100)))
-        prod_cost_base = rand(Uniform(10, 100))
-        holding_rate = rand(Uniform(0.05, 0.25)) / 12
+        demand_base = round(Int, rand(rng, Uniform(10, 100)))
+        prod_cost_base = rand(rng, Uniform(10, 100))
+        holding_rate = rand(rng, Uniform(0.05, 0.25)) / 12
     elseif scale == :medium
-        demand_base = round(Int, rand(Uniform(50, 1000)))
-        prod_cost_base = rand(Uniform(5, 200))
-        holding_rate = rand(Uniform(0.03, 0.20)) / 12
+        demand_base = round(Int, rand(rng, Uniform(50, 1000)))
+        prod_cost_base = rand(rng, Uniform(5, 200))
+        holding_rate = rand(rng, Uniform(0.03, 0.20)) / 12
     else
-        demand_base = round(Int, rand(Uniform(100, 10000)))
-        prod_cost_base = rand(Uniform(1, 500))
-        holding_rate = rand(Uniform(0.01, 0.15)) / 12
+        demand_base = round(Int, rand(rng, Uniform(100, 10000)))
+        prod_cost_base = rand(rng, Uniform(1, 500))
+        holding_rate = rand(rng, Uniform(0.01, 0.15)) / 12
     end
 
     # --- Per-item demands ---
     item_demands = zeros(Int, n_items, n_periods)
     for i in 1:n_items
-        item_base = demand_base * rand(Uniform(0.3, 1.5))
+        item_base = demand_base * rand(rng, Uniform(0.3, 1.5))
         item_demands[i, :] = round.(Int, clamp.(
-            rand(Normal(item_base, item_base * 0.25), n_periods),
+            rand(rng, Normal(item_base, item_base * 0.25), n_periods),
             max(1, item_base * 0.3), item_base * 2.0
         ))
     end
@@ -119,18 +119,18 @@ function MultiItemInventoryProblem(target_variables::Int, feasibility_status::Fe
     item_production_costs = zeros(n_items, n_periods)
     item_holding_costs = zeros(n_items, n_periods)
     for i in 1:n_items
-        base_cost = prod_cost_base * rand(Uniform(0.5, 2.0))
+        base_cost = prod_cost_base * rand(rng, Uniform(0.5, 2.0))
         item_production_costs[i, :] = clamp.(
-            rand(Normal(base_cost, base_cost * 0.1), n_periods),
+            rand(rng, Normal(base_cost, base_cost * 0.1), n_periods),
             base_cost * 0.8, base_cost * 1.2
         )
         item_holding_costs[i, :] = item_production_costs[i, :] .* holding_rate
     end
 
     # --- Initial inventory and shared-resource usage ---
-    item_initial_inventory = round.(Int, [mean(item_demands[i, :]) * rand(Uniform(0.1, 0.4))
+    item_initial_inventory = round.(Int, [mean(item_demands[i, :]) * rand(rng, Uniform(0.1, 0.4))
                                           for i in 1:n_items])
-    item_resource_usage = [rand(Uniform(0.5, 2.0)) for _ in 1:n_items]
+    item_resource_usage = [rand(rng, Uniform(0.5, 2.0)) for _ in 1:n_items]
 
     # --- Resource-usage-weighted per-period demand load ---
     # weighted_load[t] = sum_i resource_usage[i] * item_demands[i, t]
@@ -154,11 +154,11 @@ function MultiItemInventoryProblem(target_variables::Int, feasibility_status::Fe
     if feasibility_status == infeasible
         # Below the binding cumulative rate: some prefix cannot be supplied even
         # by producing flat-out in every prior period (a true contradiction).
-        prod_capacity = max(binding_rate, 1.0) * rand(Uniform(0.4, 0.7))
+        prod_capacity = max(binding_rate, 1.0) * rand(rng, Uniform(0.4, 0.7))
     else
         # feasible and unknown: capacity comfortably above the peak weighted load
         # (>= the binding cumulative rate), so just-in-time production suffices.
-        prod_capacity = peak_load * rand(Uniform(1.3, 2.0))
+        prod_capacity = peak_load * rand(rng, Uniform(1.3, 2.0))
     end
 
     return MultiItemInventoryProblem(

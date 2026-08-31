@@ -61,7 +61,7 @@ full total lands near `target_variables` (not just the direct block).
 - `seed`: Random seed for reproducibility
 """
 function TransshipmentProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
     # total = n_src*n_dst + n_src*n_hub + n_hub*n_dst
@@ -69,11 +69,11 @@ function TransshipmentProblem(target_variables::Int, feasibility_status::Feasibi
     # With n_src = n_dst = m and n_hub = round(h_frac*m):
     #   total ≈ m^2 + 2*h_frac*m^2 = m^2 * (1 + 2*h_frac)
     # => m ≈ sqrt(target / (1 + 2*h_frac))
-    h_frac = 0.3 + 0.2 * rand()  # hubs are 30%-50% of destinations
+    h_frac = 0.3 + 0.2 * rand(rng)  # hubs are 30%-50% of destinations
     m = max(2, round(Int, sqrt(target_variables / (1 + 2 * h_frac))))
 
     # Add mild asymmetry between sources and destinations while keeping the total near target.
-    ratio = 0.8 + 0.4 * rand()  # 0.8 .. 1.2
+    ratio = 0.8 + 0.4 * rand(rng)  # 0.8 .. 1.2
     n_sources = max(2, round(Int, m * ratio))
     n_destinations = max(2, round(Int, m / ratio))
     n_hubs = max(1, round(Int, h_frac * n_destinations))
@@ -93,36 +93,36 @@ function TransshipmentProblem(target_variables::Int, feasibility_status::Feasibi
 
     # --- Scale-dependent parameter ranges ---
     if total_vars <= 250
-        supply_lo, supply_hi = rand(60:100), rand(200:400)
-        demand_lo, demand_hi = rand(30:60), rand(120:220)
+        supply_lo, supply_hi = rand(rng, 60:100), rand(rng, 200:400)
+        demand_lo, demand_hi = rand(rng, 30:60), rand(rng, 120:220)
         cost_lo, cost_hi = 5.0, 40.0
     elseif total_vars <= 1000
-        supply_lo, supply_hi = rand(150:400), rand(1200:3500)
-        demand_lo, demand_hi = rand(80:200), rand(700:2000)
+        supply_lo, supply_hi = rand(rng, 150:400), rand(rng, 1200:3500)
+        demand_lo, demand_hi = rand(rng, 80:200), rand(rng, 700:2000)
         cost_lo, cost_hi = 10.0, 90.0
     else
-        supply_lo, supply_hi = rand(600:1500), rand(6000:30000)
-        demand_lo, demand_hi = rand(300:1000), rand(3500:18000)
+        supply_lo, supply_hi = rand(rng, 600:1500), rand(rng, 6000:30000)
+        demand_lo, demand_hi = rand(rng, 300:1000), rand(rng, 3500:18000)
         cost_lo, cost_hi = 20.0, 250.0
     end
 
     # --- Demands and supplies ---
-    demands = rand(demand_lo:demand_hi, n_destinations)
-    supplies = rand(supply_lo:supply_hi, n_sources)
+    demands = rand(rng, demand_lo:demand_hi, n_destinations)
+    supplies = rand(rng, supply_lo:supply_hi, n_sources)
 
     # --- Arc costs (hub legs slightly cheaper per leg to make routing attractive) ---
-    cost_direct = cost_lo .+ (cost_hi - cost_lo) .* rand(n_sources, n_destinations)
-    cost_to_hub = (cost_lo .+ (cost_hi - cost_lo) .* rand(n_sources, n_hubs)) .* 0.6
-    cost_from_hub = (cost_lo .+ (cost_hi - cost_lo) .* rand(n_hubs, n_destinations)) .* 0.6
+    cost_direct = cost_lo .+ (cost_hi - cost_lo) .* rand(rng, n_sources, n_destinations)
+    cost_to_hub = (cost_lo .+ (cost_hi - cost_lo) .* rand(rng, n_sources, n_hubs)) .* 0.6
+    cost_from_hub = (cost_lo .+ (cost_hi - cost_lo) .* rand(rng, n_hubs, n_destinations)) .* 0.6
 
     # Helper to distribute an integer addition across a vector (keeps reproducibility).
     function distribute_additions!(vec::Vector{Int}, amount::Int)
         amount <= 0 && return
-        w = rand(length(vec))
+        w = rand(rng, length(vec))
         base = floor.(Int, (w ./ sum(w)) .* amount)
         remainder = amount - sum(base)
         if remainder > 0
-            for idx in randperm(length(vec))[1:min(remainder, length(vec))]
+            for idx in randperm(rng, length(vec))[1:min(remainder, length(vec))]
                 base[idx] += 1
             end
         end
@@ -143,7 +143,7 @@ function TransshipmentProblem(target_variables::Int, feasibility_status::Feasibi
     elseif feasibility_status == infeasible
         # Force a deterministic contradiction: aggregate demand strictly exceeds supply.
         # This makes the destination constraints unsatisfiable regardless of routing/hub caps.
-        target_margin = max(1, round(Int, (0.05 + 0.05 * rand()) * max(total_supply, 1)))
+        target_margin = max(1, round(Int, (0.05 + 0.05 * rand(rng)) * max(total_supply, 1)))
         missing = (total_supply + target_margin) - total_demand
         if missing > 0
             distribute_additions!(demands, missing)
@@ -161,15 +161,15 @@ function TransshipmentProblem(target_variables::Int, feasibility_status::Feasibi
     # Per-arc capacity ~ (total_demand / n_hubs) so all hubs together can carry
     # roughly all demand, but no one arc can.
     hub_share = total_demand / max(n_hubs, 1)
-    per_arc_cap_to = hub_share * (0.6 + 0.5 * rand())
-    per_arc_cap_from = hub_share * (0.6 + 0.5 * rand())
+    per_arc_cap_to = hub_share * (0.6 + 0.5 * rand(rng))
+    per_arc_cap_from = hub_share * (0.6 + 0.5 * rand(rng))
     cap_to_hub = fill(0.0, n_sources, n_hubs)
     cap_from_hub = fill(0.0, n_hubs, n_destinations)
     for i in 1:n_sources, t in 1:n_hubs
-        cap_to_hub[i, t] = per_arc_cap_to * (0.8 + 0.4 * rand())
+        cap_to_hub[i, t] = per_arc_cap_to * (0.8 + 0.4 * rand(rng))
     end
     for t in 1:n_hubs, j in 1:n_destinations
-        cap_from_hub[t, j] = per_arc_cap_from * (0.8 + 0.4 * rand())
+        cap_from_hub[t, j] = per_arc_cap_from * (0.8 + 0.4 * rand(rng))
     end
 
     return TransshipmentProblem(

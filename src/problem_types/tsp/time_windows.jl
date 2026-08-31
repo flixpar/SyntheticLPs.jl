@@ -109,24 +109,24 @@ statuses. For `target = 100` this gives `n = 10` (100 vars); for `target = 500`,
   admit a feasible tour.
 """
 function TSPTimeWindowsProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
     # total = n^2  =>  n ≈ sqrt(target). Status-independent (no deletions).
     n = max(5, round(Int, sqrt(target_variables)))
 
     # --- Geography, travel times, service times ---
-    locations = _tsp_stops(n)
-    dist = _tsp_distance(locations)
-    minutes_per_km = rand(1.2:0.1:2.0)             # urban driving pace
+    locations = _tsp_stops(rng, n)
+    dist = _tsp_distance(rng, locations)
+    minutes_per_km = rand(rng, 1.2:0.1:2.0)             # urban driving pace
     tau = round.(dist .* minutes_per_km, digits = 2)
     # Time propagation is the subtour eliminator; it needs strictly positive
     # travel times on distinct stops (guaranteed by the distance floor).
     @assert minimum(tau[i, j] for i in 1:n, j in 1:n if i != j) > 0
-    service = vcat(0.0, [rand(5.0:0.5:25.0) for _ in 2:n])
+    service = vcat(0.0, [rand(rng, 5.0:0.5:25.0) for _ in 2:n])
 
     # --- A concrete tour and its no-wait schedule (shared by all branches) ---
-    tour = [1; shuffle(collect(2:n)); 1]
+    tour = [1; shuffle(rng, collect(2:n)); 1]
     arr = zeros(n)                                  # no-wait arrivals, depot at 0
     for idx in 2:n
         i, j = tour[idx-1], tour[idx]
@@ -141,9 +141,9 @@ function TSPTimeWindowsProblem(target_variables::Int, feasibility_status::Feasib
     if feasibility_status == feasible
         # Plant windows around the tour schedule. `a` rounds down (it must not
         # exceed the realized arrival) and `b` rounds up (it must not cut it).
-        tight = rand(n) .< 0.25                     # appointment stops
+        tight = rand(rng, n) .< 0.25                     # appointment stops
         for j in 2:n
-            target_a = tight[j] ? arr[j] : max(0.0, arr[j] * (0.75 + 0.2 * rand()))
+            target_a = tight[j] ? arr[j] : max(0.0, arr[j] * (0.75 + 0.2 * rand(rng)))
             a[j] = max(0.0, round(target_a - 0.01, digits = 2))
         end
         # Forward pass WITH waiting: the schedule the vehicle actually runs.
@@ -156,15 +156,15 @@ function TSPTimeWindowsProblem(target_variables::Int, feasibility_status::Feasib
             b[j] = round(t[j] + 0.01, digits = 2)   # > t[j] after rounding
         end
         planted_return = t[tour[n]] + service[tour[n]] + tau[tour[n], 1]
-        F = round(tour_tau * (1.10 + 0.20 * rand()), digits = 2)
-        L = round(planted_return * (1.05 + 0.15 * rand()), digits = 2)
+        F = round(tour_tau * (1.10 + 0.20 * rand(rng)), digits = 2)
+        L = round(planted_return * (1.05 + 0.15 * rand(rng)), digits = 2)
 
     else
         # Natural windows, independent of the tour (the infeasible and unknown
         # branches differ only in the budget F).
         for j in 2:n
-            a[j] = round(rand() * 0.6 * horizon, digits = 2)
-            b[j] = round(a[j] + rand(20.0:5.0:90.0), digits = 2)
+            a[j] = round(rand(rng) * 0.6 * horizon, digits = 2)
+            b[j] = round(a[j] + rand(rng, 20.0:5.0:90.0), digits = 2)
         end
         L = round(horizon * 1.2, digits = 2)
         if feasibility_status == infeasible
@@ -174,7 +174,7 @@ function TSPTimeWindowsProblem(target_variables::Int, feasibility_status::Feasib
             F = round(0.85 * sum_min, digits = 2)
         else
             # unknown: a plausible budget that may or may not suffice.
-            F = round(tour_tau * (0.9 + 0.3 * rand()), digits = 2)
+            F = round(tour_tau * (0.9 + 0.3 * rand(rng)), digits = 2)
         end
     end
 

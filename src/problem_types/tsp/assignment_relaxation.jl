@@ -76,7 +76,7 @@ against the *delivered* count.
 - `unknown`: a natural instance, identical to the feasible branch.
 """
 function TSPAssignmentRelaxationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
     # total = n^2 - n  =>  n = (1 + sqrt(1 + 4*target)) / 2.
@@ -85,15 +85,15 @@ function TSPAssignmentRelaxationProblem(target_variables::Int, feasibility_statu
     # Block size k is drawn unconditionally (RNG alignment across statuses);
     # the infeasible branch sizes n against the delivered count
     # n^2 - n - k*(n - k) variables.
-    n, k = _tsp_plan_dimensions(n0, target_variables, feasibility_status,
+    n, k = _tsp_plan_dimensions(rng, n0, target_variables, feasibility_status,
                                 (m, kk) -> m^2 - m - kk * (m - kk))
 
     # --- Geography and symmetric road distances (shared with tsp/standard) ---
-    locations = _tsp_stops(n)
-    dist = _tsp_distance(locations)
+    locations = _tsp_stops(rng, n)
+    dist = _tsp_distance(rng, locations)
 
     # --- Resolve feasibility intent ---
-    arc_ok, S, T = _tsp_arc_support(n, k, feasibility_status)
+    arc_ok, S, T = _tsp_arc_support(rng, n, k, feasibility_status)
 
     return TSPAssignmentRelaxationProblem(n, locations, dist, arc_ok, S, T)
 end

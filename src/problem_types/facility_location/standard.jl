@@ -48,39 +48,39 @@ Construct a facility location problem instance.
 - `seed`: Random seed for reproducibility
 """
 function FacilityLocationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Determine scale and ranges
     if target_variables <= 100
         min_facilities, max_facilities = 2, 20
         min_customers, max_customers = 1, 40
-        grid_width = rand(200.0:50.0:800.0)
-        grid_height = rand(200.0:50.0:800.0)
-        transport_cost_per_km = rand(0.5:0.1:1.2)
-        min_demand, max_demand = rand(5.0:1.0:20.0), rand(50.0:10.0:150.0)
-        fixed_cost_min, fixed_cost_max = rand(20000.0:5000.0:80000.0), rand(100000.0:20000.0:300000.0)
-        capacity_factor = rand(1.1:0.05:1.6)
-        budget_factor = rand(0.4:0.05:0.8)
+        grid_width = rand(rng, 200.0:50.0:800.0)
+        grid_height = rand(rng, 200.0:50.0:800.0)
+        transport_cost_per_km = rand(rng, 0.5:0.1:1.2)
+        min_demand, max_demand = rand(rng, 5.0:1.0:20.0), rand(rng, 50.0:10.0:150.0)
+        fixed_cost_min, fixed_cost_max = rand(rng, 20000.0:5000.0:80000.0), rand(rng, 100000.0:20000.0:300000.0)
+        capacity_factor = rand(rng, 1.1:0.05:1.6)
+        budget_factor = rand(rng, 0.4:0.05:0.8)
     elseif target_variables <= 1000
         min_facilities, max_facilities = 3, 100
         min_customers, max_customers = 5, 200
-        grid_width = rand(500.0:100.0:2000.0)
-        grid_height = rand(500.0:100.0:2000.0)
-        transport_cost_per_km = rand(0.8:0.1:1.8)
-        min_demand, max_demand = rand(10.0:2.0:30.0), rand(80.0:20.0:200.0)
-        fixed_cost_min, fixed_cost_max = rand(50000.0:10000.0:150000.0), rand(250000.0:50000.0:600000.0)
-        capacity_factor = rand(1.2:0.05:1.8)
-        budget_factor = rand(0.5:0.05:0.9)
+        grid_width = rand(rng, 500.0:100.0:2000.0)
+        grid_height = rand(rng, 500.0:100.0:2000.0)
+        transport_cost_per_km = rand(rng, 0.8:0.1:1.8)
+        min_demand, max_demand = rand(rng, 10.0:2.0:30.0), rand(rng, 80.0:20.0:200.0)
+        fixed_cost_min, fixed_cost_max = rand(rng, 50000.0:10000.0:150000.0), rand(rng, 250000.0:50000.0:600000.0)
+        capacity_factor = rand(rng, 1.2:0.05:1.8)
+        budget_factor = rand(rng, 0.5:0.05:0.9)
     else
         min_facilities, max_facilities = 5, 500
         min_customers, max_customers = 10, 2000
-        grid_width = rand(1000.0:200.0:5000.0)
-        grid_height = rand(1000.0:200.0:5000.0)
-        transport_cost_per_km = rand(1.0:0.2:3.0)
-        min_demand, max_demand = rand(20.0:5.0:60.0), rand(150.0:50.0:500.0)
-        fixed_cost_min, fixed_cost_max = rand(100000.0:20000.0:300000.0), rand(500000.0:100000.0:1500000.0)
-        capacity_factor = rand(1.3:0.1:2.0)
-        budget_factor = rand(0.6:0.05:0.95)
+        grid_width = rand(rng, 1000.0:200.0:5000.0)
+        grid_height = rand(rng, 1000.0:200.0:5000.0)
+        transport_cost_per_km = rand(rng, 1.0:0.2:3.0)
+        min_demand, max_demand = rand(rng, 20.0:5.0:60.0), rand(rng, 150.0:50.0:500.0)
+        fixed_cost_min, fixed_cost_max = rand(rng, 100000.0:20000.0:300000.0), rand(rng, 500000.0:100000.0:1500000.0)
+        capacity_factor = rand(rng, 1.3:0.1:2.0)
+        budget_factor = rand(rng, 0.6:0.05:0.95)
     end
 
     # Find optimal n_facilities and n_customers
@@ -117,22 +117,22 @@ function FacilityLocationProblem(target_variables::Int, feasibility_status::Feas
     n_customers = best_n_customers
 
     # Generate locations
-    facility_locs = [(grid_width * rand(), grid_height * rand()) for _ in 1:n_facilities]
+    facility_locs = [(grid_width * rand(rng), grid_height * rand(rng)) for _ in 1:n_facilities]
 
     n_clusters = max(2, div(n_customers, 20))
-    cluster_centers = [(grid_width * rand(), grid_height * rand()) for _ in 1:n_clusters]
+    cluster_centers = [(grid_width * rand(rng), grid_height * rand(rng)) for _ in 1:n_clusters]
     customer_locs = Tuple{Float64,Float64}[]
     for _ in 1:n_customers
-        center = rand(cluster_centers)
-        x = clamp(center[1] + randn() * (grid_width/10), 0, grid_width)
-        y = clamp(center[2] + randn() * (grid_height/10), 0, grid_height)
+        center = rand(rng, cluster_centers)
+        x = clamp(center[1] + randn(rng) * (grid_width/10), 0, grid_width)
+        y = clamp(center[2] + randn(rng) * (grid_height/10), 0, grid_height)
         push!(customer_locs, (x, y))
     end
 
     # Generate demands
     demands = Dict{Int,Float64}()
     for c in 1:n_customers
-        demands[c] = exp(rand(Normal(log((min_demand + max_demand)/2), 0.5)))
+        demands[c] = exp(rand(rng, Normal(log((min_demand + max_demand)/2), 0.5)))
     end
 
     total_demand = sum(values(demands))
@@ -143,7 +143,7 @@ function FacilityLocationProblem(target_variables::Int, feasibility_status::Feas
     capacities = Dict{Int,Float64}()
 
     for w in 1:n_facilities
-        capacity = avg_facility_capacity * (0.8 + 0.4 * rand())
+        capacity = avg_facility_capacity * (0.8 + 0.4 * rand(rng))
         capacities[w] = capacity
 
         location_factor = 1.0 + 0.2 * (facility_locs[w][1] / grid_width + facility_locs[w][2] / grid_height)
@@ -162,7 +162,7 @@ function FacilityLocationProblem(target_variables::Int, feasibility_status::Feas
                 (facility_locs[w][1] - customer_locs[c][1])^2 +
                 (facility_locs[w][2] - customer_locs[c][2])^2
             )
-            shipping_costs[(w,c)] = distance * transport_cost_per_km * (0.9 + 0.2 * rand())
+            shipping_costs[(w,c)] = distance * transport_cost_per_km * (0.9 + 0.2 * rand(rng))
         end
     end
 
@@ -225,15 +225,15 @@ function FacilityLocationProblem(target_variables::Int, feasibility_status::Feas
             order_desc = sortperm(ratios, rev=true)
         end
         selected_idxs, min_int_budget = greedy_integer_subset_for(total_demand)
-        slack_factor = 1.02 + 0.23 * rand()
+        slack_factor = 1.02 + 0.23 * rand(rng)
         budget = max(original_budget, min_int_budget * slack_factor)
     elseif solution_status == :infeasible
         b_thresh = fractional_budget_to_reach(total_demand)
         if isfinite(b_thresh)
-            tighten = rand(0.75:0.01:0.95)
+            tighten = rand(rng, 0.75:0.01:0.95)
             budget = min(original_budget, b_thresh * tighten)
         else
-            budget = min(original_budget, sum(values(fixed_costs)) * rand(0.4:0.01:0.8))
+            budget = min(original_budget, sum(values(fixed_costs)) * rand(rng, 0.4:0.01:0.8))
         end
     else
         budget = original_budget

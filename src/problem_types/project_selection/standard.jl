@@ -52,7 +52,7 @@ Construct a project selection problem instance.
 - `seed`: Random seed for reproducibility
 """
 function ProjectSelectionProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # For project selection, variables = n_projects
     n_projects = target_variables
@@ -62,44 +62,44 @@ function ProjectSelectionProblem(target_variables::Int, feasibility_status::Feas
         # Small scale
         cost_mean = log(100_000)
         cost_std = 1.5
-        min_cost = max(5_000, round(rand(LogNormal(cost_mean - cost_std, 0.5)), digits=0))
-        max_cost = min(500_000, round(rand(LogNormal(cost_mean + cost_std, 0.5)), digits=0))
+        min_cost = max(5_000, round(rand(rng, LogNormal(cost_mean - cost_std, 0.5)), digits=0))
+        max_cost = min(500_000, round(rand(rng, LogNormal(cost_mean + cost_std, 0.5)), digits=0))
 
-        return_multiplier = rand(Uniform(1.5, 4.0))
-        min_return = max(10_000, min_cost * rand(Uniform(0.8, 1.2)))
+        return_multiplier = rand(rng, Uniform(1.5, 4.0))
+        min_return = max(10_000, min_cost * rand(rng, Uniform(0.8, 1.2)))
         max_return = min(1_000_000, max_cost * return_multiplier)
 
-        budget_factor = rand(Beta(2, 3)) * 0.4 + 0.2
-        max_risk_score = rand(Uniform(8.0, 12.0))
-        dependency_density = rand(Beta(2, 8)) * 0.1 + 0.05
+        budget_factor = rand(rng, Beta(2, 3)) * 0.4 + 0.2
+        max_risk_score = rand(rng, Uniform(8.0, 12.0))
+        dependency_density = rand(rng, Beta(2, 8)) * 0.1 + 0.05
     elseif target_variables <= 1000
         # Medium scale
         cost_mean = log(500_000)
         cost_std = 1.8
-        min_cost = max(10_000, round(rand(LogNormal(cost_mean - cost_std, 0.6)), digits=0))
-        max_cost = min(5_000_000, round(rand(LogNormal(cost_mean + cost_std, 0.6)), digits=0))
+        min_cost = max(10_000, round(rand(rng, LogNormal(cost_mean - cost_std, 0.6)), digits=0))
+        max_cost = min(5_000_000, round(rand(rng, LogNormal(cost_mean + cost_std, 0.6)), digits=0))
 
-        return_multiplier = rand(Gamma(2, 2)) + 2.0
-        min_return = max(50_000, min_cost * rand(Uniform(0.7, 1.3)))
+        return_multiplier = rand(rng, Gamma(2, 2)) + 2.0
+        min_return = max(50_000, min_cost * rand(rng, Uniform(0.7, 1.3)))
         max_return = min(10_000_000, max_cost * return_multiplier)
 
-        budget_factor = rand(Beta(3, 4)) * 0.35 + 0.15
-        max_risk_score = rand(Uniform(12.0, 18.0))
-        dependency_density = rand(Beta(3, 7)) * 0.15 + 0.1
+        budget_factor = rand(rng, Beta(3, 4)) * 0.35 + 0.15
+        max_risk_score = rand(rng, Uniform(12.0, 18.0))
+        dependency_density = rand(rng, Beta(3, 7)) * 0.15 + 0.1
     else
         # Large scale
         cost_mean = log(2_000_000)
         cost_std = 2.0
-        min_cost = max(50_000, round(rand(LogNormal(cost_mean - cost_std, 0.7)), digits=0))
-        max_cost = min(50_000_000, round(rand(LogNormal(cost_mean + cost_std, 0.7)), digits=0))
+        min_cost = max(50_000, round(rand(rng, LogNormal(cost_mean - cost_std, 0.7)), digits=0))
+        max_cost = min(50_000_000, round(rand(rng, LogNormal(cost_mean + cost_std, 0.7)), digits=0))
 
-        return_multiplier = rand(Gamma(1.5, 2.5)) + 1.5
-        min_return = max(100_000, min_cost * rand(Uniform(0.6, 1.4)))
+        return_multiplier = rand(rng, Gamma(1.5, 2.5)) + 1.5
+        min_return = max(100_000, min_cost * rand(rng, Uniform(0.6, 1.4)))
         max_return = min(100_000_000, max_cost * return_multiplier)
 
-        budget_factor = rand(Beta(4, 6)) * 0.3 + 0.1
-        max_risk_score = rand(Uniform(15.0, 25.0))
-        dependency_density = rand(Beta(2, 5)) * 0.15 + 0.15
+        budget_factor = rand(rng, Beta(4, 6)) * 0.3 + 0.1
+        max_risk_score = rand(rng, Uniform(15.0, 25.0))
+        dependency_density = rand(rng, Beta(2, 5)) * 0.15 + 0.15
     end
 
     # Ensure min < max
@@ -111,15 +111,15 @@ function ProjectSelectionProblem(target_variables::Int, feasibility_status::Feas
     end
 
     # Risk budget
-    risk_per_project = rand(Uniform(0.8, 2.5))
+    risk_per_project = rand(rng, Uniform(0.8, 2.5))
     risk_budget = n_projects * risk_per_project
 
     # Maximum high-risk projects
-    high_risk_fraction = rand(Beta(2, 5)) * 0.2 + 0.1
+    high_risk_fraction = rand(rng, Beta(2, 5)) * 0.2 + 0.1
     max_high_risk_projects = max(1, ceil(Int, n_projects * high_risk_fraction))
 
     # High risk threshold
-    high_risk_threshold = max_risk_score * rand(Uniform(0.6, 0.8))
+    high_risk_threshold = max_risk_score * rand(rng, Uniform(0.6, 0.8))
 
     projects = collect(1:n_projects)
 
@@ -138,19 +138,19 @@ function ProjectSelectionProblem(target_variables::Int, feasibility_status::Feas
 
     for p in projects
         # Assign project to a category
-        cat_idx = sample(1:length(project_categories), Weights(category_weights))
+        cat_idx = sample(rng, 1:length(project_categories), Weights(category_weights))
         cat = project_categories[cat_idx]
 
         # Generate cost using log-normal distribution
         cost_range = max_cost - min_cost
         cost_mean_ln = log(min_cost + cost_range * 0.3)
         cost_std_ln = 0.8
-        base_cost = min_cost + (max_cost - min_cost) * min(1.0, max(0.0, rand(LogNormal(cost_mean_ln, cost_std_ln)) / exp(cost_mean_ln + cost_std_ln^2)))
+        base_cost = min_cost + (max_cost - min_cost) * min(1.0, max(0.0, rand(rng, LogNormal(cost_mean_ln, cost_std_ln)) / exp(cost_mean_ln + cost_std_ln^2)))
         costs[p] = base_cost
 
         # Generate correlated return
-        target_roi = rand(Uniform(cat[1], cat[2]))
-        noise_factor = rand(Normal(1.0, cat[3] * 0.2))
+        target_roi = rand(rng, Uniform(cat[1], cat[2]))
+        noise_factor = rand(rng, Normal(1.0, cat[3] * 0.2))
         returns[p] = base_cost * target_roi * max(0.5, noise_factor)
         returns[p] = max(min_return, min(max_return, returns[p]))
     end
@@ -162,9 +162,9 @@ function ProjectSelectionProblem(target_variables::Int, feasibility_status::Feas
 
         alpha = 1.5 + return_percentile * 2.0
         beta = 3.0 - return_percentile * 1.5
-        base_risk = rand(Beta(alpha, beta))
+        base_risk = rand(rng, Beta(alpha, beta))
 
-        noise = rand(Normal(1.0, 0.15))
+        noise = rand(rng, Normal(1.0, 0.15))
         risk_scores[p] = max(1.0, min(max_risk_score, base_risk * max_risk_score * noise))
     end
 
@@ -182,7 +182,7 @@ function ProjectSelectionProblem(target_variables::Int, feasibility_status::Feas
 
             dependency_prob = dependency_density * (0.5 + 0.3 * cost_factor + 0.2 * risk_similarity)
 
-            if rand() < dependency_prob
+            if rand(rng) < dependency_prob
                 push!(dependencies, (proj_i, proj_j))
             end
         end
@@ -197,7 +197,7 @@ function ProjectSelectionProblem(target_variables::Int, feasibility_status::Feas
 
     actual_status = feasibility_status
     if feasibility_status == unknown
-        actual_status = rand() < 0.7 ? feasible : infeasible
+        actual_status = rand(rng) < 0.7 ? feasible : infeasible
     end
 
     if actual_status == infeasible
@@ -214,7 +214,7 @@ function ProjectSelectionProblem(target_variables::Int, feasibility_status::Feas
             end
         end
         # Require more projects than affordable
-        min_selected = affordable + max(1, rand(1:max(1, n_projects ÷ 4)))
+        min_selected = affordable + max(1, rand(rng, 1:max(1, n_projects ÷ 4)))
         min_selected = min(min_selected, n_projects)
     end
 

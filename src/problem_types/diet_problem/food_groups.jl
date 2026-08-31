@@ -66,39 +66,39 @@ Feasibility handling:
 - `seed`: Random seed for reproducibility
 """
 function FoodGroupsDietProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # Variable count = n_foods (one consumption variable per food), so n_foods = target.
     n_foods = max(4, target_variables)
 
     # Scale nutrient count and parameter ranges with problem size.
     if n_foods <= 100
-        n_nutrients = rand(5:min(25, max(5, n_foods ÷ 4)))
-        cost_range = (rand(0.5:0.1:2.0), rand(3.0:0.5:8.0))
-        nutrient_range = (rand(0.05:0.01:0.15), rand(1.5:0.1:3.0))
+        n_nutrients = rand(rng, 5:min(25, max(5, n_foods ÷ 4)))
+        cost_range = (rand(rng, 0.5:0.1:2.0), rand(rng, 3.0:0.5:8.0))
+        nutrient_range = (rand(rng, 0.05:0.01:0.15), rand(rng, 1.5:0.1:3.0))
     elseif n_foods <= 1000
-        n_nutrients = rand(15:min(75, max(15, n_foods ÷ 8)))
-        cost_range = (rand(0.1:0.05:1.0), rand(2.0:0.5:10.0))
-        nutrient_range = (rand(0.01:0.005:0.1), rand(1.0:0.2:4.0))
+        n_nutrients = rand(rng, 15:min(75, max(15, n_foods ÷ 8)))
+        cost_range = (rand(rng, 0.1:0.05:1.0), rand(rng, 2.0:0.5:10.0))
+        nutrient_range = (rand(rng, 0.01:0.005:0.1), rand(rng, 1.0:0.2:4.0))
     else
-        n_nutrients = rand(25:min(150, max(25, n_foods ÷ 15)))
-        cost_range = (rand(0.05:0.01:0.5), rand(1.0:0.2:15.0))
-        nutrient_range = (rand(0.005:0.001:0.05), rand(0.5:0.1:5.0))
+        n_nutrients = rand(rng, 25:min(150, max(25, n_foods ÷ 15)))
+        cost_range = (rand(rng, 0.05:0.01:0.5), rand(rng, 1.0:0.2:15.0))
+        nutrient_range = (rand(rng, 0.005:0.001:0.05), rand(rng, 0.5:0.1:5.0))
     end
 
     # Basic food data.
     min_cost, max_cost = cost_range
-    costs = rand(min_cost:0.1:max_cost, n_foods)
+    costs = rand(rng, min_cost:0.1:max_cost, n_foods)
 
     min_nutrient, max_nutrient = nutrient_range
     # Ensure strictly positive nutrient content so every nutrient is achievable.
-    nutrient_content = rand(min_nutrient:0.01:max_nutrient, n_foods, n_nutrients)
+    nutrient_content = rand(rng, min_nutrient:0.01:max_nutrient, n_foods, n_nutrients)
 
     # Food-group assignments: ensure each group has at least one food.
-    n_food_groups = rand(4:min(8, max(4, n_foods ÷ 5)))
-    food_group_assignments = rand(1:n_food_groups, n_foods)
+    n_food_groups = rand(rng, 4:min(8, max(4, n_foods ÷ 5)))
+    food_group_assignments = rand(rng, 1:n_food_groups, n_foods)
     # Guarantee every group is non-empty by seeding one food per group.
-    perm = randperm(n_foods)
+    perm = randperm(rng, n_foods)
     for g in 1:n_food_groups
         food_group_assignments[perm[g]] = g
     end
@@ -124,13 +124,13 @@ function FoodGroupsDietProblem(target_variables::Int, feasibility_status::Feasib
     primary_eff_sum = sum(cost_effectiveness[primary_foods])
     for i in primary_foods
         w = cost_effectiveness[i] / primary_eff_sum
-        baseline_diet[i] = primary_total * w * (0.7 + rand() * 0.6)
+        baseline_diet[i] = primary_total * w * (0.7 + rand(rng) * 0.6)
     end
     secondary_foods = order[(primary_count + 1):end]
     if !isempty(secondary_foods)
         secondary_total = base_consumption * 0.25
         for i in secondary_foods
-            baseline_diet[i] = secondary_total / length(secondary_foods) * (0.5 + rand())
+            baseline_diet[i] = secondary_total / length(secondary_foods) * (0.5 + rand(rng))
         end
     end
     # Normalize total baseline consumption.
@@ -142,19 +142,19 @@ function FoodGroupsDietProblem(target_variables::Int, feasibility_status::Feasib
     end
 
     # --- Supply limits: generous headroom above the baseline diet ---
-    food_supply_limits = [baseline_diet[i] * (2.0 + rand() * 2.0) for i in 1:n_foods]
+    food_supply_limits = [baseline_diet[i] * (2.0 + rand(rng) * 2.0) for i in 1:n_foods]
 
     # --- Nutrient requirements: below baseline achievement (with tolerance) ---
     requirements = zeros(n_nutrients)
     for j in 1:n_nutrients
         achieved = sum(nutrient_content[i, j] * baseline_diet[i] for i in 1:n_foods)
         # Require 70-90% of what the baseline achieves -> baseline satisfies it.
-        requirements[j] = achieved * (0.7 + rand() * 0.2)
+        requirements[j] = achieved * (0.7 + rand(rng) * 0.2)
     end
 
     # --- Cost budget: above baseline cost ---
     baseline_cost = sum(costs[i] * baseline_diet[i] for i in 1:n_foods)
-    cost_budget = baseline_cost * (1.15 + rand() * 0.35)
+    cost_budget = baseline_cost * (1.15 + rand(rng) * 0.35)
 
     # --- Group floors: below the baseline served quantity per group ---
     # group_baseline[g] = total baseline consumption of foods in group g.
@@ -172,14 +172,14 @@ function FoodGroupsDietProblem(target_variables::Int, feasibility_status::Feasib
     for g in 1:n_food_groups
         # Floor is a fraction of what the baseline already serves from the group;
         # this is automatically <= group availability since baseline <= supply.
-        min_servings_per_group[g] = group_baseline[g] * (0.3 + rand() * 0.4)
+        min_servings_per_group[g] = group_baseline[g] * (0.3 + rand(rng) * 0.4)
     end
 
     # --- Force a deterministic infeasibility if requested ---
     if actual_status == infeasible
         # Require more from one group than the group can ever supply (clear margin).
-        target_group = rand(1:n_food_groups)
-        min_servings_per_group[target_group] = group_availability[target_group] * (1.5 + rand() * 0.5)
+        target_group = rand(rng, 1:n_food_groups)
+        min_servings_per_group[target_group] = group_availability[target_group] * (1.5 + rand(rng) * 0.5)
     end
 
     return FoodGroupsDietProblem(

@@ -68,7 +68,7 @@ There is exactly one decision variable per item, so `n_items = target_variables`
   model is infeasible regardless of integrality.
 """
 function BoundedKnapsackProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     # One decision variable per item.
     n_items = max(1, target_variables)
@@ -76,39 +76,39 @@ function BoundedKnapsackProblem(target_variables::Int, feasibility_status::Feasi
     # --- Scale-tiered parameter ranges ---
     # base weights/values plus multiplicity bounds; ranges grow with problem size.
     if n_items <= 100
-        weight_lo, weight_hi = 3, rand(18:28)
-        value_base_lo, value_base_hi = 10, rand(70:110)
-        bound_hi = rand(4:6)
+        weight_lo, weight_hi = 3, rand(rng, 18:28)
+        value_base_lo, value_base_hi = 10, rand(rng, 70:110)
+        bound_hi = rand(rng, 4:6)
     elseif n_items <= 1000
-        weight_lo, weight_hi = 5, rand(30:45)
-        value_base_lo, value_base_hi = 20, rand(150:260)
-        bound_hi = rand(5:7)
+        weight_lo, weight_hi = 5, rand(rng, 30:45)
+        value_base_lo, value_base_hi = 20, rand(rng, 150:260)
+        bound_hi = rand(rng, 5:7)
     else
-        weight_lo, weight_hi = 10, rand(50:75)
-        value_base_lo, value_base_hi = 40, rand(300:550)
-        bound_hi = rand(6:8)
+        weight_lo, weight_hi = 10, rand(rng, 50:75)
+        value_base_lo, value_base_hi = 40, rand(rng, 300:550)
+        bound_hi = rand(rng, 6:8)
     end
 
     # --- Weights ---
-    weights = rand(weight_lo:weight_hi, n_items)
+    weights = rand(rng, weight_lo:weight_hi, n_items)
 
     # --- Values: positively but noisily correlated with weight ---
     # value_i ≈ correlation_slope * weight_i + base_noise, kept strictly positive.
-    correlation_slope = value_base_hi / max(weight_hi, 1) * (0.5 + 0.5 * rand())
+    correlation_slope = value_base_hi / max(weight_hi, 1) * (0.5 + 0.5 * rand(rng))
     values = Vector{Int}(undef, n_items)
     for i in 1:n_items
         signal = correlation_slope * weights[i]
-        noise = rand(value_base_lo:value_base_hi)
+        noise = rand(rng, value_base_lo:value_base_hi)
         v = round(Int, 0.6 * signal + 0.4 * noise + value_base_lo)
         values[i] = max(value_base_lo, v)
     end
 
     # --- Multiplicity bounds u_i (units of each product available) ---
-    upper_bounds = rand(1:bound_hi, n_items)
+    upper_bounds = rand(rng, 1:bound_hi, n_items)
 
     # --- Capacity: a fraction of the maximum total weight so the budget binds ---
     max_total_weight = sum(weights[i] * upper_bounds[i] for i in 1:n_items)
-    capacity_ratio = 0.30 + 0.30 * rand()  # 30%-60% of the max packable weight
+    capacity_ratio = 0.30 + 0.30 * rand(rng)  # 30%-60% of the max packable weight
     capacity = max(1, round(Int, max_total_weight * capacity_ratio))
 
     # --- Resolve feasibility intent ---
@@ -133,7 +133,7 @@ function BoundedKnapsackProblem(target_variables::Int, feasibility_status::Feasi
             remaining -= weights[i] * take
         end
         # Require strictly more value than the relaxation can achieve.
-        min_value = lp_opt * (1.1 + 0.3 * rand())
+        min_value = lp_opt * (1.1 + 0.3 * rand(rng))
         # Guard against degenerate zero optimum (cannot happen with positive data,
         # but keep the floor strictly positive so the constraint is emitted).
         min_value = max(min_value, 1.0)

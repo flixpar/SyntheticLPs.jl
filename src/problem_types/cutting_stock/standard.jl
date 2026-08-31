@@ -41,35 +41,35 @@ Construct a cutting stock problem instance with guaranteed feasibility propertie
 - `seed`: Random seed for reproducibility
 """
 function CuttingStockProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    Random.seed!(seed)
+    rng = MersenneTwister(seed)
 
     max_patterns = target_variables
 
     # Scale parameters based on target variable count
     if target_variables <= 250
-        n_piece_types = rand(3:min(15, max(3, target_variables ÷ 10)))
-        stock_length = rand(Uniform(3.0, 8.0))
-        demand_min = rand(5:20)
-        demand_max = rand(50:200)
+        n_piece_types = rand(rng, 3:min(15, max(3, target_variables ÷ 10)))
+        stock_length = rand(rng, Uniform(3.0, 8.0))
+        demand_min = rand(rng, 5:20)
+        demand_max = rand(rng, 50:200)
         common_lengths = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
-        common_length_prob = rand(Uniform(0.3, 0.6))
-        waste_factor = rand(Uniform(0.05, 0.15))
+        common_length_prob = rand(rng, Uniform(0.3, 0.6))
+        waste_factor = rand(rng, Uniform(0.05, 0.15))
     elseif target_variables <= 1000
-        n_piece_types = rand(8:min(50, max(8, target_variables ÷ 20)))
-        stock_length = rand(Uniform(6.0, 12.0))
-        demand_min = rand(20:100)
-        demand_max = rand(200:1000)
+        n_piece_types = rand(rng, 8:min(50, max(8, target_variables ÷ 20)))
+        stock_length = rand(rng, Uniform(6.0, 12.0))
+        demand_min = rand(rng, 20:100)
+        demand_max = rand(rng, 200:1000)
         common_lengths = [1.0, 1.2, 1.5, 2.0, 2.4, 3.0, 4.0, 6.0]
-        common_length_prob = rand(Uniform(0.4, 0.7))
-        waste_factor = rand(Uniform(0.03, 0.10))
+        common_length_prob = rand(rng, Uniform(0.4, 0.7))
+        waste_factor = rand(rng, Uniform(0.03, 0.10))
     else
-        n_piece_types = rand(20:min(200, max(20, target_variables ÷ 50)))
-        stock_length = rand(Uniform(8.0, 20.0))
-        demand_min = rand(100:500)
-        demand_max = rand(1000:10000)
+        n_piece_types = rand(rng, 20:min(200, max(20, target_variables ÷ 50)))
+        stock_length = rand(rng, Uniform(8.0, 20.0))
+        demand_min = rand(rng, 100:500)
+        demand_max = rand(rng, 1000:10000)
         common_lengths = [1.0, 1.2, 1.5, 2.0, 2.4, 3.0, 4.0, 6.0, 8.0, 10.0, 12.0]
-        common_length_prob = rand(Uniform(0.5, 0.8))
-        waste_factor = rand(Uniform(0.02, 0.08))
+        common_length_prob = rand(rng, Uniform(0.5, 0.8))
+        waste_factor = rand(rng, Uniform(0.02, 0.08))
     end
 
     # Ensure enough piece-type diversity that generate_cutting_patterns can produce
@@ -83,18 +83,18 @@ function CuttingStockProblem(target_variables::Int, feasibility_status::Feasibil
     effective_max_length = min(stock_length * 0.95, stock_length - 0.1)
 
     for i in 1:n_piece_types
-        if rand() < common_length_prob && !isempty(common_lengths)
-            base_length = rand(common_lengths)
+        if rand(rng) < common_length_prob && !isempty(common_lengths)
+            base_length = rand(rng, common_lengths)
             if base_length > effective_max_length
                 valid_lengths = filter(x -> x <= effective_max_length, common_lengths)
-                base_length = isempty(valid_lengths) ? effective_max_length * 0.8 : rand(valid_lengths)
+                base_length = isempty(valid_lengths) ? effective_max_length * 0.8 : rand(rng, valid_lengths)
             end
-            variation = rand(Normal(0, 0.02))
+            variation = rand(rng, Normal(0, 0.02))
             length = clamp(base_length + variation, 0.1, effective_max_length)
             push!(piece_lengths, round(length, digits=2))
         else
             α, β = 2.0, 3.0
-            normalized = rand(Beta(α, β))
+            normalized = rand(rng, Beta(α, β))
             length = 0.1 + (effective_max_length - 0.1) * normalized
             precision = stock_length > 10 ? 0.1 : 0.05
             length = round(length / precision) * precision
@@ -116,7 +116,7 @@ function CuttingStockProblem(target_variables::Int, feasibility_status::Feasibil
             σ = 0.7
         end
 
-        base_demand = rand(LogNormal(μ, σ))
+        base_demand = rand(rng, LogNormal(μ, σ))
         if base_demand < 50
             base_demand = round(base_demand / 5) * 5
         elseif base_demand < 200
@@ -131,11 +131,11 @@ function CuttingStockProblem(target_variables::Int, feasibility_status::Feasibil
     # Determine target feasibility
     target_feasible = feasibility_status == feasible ? true :
                      feasibility_status == infeasible ? false :
-                     rand() < 0.5
+                     rand(rng) < 0.5
 
     # Generate patterns and adjust for feasibility
     demands, stock_limit, patterns = adjust_for_feasibility(
-        base_demands, piece_lengths, stock_length, common_lengths,
+        rng, base_demands, piece_lengths, stock_length, common_lengths,
         target_feasible, waste_factor, max_patterns
     )
 
@@ -145,16 +145,16 @@ end
 """
 Adjust demands and constraints to achieve desired feasibility with mathematical guarantees
 """
-function adjust_for_feasibility(base_demands, piece_lengths, stock_length,
+function adjust_for_feasibility(rng::AbstractRNG, base_demands, piece_lengths, stock_length,
                                common_lengths, target_feasible, waste_factor, max_patterns)
 
     if target_feasible
         # FEASIBLE: Create realistic, solvable manufacturing scenarios
-        patterns = generate_cutting_patterns(stock_length, piece_lengths, max_patterns, waste_factor)
+        patterns = generate_cutting_patterns(rng, stock_length, piece_lengths, max_patterns, waste_factor)
         demands = copy(base_demands)
 
         for i in 1:length(demands)
-            variation = rand(Uniform(0.8, 1.2))
+            variation = rand(rng, Uniform(0.8, 1.2))
             demands[i] = max(1, round(Int, demands[i] * variation))
         end
 
@@ -165,16 +165,16 @@ function adjust_for_feasibility(base_demands, piece_lengths, stock_length,
     else
         # INFEASIBLE: Create mathematically guaranteed infeasible scenarios
         scenarios = [:rush_order, :seasonal_spike, :backlog_clearing, :mixed]
-        scenario = rand(scenarios)
+        scenario = rand(rng, scenarios)
 
-        infeasibility_method = rand(1:3)
+        infeasibility_method = rand(rng, 1:3)
 
         if infeasibility_method == 1
             # Method 1: Single piece impossibility
-            patterns = generate_cutting_patterns(stock_length, piece_lengths, max_patterns, waste_factor)
+            patterns = generate_cutting_patterns(rng, stock_length, piece_lengths, max_patterns, waste_factor)
             target_piece_idx = argmin(piece_lengths)
 
-            reasonable_stock_limit = round(Int, sum(base_demands) * rand(Uniform(0.8, 1.2)))
+            reasonable_stock_limit = round(Int, sum(base_demands) * rand(rng, Uniform(0.8, 1.2)))
 
             best_efficiency = 0
             for pattern in patterns
@@ -188,15 +188,15 @@ function adjust_for_feasibility(base_demands, piece_lengths, stock_length,
 
             max_possible_target = best_efficiency * reasonable_stock_limit
 
-            scaling_factors = calculate_demand_scaling_factors(piece_lengths, common_lengths, scenario)
+            scaling_factors = calculate_demand_scaling_factors(rng, piece_lengths, common_lengths, scenario)
             demands = [max(1, round(Int, d * f)) for (d, f) in zip(base_demands, scaling_factors)]
-            demands[target_piece_idx] = max_possible_target + round(Int, max_possible_target * rand(Uniform(0.3, 0.8)))
+            demands[target_piece_idx] = max_possible_target + round(Int, max_possible_target * rand(rng, Uniform(0.3, 0.8)))
 
             stock_limit = reasonable_stock_limit
 
         elseif infeasibility_method == 2
             # Method 2: No-pattern scenario
-            target_piece_idx = rand(1:length(piece_lengths))
+            target_piece_idx = rand(rng, 1:length(piece_lengths))
 
             patterns = []
             for (i, piece_length) in enumerate(piece_lengths)
@@ -211,9 +211,9 @@ function adjust_for_feasibility(base_demands, piece_lengths, stock_length,
                 pattern = zeros(Int, length(piece_lengths))
                 available_indices = [i for i in 1:length(piece_lengths) if i != target_piece_idx]
                 for idx in available_indices
-                    if rand() < 0.3
+                    if rand(rng) < 0.3
                         max_fit = floor(Int, stock_length / piece_lengths[idx])
-                        pattern[idx] = rand(1:max(1, max_fit))
+                        pattern[idx] = rand(rng, 1:max(1, max_fit))
                     end
                 end
                 if sum(pattern) > 0
@@ -221,7 +221,7 @@ function adjust_for_feasibility(base_demands, piece_lengths, stock_length,
                 end
             end
 
-            scaling_factors = calculate_demand_scaling_factors(piece_lengths, common_lengths, scenario)
+            scaling_factors = calculate_demand_scaling_factors(rng, piece_lengths, common_lengths, scenario)
             demands = [max(1, round(Int, d * f)) for (d, f) in zip(base_demands, scaling_factors)]
             demands[target_piece_idx] = max(1, round(Int, base_demands[target_piece_idx] * scaling_factors[target_piece_idx]))
 
@@ -229,7 +229,7 @@ function adjust_for_feasibility(base_demands, piece_lengths, stock_length,
 
         else
             # Method 3: Combined stock+demand contradiction
-            patterns = generate_cutting_patterns(stock_length, piece_lengths, max_patterns, waste_factor)
+            patterns = generate_cutting_patterns(rng, stock_length, piece_lengths, max_patterns, waste_factor)
 
             min_total_stock_needed = 0
             for i in 1:length(piece_lengths)
@@ -246,10 +246,10 @@ function adjust_for_feasibility(base_demands, piece_lengths, stock_length,
                 min_total_stock_needed = max(min_total_stock_needed, min_stock_for_piece_i)
             end
 
-            stock_limit = max(1, round(Int, min_total_stock_needed * rand(Uniform(0.4, 0.7))))
+            stock_limit = max(1, round(Int, min_total_stock_needed * rand(rng, Uniform(0.4, 0.7))))
 
-            scaling_factors = calculate_demand_scaling_factors(piece_lengths, common_lengths, scenario)
-            enhanced_factors = [f * rand(Uniform(1.2, 1.8)) for f in scaling_factors]
+            scaling_factors = calculate_demand_scaling_factors(rng, piece_lengths, common_lengths, scenario)
+            enhanced_factors = [f * rand(rng, Uniform(1.2, 1.8)) for f in scaling_factors]
             demands = [max(1, round(Int, d * f)) for (d, f) in zip(base_demands, enhanced_factors)]
         end
 
@@ -260,30 +260,30 @@ end
 """
 Calculate realistic demand scaling based on business scenarios
 """
-function calculate_demand_scaling_factors(piece_lengths, common_lengths, scenario::Symbol)
+function calculate_demand_scaling_factors(rng::AbstractRNG, piece_lengths, common_lengths, scenario::Symbol)
     n_pieces = length(piece_lengths)
     scaling_factors = ones(Float64, n_pieces)
 
     if scenario == :rush_order
         for i in 1:n_pieces
             if piece_lengths[i] in common_lengths
-                scaling_factors[i] = rand(Uniform(2.0, 4.0))
+                scaling_factors[i] = rand(rng, Uniform(2.0, 4.0))
             else
-                scaling_factors[i] = rand(Uniform(0.8, 1.5))
+                scaling_factors[i] = rand(rng, Uniform(0.8, 1.5))
             end
         end
     elseif scenario == :seasonal_spike
-        base_spike = rand(Uniform(1.8, 2.5))
+        base_spike = rand(rng, Uniform(1.8, 2.5))
         for i in 1:n_pieces
-            scaling_factors[i] = base_spike * rand(Uniform(0.8, 1.2))
+            scaling_factors[i] = base_spike * rand(rng, Uniform(0.8, 1.2))
         end
     elseif scenario == :backlog_clearing
         for i in 1:n_pieces
-            scaling_factors[i] = rand(Uniform(2.2, 3.5))
+            scaling_factors[i] = rand(rng, Uniform(2.2, 3.5))
         end
     else  # :mixed
         for i in 1:n_pieces
-            scaling_factors[i] = rand(Uniform(1.5, 2.8))
+            scaling_factors[i] = rand(rng, Uniform(1.5, 2.8))
         end
     end
 
@@ -293,7 +293,7 @@ end
 """
 Helper function to generate feasible cutting patterns
 """
-function generate_cutting_patterns(standard_length, piece_lengths, max_patterns, waste_factor=0.1)
+function generate_cutting_patterns(rng::AbstractRNG, standard_length, piece_lengths, max_patterns, waste_factor=0.1)
     patterns = Vector{Vector{Int}}()
 
     # Single-piece patterns
@@ -315,13 +315,13 @@ function generate_cutting_patterns(standard_length, piece_lengths, max_patterns,
         indices = collect(1:length(piece_lengths))
 
         num_types_to_use = min(length(piece_lengths),
-                              max(1, round(Int, rand(Exponential(2.0)))))
+                              max(1, round(Int, rand(rng, Exponential(2.0)))))
 
-        selected_indices = sample(indices, num_types_to_use, replace=false)
+        selected_indices = sample(rng, indices, num_types_to_use, replace=false)
 
         while !isempty(selected_indices)
             weights = [standard_length / piece_lengths[i] for i in selected_indices]
-            idx = sample(selected_indices, Weights(weights))
+            idx = sample(rng, selected_indices, Weights(weights))
 
             if piece_lengths[idx] <= remaining_length
                 new_pattern[idx] += 1
