@@ -157,6 +157,29 @@ const RT_VARIANTS = (RT_WEIGHTED, RT_MEAN_TAIL, RT_MINMAX, RT_ROBUST,
                   for i in core)
     end
 
+    @testset "setup shifts translate the full dose geometry" begin
+        spec = (angles=[0.0], body=(10.0, 8.0, 10.0))
+        locations = [0.0 0.0 0.0]
+        shifted_locations = [1.0 0.0 0.0]
+        dose_arguments = (
+            [:ptv], [1], [0.0], [0.0], [1.0], [1.0], 6,
+        )
+
+        nominal = SyntheticLPs._rt_dose_matrix(
+            spec, locations, dose_arguments...,
+        )
+        shifted_scenario = SyntheticLPs._rt_dose_matrix(
+            spec, locations, dose_arguments...;
+            setup_shift_cm=(1.0, 0.0, 0.0),
+        )
+        translated_anatomy = SyntheticLPs._rt_dose_matrix(
+            spec, shifted_locations, dose_arguments...,
+        )
+
+        @test shifted_scenario ≈ translated_anatomy
+        @test shifted_scenario[1, 1] < nominal[1, 1]
+    end
+
     @testset "constructive status artifacts" begin
         for ref in RT_VARIANTS, target in (50, 220, 500),
             seed in 0:7

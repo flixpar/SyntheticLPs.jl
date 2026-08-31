@@ -560,7 +560,7 @@ function _rt_dose_matrix(spec, locations, voxel_structure, beam_of,
         for (beam, angle_deg) in enumerate(spec.angles)
             angle = deg2rad(angle_deg)
             lateral = -sin(angle) * world_x + cos(angle) * world_y
-            axial_depth = cos(angle) * x + sin(angle) * y
+            axial_depth = cos(angle) * world_x + sin(angle) * world_y
             projected_radius = sqrt((spec.body[1] * cos(angle))^2 +
                                     (spec.body[2] * sin(angle))^2)
             depth = clamp(axial_depth + projected_radius, 0.0,
