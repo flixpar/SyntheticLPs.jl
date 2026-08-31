@@ -4,6 +4,155 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-30 17:35 UTC (generator realism and feasibility calibration)
+
+**Previous Commit**: `fc0620e`
+
+**Commits**: `da92e61` (product mix), `b950ec0` (airline crew), `cdb9fec`
+(nurse scheduling), `b85df71` (telecom), `1f48d5a` (maritime), `4646742`
+(neural network verification)
+
+**Summary**: Six generators produced instances that did not test what they
+claimed to. Three had feasibility profiles that degenerated with scale, one
+emitted set-covering columns that were not crew pairings, one returned an
+already-continuous model when asked for its integer formulation, and one
+produced infeasible instances that presolve refuted without ever touching the
+model. Each is rebuilt around planted evidence — a nominal plan, schedule,
+roster, routing or input point that is retained as a typed witness — with the
+infeasible counterpart backed by a typed certificate. Where the category is a
+MIP, the certificates are built from LP rows alone so infeasibility survives
+the default `relax_integer=true`. Every fix is backed by before/after HiGHS
+measurements over size x seed sweeps, and each generator gains a
+`test/problem_types/*.jl` file. Suite grew from 124,728 to 156,135 passing
+tests.
+
+**Details**:
+
+- **`product_mix/standard`** (`da92e61`): capacities and per-product floors were
+  sampled independently, so growing product counts accumulated floor
+  consumption the capacities could not cover; the `unknown` profile was 0/30
+  feasible at 500, 1000 and 5000 variables. Rebuilt around a planted operating
+  plan: capacities are the plan's consumption plus randomized headroom, floors
+  and ceilings are fractions of its output. Since usage coefficients are
+  nonnegative and `lower_bounds .<= upper_bounds` holds, `x = lower_bounds` is
+  the pointwise-smallest candidate, so feasibility reduces to the scalar
+  `floor_utilization = max_i (sum_j usage[i,j]*lb[j]) / availabilities[i] <= 1`.
+  Each profile places that scalar; the `unknown` coin is size-independent, which
+  is what removes the drift. Ceilings are lifted to `1.05*lb` where needed so
+  infeasibility is an over-committed capacity row, not a bound clash. Added
+  `ProductMixPlanWitness` / `ResourceOvercommitCertificate`. `unknown`
+  feasible/infeasible over 30 seeds: 500: 0/30 -> 18/12, 1000: 0/30 -> 16/14,
+  5000: 0/30 -> 17/13; the analytic predictor matched HiGHS on all 450 solved
+  instances.
+
+- **`airline_crew/standard`** (`b950ec0`): the columns were not crew pairings.
+  A 20% branch jumped to an arbitrary unused flight mid-sequence, and the
+  exact-cover step applied `seq = [f for f in seq if f in unassigned]`, a filter
+  that edits a leg set and so breaks sequences that were connected. Over 598,500
+  pairings, 16,077 of 115,588 leg-to-leg connections (13.9%) joined flights at
+  mismatched airports. The other four legality properties were not merely
+  unchecked but unrepresentable: the struct held no times, no bases and no
+  duty/rest rules. Added a dated schedule and per-instance `CrewPairingRules`,
+  and switched to construction over filtering — the schedule is built by
+  planting lines of flying, each a legal pairing whose legs are created as it is
+  flown, with extra columns from a DFS restricted to legal successors that
+  accepts a walk only at its base. Rules sample `max_sit < min_rest` always, so
+  duty segmentation is uniquely recoverable from leg times and the test
+  validator re-derives it independently. Planted lines partition the flights, so
+  `feasible` admits an exact cover (`CrewPairingCoverWitness`); `infeasible`
+  plants one flight from a non-base airport past every arrival, giving row
+  `0 == 1` (`UncoverableFlightCertificate`). Costs are now credit-hour crew pay.
+  All five properties: zero violations across the same sweep.
+
+- **`nurse_scheduling/standard`** (`cdb9fec`): the natural formulation stayed
+  continuous under `relax_integer=false`, so a caller asking for the integer
+  model got a relaxed one. Assignments are now `Bin`; the default corpus is
+  unchanged because `relax_integrality` runs centrally right after
+  `build_model`. Separately, the availability repair promised two available
+  nurses per slot but drew its pool from all nurses
+  (`randperm(n_nurses)[1:needed]`), so a flip could be a no-op and the slot
+  silently stayed at one: 69 short slots across 62 of 450 instances, now 0. The
+  minimum is exposed as `NURSE_MIN_AVAILABLE_PER_SHIFT` and the
+  `min_available_per_shift` field. Added `NurseRosterWitness` (already integral,
+  so it satisfies MIP and relaxation) and `NurseSkillShortageCertificate`
+  (`required == qualified + 1` against variables capped at 1, so it refutes the
+  relaxation). Reclassified in the docstrings and in CLAUDE.md's model-class
+  list, and removed the now-false cross-reference to it in
+  `tsp/assignment_relaxation`. HiGHS: 300/300 correct on the relaxation and
+  300/300 on the unrelaxed MIP.
+
+- **`telecom_network_design/standard`** (`b85df71`): two defects. Sizing moved in
+  plateaus because `n_arcs` and `n_commodities` were rounded inside hard-coded
+  per-scale bands before the product was reconciled with the target — all of
+  `101:290` gave 315 variables (197% error at target 106), all of `1001:1700`
+  gave 2050. Now the arc count is solved from the exact product; mean relative
+  error over a 25-point log sweep 0.226 -> 0.0028, max 1.97 -> 0.0156. And the
+  `unknown` profile drifted from 100% feasible at 50 variables to 3% at 20000
+  because the four knobs were sampled independently. They are now derived from a
+  planted nominal design: gravity shares summing to 1, modules sized from
+  carried load, then a Frank-Wolfe congestion-balancing routing yielding
+  `routable_scale`, against which demand is placed. A max-concurrent-flow check
+  puts the planted routing within 0-11% of the true threshold at every size
+  (up to 50% off before the tuning, which is what skewed small instances
+  feasible). `unknown` places demand in a +/-35% log band bracketing the
+  threshold, positioned by a golden-ratio low-discrepancy function of the seed
+  so a contiguous seed block sweeps the band evenly rather than gambling. Two
+  relaxation-proof certificate modes. `unknown` OPTIMAL/INFEASIBLE at
+  50/100/500/1000/5000/20000: 30-0, 30-0, 26-4, 18-12, 3-27, 1-29 -> 16-14,
+  15-15, 13-17, 14-16, 13-17, 13-17. Added `TELECOM_MAX_VARIABLES = 1_000_000`.
+
+- **`maritime_inventory_routing/standard`** (`1f48d5a`): sizing scanned P, V and
+  T over a dense `P x P` movement block, so counts moved in coarse `V*P^2*T`
+  jumps, saturated at 15,590 variables and gave identical dimensions for every
+  seed. Replaced with an explicit time-expanded sailing network (a leg exists
+  iff `travel_time[i,j] <= period_length`), which is both the realism win and a
+  continuously adjustable sizing knob where the port count is not; dimensions
+  now invert the exact variable-count formula in closed form. Mean relative
+  error 2.69% -> 0.60%, max 22.05% -> 8.00%, every target >= 779 exact, and
+  100,000 and 300,000 reachable. The route and material evidence the generator
+  already computed and discarded is retained as `MaritimeScheduleWitness`
+  (verified on 125 instances via `primal_feasibility_report` against the
+  *unrelaxed* model, zero violations) and `MaritimeSupplyCertificate` (the
+  aggregate argument that previously existed only as a comment; LP rows only, so
+  150/150 relaxed infeasible instances return INFEASIBLE). Also fixed `unknown`,
+  which under the package default returned feasible for all 30 seeds at every
+  size — no mix at all — and added per-customer tank capacities, previously
+  unbounded.
+
+- **`neural_network_verification/relu_big_m`** (`4646742`): the infeasible branch
+  set the threshold above the `output` variable's own declared bound, so HiGHS
+  refuted it in presolve with no network reasoning. Added `nnv_backward_bound`,
+  a CROWN/DeepPoly-style backward linear relaxation collapsing the network into
+  one affine function maximised exactly over the input box, and placed the
+  threshold strictly inside the gap `attainable_upper < threshold < declared
+  bound`. The gap vanished for networks of six neurons or fewer, so an opposing
+  neuron pair is planted in the last hidden layer (`w_v = -w_u`, and the
+  existing odd-symmetric bias rule gives `b_v = -b_u`, so `z_v == -z_u`): at
+  most one of `relu(z)`, `relu(-z)` is positive while interval propagation adds
+  both maxima, making the gap provably at least `min(c_u*U_u, c_v*U_v)`.
+  Infeasibility survives relaxation because the big-M rows project exactly onto
+  the triangle relaxation. Simplex iterations on infeasible instances with
+  presolve off: 1-5 -> 3420-6731 at 5000 variables, 2-5 -> 732-926 at 1000; with
+  presolve on, HiGHS no longer settles them in presolve. Big-M audit found the
+  constants already equal to the propagated per-neuron bounds, so nothing was
+  loose; a test now pins them.
+
+**Known limitation**: `neural_network_verification` `feasible` instances at
+>= 500 variables still hit the time limit with no incumbent when solved
+*unrelaxed*. This is pre-existing and was verified unchanged on `fc0620e`; it is
+inherent to branch-and-bound on big-M ReLU encodings, and the planted witness is
+confirmed MIP-feasible row by row without a solver. It matches the documented
+`:inconclusive` behaviour for unrelaxed MIPs.
+
+**Not addressed**: 59 generator files still call `Random.seed!(seed)`, seeding
+Julia's global RNG rather than a local `MersenneTwister`. Instance
+reproducibility holds today because each constructor seeds then immediately
+draws, but generation clobbers the caller's RNG as a side effect and the pattern
+is not thread-safe. The four generators touched here that had it
+(`product_mix`, `airline_crew`, `telecom_network_design`,
+`maritime_inventory_routing`) were converted to local RNGs, so they now diverge
+stylistically from the rest of the corpus. Worth a follow-up sweep.
+
 ## 2026-08-30 14:40 UTC (hub location tests moved to the per-category file)
 
 **Previous Commit**: `5a67821`

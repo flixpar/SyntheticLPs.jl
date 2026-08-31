@@ -127,6 +127,18 @@ SyntheticLPs uses a type-based dispatch system for generating realistic linear p
   instead of silently undersizing. Its optional metadata fields are
   status-specific (`feasible_witness`, `infeasibility_certificate`, or
   `nominal_scenario`), while disruption metadata depends only on the profile.
+- `telecom_network_design/standard` follows the same convention: capped at a
+  documented 1,000,000-variable target (`TELECOM_MAX_VARIABLES`) raising
+  `ArgumentError` above it, with status-specific `feasible_witness` /
+  `infeasibility_certificate` fields.
+- Status-specific typed witnesses and certificates are the general pattern for
+  generators whose feasibility is planted rather than hoped for. Besides the
+  above, `hub_location` (all variants), `product_mix`, `airline_crew`,
+  `nurse_scheduling`, `neural_network_verification`, and
+  `maritime_inventory_routing` each store a typed witness for `feasible`
+  requests and a typed certificate for `infeasible` ones, and neither for
+  `unknown`. Where the category is a MIP, prefer a certificate built from LP
+  rows alone so the infeasibility survives the default `relax_integer=true`.
 
 **Utility Scripts**:
 - `scripts/generate_problem.jl`: Command-line interface for problem generation
@@ -231,14 +243,24 @@ The corpus deliberately mixes three model classes; treat the names accordingly:
   variables), plus `master_surgical_schedule` (binary tactical block design),
   `robust_elective` (a sparse budgeted-uncertainty counterpart), and
   `benchmark_loading` (empirically calibrated OR-day assignment). These are
-  real mixed-integer formulations.
+  real mixed-integer formulations. Also genuine MIPs: `nurse_scheduling`
+  (binary nurse-to-shift assignments under coverage, skill-mix, availability,
+  shift/weekend/night bounds, consecutive-day limits and post-night rest — its
+  `feasible_witness` is an *integral* roster satisfying the MIP as well as its
+  relaxation, and its skill-shortage `infeasibility_certificate` refutes the
+  relaxation too), `airline_crew` (binary set partitioning over pairings that
+  are operationally legal by construction), `neural_network_verification`
+  (binary ReLU phase indicators; its LP relaxation is the triangle relaxation
+  of the big-M encoding), `telecom_network_design` (binary link installation),
+  and `maritime_inventory_routing` (binary vessel positions and sailing legs).
+  For all four of the latter, infeasible instances are refuted by LP rows
+  alone, so they stay infeasible after relaxation.
 - **Purpose-built LP relaxations of MIPs**: continuous relaxations useful as
   LP-solver test instances but *not* directly implementable integer solutions —
-  notably `nurse_scheduling` (fractional rosters) and
-  `tsp/assignment_relaxation` (a strengthened
+  notably `tsp/assignment_relaxation` (a strengthened
   degree LP relaxation of the TSP — fractional arc covers that may contain
   subtours).
-  Their docstrings state this explicitly. In addition, the public generation API
+  Its docstring states this explicitly. In addition, the public generation API
   defaults to `relax_integer=true`, so every natural MIP above—including unit
   commitment and both bin-packing variants—is returned as an LP relaxation
   unless the caller opts out.
