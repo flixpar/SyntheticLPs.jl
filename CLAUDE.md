@@ -279,12 +279,33 @@ integer schedules.
 
 ### Testing Strategy
 
-- `test/runtests.jl`: Comprehensive test suite verifying all problem generators
-- Tests problem generation with different target variable counts
-- Tests all three feasibility statuses (feasible, infeasible, unknown)
-- Verifies models have proper structure (variables, constraints, objective)
-- Validates reproducibility with fixed seeds
-- Each generator tested with multiple configurations
+Tests are split by scope. `test/runtests.jl` holds only framework-level
+coverage; everything specific to one problem category lives in
+`test/problem_types/<category>.jl`, so a generator's source, documentation, and
+regression coverage evolve as one reviewable unit.
+
+- `test/runtests.jl`:
+  - `test_problem_generator(ref)`, applied to every registered variant: target
+    variable counts, all three feasibility statuses, model structure
+    (variables, constraints, objective), and reproducibility under a fixed seed
+  - Registry and interface tests, global-RNG isolation, dataset generation, the
+    bounds-to-constraints transform, the pure `_classify_termination` table, and
+    the generic half of the feasibility-contract machinery (retry budget, seed
+    walk, pristine-model guarantee)
+  - An include loop that pulls in every `test/problem_types/*.jl` in sorted order
+- `test/problem_types/<category>.jl`: focused quality contracts for one
+  category — registry shape, exact variable-count formulas, data invariants,
+  witness/certificate arithmetic, edge-size robustness, and solver-backed
+  feasibility contracts. Add coverage for a new category here, not in
+  `runtests.jl`.
+  - Files run in ambient scope (`include` evaluates at module top level), so
+    `MOI`, `HAS_HIGHS`, `Uniform`, and the `using` imports from `runtests.jl`
+    are visible without re-importing.
+  - The include loop sits *outside* the `if HAS_HIGHS` guard at the tail of
+    `runtests.jl`, so each file must guard its own solver-dependent tests with
+    `if HAS_HIGHS` (the established pattern is `@testset ... begin` wrapping an
+    inner `if HAS_HIGHS`). Otherwise the direct
+    `julia --project=@. test/runtests.jl` run errors instead of skipping.
 
 ## Adding New Categories and Variants
 
@@ -296,14 +317,20 @@ integer schedules.
 4. Implement `build_model(prob::VariantStruct)` (must be deterministic)
 5. Call `register_variant(:category, :variant, VariantStruct, "Description")` (pass `default=true` to make it the category default)
 6. `include("<variant>.jl")` from the category's `<category>.jl` entry point
-7. Run tests to verify implementation
+7. Extend `test/problem_types/<category>.jl` with the variant's quality
+   contracts (create the file if the category has none yet — the include loop
+   picks it up automatically)
+8. Run tests to verify implementation
 
 ### Add a new category
 
 1. Create `src/problem_types/<category>/<category>.jl` (the entry point) and at least one variant file (steps 1–5 above)
 2. The entry point `include`s the variant file(s); add `register_category(:category, "Description")` there only if you want a category-level description distinct from its variants
 3. Add `include("problem_types/<category>/<category>.jl")` to `src/SyntheticLPs.jl`
-4. Run tests to verify implementation
+4. Create `test/problem_types/<category>.jl` with the category's quality
+   contracts; it is included automatically, so nothing in `test/runtests.jl`
+   needs to change
+5. Run tests to verify implementation
 
 Key principles:
 - Struct stores ALL generated data needed to build the model

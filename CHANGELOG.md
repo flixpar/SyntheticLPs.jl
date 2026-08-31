@@ -4,6 +4,67 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-31 04:42 UTC (remaining per-category tests moved out of runtests.jl)
+
+**Previous Commit**: `700fc60`
+
+**Commits**: (pending)
+
+**Summary**: Finished the migration begun by the hub-location move: every
+problem-type-specific testset still living inline in `test/runtests.jl` now sits
+in `test/problem_types/<category>.jl`. `runtests.jl` shrank from 2,374 to 499
+lines and retains only framework-level coverage — the shared
+`test_problem_generator` helper, registry/interface tests, RNG isolation,
+dataset generation, the bounds-to-constraints transform, the pure
+termination-status classification table, and the generic half of the
+feasibility-contract machinery. No test was added, removed, or changed: the
+suite still reports 150,420 passing tests solver-free and 156,502 under
+`Pkg.test()` with HiGHS, both verified against a `HEAD` worktree baseline.
+
+**Details**:
+
+- **Whole testsets relocated and dedented one level** (new files):
+  - `TSP Variants` (101 lines) → `test/problem_types/tsp.jl`
+  - `Supply-chain network planning` (461 lines) → `supply_chain.jl`
+  - `Workforce Shift Covering` (384 lines) → `workforce_shift_scheduling.jl`
+  - `Operating Room Scheduling` (281 lines) → `operating_room_scheduling.jl`
+  - `Regression Basis Pursuit` (275 lines) → `regression.jl`
+- **`Generator Robustness Fixes` was a cross-category grab bag** of edge-size
+  regressions and got split along category lines, each fragment wrapped in its
+  own named testset with a header comment recording what regressed:
+  `portfolio.jl` (extreme asset counts vs. `Uniform a < b`), `set_system.jl`
+  (planted partitions down to 2 columns/bids, plus the tiny `generate_dataset`
+  draw), `multi_commodity_flow.jl` (rejection-sampled arcs),
+  `graph_optimization.jl` (generalized-independent-set edge budget),
+  `knapsack.jl` (sparse `mixed_integer_set` row supports), `generic_milp.jl`
+  (O(width) row supports), `container_loading.jl` (smallest-formulation
+  clamping), `energy.jl` (OTS line sampling, emissions-intensity target,
+  attainability of the feasible-profile cap), plus appends of the tsp
+  tiny-target block to `tsp.jl` and the `n_parcels == 2` block to `land_use.jl`.
+- **`Feasibility Contract Verification` was likewise split.** Its first half is
+  genuinely about the mechanism — no-optimizer passthrough, the
+  `max_feasibility_retries >= 1` check, retry-budget exhaustion and its seed
+  walk, the pristine-model guarantee, and the hand-built bounded/unbounded
+  `_check_feasibility_contract` cases — and stays in `runtests.jl`. The
+  per-category contract loops that followed it moved out: `crop_planning.jl`
+  (the "fallow-land" hole), `energy.jl`, `supply_chain.jl` (standard fallback
+  routes, network-planning planted plan/product cut, and the unknown-profile
+  mix), `unit_commitment.jl`, `blending.jl`, and `tsp.jl` (relaxed contracts for
+  all eight variants, the unrelaxed natural MIPs, and the m-TSP route
+  reconstruction).
+- `blending.jl` keeps `blending/standard` and `feed_blending/standard` in the
+  single loop they were written as rather than splitting a two-ref `for` across
+  two files; its header comment says so.
+- **Style follows the ambient-scope convention** of `crop_planning.jl` and
+  `hub_location.jl`: `include` runs at module top level, so `MOI`, `HAS_HIGHS`,
+  `Uniform`, and the `using` imports from `runtests.jl` stay visible. Every
+  solver-dependent fragment is wrapped `@testset ... begin; if HAS_HIGHS`, so
+  the files are correct under the direct `julia --project=@. test/runtests.jl`
+  run too — the old inline blocks had relied on the single `if HAS_HIGHS` guard
+  around the tail of `runtests.jl`, which the include loop sits outside of.
+- The `test/problem_types/` include loop is unchanged; the 13 pre-existing files
+  plus 14 new ones are picked up in sorted order.
+
 ## 2026-08-31 03:11 UTC (constructor-local RNG for every generator)
 
 **Previous Commit**: `87e6b40`

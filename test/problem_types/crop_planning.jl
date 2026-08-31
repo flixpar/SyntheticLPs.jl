@@ -87,3 +87,17 @@
         end
     end
 end
+
+@testset "Crop planning feasibility contracts" begin
+    if HAS_HIGHS
+        # crop_planning/standard infeasible-request: previously ~17% came back
+        # feasible (the "fallow-land" hole). With the optimizer guard every seed
+        # must now solve INFEASIBLE.
+        for s in 1:8
+            m, _ = generate_problem("crop_planning/standard", 120, infeasible, s;
+                                    optimizer = HiGHS.Optimizer)
+            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            @test termination_status(m) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
+        end
+    end
+end
