@@ -17,7 +17,7 @@ This package provides:
 
 ## Problem Types
 
-The package includes generators for 44 common LP/MIP problem categories, all
+The package includes generators for 45 common LP/MIP problem categories, all
 unified with a standardized interface. Each category groups one or more
 **variants** — concrete formulations with their own data generation and model
 structure (see [Categories and Variants](#categories-and-variants)). Categories
@@ -43,6 +43,7 @@ with more than one variant are annotated below.
 - Graph Optimization — variants: `independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`
 - Hub Location — variants: `p_hub_median` (tight four-index single allocation), `compact_single_allocation` (origin-indexed `O(n^3)` formulation), `r_allocation` (primary/backup hubs), `multiple_allocation` (fixed-charge AP-style routing), `capacitated` (loose/tight AP profiles), `hub_covering` (OD service thresholds), `hub_network` (modular regional links), `budgeted_backbone` (exact-p capacitated link investment); see [generator notes](docs/hub_location.md)
 - Inventory — variants: `standard`, `lot_sizing`, `multi_item`, `multi_echelon`
+- Inverse Optimization — variants: `classical` (exact weighted-L1 objective recovery), `noisy_observations` (multi-context absolute-suboptimality fitting), `shortest_path` (spatial inverse routing); see [generator notes](docs/inverse_optimization.md)
 - Job Shop Scheduling
 - Land Use
 - Load Balancing — variants: `standard`, `discrete_placement`
@@ -164,6 +165,16 @@ generates the RHS before status handling and is an explicit witness only when
 measurement rows and inconsistent RHS. Because each feature requires two split
 variables, even targets of at least two are exact, odd targets round up by one,
 and smaller targets produce two variables.
+
+The `inverse_optimization` family learns forward objective coefficients from
+observed decisions. Its three pure-LP variants cover classical exact inverse
+linear optimization, regularized absolute-suboptimality fitting over noisy
+multi-context decision panels, and inverse shortest paths on sparse spatial road
+networks. Cost normalization prevents the all-zero degeneracy; sparse
+right-skewed production data, bounded behavioral-noise profiles, and
+road-class-calibrated travel times provide diverse grounded structure. Feasible
+instances carry exact primal/dual or shortest-path-potential witnesses, and
+infeasible instances carry a contradictory admissible-cost-set certificate.
 
 The `radiotherapy` family builds reduced but spatially grounded IMRT fluence-map
 LPs and MILPs. Six TG-119/CORT-style anatomy profiles generate contoured 3-D

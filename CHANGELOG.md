@@ -4,6 +4,40 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-31 16:49 UTC (inverse-optimization generators)
+
+**Previous Commit**: `b455f17`
+
+**Commits**: (pending)
+
+**Summary**: Added a research-grounded inverse-optimization category with three
+pure-LP variants spanning exact objective recovery, noisy multi-observation
+fitting, and spatial inverse shortest paths.
+
+**Details**:
+
+- Added `classical`, a weighted-L1 inverse packing LP with normalized objective
+  coefficients, sparse production technology, an exact observed optimum, dual
+  prices, and strong-duality rows.
+- Added `noisy_observations`, a regularized absolute-suboptimality LP over
+  multiple context-specific feasible observations. Routine, heterogeneous, and
+  outlier-contaminated profiles use bounded utilization losses around latent
+  optimal plans.
+- Added `shortest_path`, a weighted-L1 inverse network LP with sparse spatial
+  road graphs, class-calibrated speeds, asymmetric travel times, multiple OD
+  observations, and shortest-path dual potentials. Prior errors are conditioned
+  on making at least one observed path nonoptimal, avoiding zero-adjustment
+  instances.
+- Added target-aware dimension planners, constructor-local randomness, exact
+  feasible witnesses, contradictory admissible-cost-set infeasibility
+  certificates, natural unknown-status mixtures, and solver-independent audit
+  helpers for all variants.
+- Added focused tests for model algebra, sizing, sparsity and distributional
+  profiles, path correctness, reproducibility, status artifacts, and HiGHS
+  feasibility contracts. The full suite passes all 163,188 assertions.
+  Documented the formulations, research basis, assumptions, distributions, and
+  status semantics.
+
 ## 2026-08-31 (radiotherapy generator consolidation and expansion)
 
 **Previous Commit**: `88d3c1b`
