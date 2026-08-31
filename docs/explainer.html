@@ -172,7 +172,7 @@ window.MathJax={
 <div class="scrim" id="scrim"></div>
 <div class="layout">
   <aside class="sidebar" id="sidebar">
-    <div class="brand"><b>SyntheticLPs</b><span>Generator Explainer · 31 problem types</span></div>
+    <div class="brand"><b>SyntheticLPs</b><span>Generator Explainer · 32 problem types</span></div>
     <input class="search" id="search" type="search" placeholder="Filter generators…" autocomplete="off">
     <nav id="nav">
       <a class="nav-top" href="#overview" data-target="overview">Overview</a>
@@ -220,6 +220,9 @@ window.MathJax={
 <div class="nav-group"><div class="nav-group-label">Land &amp; Agriculture</div>
 <a class="nav-item" href="#crop_planning" data-target="crop_planning" data-search="crop planning allocate acreage across crops">Crop Planning</a>
 <a class="nav-item" href="#land_use" data-target="land_use" data-search="land use assign parcels to zoning types">Land Use</a>
+</div>
+<div class="nav-group"><div class="nav-group-label">Healthcare</div>
+<a class="nav-item" href="#radiotherapy" data-target="radiotherapy" data-search="radiotherapy fluence-map planning imrt fluence maps, dvh tails, robust setup scenarios, and beam selection">Radiotherapy Fluence-Map Planning</a>
 </div>
     </nav>
   </aside>
@@ -383,7 +386,7 @@ window.MathJax={
     <span class="chip chip-continuous">Continuous</span>
   </div>
 </a>
-<a class="card fam-border-production" href="#product_mix" data-target="product_mix" data-search="product mix product mix generates a continuous profit-maximization lp that chooses production levels across many products with resource capacities and optional market lower and upper bounds. profit-max with market lower/upper bounds">
+<a class="card fam-border-production" href="#product_mix" data-target="product_mix" data-search="product mix product mix generates a continuous profit-maximization lp that chooses production levels across many products with resource capacities and market lower and upper bounds. profit-max with market lower/upper bounds">
   <div class="card-top"><span class="card-title">Product Mix</span></div>
   <p class="card-tag">Profit-max with market lower/upper bounds</p>
   <div class="chips">
@@ -419,7 +422,7 @@ window.MathJax={
 <div class="fam-block" data-family="scheduling">
 <div class="fam-head"><span class="fam-dot fam-scheduling"></span><h3>Assignment &amp; Scheduling</h3><p>Match discrete entities to tasks, shifts, or patterns.</p></div>
 <div class="card-grid">
-<a class="card fam-border-scheduling" href="#airline_crew" data-target="airline_crew" data-search="airline crew generates airline crew pairing set-partitioning instances where each flight must be covered by exactly one crew pairing at minimum cost. set-partitioning crew pairing">
+<a class="card fam-border-scheduling" href="#airline_crew" data-target="airline_crew" data-search="airline crew generates airline crew pairing set-partitioning instances where each flight must be covered by exactly one *operationally legal* crew pairing at minimum cost. set-partitioning crew pairing">
   <div class="card-top"><span class="card-title">Airline Crew</span></div>
   <p class="card-tag">Set-partitioning crew pairing</p>
   <div class="chips">
@@ -529,6 +532,18 @@ window.MathJax={
   <div class="chips">
     <span class="chip chip-sense">Max</span>
     <span class="chip chip-binary">Binary</span>
+  </div>
+</a>
+</div></div>
+<div class="fam-block" data-family="healthcare">
+<div class="fam-head"><span class="fam-dot fam-healthcare"></span><h3>Healthcare</h3><p>Plan clinical resources and treatment under safety constraints.</p></div>
+<div class="card-grid">
+<a class="card fam-border-healthcare" href="#radiotherapy" data-target="radiotherapy" data-search="radiotherapy fluence-map planning the `radiotherapy` category generates imrt fluence-map optimization (fmo) lps and milps. it combines a spatial synthetic patient and sparse photon dose-influence matrix with five complementary inverse-planning formulations. the result is intended for optimization research and solver testing; it is not a clinical dose engine and must not be used to plan patient treatment. imrt fluence maps, dvh tails, robust setup scenarios, and beam selection">
+  <div class="card-top"><span class="card-title">Radiotherapy Fluence-Map Planning</span></div>
+  <p class="card-tag">IMRT fluence maps, DVH tails, robust setup scenarios, and beam selection</p>
+  <div class="chips">
+    <span class="chip chip-sense">Min</span>
+    <span class="chip chip-mixed">Mixed</span>
   </div>
 </a>
 </div></div>
@@ -792,16 +807,21 @@ sum_{(s,j) in A} flow[s,j] = target_flow</pre>
   <div class="sec-body"><p><code>target_variables</code> is interpreted as:</p>
 <pre class="formula">n_arcs * (2 * n_commodities + 1)</pre>
 <p>For each physical arc, the model has one installation variable and one flow variable for each commodity in each of the two directions.</p>
-<p>Scale-dependent ranges:</p>
-<table><thead><tr><th>Scale condition</th><th>Nodes</th><th>Physical arcs</th><th>Commodities</th></tr></thead><tbody><tr><td><code>target_variables &lt;= 100</code></td><td>4-12</td><td>5-25</td><td>3-15</td></tr><tr><td><code>target_variables &lt;= 1000</code></td><td>8-35</td><td>15-120</td><td>10-80</td></tr><tr><td>otherwise</td><td>20-120</td><td>50-600</td><td>20-300</td></tr></tbody></table>
-<p>The constructor searches over <code>n_arcs</code> and the implied <code>n_commodities</code>. If no combination is within 10% error, it uses a square-root heuristic. Node count is then derived from arc count using a random density factor between 1.5 and 2.5 arcs per node, subject to scale bounds and complete-graph feasibility.</p>
-<p>Scale-dependent parameter ranges:</p>
-<table><thead><tr><th>Scale</th><th>Grid</th><th>Base install cost</th><th>Cost/km</th><th>Flow cost/unit</th><th>Demand range</th><th>Budget factor</th><th>Capacity modules</th></tr></thead><tbody><tr><td>small</td><td>100-500</td><td>10000-50000</td><td>50-150</td><td>0.005-0.02</td><td>sampled 1-5 to 50-150</td><td>0.4-0.7</td><td>155, 622, 2488</td></tr><tr><td>medium</td><td>500-2000</td><td>30000-100000</td><td>80-200</td><td>0.01-0.05</td><td>sampled 5-15 to 100-300</td><td>0.5-0.8</td><td>155, 622, 2488, 9953</td></tr><tr><td>large</td><td>2000-10000</td><td>100000-500000</td><td>150-500</td><td>0.02-0.1</td><td>sampled 10-30 to 200-1000</td><td>0.6-0.9</td><td>622, 2488, 9953, 39813</td></tr></tbody></table>
+<p>Sizing is exact-product driven rather than band driven. The constructor samples a realistic commodities-per-link ratio (log-uniform in <code>[0.35, 1.4]</code>), derives the implied arc count from <code>target = n_arcs * (2 * ratio * n_arcs + 1)</code>, and then scores every commodity count in a wide window around it by</p>
+<pre class="formula">|n_arcs * (2 * n_commodities + 1) - target| / target  +  0.02 * |log(n_commodities / hint)|</pre>
+<p>picking the best. Because the exactness term dominates, the realised variable count tracks the target continuously: over a 25-point logarithmic sweep from 50 to 20000 variables (all three feasibility statuses, five seeds each) the mean relative error is 0.3% and the worst case 1.6%. Node count is then derived from arc count with a random density factor between 1.5 and 2.5 arcs per node, clamped so the topology is realisable (connected and simple).</p>
+<p>Requests above <code>TELECOM_MAX_VARIABLES = 1_000_000</code> raise an <code>ArgumentError</code> rather than silently undersizing, matching the convention used by <code>supply_chain/network_planning</code>.</p>
+<p>Geographic scale and unit costs are derived from the node count rather than from hard-coded size bands:</p>
+<table><thead><tr><th>Quantity</th><th>Value</th></tr></thead><tbody><tr><td>Grid span</td><td><code>clamp(120 * sqrt(n_nodes), 150, 9000)</code> times <code>U(0.8, 1.25)</code></td></tr><tr><td>Base install cost</td><td><code>12000 * sqrt(n_nodes)</code> times <code>U(0.8, 1.3)</code></td></tr><tr><td>Cost per km</td><td><code>U(60, 400)</code></td></tr><tr><td>Flow cost per unit</td><td><code>U(0.005, 0.08)</code></td></tr><tr><td>Capacity modules</td><td>155, 622, 2488, 9953, 39813 (OC-3 to OC-768)</td></tr></tbody></table>
 <p>Random data generation:</p>
-<ul><li>Node locations are clustered around <code>max(1, div(n_nodes, 3))</code> random centers with normal offsets and clamping to the grid.</li><li>Topology starts with a nearest-neighbor spanning tree to ensure connectivity, then adds mostly short arcs, then random remaining arcs if needed.</li><li>Physical arcs are stored canonically with <code>i &lt; j</code>; <code>directed_arcs</code> contains both <code>(i, j)</code> and <code>(j, i)</code>.</li><li>Distances are Euclidean and stored for both directions.</li><li>Link capacities are selected from optical capacity modules. Longer links bias toward larger modules.</li><li>Installation costs equal a base term adjusted by capacity module plus distance cost with 10% random noise.</li><li>Flow costs are proportional to distance and stored for both directions.</li><li>Commodities are random source-sink pairs. Hub-to-hub traffic, where both endpoints are among the first quarter of nodes, receives higher log-normal demand.</li><li>Initial budget is <code>sum(installation_costs) * budget_factor</code>.</li></ul>
+<ul><li>Node locations are clustered around <code>max(1, div(n_nodes, 4))</code> random centers with normal offsets and clamping to the grid.</li><li>Topology is a Euclidean minimum spanning tree (guaranteeing connectivity) plus the shortest remaining node pairs, ranked with a lognormal perturbation so a few long-haul links appear. Exactly <code>n_arcs</code> links are produced.</li><li>Physical arcs are stored canonically with <code>i &lt; j</code>; <code>directed_arcs</code> contains both <code>(i, j)</code> and <code>(j, i)</code>.</li><li>Distances are Euclidean and stored for both directions.</li><li>Commodities are population-weighted source-sink pairs with gravity-style lognormal volume *shares* that sum to one. The absolute demand scale is fixed later, once the topology&#x27;s routing capacity is known.</li><li>Link capacity modules are sized from the traffic each link actually carries: a first cheapest-path routing pass gives per-link reference loads, and each link takes the smallest module covering its load (with a 12% floor of the peak load so unused links stay installable and useful for reroutes).</li><li>Installation costs equal a base term adjusted by the chosen capacity module plus distance cost with 10% random noise.</li><li>Flow costs are proportional to distance and stored for both directions.</li></ul></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Joint Calibration</h3>
+  <div class="sec-body"><p>Topology, demand, capacity and budget are derived from one another through a **planted nominal design** instead of being sampled on independent schedules:</p>
+<ol><li>The unit-demand traffic matrix is routed over the topology by a Frank-Wolfe congestion-balancing routing (iteration 1 is the plain cheapest-path routing; later iterations take Frank-Wolfe steps on <code>sum_a (load_a / cap_a)^4</code>). Small topologies get more steps, since they are cheap to route.</li><li><code>routable_scale = 1 / max_a (load_a / cap_a)</code> is the largest total demand this planted routing carries exactly. Solving the max-concurrent-flow LP shows the planted routing is within 0-11% of the true routing threshold at every network size.</li><li>A family of cuts (every singleton, geometric sweep cuts along random directions, nearest-neighbour balls) yields <code>cut_bound_scale</code>, the smallest total demand that provably cannot be routed. By construction <code>routable_scale &lt;= cut_bound_scale</code>.</li><li><code>nominal_cost</code> is the installation cost of the links the planted routing uses; the budget is set relative to it.</li></ol>
 <p>The stored struct fields are:</p>
-<ul><li><code>n_nodes</code></li><li><code>n_arcs</code></li><li><code>n_commodities</code></li><li><code>arcs</code></li><li><code>directed_arcs</code></li><li><code>node_locations</code></li><li><code>distances</code></li><li><code>installation_costs</code></li><li><code>link_capacities</code></li><li><code>flow_costs</code></li><li><code>commodities</code></li><li><code>budget</code></li><li><code>outgoing_arcs</code></li><li><code>incoming_arcs</code></li></ul>
-<p>The constructor calls <code>Random.seed!(seed)</code>, so generation is reproducible for a fixed seed but resets Julia&#x27;s global RNG state.</p></div>
+<ul><li><code>n_nodes</code>, <code>n_arcs</code>, <code>n_commodities</code></li><li><code>arcs</code>, <code>directed_arcs</code>, <code>node_locations</code>, <code>distances</code></li><li><code>installation_costs</code>, <code>link_capacities</code>, <code>flow_costs</code></li><li><code>commodities</code>, <code>budget</code>, <code>outgoing_arcs</code>, <code>incoming_arcs</code></li><li><code>total_demand</code>, <code>routable_scale</code>, <code>cut_bound_scale</code>, <code>nominal_cost</code></li><li><code>feasible_witness::Union{Nothing,TelecomRouteWitness}</code></li><li><code>infeasibility_certificate::Union{Nothing,TelecomCapacityCutCertificate,TelecomBudgetCertificate}</code></li><li><code>feasibility_status</code></li></ul>
+<p>All randomness runs through a local <code>MersenneTwister(seed)</code>, so generation is reproducible for a fixed seed and leaves Julia&#x27;s global RNG untouched.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">∑</span>LP Formulation</h3>
   <div class="sec-body"><p>Sets and indices:</p>
@@ -831,14 +851,16 @@ f_{k,u,v} &gt;= 0</pre>
 <p>At the package API level, <code>generate_problem(...; relax_integer=true)</code> is the default, so installation variables are relaxed unless the caller sets <code>relax_integer=false</code>.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">⚖</span>Feasibility Controls</h3>
-  <div class="sec-body"><ul><li><code>feasible</code>: The generator first checks whether all demands can be greedily routed on the full network using <code>can_route_demands</code>. If not, it repeatedly scales link capacities up by factors up to a maximum cumulative scale of 50, with one final doubling attempt. It then greedily selects a high capacity-per-cost subset of links, first building connectivity and then adding links until <code>can_route_demands</code> succeeds. Budget is set to at least the selected-link installation cost times <code>1.05</code> to <code>1.20</code>.</li><li><code>infeasible</code>: The generator tightens budget below a greedy spanning-tree cost estimate, using a multiplier from <code>0.45</code> to <code>0.75</code>. It also targets the busiest source and sink nodes and reduces incident link capacities to only <code>25%</code> to <code>60%</code> of their associated traffic. If routing still appears possible, it globally halves capacities up to three times, then may directly cap the busiest source&#x27;s incident capacity to about 10% of outgoing demand.</li><li><code>unknown</code>: No explicit feasibility adjustment is applied; the original budget and sampled capacities are used.</li></ul>
-<p>The feasibility checks are constructive heuristics, not calls to the final JuMP solver. They route commodities one at a time along shortest paths with remaining undirected capacity.</p></div>
+  <div class="sec-body"><p>All three profiles place the total demand relative to the two calibration anchors above.</p>
+<ul><li><code>feasible</code>: total demand is 55-90% of <code>routable_scale</code>, so the planted design routes every commodity inside the installed capacities, and the budget is 1.02-1.35 times that design&#x27;s installation cost. The design is stored as a typed <code>TelecomRouteWitness</code> (installed links, per-commodity <code>(node path, flow)</code> routes, resulting link loads, installation cost) and is an exact feasible point of the integer model - hence also of the LP relaxation.</li><li><code>infeasible</code>: one of two modes, chosen at random.<ul><li>*Capacity shortfall*: total demand is pushed 15-80% past <code>cut_bound_scale</code>, so the tightest cut cannot carry the traffic that must cross it. Stored as <code>TelecomCapacityCutCertificate</code> with the node set, crossing links, crossing demand and crossing capacity.</li><li>*Budget shortfall*: demand stays comfortably routable (40-80% of <code>routable_scale</code>), but the budget is set to 45-85% of the cut-implied minimum spend <code>crossing_demand * min_{a in cut} (c_a / cap_a)</code>. Stored as <code>TelecomBudgetCertificate</code>.</li></ul>
+<p>Both arguments use only flow conservation, <code>sum_k f_k(a) &lt;= cap_a * y_a</code> and <code>0 &lt;= y &lt;= 1</code>, so **the infeasibility survives <code>relax_integrality</code>** - it is not integer-deep. This matters because the package API defaults to <code>relax_integer=true</code>.</p></li><li><code>unknown</code>: total demand is placed in a +-35% log band just above <code>routable_scale</code>, which brackets the true routing threshold at every scale. The position inside the band is a golden-ratio (low-discrepancy) function of the seed, so consecutive seeds sweep the band evenly and any block of seeds is a genuine mix. Measured with HiGHS on the default LP relaxation (30 seeds per size), the feasible share is 53%, 50%, 43%, 47%, 43% and 43% at 50, 100, 500, 1000, 5000 and 20000 variables.</li></ul>
+<p>The witness and the certificates are exact arithmetic statements about the stored fields, not solver calls; <code>test/problem_types/telecom_network_design.jl</code> recomputes both from the struct.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">▤</span>Model Characteristics</h3>
   <div class="sec-body"><ul><li>Variables: <code>n_arcs</code> installation variables plus <code>2 * n_arcs * n_commodities</code> flow variables.</li><li>Constraints: <code>n_commodities * n_nodes</code> flow-conservation equalities, <code>n_arcs</code> capacity constraints, and one budget constraint.</li><li>Density: flow-conservation rows are sparse network incidence rows; capacity rows touch both directions for every commodity on one physical link plus the corresponding install variable.</li><li>Intended model class: mixed-integer multicommodity network design.</li><li>Default generated LP: with the package default <code>relax_integer=true</code>, installation decisions become continuous in <code>[0, 1]</code>, producing the LP relaxation.</li></ul></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">✎</span>Practical Notes</h3>
-  <div class="sec-body"><p>These instances are useful for testing large sparse network matrices, multicommodity flow structure, and fixed-charge design relaxations. The helper <code>can_route_demands</code> is greedy and capacity-based, so it is a generation heuristic rather than a proof procedure for all cases. The generated physical network is undirected for capacity and installation, but flow variables are directed.</p></div>
+  <div class="sec-body"><p>These instances are useful for testing large sparse network matrices, multicommodity flow structure, and fixed-charge design relaxations. The generated physical network is undirected for capacity and installation, but flow variables are directed. The <code>feasible</code> and <code>infeasible</code> profiles are backed by a planted design and by cut certificates respectively, so they are proofs rather than heuristics; only the <code>unknown</code> profile is left genuinely undecided.</p></div>
 </section>
 </article>
 <article id="transportation" class="view article">
@@ -1359,7 +1381,7 @@ x[i] &lt;= max_food_amounts[i]    for listed foods</pre>
   <header class="art-head fam-border-production">
     <div class="art-eyebrow"><span class="fam-dot fam-production"></span>Production &amp; Planning</div>
     <h2>Product Mix</h2>
-    <p class="art-intro">Product mix generates a continuous profit-maximization LP that chooses production levels across many products with resource capacities and optional market lower and upper bounds.</p>
+    <p class="art-intro">Product mix generates a continuous profit-maximization LP that chooses production levels across many products with resource capacities and market lower and upper bounds.</p>
     <div class="chips">
       <span class="chip chip-sense">Objective: Max</span>
       <span class="chip chip-continuous">Continuous variables</span>
@@ -1367,28 +1389,28 @@ x[i] &lt;= max_food_amounts[i]    for listed foods</pre>
   </header>
   <section class="doc-section">
   <h3><span class="sec-icon">◆</span>Overview</h3>
-  <div class="sec-body"><p>This generator represents a product mix planning problem in which a manufacturer chooses quantities for multiple products. Products earn profit and consume resources; optional lower bounds model minimum market commitments, while optional upper bounds model market saturation or sales limits.</p>
-<p>The generator includes scale-dependent and industry-dependent data generation. It can produce small, medium, and large operations with different resource counts, profit ranges, usage ranges, sparsity levels, and market-bound frequencies.</p></div>
+  <div class="sec-body"><p>This generator represents a product mix planning problem in which a manufacturer chooses quantities for multiple products. Products earn profit and consume resources; lower bounds model minimum market commitments, while upper bounds model market saturation or sales limits.</p>
+<p>The generator includes scale-dependent and industry-dependent data generation. It can produce small, medium, and large operations with different resource counts, profit ranges, usage ranges, sparsity levels, and market-bound frequencies.</p>
+<p>Capacities and market floors are derived from a **planted operating plan** rather than sampled independently of each other. Sampling them independently makes the aggregate floor consumption and the aggregate capacity drift apart as the number of products grows, which used to drive the <code>unknown</code> profile to near-certain infeasibility from roughly 500 variables upward. Anchoring both sides on one nominal plan keeps them mutually consistent at every scale.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">▦</span>Generator Data and Sizing</h3>
   <div class="sec-body"><p><code>target_variables</code> maps directly to products:</p>
 <pre class="formula">num_products = max(2, min(10000, target_variables))</pre>
 <p>Resource count and parameter distributions depend on the requested scale.</p>
 <p>For <code>target_variables &lt;= 250</code>:</p>
-<ul><li><code>num_resources</code>: <code>DiscreteUniform(3, 8)</code>.</li><li><code>sparsity</code>: <code>Beta(2, 6)</code>.</li><li><code>profit_min</code>: <code>LogNormal(log(15), 0.4)</code>.</li><li><code>profit_max</code>: <code>LogNormal(log(120), 0.3)</code>.</li><li><code>resource_usage_min</code>: <code>LogNormal(log(1.0), 0.3)</code>.</li><li><code>resource_usage_max</code>: <code>LogNormal(log(5), 0.3)</code>.</li><li><code>market_constraint_prob</code>: <code>Beta(4, 6)</code>.</li><li><code>correlation_strength</code>: <code>Beta(4, 3)</code>.</li></ul>
+<ul><li><code>num_resources</code>: <code>DiscreteUniform(3, 8)</code>.</li><li><code>sparsity</code>: <code>Beta(2, 6)</code>.</li><li><code>profit_min</code>: <code>LogNormal(log(15), 0.4)</code>.</li><li><code>profit_max</code>: <code>LogNormal(log(120), 0.3)</code>.</li><li><code>resource_usage_min</code>: <code>LogNormal(log(1.0), 0.3)</code>.</li><li><code>resource_usage_max</code>: <code>LogNormal(log(5), 0.3)</code>.</li><li><code>market_constraint_prob</code>: <code>Beta(4, 6)</code>.</li><li><code>correlation_strength</code>: <code>Beta(4, 3)</code>.</li><li><code>volume_center</code>: <code>LogNormal(log(140), 0.4)</code>.</li></ul>
 <p>For <code>250 &lt; target_variables &lt;= 1000</code>:</p>
-<ul><li><code>num_resources</code>: selected from <code>5:15</code> using a <code>Beta(2, 3)</code> sample.</li><li><code>sparsity</code>: <code>Beta(3, 4)</code>.</li><li><code>profit_min</code>: <code>LogNormal(log(8), 0.5)</code>.</li><li><code>profit_max</code>: <code>LogNormal(log(75), 0.4)</code>.</li><li><code>resource_usage_min</code>: <code>LogNormal(log(0.6), 0.4)</code>.</li><li><code>resource_usage_max</code>: <code>LogNormal(log(4.5), 0.4)</code>.</li><li><code>market_constraint_prob</code>: <code>Beta(5, 5)</code>.</li><li><code>correlation_strength</code>: <code>Beta(6, 4)</code>.</li></ul>
+<ul><li><code>num_resources</code>: selected from <code>5:15</code> using a <code>Beta(2, 3)</code> sample.</li><li><code>sparsity</code>: <code>Beta(3, 4)</code>.</li><li><code>profit_min</code>: <code>LogNormal(log(8), 0.5)</code>.</li><li><code>profit_max</code>: <code>LogNormal(log(75), 0.4)</code>.</li><li><code>resource_usage_min</code>: <code>LogNormal(log(0.6), 0.4)</code>.</li><li><code>resource_usage_max</code>: <code>LogNormal(log(4.5), 0.4)</code>.</li><li><code>market_constraint_prob</code>: <code>Beta(5, 5)</code>.</li><li><code>correlation_strength</code>: <code>Beta(6, 4)</code>.</li><li><code>volume_center</code>: <code>LogNormal(log(90), 0.45)</code>.</li></ul>
 <p>For <code>target_variables &gt; 1000</code>:</p>
-<ul><li><code>num_resources</code>: <code>round(Int, LogNormal(log(18), 0.4))</code>, clamped to <code>8:30</code>.</li><li><code>sparsity</code>: <code>Beta(2, 3)</code>.</li><li><code>profit_min</code>: <code>LogNormal(log(3), 0.6)</code>.</li><li><code>profit_max</code>: <code>LogNormal(log(45), 0.5)</code>.</li><li><code>resource_usage_min</code>: <code>LogNormal(log(0.3), 0.5)</code>.</li><li><code>resource_usage_max</code>: <code>LogNormal(log(4), 0.5)</code>.</li><li><code>market_constraint_prob</code>: <code>Beta(6, 4)</code>.</li><li><code>correlation_strength</code>: <code>Beta(8, 3)</code>.</li></ul>
+<ul><li><code>num_resources</code>: <code>round(Int, LogNormal(log(18), 0.4))</code>, clamped to <code>8:30</code>.</li><li><code>sparsity</code>: <code>Beta(2, 3)</code>.</li><li><code>profit_min</code>: <code>LogNormal(log(3), 0.6)</code>.</li><li><code>profit_max</code>: <code>LogNormal(log(45), 0.5)</code>.</li><li><code>resource_usage_min</code>: <code>LogNormal(log(0.3), 0.5)</code>.</li><li><code>resource_usage_max</code>: <code>LogNormal(log(4), 0.5)</code>.</li><li><code>market_constraint_prob</code>: <code>Beta(6, 4)</code>.</li><li><code>correlation_strength</code>: <code>Beta(8, 3)</code>.</li><li><code>volume_center</code>: <code>LogNormal(log(50), 0.5)</code>.</li></ul>
 <p>The generator samples an industry type from:</p>
 <pre class="formula">manufacturing, food_processing, electronics, furniture, chemical, automotive</pre>
-<p>with scale-dependent weights. Industry type then modifies profit ranges, resource usage ranges, sparsity, market-bound probability, and/or correlation strength. For example, electronics increases profit and usage maxima and raises sparsity, while automotive strongly increases profit and usage ranges but lowers sparsity and market-bound probability.</p>
+<p>with scale-dependent weights (stored as a <code>Symbol</code> in the <code>industry</code> field). Industry type then modifies profit ranges, resource usage ranges, sparsity, market-bound probability, correlation strength, and/or the nominal production volume. For example, electronics increases profit and usage maxima and raises sparsity, while automotive strongly increases profit and usage ranges but lowers sparsity, market-bound probability, and per-product volume.</p>
 <p>Generated data:</p>
-<ul><li><code>quality_factors[j]</code>: <code>Beta(2, 2)</code> per product.</li><li><code>profits[j]</code>: log-normal base profit clamped to <code>[profit_min, profit_max]</code>, plus a quality-correlated component.</li><li><code>usage_matrix[i, j]</code>: resource <code>i</code> usage by product <code>j</code>. Entries are zero with probability <code>sparsity</code>; otherwise they combine a resource-level base usage, a gamma random component, and quality correlation.</li><li>Each product is forced to use at least one resource.</li><li>Each resource is forced to be used by at least one product.</li><li><code>availabilities[i]</code>: based on average usage per resource times <code>num_products / 2</code>, multiplied by log-normal variability clamped to <code>[0.5, 2.0]</code> and a factor in roughly <code>[0.6, 1.2]</code>.</li><li><code>lower_bounds[j]</code>: optional market floor, initially zero.</li><li><code>upper_bounds[j]</code>: optional market cap, initially <code>Inf</code>.</li></ul>
-<p>Market bounds are generated from each product&#x27;s single-product <code>max_possible[j]</code>, computed as the minimum availability-to-usage ratio across resources with positive usage. Each product independently receives a lower bound with probability <code>market_constraint_prob / 2</code> and an upper bound with the same probability.</p>
+<ul><li><code>quality_factors[j]</code>: <code>Beta(2, 2)</code> per product.</li><li><code>profits[j]</code>: log-normal base profit clamped to <code>[profit_min, profit_max]</code>, plus a quality-correlated component.</li><li><code>usage_matrix[i, j]</code>: resource <code>i</code> usage by product <code>j</code>. Entries are zero with probability <code>sparsity</code>; otherwise they combine a resource-level base usage, a gamma random component, and quality correlation.</li><li>Each product is forced to use at least one resource (this keeps the maximization bounded).</li><li>Each resource is forced to be used by at least one product.</li><li><code>nominal_plan[j]</code>: the planted operating plan, <code>LogNormal(log(volume_center), 0.55)</code> clamped to <code>[0.1, 10] * volume_center</code>.</li><li><code>consumption = usage_matrix * nominal_plan</code>: what the plan actually consumes.</li><li><code>availabilities[i] = consumption[i] * (1 + headroom[i])</code>, with <code>headroom[i]</code> drawn from <code>LogNormal(log(0.18), 0.8)</code> clamped to <code>[0.02, 2.0]</code>. Small headroom values give genuinely binding capacity rows.</li><li><code>lower_bounds[j]</code>: with probability <code>clamp(0.25 + 0.7 * market_constraint_prob, 0.25, 0.95)</code>, a committed minimum of <code>(0.2 + 0.7 * Beta(2, 2)) * nominal_plan[j]</code>; otherwise <code>0</code>. At least one product always carries a floor.</li><li><code>upper_bounds[j]</code>: with probability <code>clamp(0.5 * market_constraint_prob, 0.05, 0.8)</code>, a sales ceiling of <code>(1.05 + 1.4 * Beta(2, 2)) * nominal_plan[j]</code>; otherwise <code>Inf</code>.</li></ul>
 <p>The stored struct fields are:</p>
-<ul><li><code>num_products::Int</code></li><li><code>num_resources::Int</code></li><li><code>profits::Vector{Float64}</code></li><li><code>usage_matrix::Matrix{Float64}</code></li><li><code>availabilities::Vector{Float64}</code></li><li><code>lower_bounds::Vector{Float64}</code></li><li><code>upper_bounds::Vector{Float64}</code></li></ul>
-<p>The constructor calls <code>Random.seed!(seed)</code>, so generation is reproducible for the same arguments and package version, while also resetting Julia&#x27;s global RNG.</p></div>
+<ul><li><code>num_products::Int</code></li><li><code>num_resources::Int</code></li><li><code>profits::Vector{Float64}</code></li><li><code>usage_matrix::Matrix{Float64}</code></li><li><code>availabilities::Vector{Float64}</code></li><li><code>lower_bounds::Vector{Float64}</code></li><li><code>upper_bounds::Vector{Float64}</code></li><li><code>nominal_plan::Vector{Float64}</code></li><li><code>floor_utilization::Float64</code></li><li><code>industry::Symbol</code></li><li><code>feasible_witness::Union{Nothing,ProductMixPlanWitness}</code></li><li><code>infeasibility_certificate::Union{Nothing,ResourceOvercommitCertificate}</code></li><li><code>feasibility_status::FeasibilityStatus</code></li></ul>
+<p>The constructor draws from a local <code>MersenneTwister(seed)</code>, so generation is reproducible for the same arguments and package version and never disturbs Julia&#x27;s global RNG.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">∑</span>LP Formulation</h3>
   <div class="sec-body"><p>Sets and indices:</p>
@@ -1397,39 +1419,43 @@ x[i] &lt;= max_food_amounts[i]    for listed foods</pre>
 <pre class="formula">x_j &gt;= 0    quantity of product j to produce</pre>
 <p>Objective:</p>
 <div class="math">\[\max \sum_{j \in P} profit_j x_j\]</div>
-<p>Resource constraints:</p>
+<p>Resource constraints (only products with a positive usage coefficient appear in a row):</p>
 <div class="math">\[\sum_{j \in P} usage_{i,j} x_j \le availability_i \quad \forall i \in R\]</div>
 <p>Market lower-bound constraints are added only when <code>lower_bounds[j] &gt; 0</code>:</p>
 <div class="math">\[x_j \ge lower\_bound_j\]</div>
 <p>Market upper-bound constraints are added only when <code>upper_bounds[j] &lt; Inf</code>:</p>
 <div class="math">\[x_j \le upper\_bound_j\]</div>
 <p>Bounds:</p>
-<ul><li>All variables are continuous and nonnegative.</li><li>Upper bounds are optional and product-specific.</li></ul>
+<ul><li>All variables are continuous and nonnegative.</li><li>Market floors and ceilings are explicit rows, not variable bounds.</li></ul>
 <p>Interpretation: the model chooses a profit-maximizing production portfolio while respecting limited resources and product-level market requirements.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">⚖</span>Feasibility Controls</h3>
-  <div class="sec-body"><p>The constructor converts the requested status into:</p>
-<pre class="formula">:feasible      if feasibility_status == feasible
-:infeasible    if feasibility_status == infeasible
-:all           if feasibility_status == unknown</pre>
-<p>For <code>feasible</code>, the generator:</p>
-<ol><li>Repairs any product where <code>lower_bounds[j] &gt; upper_bounds[j]</code> by setting the lower bound to <code>0.98 * upper_bounds[j]</code>.</li><li>Computes aggregate resource usage required by the lower bounds.</li><li>If any resource requirement exceeds availability, scales all lower bounds down by <code>minimum(availability / required) * 0.98</code>.</li><li>Rechecks lower bounds against finite upper bounds.</li></ol>
-<p>This makes the lower-bound point feasible with respect to resource capacities and finite product caps.</p>
-<p>For <code>infeasible</code>, the generator:</p>
-<ol><li>Ensures there are positive lower bounds. If none exist, it selects products using a heavily used resource and assigns lower bounds equal to <code>(0.15 + 0.25 * rand()) * max_possible[j]</code>.</li><li>Computes required resource usage from lower bounds.</li><li>Chooses the resource with the largest required-to-available ratio, or a heavily used fallback resource if requirements are zero.</li><li>Reduces that resource availability to <code>required[critical_i] * (1 - shortage_margin)</code>, where <code>shortage_margin</code> is sampled from <code>0.10</code> to <code>0.35</code>.</li><li>With probability <code>0.3</code>, also reduces another resource to slightly below its required lower-bound usage.</li></ol>
-<p>For <code>unknown</code>, no repair or forced infeasibility branch is applied after the initial stochastic construction. The instance may be feasible or infeasible depending on the sampled bounds and capacities.</p></div>
+  <div class="sec-body"><p>Because every usage coefficient is nonnegative, <code>x = lower_bounds</code> is the pointwise-smallest candidate point. The constructor always keeps <code>lower_bounds .&lt;= upper_bounds</code>, so the instance is feasible **iff**</p>
+<div class="math">\[floor\_utilization \;=\; \max_{i \in R} \frac{\sum_{j \in P} usage_{i,j}\, lower\_bound_j}{availability_i} \;\le\; 1 .\]</div>
+<p>That scalar is stored in the <code>floor_utilization</code> field, and the three profiles differ only in where they place it.</p>
+<p>For <code>feasible</code>, nothing is perturbed: floors are at most <code>0.9 * nominal_plan</code>, ceilings at least <code>1.05 * nominal_plan</code>, and capacities strictly exceed the plan&#x27;s consumption, so <code>floor_utilization &lt; 1</code>. The planted plan is stored as a <code>ProductMixPlanWitness</code> (<code>plan</code>, <code>consumption</code>, <code>slack = availabilities - consumption</code>, all strictly positive) and is an actual feasible point of the built model.</p>
+<p>For <code>unknown</code> and <code>infeasible</code>, the generator picks a target utilization and moves the data onto it:</p>
+<ul><li><code>infeasible</code>: <code>target = 1.15 + 0.45 * rand()</code>.</li><li><code>unknown</code>: <code>target = 1 ± margin</code> with <code>margin = 0.04 + 0.31 * rand()</code> and a fair coin for the sign. Feasibility is therefore an explicit coin flip that is independent of problem size.</li></ul>
+<p>Let <code>gap = target / floor_utilization</code> for the pre-perturbation data. The adjustment is split between tightening capacity and raising commitments so neither is pushed to an extreme:</p>
+<pre class="formula">theta          = 0.35 + 0.3 * rand()
+capacity_scale = clamp(gap^(theta - 1), 0.35, 3.0)
+floor_scale    = gap * capacity_scale
+availabilities .*= capacity_scale
+lower_bounds   .*= floor_scale</pre>
+<p>Since the ratio multiplier is <code>floor_scale / capacity_scale = gap</code>, the resulting <code>floor_utilization</code> equals <code>target</code> exactly. Any ceiling that would fall below its floor is raised to <code>1.05 * lower_bounds[j]</code>, so infeasibility never degenerates into a per-variable bound clash.</p>
+<p>For <code>infeasible</code>, the most stressed resource and the products whose floors consume it are stored in a <code>ResourceOvercommitCertificate</code> (<code>resource</code>, <code>products</code>, <code>required_usage</code>, <code>availability</code>) with <code>required_usage &gt; availability</code>. The refutation uses the aggregate capacity row together with the floor rows, so it holds for the LP itself.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">▤</span>Model Characteristics</h3>
   <div class="sec-body"><p>Variable count:</p>
 <pre class="formula">num_products</pre>
 <p>Constraint count drivers:</p>
 <ul><li><code>num_resources</code> capacity constraints.</li><li>One lower-bound constraint for each positive <code>lower_bounds[j]</code>.</li><li>One upper-bound constraint for each finite <code>upper_bounds[j]</code>.</li></ul>
-<p>The usage matrix is sparse by construction: each entry is independently set to zero with probability <code>sparsity</code>, followed by repair passes that prevent all-zero product columns and all-zero resource rows.</p>
+<p>The usage matrix is sparse by construction: each entry is independently set to zero with probability <code>sparsity</code>, followed by repair passes that prevent all-zero product columns and all-zero resource rows. Zero coefficients are omitted from the capacity rows.</p>
 <p>The model is a continuous LP. Product quantities are divisible; no integer or batch constraints are enforced.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">✎</span>Practical Notes</h3>
   <div class="sec-body"><p>This generator is useful for benchmarking product-mix LPs with more varied structure than the simpler production planning generator. It introduces sparse resource consumption, correlated profit/quality/usage patterns, industry-specific regimes, and both lower and upper market bounds.</p>
-<p>For <code>unknown</code>, the code deliberately leaves the sampled instance uncorrected, so the status is not a randomized 70/30 choice as in some other generators. The imported <code>LinearAlgebra</code> module is not used by this file.</p></div>
+<p>Observed feasibility mix under HiGHS (30 seeds per cell): <code>feasible</code> is 100% <code>OPTIMAL</code> and <code>infeasible</code> is 100% <code>INFEASIBLE</code> at every size, while <code>unknown</code> stays close to an even split at 50, 100, 500, 1000, and 5000 variables. The analytic <code>floor_utilization &lt;= 1</code> test agreed with HiGHS on all 450 solved instances.</p></div>
 </section>
 </article>
 <article id="production_planning" class="view article">
@@ -1657,7 +1683,7 @@ g_{u,t} \ge \underline g_u on_{u,t}.\]</div>
   <header class="art-head fam-border-scheduling">
     <div class="art-eyebrow"><span class="fam-dot fam-scheduling"></span>Assignment &amp; Scheduling</div>
     <h2>Airline Crew</h2>
-    <p class="art-intro">Generates airline crew pairing set-partitioning instances where each flight must be covered by exactly one crew pairing at minimum cost.</p>
+    <p class="art-intro">Generates airline crew pairing set-partitioning instances where each flight must be covered by exactly one *operationally legal* crew pairing at minimum cost.</p>
     <div class="chips">
       <span class="chip chip-sense">Objective: Min</span>
       <span class="chip chip-binary">Binary variables</span>
@@ -1665,44 +1691,50 @@ g_{u,t} \ge \underline g_u on_{u,t}.\]</div>
   </header>
   <section class="doc-section">
   <h3><span class="sec-icon">◆</span>Overview</h3>
-  <div class="sec-body"><p>This generator represents the crew pairing step in airline operations planning. A flight network is generated over base and non-base airports, then feasible-looking pairings are built as sequences of connected flights. The optimization model chooses pairings so that every flight in the planning horizon is covered exactly once.</p></div>
+  <div class="sec-body"><p>This generator represents the crew pairing step in airline operations planning. A dated flight schedule is generated over a hub-and-spoke airport network, and crew pairings are built as time-and-airport-respecting walks through that schedule. The optimization model chooses pairings so that every flight in the planning horizon is covered exactly once.</p>
+<p>Every generated column is a pairing a crew could actually fly. Pairings are grown leg by leg under the legality rules, so the following hold by construction, and no downstream step ever edits a pairing&#x27;s leg set (filtering only ever drops whole columns):</p>
+<ul><li>**Airport continuity**: each leg departs from the airport where the previous leg arrived.</li><li>**Time feasibility**: each leg departs at least <code>min_connect</code> minutes after the previous leg arrives.</li><li>**Base return**: the pairing starts at a crew base and ends back at that same base.</li><li>**Duty rules**: legs group into duty periods bounded by <code>max_legs_per_duty</code>, <code>max_block_minutes</code> (flight time) and <code>max_duty_minutes</code> (elapsed time), with at most <code>max_duties</code> duties per pairing.</li><li>**Rest rules**: consecutive duties are separated by a rest in <code>[min_rest, max_rest]</code>.</li></ul>
+<p>Because <code>max_sit &lt; min_rest</code>, the duty structure of a pairing is uniquely recoverable from its leg times: a ground time of at most <code>max_sit</code> is an in-duty connection, anything longer is an overnight rest.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">▦</span>Generator Data and Sizing</h3>
-  <div class="sec-body"><p><code>target_variables</code> is interpreted as the target number of pairing variables. The constructor first samples a scale:</p>
-<table><thead><tr><th>Scale condition</th><th>Airports</th><th>Bases</th><th>Flights</th><th>Max pairings</th><th>Max flights per pairing</th></tr></thead><tbody><tr><td><code>target_variables &lt;= 300</code></td><td>5-12</td><td>2-4</td><td>40-80</td><td>50-150</td><td>3-5</td></tr><tr><td><code>target_variables &lt;= 1500</code></td><td>10-25</td><td>3-6</td><td>80-200</td><td>150-500</td><td>4-6</td></tr><tr><td>otherwise</td><td>20-60</td><td>5-15</td><td>150-600</td><td>400-2000</td><td>5-8</td></tr></tbody></table>
-<p>The sampled flight and pairing counts are iteratively adjusted for up to 15 iterations. The sizing target used during adjustment is:</p>
-<pre class="formula">current_vars = min(max_pairings, num_flights * 2)</pre>
-<p>The final number of pairings is <code>min(max_pairings, actual_num_flights * 2)</code>, so the realized variable count can differ from <code>target_variables</code>.</p>
-<p>Generated data:</p>
-<ul><li>Airports <code>1:num_bases</code> are crew bases; the rest are non-base airports.</li><li>Flights are first generated in hub-and-spoke patterns from bases to non-bases with probability <code>0.7</code>, and from non-bases to bases with probability <code>0.6</code>.</li><li>Any remaining flights are filled with random point-to-point origin-destination pairs with distinct endpoints.</li><li>Flight costs are sampled from truncated normals: small <code>Normal(1200:2000, 300:600)</code> truncated to <code>[500, 10000]</code>, medium <code>Normal(2000:3500, 600:1200)</code>, large <code>Normal(3000:6000, 1000:2500)</code>.</li><li>Base-to-non-base and point-to-point costs receive additional multiplicative beta noise.</li><li>Pairing overhead means are sampled from truncated normals around <code>0.2</code>, <code>0.25</code>, or <code>0.35</code> by scale; overhead standard deviations are similarly sampled and truncated.</li><li>Pairing length is sampled with weights <code>[0.4, 0.3, 0.15, 0.1, 0.04, 0.01]</code>, truncated to the maximum allowed length.</li></ul>
-<p>The stored struct fields are:</p>
-<ul><li><code>num_flights</code></li><li><code>flight_origins</code></li><li><code>flight_destinations</code></li><li><code>pairing_costs</code></li><li><code>flights_in_pairing</code></li></ul>
-<p>The constructor calls <code>Random.seed!(seed)</code>, so generation is reproducible for a fixed seed but resets Julia&#x27;s global RNG state.</p></div>
+  <div class="sec-body"><p><code>target_variables</code> is interpreted as the number of pairing columns, and the generator emits **exactly** that many. Derived sizes:</p>
+<table><thead><tr><th>Quantity</th><th>Value</th></tr></thead><tbody><tr><td>pairing columns</td><td><code>target_variables</code> (exact)</td></tr><tr><td>flights (covering rows)</td><td>about <code>0.55 * target_variables</code>, grown further whenever the pairing sampler stalls</td></tr><tr><td>airports</td><td><code>clamp(round(5 + flights/7), 6, 60)</code></td></tr><tr><td>crew bases</td><td><code>clamp(round(airports/6), 2, 10)</code>, the airports <code>1:num_bases</code></td></tr><tr><td>schedule horizon</td><td><code>clamp(round(flights / (2.5 * airports)), 2, 12)</code> days, seven departure waves per day</td></tr></tbody></table>
+<p>Legality rules are sampled per instance in ranges typical of a domestic narrowbody operation:</p>
+<table><thead><tr><th>Rule</th><th>Range (minutes unless noted)</th></tr></thead><tbody><tr><td><code>min_connect</code></td><td><code>30:5:45</code></td></tr><tr><td><code>max_sit</code></td><td><code>180:30:300</code></td></tr><tr><td><code>max_legs_per_duty</code></td><td><code>3:5</code> legs</td></tr><tr><td><code>max_duty_minutes</code></td><td><code>690:30:840</code></td></tr><tr><td><code>max_block_minutes</code></td><td><code>480:30:570</code></td></tr><tr><td><code>min_rest</code></td><td><code>600:30:660</code></td></tr><tr><td><code>max_rest</code></td><td><code>960:60:1200</code></td></tr><tr><td><code>max_duties</code></td><td><code>2:4</code> duties</td></tr></tbody></table>
+<p>Airports sit on a 2000 x 1400 km map with the bases spread around the centre; scheduled block time is <code>35 + distance / 12</code> minutes rounded to five minutes and clamped to <code>[45, 240]</code>.</p>
+<h4>Schedule construction</h4>
+<p>The schedule is produced by *planting lines of flying*: each planted line is a legal pairing whose legs are **created as it is flown** (base -&gt; ... -&gt; base, with sit times, duty limits and overnight rests). Every flight therefore belongs to exactly one planted line, so the planted lines partition the flight set. A line is buffered and re-checked against the legality rules before it is committed; on repeated failure a two-leg out-and-back (always legal under the sampled rules) is committed instead.</p>
+<p>Additional columns are then sampled by randomized depth-first walks over the resulting schedule: each expansion is restricted to legal successors (connection or rest window, duty leg/block/elapsed limits, duty count), and a walk is accepted only while standing at its base. Sampled columns freely mix legs from different lines. If the walk sampler stalls, another line is planted, which both enlarges the schedule and contributes a column, so the loop always reaches the target column count.</p>
+<h4>Cost</h4>
+<p>Pairing cost follows standard airline crew pay:</p>
+<pre class="formula">credit_p = max( block_p , duty_guarantee * duty_time_p , min_daily_credit * duties_p )
+c_p      = pay_rate * credit_p / 60 + per_diem_rate * tafb_p / 60 + hotel_cost * (duties_p - 1)</pre>
+<p>where <code>block_p</code> is total flight time, <code>duty_time_p</code> is total elapsed duty time, <code>tafb_p</code> is time away from base and <code>duties_p</code> is the number of duty periods. <code>pay_rate in [180, 320]</code> per credit hour, <code>duty_guarantee in [0.50, 0.60]</code>, <code>min_daily_credit in 240:15:315</code> minutes, <code>per_diem_rate in [2.0, 3.5]</code> per hour, <code>hotel_cost in [90, 160]</code> per overnight. Costs are a deterministic function of the pairing&#x27;s schedule.</p>
+<h4>Struct fields</h4>
+<ul><li><code>num_flights</code>, <code>num_airports</code>, <code>bases</code>, <code>airport_locations</code>, <code>block_minutes</code></li><li><code>flight_origins</code>, <code>flight_destinations</code>, <code>departure_times</code>, <code>arrival_times</code></li><li><code>rules::CrewPairingRules</code></li><li><code>pairing_costs</code>, <code>flights_in_pairing</code>, <code>pairing_bases</code></li><li><code>pay_rate</code>, <code>duty_guarantee</code>, <code>min_daily_credit</code>, <code>per_diem_rate</code>, <code>hotel_cost</code></li><li><code>feasible_witness::Union{Nothing,CrewPairingCoverWitness}</code></li><li><code>infeasibility_certificate::Union{Nothing,UncoverableFlightCertificate}</code></li><li><code>feasibility_status</code></li></ul>
+<p>The constructor draws from a local <code>MersenneTwister(seed)</code>, so generation is reproducible and leaves Julia&#x27;s global RNG untouched.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">∑</span>LP Formulation</h3>
   <div class="sec-body"><p>Sets and indices:</p>
 <ul><li><code>F = {1, ..., num_flights}</code>: flights.</li><li><code>P = {1, ..., length(pairing_costs)}</code>: generated pairings.</li><li><code>A_p subset F</code>: flights contained in pairing <code>p</code>.</li></ul>
 <p>Decision variables:</p>
 <pre class="formula">x_p in {0, 1}</pre>
-<p><code>x_p = 1</code> means pairing <code>p</code> is selected.</p>
+<p><code>x_p = 1</code> means pairing <code>p</code> is flown.</p>
 <p>Objective:</p>
 <pre class="formula">minimize sum_{p in P} c_p x_p</pre>
-<p>where <code>c_p</code> is <code>pairing_costs[p]</code>.</p>
 <p>Constraints:</p>
 <pre class="formula">sum_{p in P: f in A_p} x_p = 1    for each f in F</pre>
-<p>Each flight must be covered exactly once. There are no explicit connection, duty-time, crew-base, or rest constraints in the JuMP model; those are represented only indirectly through how pairings are generated.</p>
-<p>Bounds:</p>
-<pre class="formula">x_p binary</pre>
+<p>Each flight must be covered exactly once. Connection, duty-time, crew-base and rest rules are not rows of the model: as in real crew pairing solvers, they are enforced inside the columns.</p>
 <p>At the package API level, <code>generate_problem(...; relax_integer=true)</code> is the default, so these binary variables are relaxed unless the caller sets <code>relax_integer=false</code>.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">⚖</span>Feasibility Controls</h3>
-  <div class="sec-body"><ul><li><code>feasible</code>: The generator builds an exact cover first. It repeatedly assigns unassigned flights to pairings, removes covered flights from the unassigned set, then adds extra random pairings until the target count is reached. The initial partition provides a feasible integer solution before relaxation.</li><li><code>infeasible</code>: The generator chooses one random flight and puts it in an <code>avoid_set</code>. All generated pairings avoid that flight. The model still includes the equality constraint for the avoided flight, so its covering sum is empty and the constraint is <code>0 == 1</code>.</li><li><code>unknown</code>: The generator randomly selects feasible behavior with probability <code>0.5</code>; otherwise it uses the infeasible behavior above.</li></ul></div>
+  <div class="sec-body"><ul><li><code>feasible</code>: every planted line is kept as a column, so those columns partition the flight set. The partition is recorded in <code>feasible_witness::CrewPairingCoverWitness</code> (the column indices), and setting them to one is an integral exact cover - feasible for the MIP and its LP relaxation.</li><li><code>infeasible</code>: the same construction plus one extra flight departing from a **non-base** airport, scheduled beyond every other arrival so nothing can connect into it. It can neither open a pairing (its origin is not a base) nor follow another leg (no flight arrives at its origin inside the sit or rest window), so no legal pairing contains it and its covering row is <code>0 == 1</code>. <code>infeasibility_certificate::UncoverableFlightCertificate</code> records the flight, its endpoints and the (zero) predecessor count. Every other flight is still covered, so the infeasibility is minimal and structural, and it refutes the LP relaxation as well.</li><li><code>unknown</code>: a genuine three-way mix - the planted partition is kept intact (feasible), only a random subset of the planted lines is kept as columns (genuinely undecided: the surviving columns may or may not still admit an exact cover), or an uncoverable flight is planted (infeasible). Metadata is status specific, so <code>unknown</code> instances carry neither a witness nor a certificate.</li></ul></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">▤</span>Model Characteristics</h3>
-  <div class="sec-body"><ul><li>Variables: <code>length(pairing_costs)</code>, approximately <code>min(max_pairings, 2 * num_flights)</code>.</li><li>Constraints: exactly <code>num_flights</code> covering equalities.</li><li>Nonzeros: driven by total flight appearances across all pairings. Pairing lengths are short, so the matrix is sparse.</li><li>Intended model class: binary set partitioning.</li><li>Default generated LP: with the package default <code>relax_integer=true</code>, the binary pairing choices are converted to continuous variables, yielding the LP relaxation.</li></ul></div>
+  <div class="sec-body"><ul><li>Variables: exactly <code>target_variables</code>, one per pairing.</li><li>Constraints: exactly <code>num_flights</code> covering equalities (<code>num_flights + 1</code> rows worth of flights in infeasible mode, since the orphan flight adds a row).</li><li>Nonzeros: total flight appearances across all columns; pairings average roughly five to six legs, so the matrix is sparse.</li><li>Intended model class: binary set partitioning.</li><li>Default generated LP: with the package default <code>relax_integer=true</code>, the binary pairing choices become continuous, yielding the set-partitioning LP relaxation.</li></ul></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">✎</span>Practical Notes</h3>
-  <div class="sec-body"><p>These instances are useful for testing set-partitioning structure, sparse exact-cover constraints, and binary-to-LP relaxation behavior. Costs encode some operational realism, including base start/end discounts and length penalties, but the generated pairings are not validated against real airline duty rules. In infeasible mode the infeasibility is structural and direct: at least one flight has no covering pairing.</p></div>
+  <div class="sec-body"><p>These instances are useful for testing set-partitioning structure, sparse exact-cover constraints, degenerate LP relaxations, and column-oriented solvers. Unlike a random 0/1 covering matrix, the columns here are genuine crew pairings: the sparsity pattern is induced by a real connection network in space and time, and the costs are the credit-hour costs a crew planning system would pay.</p></div>
 </section>
 </article>
 <article id="assignment" class="view article">
@@ -2458,6 +2490,89 @@ s_i(\mathit{revenue}_{iz}-\mathit{cost}_{iz})x_{iz}.\]</div>
   <h3><span class="sec-icon">§</span>Model Size and Use</h3>
   <div class="sec-body"><ul><li>Variables: <code>n_parcels * n_zoning_types</code>, binary before optional relaxation.</li><li>Assignment rows: <code>n_parcels</code>.</li><li>Resource rows: <code>n_resources</code>.</li><li>Environmental rows: one per restricted parcel-zoning pair.</li><li>Minimum-count rows: up to three.</li><li>Adjacency rows: exactly <code>2 * length(adjacency_edges)</code> when enabled.</li></ul>
 <p>The package-level default <code>relax_integer=true</code> converts the binaries to continuous variables in <code>[0,1]</code>. Use <code>relax_integer=false</code> for the native zoning MILP. The infeasibility certificate is valid for both formulations, while the feasible witness is an integer solution to both.</p></div>
+</section>
+</article>
+<article id="radiotherapy" class="view article">
+  <a class="back" href="#overview" data-target="overview">← All generators</a>
+  <header class="art-head fam-border-healthcare">
+    <div class="art-eyebrow"><span class="fam-dot fam-healthcare"></span>Healthcare</div>
+    <h2>Radiotherapy Fluence-Map Planning</h2>
+    <p class="art-intro">The <code>radiotherapy</code> category generates IMRT fluence-map optimization (FMO) LPs and MILPs. It combines a spatial synthetic patient and sparse photon dose-influence matrix with five complementary inverse-planning formulations. The result is intended for optimization research and solver testing; it is not a clinical dose engine and must not be used to plan patient treatment.</p>
+    <div class="chips">
+      <span class="chip chip-sense">Objective: Min</span>
+      <span class="chip chip-mixed">Mixed variables</span>
+    </div>
+  </header>
+  <section class="doc-section">
+  <h3><span class="sec-icon">§</span>Shared patient and beam data</h3>
+  <div class="sec-body"><p>Every problem stores a <code>RadiotherapyCaseData</code> in <code>problem.case_data</code>. A seed selects one of six profiles in a reproducible rotation:</p>
+<table><thead><tr><th>Profile</th><th>Structures</th><th>Prescription</th><th>Fractions</th><th>Coplanar fields</th></tr></thead><tbody><tr><td><code>prostate</code></td><td>PTV, rectum, bladder, femoral heads, normal tissue</td><td>74–80 Gy</td><td>35–44</td><td>7, TG-119 50-degree pattern</td></tr><tr><td><code>head_neck</code></td><td>PTV, cord, parotids, oral cavity, normal tissue</td><td>50–70 Gy</td><td>30–35</td><td>9 at 40-degree intervals</td></tr><tr><td><code>c_shape</code></td><td>annular PTV, central avoidance core, normal tissue</td><td>48–54 Gy</td><td>25–30</td><td>9 at 40-degree intervals</td></tr><tr><td><code>liver</code></td><td>PTV, uninvolved liver, kidneys, heart, normal tissue</td><td>45–60 Gy</td><td>10–30</td><td>7 offset fields</td></tr><tr><td><code>lung</code></td><td>PTV, lungs, heart, esophagus, cord, normal tissue</td><td>50–66 Gy</td><td>25–35</td><td>9 at 40-degree intervals</td></tr><tr><td><code>breast</code></td><td>PTV, lungs, heart, contralateral breast, normal tissue</td><td>40–52 Gy</td><td>15–28</td><td>4 tangents plus anterior field</td></tr></tbody></table>
+<p>Voxel coordinates are stratified by contoured structure rather than sampled as independent labels. For example, the prostate PTV is an ellipsoid abutting a posterior rectum, the head-and-neck cord is a narrow posterior cylinder between paired parotids, and the C-shape follows the TG-119 1.5–3.7 cm annulus around a 1 cm core. The voxel sample is an optimization-grid reduction: it preserves structures, geometry, and a sampled physical volume in cc for every point while scaling with <code>target_variables</code>, rather than materializing the hundreds of thousands of voxels in a full CT.</p>
+<p>Each field has a balanced rectangular-like 2-D beamlet grid covering the beam&#x27;s-eye-view PTV plus a margin. Neighbor pairs in each grid are stored in <code>beamlet_edges</code>. The dose matrix <code>D</code> is generated from a photon pencil-beam surrogate:</p>
+<pre class="formula">D[i,j] = tissue_factor[i] * depth_attenuation[i,field(j)]
+         * (narrow_primary_kernel[i,j] + broad_scatter_kernel[i,j])</pre>
+<p>Depth attenuation combines energy-dependent exponential attenuation and source divergence; each case records a sampled 6 or 10 MV nominal beam energy. Lateral/longitudinal Gaussian kernels make nearby beamlets affect nearby voxels similarly; negligible far-field coefficients are omitted. One small leakage/scatter coefficient per out-of-field voxel and field prevents empty normal-tissue rows. Thus <code>D</code> is nonnegative, sparse, spatially correlated, and has no empty row or column. It is not an i.i.d. random matrix.</p>
+<p>A deterministic projected nonnegative least-squares fit balances a positive reference fluence against the PTV without requiring an optimization solver at generation time. Dose is normalized so the volume-median PTV dose is 1.0, the prescription. At ordinary corpus sizes the deterministic audit requires PTV D95 at least 0.90 and D2 at most 1.10. This reference is the feasible witness where one is promised. Pointwise target floors/ceilings are deliberately documented as safety rails; the generator does not mislabel them as DVH D98 or D2 constraints.</p>
+<p>The field counts, angles, and problem scale are grounded in TG-119 and the public CORT benchmark. CORT uses 0.5–1 cm beamlets; this generator approaches that resolution as the requested size grows and treats each beamlet as a coarser aggregate at small solver-test sizes. CORT reports selected clinical problems with about 1,166–11,489 beamlets, 6,770–22,682 target voxels, and sparse dose matrices; this generator creates reduced problems and grows toward that sparse regime as the requested size grows. Small exact-size benchmarks necessarily use coarser grids and fewer sampled voxels per beamlet.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>`weighted_deviation`</h3>
+  <div class="sec-body"><p>The default variant uses voxelwise piecewise-linear dose penalties. Let <code>x_j</code> be nonnegative beamlet fluence and <code>d_i = sum_j D[i,j] x_j</code>. Target underdose <code>u_i</code> and overdose <code>o_i</code> satisfy:</p>
+<pre class="formula">d_i + u_i &gt;= desired_i             target voxels
+d_i - o_i &lt;= desired_i             all voxels
+u_i, o_i &gt;= 0</pre>
+<p>For every adjacent beamlet pair <code>(j,k)</code>, <code>v_jk</code> linearizes absolute fluence variation:</p>
+<pre class="formula">v_jk &gt;= x_j - x_k
+v_jk &gt;= x_k - x_j
+v_jk &gt;= 0</pre>
+<p>The objective minimizes structure-normalized weighted deviations, a small total-fluence term, and anisotropic total variation:</p>
+<pre class="formula">min  sum_i w_under[i] * u_i + sum_i w_over[i] * o_i
+     + lambda_MU * sum_j x_j + lambda_TV * sum_(j,k) v_jk</pre>
+<p>Target lower/upper bounds and per-structure voxel maximums are hard rows. Soft penalties therefore model preference tradeoffs without turning every requested infeasible instance into a feasible one.</p>
+<p>Variable count is exact or within one variable for normal targets:</p>
+<pre class="formula">beamlets + target voxels + all voxels + beamlet adjacency edges</pre></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>`mean_tail_dose`</h3>
+  <div class="sec-body"><p>This variant replaces voxelwise deviation slacks with linear mean-tail-dose constraints, the radiotherapy analogue of CVaR. It constrains the mean dose in the coldest fraction of the PTV and the hottest selected fraction of every OAR and normal-tissue structure.</p>
+<p>For a hot-tail fraction <code>alpha_s</code>, free threshold <code>eta_s</code>, and nonnegative excess <code>z_i</code>:</p>
+<pre class="formula">z_i &gt;= d_i - eta_s
+eta_s + sum_(i in s) volume_i * z_i
+        / (alpha_s * sum_(i in s) volume_i) &lt;= hot_tail_bound_s</pre>
+<p>The PTV cold tail reverses the deviation:</p>
+<pre class="formula">z_i &gt;= eta_PTV - d_i
+eta_PTV - sum_(i in PTV) volume_i * z_i
+          / (alpha_PTV * sum_(i in PTV) volume_i) &gt;= cold_tail_bound_PTV</pre>
+<p>The fractions mirror common DVH goals: 90–95% cold target tails, 5–10% hot tails for serial structures, and 30–50% hot tails for parallel organs. This is a convex surrogate for exact dose-volume constraints, whose feasible regions are nonconvex. The objective minimizes structure-weighted mean non-target dose, total fluence, and the same beamlet total variation.</p>
+<p>Variable count is exact or within one variable for normal targets:</p>
+<pre class="formula">beamlets + all voxels + structures + beamlet adjacency edges</pre></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>`minmax_deviation`</h3>
+  <div class="sec-body"><p>This LP retains the default variant&#x27;s hinge variables but introduces one epigraph variable <code>rho</code>. Every target underdose and structure-weighted overdose is bounded by <code>rho</code>; the objective minimizes <code>rho</code> plus small fluence and total-variation terms. It is useful when a sum objective would let a large structure statistically hide a small, badly served region.</p>
+<pre class="formula">rho &gt;= importance_under[i] * u_i       target voxels
+rho &gt;= importance_over[i] * o_i        all voxels
+min rho + lambda_MU * sum_j x_j + lambda_TV * sum_(j,k) v_jk</pre></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>`robust_fluence`</h3>
+  <div class="sec-body"><p>This deterministic-equivalent LP uses one fluence map for three dose matrices: the nominal setup and two coherent rigid patient shifts of approximately 0.25–0.45 cm laterally and up to 0.2 cm longitudinally. A scenario is produced by moving every anatomical sample together relative to the fixed beamlet grid, then recomputing the sparse pencil-beam matrix. It is therefore spatially coherent—not independent noise on matrix entries. Hard safety rows and underdose/overdose hinges hold in every scenario, while the objective averages deviation costs across scenarios.</p>
+<pre class="formula">d_i^s = sum_j D^s[i,j] x_j
+target_floor &lt;= d_i^s &lt;= target_ceiling             every scenario
+d_i^s &lt;= structure_max                              OARs, every scenario</pre>
+<p>The feasible witness is audited against all three matrices by <code>_rt_robust_witness_is_valid</code>.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>`beam_angle_selection`</h3>
+  <div class="sec-body"><p>This variant is a MILP before the package&#x27;s optional integrality relaxation. Twelve candidate coplanar fields have binary open variables <code>y_b</code>; every beamlet is linked to its field by a calibrated upper bound.</p>
+<pre class="formula">x_j &lt;= M_j * y_field(j)
+minimum_open &lt;= sum_b y_b &lt;= maximum_open</pre>
+<p>The field count is a range rather than an equality, so the positive <code>sum_b y_b</code> objective term changes the optimizer&#x27;s choice—it is not a constant masquerading as a selection cost. The stored feasible witness includes both fluence and the planted open-field set. Use <code>relax_integer=false</code> to retain the natural binary formulation.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Feasibility controls</h3>
+  <div class="sec-body"><ul><li><code>feasible</code>: hard limits and mean-tail bounds are placed outside metrics of<p><code>case_data.reference_fluence</code>. <code>feasible_witness</code> stores that complete fluence vector. <code>_rt_witness_is_valid</code> checks hard rows and <code>_rt_mean_tail_witness_is_valid</code> additionally checks every tail goal. Robust witnesses are checked across all scenarios; beam-selection witnesses additionally record and validate the open fields and linking bounds.</p></li><li><code>infeasible</code>: one sampled target voxel and one OAR voxel are coincident,<p>representing an overlapping contour sample. Their influence rows obey <code>D[oar,:] = lambda * D[target,:]</code>, while the OAR upper bound is strictly below <code>lambda * target_floor</code>. The stored <code>RadiotherapyDoseConflictCertificate</code> is an exact algebraic contradiction, and <code>_rt_certificate_is_valid</code> verifies it without solving.</p></li><li><code>unknown</code>: clinical target and OAR tightness is sampled independently of the<p>reference fluence. No witness or certificate is exposed and <code>resolved_status</code> remains <code>unknown</code>. Representative deterministic samples contain both feasible and overconstrained plans.</p></li></ul>
+<p>All randomness is local to the constructor. Reusing <code>(variant, target, status, seed)</code> reproduces the complete anatomy, beam grid, sparse matrix, limits, and JuMP model without changing Julia&#x27;s global RNG state.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Research basis</h3>
+  <div class="sec-body"><ul><li>Craft et al., [Shared data for intensity modulated radiation therapy (IMRT)<p>optimization research: the CORT dataset](https://doi.org/10.1186/2047-217X-3-37), GigaScience 2014. Source for public case sizes, beamlet/voxel metadata, sparse dose-influence matrices, and the basic linear FMO example.</p></li><li>Ezzell et al., [IMRT commissioning: Multiple institution planning and<p>dosimetry comparisons, a report from AAPM Task Group 119](https://doi.org/10.1118/1.3238104), Medical Physics 2009. Source for the prostate, head-and-neck, and C-shape structures, dose goals, and field arrangements.</p></li><li>Romeijn et al., [A novel linear programming approach to fluence map<p>optimization for intensity modulated radiation therapy treatment planning](https://doi.org/10.1118/1.1625449), Medical Physics 2003. Basis for piecewise-linear convex FMO.</p></li><li>Romeijn et al., [A new linear programming approach to radiation therapy<p>treatment planning problems](https://doi.org/10.1287/opre.1050.0261), Operations Research 2006. Basis for linear hot/cold mean-tail-dose constraints.</p></li><li>Zhu et al., [Using total-variation regularization for intensity modulated<p>radiation therapy inverse planning](https://doi.org/10.1088/0031-9155/53/23/002), Physics in Medicine and Biology 2008. Basis for adjacent-beamlet L1 deliverability regularization.</p></li><li>Chan, Bortfeld, and Tsitsiklis, [A robust approach to IMRT<p>optimization](https://doi.org/10.1088/0031-9155/51/10/014), Physics in Medicine and Biology 2006. Basis for optimizing one plan over explicitly modeled motion/uncertainty realizations.</p></li><li>Huang et al., [Applying mixed-integer linear programming to the non-coplanar<p>beam angle optimization of intensity-modulated radiotherapy for liver cancer](https://doi.org/10.21037/qims-24-296), Quantitative Imaging in Medicine and Surgery 2024. Contemporary example of binary beam-angle selection coupled to IMRT planning.</p></li></ul></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Practical notes</h3>
+  <div class="sec-body"><p>These problems exercise sparse but correlated dose blocks, many overlapping structure rows, free CVaR thresholds, degenerate hinge variables, repeated scenario blocks, grid-incidence regularization, and binary field activation. The first four variants are pure LPs. <code>beam_angle_selection</code> is naturally a MILP and follows the package-wide <code>relax_integer</code> setting. The anatomy and pencil-beam engine are research-grade synthetic data—not commissioned clinical dosimetry—and the generated plans must never be used for patient care.</p></div>
 </section>
 </article>
   </main>

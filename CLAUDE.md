@@ -82,7 +82,7 @@ julia --project=@.
 
 ## Architecture
 
-SyntheticLPs uses a type-based dispatch system for generating realistic linear programming problems. Problems are organized as a two-level hierarchy: a **category** (a problem domain, e.g. `:transportation`) groups one or more **variants** (concrete generators with their own data generation and model formulation, e.g. `:standard`). There are 43 categories; most have a single variant, while several carry multiple variants with distinct formulations. All generators follow a consistent pattern using Julia's multiple dispatch.
+SyntheticLPs uses a type-based dispatch system for generating realistic linear programming problems. Problems are organized as a two-level hierarchy: a **category** (a problem domain, e.g. `:transportation`) groups one or more **variants** (concrete generators with their own data generation and model formulation, e.g. `:standard`). There are 44 categories; most have a single variant, while several carry multiple variants with distinct formulations. All generators follow a consistent pattern using Julia's multiple dispatch.
 
 ### Core Components
 
@@ -207,18 +207,19 @@ register_variant(:category, :standard, VariantStruct, "Description")
 
 ### Available Problem Categories
 
-The system includes 43 categories covering major LP/MIP problem classes. Each
+The system includes 44 categories covering major LP/MIP problem classes. Each
 category's default variant is `:standard` except `graph_optimization`
 (`:independent_set`), `hub_location` (`:p_hub_median`),
 `neural_network_verification` (`:relu_big_m`), `portfolio`
 (`:cvar`), `regression` (`:lad`), `set_system` (`:set_cover`),
-`vehicle_routing` (`:cvrp`), and `workforce_shift_scheduling` (`:covering`).
+`radiotherapy` (`:weighted_deviation`), `vehicle_routing` (`:cvrp`), and
+`workforce_shift_scheduling` (`:covering`).
 Categories with multiple variants are listed with them below.
 - Transportation (`standard`, `balanced`, `capacitated`, `transshipment`, `emission_constrained`, `fixed_charge`), Diet Problem (`standard`, `nutrient_bounds`, `food_groups`), Knapsack (`standard`, `multidimensional`, `bounded`, `mixed_integer_set`), Portfolio (`cvar`, `tracking_error`), Network Flow (`standard`, `generalized_flow`)
 - Multi-Commodity Flow (`standard`, `binary_capacity`, `integer_flow`), Assignment (`standard`, `workload_balance`), Blending (`standard`, `equipment_batches`, `multi_product`), Container Loading (`standard`, `two_dimensional_bin_packing`), Facility Location (`standard`, `two_echelon`, `p_median`), Hub Location (`p_hub_median`, `compact_single_allocation`, `r_allocation`, `multiple_allocation`, `capacitated`, `hub_covering`, `hub_network`, `budgeted_backbone`)
 - Cutting Stock (`standard`, `setup_cost`, `due_dates`, `integer_patterns`), Energy (`standard`, `ramping`, `reserves`, `storage`, `transmission`, `dc_opf`, `optimal_transmission_switching`), Inventory (`standard`, `lot_sizing`, `multi_item`, `multi_echelon`), Load Balancing (`standard`, `discrete_placement`)
 - Graph Optimization (`independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`), Set System (`set_cover`, `set_packing`, `set_partitioning`, `combinatorial_auction`), Supply Chain (`standard`, `single_source`, `carbon`, `multi_product`, `network_planning`), Operating Room Scheduling (`elective_assignment`, `case_sequencing`, `weekly_planning`, `master_surgical_schedule`, `robust_elective`, `benchmark_loading`)
-- TSP (`standard`, `asymmetric`, `flow`, `time_windows`, `assignment_relaxation`, `prize_collecting`, `multiple_salespersons`, `precedence`), Vehicle Routing (`cvrp`), Regression (`lad`, `quantile`, `chebyshev`, `basis_pursuit`), Workforce Shift Scheduling (`covering`), Bin Packing (`standard`, `heterogeneous`), Revenue Management (`standard`, `stochastic_overbooking`)
+- TSP (`standard`, `asymmetric`, `flow`, `time_windows`, `assignment_relaxation`, `prize_collecting`, `multiple_salespersons`, `precedence`), Vehicle Routing (`cvrp`), Regression (`lad`, `quantile`, `chebyshev`, `basis_pursuit`), Radiotherapy (`weighted_deviation`, `mean_tail_dose`, `minmax_deviation`, `robust_fluence`, `beam_angle_selection`), Workforce Shift Scheduling (`covering`), Bin Packing (`standard`, `heterogeneous`), Revenue Management (`standard`, `stochastic_overbooking`)
 - Single-variant categories: Airline Crew, Crop Planning, Feed Blending, Generic MILP, Job Shop Scheduling, Land Use, Maritime Inventory Routing, Neural Network Verification, Nurse Scheduling, Product Mix, Production Planning, Project Selection, Resilient Network Design, Resource Allocation, Scheduling, Stochastic Program, Telecom Network Design, Unit Commitment
 
 #### Model classes (LP / MIP / LP relaxation)
@@ -229,12 +230,16 @@ The corpus deliberately mixes three model classes; treat the names accordingly:
   both portfolio variants `cvar`/`tracking_error`, `supply_chain/network_planning`
   (multi-period, multi-product planning with inventory), regression variants,
   revenue management, stochastic program, and `workforce_shift_scheduling/covering`).
+  Four `radiotherapy` variants are also pure LPs: summed or minimax voxelwise
+  fluence-map optimization, convex mean-tail-dose planning, and deterministic-
+  equivalent setup-robust planning, each with beamlet total variation.
 - **MIPs** (binary/integer variables): e.g. `facility_location` variants
   (including `p_median`), all eight `hub_location` variants (hub opening,
   allocation, and backbone-build binaries; their LP relaxations are the
   classical tight SKO path relaxation and multicommodity design relaxations,
   grounded in the CAB/AP benchmark conventions), `cutting_stock/setup_cost`,
   `inventory/lot_sizing`,
+  `radiotherapy/beam_angle_selection` (binary candidate-field openings),
   `bin_packing`, `job_shop_scheduling`, `supply_chain/single_source`,
   `unit_commitment` (binary commitment/startup/shutdown in its natural model),
   `knapsack/multidimensional` (binary) and `knapsack/bounded` (integer),

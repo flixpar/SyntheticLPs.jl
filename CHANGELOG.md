@@ -4,6 +4,50 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-08-31 (radiotherapy generator consolidation and expansion)
+
+**Previous Commit**: `88d3c1b`
+
+**Commits**: (pending)
+
+**Summary**: Integrated the strongest exact-sizing radiotherapy implementation
+and expanded it into five audited IMRT formulations. The shared generator now
+uses six anatomy profiles, volume-aware sampled structures, energy-dependent
+sparse pencil-beam data, substantially better planted target coverage, coherent
+setup-error scenarios, and meaningful beam-angle selection.
+
+**Details**:
+
+- Added `weighted_deviation`, volume-weighted `mean_tail_dose`,
+  `minmax_deviation`, `robust_fluence`, and `beam_angle_selection`. The first
+  four are LPs; the last is a natural MILP with a package-default relaxation.
+- Expanded the deterministic profile rotation from prostate, head-and-neck,
+  C-shape, and liver to include lung and breast. Cases record sampled structure
+  volume, 6/10 MV beam energy, 3-D coordinates, field/beamlet geometry, and the
+  sparse influence matrix's prescription normalization.
+- Increased aperture resolution and replaced the multiplicative planted-plan
+  heuristic with projected nonnegative least squares. The reference is
+  normalized by PTV median instead of its coldest sampled point. Across the
+  committed six-profile audit at 500 variables, PTV D95 is 0.93--0.99 and D2
+  is 1.02--1.07; the previous C-shape references reached approximately 1.55
+  maximum/minimum dose ratio.
+- Mean-tail rows and mean-dose objectives use sampled physical-volume weights.
+  Hard target rows are explicitly documented as pointwise safety rails, not
+  mislabeled D98/D2 clinical goals.
+- Robust scenarios move the whole synthetic anatomy relative to fixed beamlets
+  and rebuild the dose matrix; they do not add independent coefficient noise.
+  The feasible witness is checked against every scenario.
+- Beam-angle selection uses twelve candidate fields, per-beamlet activation
+  rows, a range on the number of open fields, and a positive opening cost. The
+  cost is therefore nonconstant, unlike an equality-cardinality formulation.
+- Preserved solver-independent feasible witnesses and exact proportional-row
+  infeasibility certificates for all variants. Unknown instances expose no
+  artifact and retain a mixed feasible/infeasible distribution.
+- Expanded category tests for formulation algebra, exact sizing, six-profile
+  anatomy and DVH metrics, volume arithmetic, scenario coherence, natural BAO
+  integrality, status artifacts, reproducibility, and solver contracts. Updated
+  the README, contributor guide, detailed research notes, and offline explainer.
+
 ## 2026-08-31 (dual reformulation)
 
 **Summary**: Added an opt-in dual reformulation for generated LPs and raised the
@@ -314,6 +358,57 @@ is not thread-safe. The four generators touched here that had it
 (`product_mix`, `airline_crew`, `telecom_network_design`,
 `maritime_inventory_routing`) were converted to local RNGs, so they now diverge
 stylistically from the rest of the corpus. Worth a follow-up sweep.
+## 2026-08-30 23:57 UTC (IMRT radiotherapy fluence-map planning)
+
+**Previous Commit**: `fc0620e`
+
+**Summary**: Added a research-grounded `radiotherapy` category with two pure-LP
+IMRT fluence-map generators: voxelwise piecewise-linear dose deviation and
+convex mean-tail-dose (CVaR) planning. Both use a shared spatial pencil-beam
+dose engine, four clinical anatomy profiles, 2-D beamlet grids, total-variation
+delivery regularization, exact status artifacts, and near-exact size control.
+
+**Details**:
+- Added `radiotherapy/weighted_deviation` (the category default): nonnegative
+  beamlet fluence, target underdose and all-voxel overdose hinges, hard target
+  and structure dose limits, monitor-unit-like fluence cost, and anisotropic
+  L1 total variation over within-field beamlet neighbors.
+- Added `radiotherapy/mean_tail_dose`: a free threshold and positive-part
+  variables give the standard linear cold-tail target and hot-tail organ CVaR
+  formulation, providing a convex surrogate for nonconvex DVH constraints.
+  Its objective combines structure-weighted mean non-target dose, fluence, and
+  the same adjacency regularizer.
+- Added a common patient/dose generator calibrated against AAPM TG-119 and the
+  public CORT dataset. The deterministic profile rotation covers prostate,
+  head-and-neck, C-shape, and liver anatomy; prescriptions span 45--80 Gy;
+  profiles use 7 or 9 clinical coplanar fields. Stratified 3-D structure
+  samples feed balanced 2-D beamlet grids and a sparse, nonnegative influence
+  matrix with geometric pencil-beam support, depth attenuation, divergence,
+  broad scatter, tissue response, and out-of-field leakage. Matrix entries are
+  spatially correlated rather than independent random coefficients.
+- Clinical/downsampled beamlet-to-voxel proportions reserve roughly 12% of the
+  full variable budget for fluence, with most variables representing sampled
+  voxel dose behavior. Normal targets of 50--2,000 variables are met exactly
+  or within one variable in the committed profile matrix; very small requests
+  retain at least two samples per structure.
+- A deterministic multiplicative target-dose fit plus light grid smoothing
+  constructs the feasible reference map without requiring a solver during
+  generation. Feasible requests expose that complete fluence witness.
+  Infeasible requests expose an exact proportional target/OAR influence-row
+  contradiction whose upper/lower bounds prove infeasibility. Unknown requests
+  use correlated clinical-tightness draws, retain `unknown` metadata, expose no
+  hidden artifact, and produce both feasible and overconstrained samples.
+- Added focused tests for registry behavior, sizing equations, TG-119 angles,
+  anatomy geometry, sparse-matrix invariants and scale behavior, objective and
+  constraint algebra, CVaR arithmetic, witnesses, certificates, local-RNG
+  determinism, and HiGHS feasibility contracts. Separate stress sweeps checked
+  500 feasible witnesses and 1,000 infeasibility certificates across profiles,
+  scales, and seeds.
+- Added detailed formulation, calibration, status, safety, and research notes;
+  updated the README, contributor guide, documentation index, and regenerated
+  the offline HTML explainer. The category is explicitly synthetic and not for
+  patient treatment planning. Full `Pkg.test()` passes 125,699 tests, including
+  the HiGHS-backed feasibility checks.
 
 ## 2026-08-30 14:40 UTC (hub location tests moved to the per-category file)
 

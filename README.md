@@ -17,7 +17,7 @@ This package provides:
 
 ## Problem Types
 
-The package includes generators for 43 common LP/MIP problem categories, all
+The package includes generators for 44 common LP/MIP problem categories, all
 unified with a standardized interface. Each category groups one or more
 **variants** — concrete formulations with their own data generation and model
 structure (see [Categories and Variants](#categories-and-variants)). Categories
@@ -53,6 +53,7 @@ with more than one variant are annotated below.
 - Product Mix
 - Project Selection
 - Regression — variants: `lad`, `quantile`, `chebyshev`, `basis_pursuit` (weighted sparse recovery)
+- Radiotherapy — variants: `weighted_deviation` (voxelwise piecewise-linear IMRT fluence-map planning), `mean_tail_dose` (volume-weighted CVaR/DVH surrogate), `minmax_deviation` (worst-voxel epigraph), `robust_fluence` (coherent setup-shift scenarios), `beam_angle_selection` (joint field selection and FMO MILP); see [generator notes](docs/radiotherapy.md)
 - Resilient Network Design
 - Resource Allocation
 - Revenue Management — variants: `standard` (deterministic network LP / bid-price), `stochastic_overbooking` (scenario show-ups with denied-service recourse)
@@ -163,6 +164,17 @@ generates the RHS before status handling and is an explicit witness only when
 measurement rows and inconsistent RHS. Because each feature requires two split
 variables, even targets of at least two are exact, odd targets round up by one,
 and smaller targets produce two variables.
+
+The `radiotherapy` family builds reduced but spatially grounded IMRT fluence-map
+LPs and MILPs. Six TG-119/CORT-style anatomy profiles generate contoured 3-D
+voxel samples with volume weights, 6/10 MV field geometries, balanced 2-D
+beamlet grids, and sparse depth-attenuated pencil-beam influence matrices.
+Five variants cover summed and minimax voxel deviation, volume-weighted
+hot/cold mean-tail constraints, coherent rigid-setup scenarios, and joint
+beam-angle selection. All include adjacent-beamlet total variation. Requested
+feasible/infeasible instances carry auditable witnesses/certificates; unknown
+instances retain genuine status uncertainty. These are synthetic optimization
+benchmarks, not clinical dose calculations or patient treatment plans.
 
 ### Feasibility Control
 
