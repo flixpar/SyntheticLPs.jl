@@ -62,6 +62,7 @@ where relaxation changes the solved model.
 - [Product Mix](product_mix.md)
 - [Production Planning](production_planning.md)
 - [Project Selection](project_selection.md)
+- [Radiotherapy Fluence-Map Planning](radiotherapy.md)
 - [Resource Allocation](resource_allocation.md)
 - [Revenue Management](revenue_management.md)
 - [Scheduling](scheduling.md)
