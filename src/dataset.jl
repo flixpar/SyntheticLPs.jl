@@ -188,6 +188,7 @@ Metadata describing a single instance produced by [`generate_dataset`](@ref).
 - `num_constraints::Int`: actual constraint count (excludes variable bounds).
 - `seed::Int`: per-instance seed (reproduces this exact instance).
 - `feasibility_status::FeasibilityStatus`: requested feasibility status.
+- `dualized::Bool`: whether this returned instance is a dual reformulation.
 - `filename::Union{String,Nothing}`: file the instance was written to, or
   `nothing` if `output_dir` was not set.
 - `iterations::Int`: simplex iterations if quality-filtered, else `-1`.
@@ -202,6 +203,7 @@ struct GeneratedInstance
     num_constraints::Int
     seed::Int
     feasibility_status::FeasibilityStatus
+    dualized::Bool
     filename::Union{String,Nothing}
     iterations::Int
     solve_time::Float64
@@ -271,6 +273,7 @@ struct _DatasetCandidate
     num_variables::Int
     num_constraints::Int
     seed::Int
+    dualized::Bool
     iterations::Int
     solve_time::Float64
 end
@@ -466,6 +469,8 @@ function _attempt_candidate(rng::AbstractRNG,
                             feasibility::FeasibilityStatus,
                             relax_integer::Bool,
                             bounds_to_constraints::Bool,
+                            dualize::Bool,
+                            dualize_probability::Float64,
                             quality_filter::Bool,
                             optimizer,
                             quality_criteria::QualityCriteria,
@@ -474,6 +479,7 @@ function _attempt_candidate(rng::AbstractRNG,
                             stats::_GenerationStats,
                             verbose::Bool)
     problem_seed = rand(rng, 1:typemax(Int32))
+    dualized = _should_dualize(rng, dualize, dualize_probability)
     try
         # Build (and, when an optimizer is available and the requested status is
         # feasible/infeasible, verify the feasibility contract). The resolved seed
@@ -492,6 +498,7 @@ function _attempt_candidate(rng::AbstractRNG,
         model, _, resolved_seed = _generate_problem_verified(ref, target_vars, feasibility,
                                     problem_seed; relax_integer = relax_integer,
                                     bounds_to_constraints = bounds_to_constraints,
+                                    dualize = dualized,
                                     optimizer = verify_optimizer,
                                     max_feasibility_retries = 10,
                                     feasibility_timeout = quality_criteria.solve_timeout)
@@ -523,6 +530,7 @@ function _attempt_candidate(rng::AbstractRNG,
             num_variables(model),
             num_constraints(model; count_variable_in_set_constraints = false),
             resolved_seed,
+            dualized,
             iterations,
             stime,
         )
@@ -552,6 +560,8 @@ function _fill_candidate_pool!(candidates::Vector{_DatasetCandidate},
                                feasibility::FeasibilityStatus,
                                relax_integer::Bool,
                                bounds_to_constraints::Bool,
+                               dualize::Bool,
+                               dualize_probability::Float64,
                                quality_filter::Bool,
                                optimizer,
                                quality_criteria::QualityCriteria,
@@ -568,6 +578,7 @@ function _fill_candidate_pool!(candidates::Vector{_DatasetCandidate},
                                                   target_index_start + local_attempts - 1)
         candidate = _attempt_candidate(rng, ref, target_vars, feasibility,
                                        relax_integer, bounds_to_constraints,
+                                       dualize, dualize_probability,
                                        quality_filter, optimizer,
                                        quality_criteria, optimizer_attributes,
                                        feasible_only, stats, verbose)
@@ -603,6 +614,8 @@ function _generate_matched_group(rng::AbstractRNG,
                                  feasibility::FeasibilityStatus,
                                  relax_integer::Bool,
                                  bounds_to_constraints::Bool,
+                                 dualize::Bool,
+                                 dualize_probability::Float64,
                                  quality_filter::Bool,
                                  optimizer,
                                  quality_criteria::QualityCriteria,
@@ -628,7 +641,8 @@ function _generate_matched_group(rng::AbstractRNG,
             group_attempts += _fill_candidate_pool!(
                 candidates, rng, group_variants, quota, desired_count,
                 group_attempts, remaining_attempts, size_spec, feasibility,
-                relax_integer, bounds_to_constraints, quality_filter, optimizer,
+                relax_integer, bounds_to_constraints, dualize, dualize_probability,
+                quality_filter, optimizer,
                 quality_criteria, optimizer_attributes, feasible_only, stats, verbose)
         end
 
@@ -663,6 +677,8 @@ function _generate_unmatched_candidates(rng::AbstractRNG,
                                         feasibility::FeasibilityStatus,
                                         relax_integer::Bool,
                                         bounds_to_constraints::Bool,
+                                        dualize::Bool,
+                                        dualize_probability::Float64,
                                         quality_filter::Bool,
                                         optimizer,
                                         quality_criteria::QualityCriteria,
@@ -681,6 +697,7 @@ function _generate_unmatched_candidates(rng::AbstractRNG,
         target_vars = _sample_num_variables(rng, size_spec)
         candidate = _attempt_candidate(rng, ref, target_vars, feasibility,
                                        relax_integer, bounds_to_constraints,
+                                       dualize, dualize_probability,
                                        quality_filter, optimizer,
                                        quality_criteria, optimizer_attributes,
                                        feasible_only, stats, verbose)
@@ -737,7 +754,8 @@ function _materialize_instances(candidates::Vector{_DatasetCandidate},
                                         feasibility,
                                         candidate.seed;
                                         relax_integer = relax_integer,
-                                        bounds_to_constraints = bounds_to_constraints)
+                                        bounds_to_constraints = bounds_to_constraints,
+                                        dualize = candidate.dualized)
             actual_vars = num_variables(model)
             actual_cons = num_constraints(model; count_variable_in_set_constraints = false)
             if actual_vars != candidate.num_variables || actual_cons != candidate.num_constraints
@@ -763,6 +781,7 @@ function _materialize_instances(candidates::Vector{_DatasetCandidate},
             candidate.num_constraints,
             candidate.seed,
             feasibility,
+            candidate.dualized,
             filename,
             candidate.iterations,
             candidate.solve_time,
@@ -773,7 +792,8 @@ function _materialize_instances(candidates::Vector{_DatasetCandidate},
                   "$(filename === nothing ? string(ref) : filename) " *
                   "(target=$(candidate.target_variables), " *
                   "actual=$(candidate.num_variables), " *
-                  "cons=$(candidate.num_constraints)"
+                  "cons=$(candidate.num_constraints), " *
+                  "dual=$(candidate.dualized)"
             msg *= candidate.iterations >= 0 ? ", $(candidate.iterations) iters, " *
                                               "$(round(candidate.solve_time, digits = 2))s)" : ")"
             println(msg)
@@ -819,6 +839,12 @@ Returns metadata for every kept instance as a `Vector{GeneratedInstance}`.
   integrality relaxation. Note: converted bounds become genuine constraint rows,
   so they raise the `num_constraints` recorded for each instance and feed into
   size matching and the quality filter's constraint-based thresholds.
+- `dualize::Bool = false`: replace each continuous model by its dual after the
+  preceding transforms. This forces dualization for every instance.
+- `dualize_probability::Real = 0.0`: independently dualize each instance with
+  this probability when `dualize=false`. The default keeps dualization off. The
+  sampled choice is reproducible from `seed`, and recorded and matched sizes
+  describe the model actually returned.
 - `seed::Int = 0`: master seed (`0` = non-deterministic).
 - `match_size_distribution::Bool = true`: post-select candidates so actual
   variable counts match target distribution quantiles.
@@ -863,6 +889,8 @@ function generate_dataset(;
         feasible_only::Bool = false,
         relax_integer::Bool = true,
         bounds_to_constraints::Bool = false,
+        dualize::Bool = false,
+        dualize_probability::Real = 0.0,
         seed::Int = 0,
         match_size_distribution::Bool = true,
         match_size_by_type::Bool = false,
@@ -892,6 +920,7 @@ function generate_dataset(;
     size_match_tolerance < 0 && error("size_match_tolerance must be >= 0.")
     match_size_by_type && !match_size_distribution &&
         error("match_size_by_type=true requires match_size_distribution=true.")
+    validated_dualize_probability = _validate_dualize_probability(dualize_probability)
 
     types = resolve_problem_types(problem_types)
     feasibility = feasible_only ? feasible : unknown
@@ -911,6 +940,11 @@ function generate_dataset(;
                 (match_size_by_type ? " (per type)" : ""))
         println("  Feasibility: $(feasible_only ? "feasible only" : "unknown")")
         bounds_to_constraints && println("  Bounds → constraints: enabled")
+        if dualize
+            println("  Dual reformulation: forced for every instance")
+        elseif validated_dualize_probability > 0
+            println("  Dual reformulation probability: $validated_dualize_probability")
+        end
         println("  Problem types: $(length(types))")
         if quality_filter
             println("  Quality filter: enabled (timeout=$(quality_criteria.solve_timeout)s, " *
@@ -948,6 +982,8 @@ function generate_dataset(;
                 feasibility,
                 relax_integer,
                 bounds_to_constraints,
+                dualize,
+                validated_dualize_probability,
                 quality_filter,
                 optimizer,
                 quality_criteria,
@@ -977,6 +1013,8 @@ function generate_dataset(;
             feasibility,
             relax_integer,
             bounds_to_constraints,
+            dualize,
+            validated_dualize_probability,
             quality_filter,
             optimizer,
             quality_criteria,
@@ -1004,6 +1042,8 @@ function generate_dataset(;
             feasibility,
             relax_integer,
             bounds_to_constraints,
+            dualize,
+            validated_dualize_probability,
             quality_filter,
             optimizer,
             quality_criteria,
@@ -1038,6 +1078,8 @@ function generate_dataset(;
                         var_min = var_min, var_max = var_max,
                         feasible_only = feasible_only,
                         bounds_to_constraints = bounds_to_constraints,
+                        dualize = dualize,
+                        dualize_probability = validated_dualize_probability,
                         quality_filter = quality_filter,
                         quality_criteria = quality_criteria,
                         attempts = stats.attempts, failed = stats.failed,
@@ -1084,6 +1126,7 @@ function _write_manifest(output_dir, instances, types; kwargs...)
             "num_constraints" => inst.num_constraints,
             "seed" => inst.seed,
             "feasibility_status" => string(inst.feasibility_status),
+            "dualized" => inst.dualized,
             "filename" => inst.filename,
             "iterations" => inst.iterations < 0 ? nothing : inst.iterations,
             "solve_time" => isnan(inst.solve_time) ? nothing : inst.solve_time,

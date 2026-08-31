@@ -1,6 +1,7 @@
 module SyntheticLPs
 
 using JuMP
+import Dualization
 using Random
 using Distributions
 using JSON
@@ -28,6 +29,7 @@ export list_variants
 export list_problems
 export problem_info
 export bounds_to_constraints!
+export dualize_model, dual_reformulation, is_dual_reformulation
 export generate_dataset
 export GeneratedInstance
 export QualityCriteria, QualityResult, check_quality
@@ -241,11 +243,12 @@ function build_model end
 
 """
     _generate_problem_verified([ref_or_type], target_variables, feasibility_status, seed;
-                               relax_integer, bounds_to_constraints, optimizer,
+                               relax_integer, bounds_to_constraints, dualize, optimizer,
                                max_feasibility_retries, feasibility_timeout)
 
 Internal builder used by [`generate_problem`](@ref). Constructs the problem and its
-JuMP model and applies the `relax_integer` / `bounds_to_constraints` transforms.
+JuMP model, applies `relax_integer` and `bounds_to_constraints`, optionally
+verifies that primal model, and finally applies `dualize` before returning.
 
 When `optimizer` is supplied and `feasibility_status` is `feasible` or `infeasible`,
 the model is solved once to verify the feasibility contract — a `feasible` request
@@ -254,7 +257,7 @@ solve *disproves* the requested status the problem is rebuilt with the next seed
 re-checked, up to `max_feasibility_retries` times. (Generators aim to honor the
 requested status by construction, but a few have heuristic feasibility logic that
 occasionally misses; this central check is the project-level backstop, so callers
-receive a conforming model or an error when the retry budget is exhausted.)
+receive a dual of a conforming primal or an error when the retry budget is exhausted.)
 
 If instead the solve *certifies nothing* — it hits `feasibility_timeout`, or returns a
 status that separates neither case — the retry budget is not spent: verification
@@ -270,6 +273,7 @@ function _generate_problem_verified(::Type{T}, target_variables::Int,
                                     feasibility_status::FeasibilityStatus, seed::Int;
                                     relax_integer::Bool=true,
                                     bounds_to_constraints::Bool=false,
+                                    dualize::Bool=false,
                                     optimizer=nothing,
                                     max_feasibility_retries::Int=10,
                                     feasibility_timeout::Float64=10.0) where T <: ProblemGenerator
@@ -286,12 +290,12 @@ function _generate_problem_verified(::Type{T}, target_variables::Int,
         relax_integer && relax_integrality(model)
         bounds_to_constraints && bounds_to_constraints!(model)
         if !needs_check
-            return model, problem, current_seed
+            return dualize ? dualize_model(model) : model, problem, current_seed
         end
         verdict, ts = _check_feasibility_contract(model, optimizer, feasibility_status;
                                                   timeout=feasibility_timeout)
         if verdict === :holds
-            return model, problem, current_seed
+            return dualize ? dualize_model(model) : model, problem, current_seed
         elseif verdict === :inconclusive
             # The solve certified nothing, so we have no evidence against this
             # instance and rebuilding would just re-ask an unanswerable question.
@@ -376,7 +380,7 @@ end
 
 """
     generate_problem(::Type{T}, target_variables, feasibility_status, seed;
-                     relax_integer=true, bounds_to_constraints=false,
+                     relax_integer=true, bounds_to_constraints=false, dualize=false,
                      optimizer=nothing, max_feasibility_retries=10,
                      feasibility_timeout=10.0)
 
@@ -387,6 +391,13 @@ When `bounds_to_constraints=true`, variable bounds (other than plain `x ≥ 0`
 nonnegativity) are reformulated as explicit affine constraints via
 [`bounds_to_constraints!`](@ref). This runs *after* integrality relaxation, so
 bounds introduced by relaxing integer/binary variables are converted too.
+
+When `dualize=true`, the generated continuous model is replaced by its dual via
+[`dualize_model`](@ref). Dualization runs after integrality relaxation and bound
+reformulation. Set `relax_integer=false` only for models that are continuous by
+construction; integer and binary variables cannot be dualized. If feasibility
+verification is enabled, it checks the source primal before dualization because
+an infeasible primal's dual may be either infeasible or unbounded.
 
 When `optimizer` is supplied (e.g. `HiGHS.Optimizer`) and `feasibility_status` is
 `feasible` or `infeasible`, the model is solved to verify the feasibility contract
@@ -403,6 +414,7 @@ function generate_problem(::Type{T}, target_variables::Int,
                           feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
                           relax_integer::Bool=true,
                           bounds_to_constraints::Bool=false,
+                          dualize::Bool=false,
                           optimizer=nothing,
                           max_feasibility_retries::Int=10,
                           feasibility_timeout::Float64=10.0) where T <: ProblemGenerator
@@ -410,6 +422,7 @@ function generate_problem(::Type{T}, target_variables::Int,
                                                    feasibility_status, seed;
                                                    relax_integer=relax_integer,
                                                    bounds_to_constraints=bounds_to_constraints,
+                                                   dualize=dualize,
                                                    optimizer=optimizer,
                                                    max_feasibility_retries=max_feasibility_retries,
                                                    feasibility_timeout=feasibility_timeout)
@@ -418,7 +431,7 @@ end
 
 """
     generate_problem(ref::ProblemVariant, target_variables, feasibility_status, seed;
-                     relax_integer=true, bounds_to_constraints=false,
+                     relax_integer=true, bounds_to_constraints=false, dualize=false,
                      optimizer=nothing, max_feasibility_retries=10,
                      feasibility_timeout=10.0)
 
@@ -427,11 +440,13 @@ Generate a problem from a fully-qualified `category/variant` reference.
 function generate_problem(ref::ProblemVariant, target_variables::Int,
                           feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
                           relax_integer::Bool=true, bounds_to_constraints::Bool=false,
+                          dualize::Bool=false,
                           optimizer=nothing, max_feasibility_retries::Int=10,
                           feasibility_timeout::Float64=10.0)
     return generate_problem(get_problem_type(ref), target_variables,
                             feasibility_status, seed; relax_integer=relax_integer,
                             bounds_to_constraints=bounds_to_constraints,
+                            dualize=dualize,
                             optimizer=optimizer,
                             max_feasibility_retries=max_feasibility_retries,
                             feasibility_timeout=feasibility_timeout)
@@ -439,7 +454,7 @@ end
 
 """
     generate_problem(ref::AbstractString, target_variables, feasibility_status, seed;
-                     relax_integer=true, bounds_to_constraints=false,
+                     relax_integer=true, bounds_to_constraints=false, dualize=false,
                      optimizer=nothing, max_feasibility_retries=10,
                      feasibility_timeout=10.0)
 
@@ -449,11 +464,13 @@ Generate a problem from a `"category"` or `"category/variant"` string, parsed vi
 function generate_problem(ref::AbstractString, target_variables::Int,
                           feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
                           relax_integer::Bool=true, bounds_to_constraints::Bool=false,
+                          dualize::Bool=false,
                           optimizer=nothing, max_feasibility_retries::Int=10,
                           feasibility_timeout::Float64=10.0)
     return generate_problem(ProblemVariant(ref), target_variables,
                             feasibility_status, seed; relax_integer=relax_integer,
                             bounds_to_constraints=bounds_to_constraints,
+                            dualize=dualize,
                             optimizer=optimizer,
                             max_feasibility_retries=max_feasibility_retries,
                             feasibility_timeout=feasibility_timeout)
@@ -462,6 +479,7 @@ end
 """
     generate_problem(category::Symbol, target_variables, feasibility_status, seed;
                      variant=nothing, relax_integer=true, bounds_to_constraints=false,
+                     dualize=false,
                      optimizer=nothing, max_feasibility_retries=10,
                      feasibility_timeout=10.0)
 
@@ -477,6 +495,7 @@ variant is used; pass `variant=:name` to select a specific variant.
 - `relax_integer`: Relax integrality of the generated model
 - `bounds_to_constraints`: Reformulate variable bounds (other than `x ≥ 0`) as
   explicit affine constraints
+- `dualize`: Replace the continuous generated model with its dual formulation
 - `optimizer`: Optional solver used to verify the feasibility contract (see
   [`_generate_problem_verified`](@ref)). `nothing` disables verification.
 - `max_feasibility_retries`: Maximum number of rebuild attempts when verification
@@ -493,6 +512,7 @@ function generate_problem(category::Symbol, target_variables::Int,
                           feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
                           variant::Union{Symbol,Nothing}=nothing, relax_integer::Bool=true,
                           bounds_to_constraints::Bool=false,
+                          dualize::Bool=false,
                           optimizer=nothing, max_feasibility_retries::Int=10,
                           feasibility_timeout::Float64=10.0)
     ref = variant === nothing ? ProblemVariant(category) :
@@ -500,6 +520,7 @@ function generate_problem(category::Symbol, target_variables::Int,
     return generate_problem(ref, target_variables, feasibility_status, seed;
                             relax_integer=relax_integer,
                             bounds_to_constraints=bounds_to_constraints,
+                            dualize=dualize,
                             optimizer=optimizer,
                             max_feasibility_retries=max_feasibility_retries,
                             feasibility_timeout=feasibility_timeout)
@@ -578,13 +599,17 @@ end
 
 """
     generate_random_problem(target_variables; feasibility_status=unknown,
-                            relax_integer=true, bounds_to_constraints=false, seed=0,
+                            relax_integer=true, bounds_to_constraints=false,
+                            dualize=false, dualize_probability=0.0, seed=0,
                             optimizer=nothing, max_feasibility_retries=10,
                             feasibility_timeout=10.0)
 
 Generate a problem of a randomly selected variant targeting approximately the
 specified number of variables. Sampling is uniform over all registered
-`category/variant` pairs. When `optimizer` is supplied and `feasibility_status` is
+`category/variant` pairs. Dualization is off by default. Set
+`dualize_probability` to a value in `[0, 1]` to randomly dualize the selected
+model, reproducibly from `seed`; `dualize=true` forces dualization regardless of
+the probability. When `optimizer` is supplied and `feasibility_status` is
 `feasible`/`infeasible`, the feasibility contract is verified (see
 [`generate_problem`](@ref)).
 
@@ -596,9 +621,12 @@ specified number of variables. Sampling is uniform over all registered
 function generate_random_problem(target_variables::Int;
                                  feasibility_status::FeasibilityStatus=unknown,
                                  relax_integer::Bool=true,
-                                 bounds_to_constraints::Bool=false, seed::Int=0,
+                                 bounds_to_constraints::Bool=false,
+                                 dualize::Bool=false,
+                                 dualize_probability::Real=0.0, seed::Int=0,
                                  optimizer=nothing, max_feasibility_retries::Int=10,
                                  feasibility_timeout::Float64=10.0)
+    probability = _validate_dualize_probability(dualize_probability)
     rng = MersenneTwister(seed)
 
     problems = list_problems()
@@ -607,9 +635,11 @@ function generate_random_problem(target_variables::Int;
     end
 
     ref = rand(rng, problems)
+    apply_dualization = _should_dualize(rng, dualize, probability)
     model, problem = generate_problem(ref, target_variables, feasibility_status, seed;
                                       relax_integer=relax_integer,
                                       bounds_to_constraints=bounds_to_constraints,
+                                      dualize=apply_dualization,
                                       optimizer=optimizer,
                                       max_feasibility_retries=max_feasibility_retries,
                                       feasibility_timeout=feasibility_timeout)

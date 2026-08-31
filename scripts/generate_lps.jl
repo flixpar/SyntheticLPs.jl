@@ -74,6 +74,13 @@ function parse_commandline()
         "--bounds-to-constraints"
             help = "Reformulate variable bounds (other than x >= 0) as explicit affine constraints"
             action = :store_true
+        "--dualize"
+            help = "Force every generated continuous model to use its dual formulation"
+            action = :store_true
+        "--dualize-probability"
+            help = "Probability of dualizing each generated model (default: 0, disabled)"
+            arg_type = Float64
+            default = 0.0
         "--problem-types"
             help = "Comma-separated list of categories (e.g. transportation) or " *
                    "category/variant references (e.g. portfolio/cvar) to sample " *
@@ -155,6 +162,8 @@ function main()
         problem_types = problem_types,
         feasible_only = args["feasible-only"],
         bounds_to_constraints = args["bounds-to-constraints"],
+        dualize = args["dualize"],
+        dualize_probability = args["dualize-probability"],
         seed = args["seed"],
         match_size_distribution = !args["no-size-matching"],
         match_size_by_type = args["match-size-by-type"],

@@ -385,6 +385,133 @@ end
         @test manifest["config"]["bounds_to_constraints"] == true
     end
 
+    @testset "Dual Reformulation" begin
+        primal = Model()
+        @variable(primal, x >= 0)
+        @variable(primal, y >= 0)
+        @constraint(primal, capacity_x, 2x + y <= 8)
+        @constraint(primal, capacity_y, x + 2y <= 8)
+        @objective(primal, Max, 3x + 2y + 5)
+
+        dual = dualize_model(primal)
+        @test dual isa Model
+        @test dual !== primal
+        @test !is_dual_reformulation(primal)
+        @test is_dual_reformulation(dual)
+        @test objective_sense(primal) == MOI.MAX_SENSE
+        @test objective_sense(dual) == MOI.MIN_SENSE
+        @test num_variables(primal) == 2
+        @test num_variables(dual) == 2
+        @test all(startswith(name(v), "dual_var_") for v in all_variables(dual))
+
+        # The descriptive alias has identical structural behavior.
+        dual_alias = dual_reformulation(primal)
+        @test num_variables(dual_alias) == num_variables(dual)
+        @test objective_sense(dual_alias) == objective_sense(dual)
+
+        # A discrete model has no LP/conic dual. Generation normally avoids this
+        # through its default integrality relaxation.
+        mip = Model()
+        @variable(mip, z, Bin)
+        @objective(mip, Max, z)
+        @test_throws ArgumentError dualize_model(mip)
+
+        # Ranged affine rows are normalized on an internal copy because
+        # Dualization does not bridge Interval rows.
+        ranged = Model()
+        @variable(ranged, a >= 0)
+        @variable(ranged, b >= 0)
+        @constraint(ranged, band, 1 <= a + b <= 3)
+        @objective(ranged, Min, a + 2b)
+        ranged_dual = dualize_model(ranged)
+        @test ranged_dual isa Model
+        @test num_constraints(ranged, AffExpr, MOI.Interval{Float64}) == 1
+        @test num_variables(ranged_dual) == 2
+
+        # The option is available throughout model and dataset generation. The
+        # selected dimensions and manifest describe the returned dual models.
+        generated_primal, _ = generate_problem("product_mix", 60, feasible, 4)
+        generated_dual, _ = generate_problem("product_mix", 60, feasible, 4;
+                                             dualize = true)
+        @test objective_sense(generated_dual) != objective_sense(generated_primal)
+        @test num_variables(generated_dual) != num_variables(generated_primal)
+
+        # Random generation leaves the transformation off by default, accepts a
+        # probability for diversity, and keeps `dualize=true` as an explicit
+        # force-all override.
+        random_plain, plain_ref, _ = generate_random_problem(40; seed = 11)
+        random_sampled, sampled_ref, _ = generate_random_problem(
+            40; seed = 11, dualize_probability = 1.0,
+        )
+        random_forced, forced_ref, _ = generate_random_problem(
+            40; seed = 11, dualize = true,
+        )
+        @test plain_ref == sampled_ref == forced_ref
+        @test !is_dual_reformulation(random_plain)
+        @test is_dual_reformulation(random_sampled)
+        @test is_dual_reformulation(random_forced)
+        @test objective_sense(random_plain) != objective_sense(random_sampled)
+        @test num_variables(random_sampled) == num_variables(random_forced)
+        @test num_constraints(random_sampled; count_variable_in_set_constraints = false) ==
+              num_constraints(random_forced; count_variable_in_set_constraints = false)
+        @test_throws ArgumentError generate_random_problem(
+            40; dualize_probability = -0.1,
+        )
+        @test_throws ArgumentError generate_random_problem(
+            40; dualize_probability = 1.1,
+        )
+
+        tmp = mktempdir()
+        instances = generate_dataset(num_problems = 2, var_mean = 40, var_std = 5,
+                                     var_min = 30, var_max = 50, seed = 9,
+                                     problem_types = ["product_mix"],
+                                     match_size_distribution = false,
+                                     dualize = true, output_dir = tmp)
+        @test all(inst -> inst.num_variables > 0 && inst.filename !== nothing, instances)
+        @test all(inst -> inst.dualized, instances)
+        manifest = JSON.parsefile(joinpath(tmp, "manifest.json"))
+        @test manifest["config"]["dualize"] == true
+        @test manifest["config"]["dualize_probability"] == 0.0
+        @test all(inst -> inst["dualized"], manifest["instances"])
+
+        # A nontrivial probability produces a reproducible primal/dual mixture.
+        mixture = generate_dataset(num_problems = 12, var_mean = 40, var_std = 5,
+                                   var_min = 30, var_max = 50, seed = 19,
+                                   problem_types = ["product_mix"],
+                                   match_size_distribution = false,
+                                   dualize_probability = 0.5)
+        repeated = generate_dataset(num_problems = 12, var_mean = 40, var_std = 5,
+                                    var_min = 30, var_max = 50, seed = 19,
+                                    problem_types = ["product_mix"],
+                                    match_size_distribution = false,
+                                    dualize_probability = 0.5)
+        @test any(inst -> inst.dualized, mixture)
+        @test any(inst -> !inst.dualized, mixture)
+        @test [inst.dualized for inst in mixture] == [inst.dualized for inst in repeated]
+        @test [inst.seed for inst in mixture] == [inst.seed for inst in repeated]
+
+        default_dataset = generate_dataset(num_problems = 3, var_mean = 40, var_std = 5,
+                                           var_min = 30, var_max = 50, seed = 19,
+                                           problem_types = ["product_mix"],
+                                           match_size_distribution = false)
+        @test all(inst -> !inst.dualized, default_dataset)
+        @test_throws ArgumentError generate_dataset(
+            num_problems = 0, dualize_probability = 1.1,
+        )
+
+        if HAS_HIGHS
+            set_optimizer(primal, HiGHS.Optimizer)
+            set_optimizer(dual, HiGHS.Optimizer)
+            set_silent(primal)
+            set_silent(dual)
+            optimize!(primal)
+            optimize!(dual)
+            @test termination_status(primal) == MOI.OPTIMAL
+            @test termination_status(dual) == MOI.OPTIMAL
+            @test objective_value(dual) ≈ objective_value(primal) atol = 1e-7
+        end
+    end
+
     # Termination-status classification is pure, so the whole table is testable
     # without a solver. The distinction it encodes — disproved vs. uncertifiable —
     # is what keeps a slow solve from being misreported as a contract violation.

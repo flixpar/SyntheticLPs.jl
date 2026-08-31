@@ -2,7 +2,7 @@
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "ca918b1123e1067a461f00edbc0b93a7da6685ca"
+project_hash = "3ead0a21858deb09ed42ae15d0cad337313db839"
 
 [[deps.AliasTables]]
 deps = ["PtrArrays", "Random"]
@@ -97,6 +97,16 @@ version = "0.25.127"
 git-tree-sha1 = "7442a5dfe1ebb773c29cc2962a8980f47221d76c"
 uuid = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
 version = "0.9.5"
+
+[[deps.Dualization]]
+deps = ["LinearAlgebra", "MathOptInterface"]
+git-tree-sha1 = "2186a7ffcd33ea52dcc28321020e049f00454b2f"
+uuid = "191a621a-6537-11e9-281d-650236a99e60"
+version = "0.7.7"
+weakdeps = ["JuMP"]
+
+    [deps.Dualization.extensions]
+    DualizationJuMPExt = "JuMP"
 
 [[deps.FillArrays]]
 deps = ["LinearAlgebra"]
@@ -427,7 +437,7 @@ uuid = "bea87d4a-7f5b-5778-9afe-8cc45184846c"
 version = "7.8.3+2"
 
 [[deps.SyntheticLPs]]
-deps = ["Distributions", "JSON", "JuMP", "LinearAlgebra", "Random", "SparseArrays", "Statistics", "StatsBase"]
+deps = ["Distributions", "Dualization", "JSON", "JuMP", "LinearAlgebra", "Random", "SparseArrays", "Statistics", "StatsBase"]
 path = "."
 uuid = "6c18d9e4-3017-4cc6-8f05-9e4aefa327ea"
 version = "0.1.0"

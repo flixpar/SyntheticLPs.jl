@@ -2,6 +2,8 @@
 
 A standardized framework for generating synthetic linear programming (LP) problem instances. The goal is to generate problems that are highly realistic and can be used to test and develop LP solvers.
 
+Requires Julia 1.11 or later.
+
 ## Overview
 
 This package provides:
@@ -229,6 +231,43 @@ The reformulation runs *after* integrality relaxation, so bounds introduced by
 relaxing integer/binary variables (e.g. `0 ≤ x ≤ 1`) are converted too. Because
 the converted bounds become genuine rows, they are now counted by
 `num_constraints(model; count_variable_in_set_constraints=false)`.
+
+### Dual Reformulation
+
+Dualization is off by default. Its main use is adding reproducible formulation
+diversity to random generation: pass `dualize_probability` to independently
+choose whether each returned model is primal or dual. Integrality relaxation
+runs first by default, followed by the optional bounds-to-constraints transform,
+and dualization runs last when selected.
+
+```julia
+# Randomly return a primal or dual formulation with equal probability
+model, ref, problem = generate_random_problem(100; seed=7,
+                                              dualize_probability=0.5)
+is_dual_reformulation(model)  # reports the sampled choice
+
+# Apply the same per-instance sampling to a dataset
+instances = generate_dataset(num_problems=100, seed=7,
+                             dualize_probability=0.5)
+
+# Force the dual for a specific generated LP
+dual_model, problem = generate_problem(:transportation, 100, unknown, 0;
+                                       dualize=true)
+
+# Or dualize an existing continuous JuMP model (the primal is unchanged)
+dual_model = dualize_model(model)
+```
+
+Dual variables and constraints use `dual_var_` and `dual_con_` name prefixes.
+Unrelaxed integer or binary variables are rejected because mixed-integer models
+do not have an LP/conic dual. When an optimizer is supplied for feasibility
+contract verification, SyntheticLPs verifies the generated primal before
+dualizing it: an infeasible primal can have either an infeasible or an unbounded
+dual. Dataset generation also accepts `dualize=true`, records it in the manifest,
+and computes size and quality metadata from the models actually returned. Each
+`GeneratedInstance.dualized` value and manifest instance entry records the sampled
+choice. For individual models, use `is_dual_reformulation(model)`. Use
+`dualize=true` to force every random or dataset instance to be dualized.
 
 ### Reproducible Generation with Seeds
 
