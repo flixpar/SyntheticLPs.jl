@@ -172,7 +172,7 @@ window.MathJax={
 <div class="scrim" id="scrim"></div>
 <div class="layout">
   <aside class="sidebar" id="sidebar">
-    <div class="brand"><b>SyntheticLPs</b><span>Generator Explainer · 32 problem types</span></div>
+    <div class="brand"><b>SyntheticLPs</b><span>Generator Explainer · 33 problem types</span></div>
     <input class="search" id="search" type="search" placeholder="Filter generators…" autocomplete="off">
     <nav id="nav">
       <a class="nav-top" href="#overview" data-target="overview">Overview</a>
@@ -216,6 +216,9 @@ window.MathJax={
 <a class="nav-item" href="#portfolio" data-target="portfolio" data-search="portfolio cvar portfolio with policy constraints">Portfolio</a>
 <a class="nav-item" href="#project_selection" data-target="project_selection" data-search="project selection pick projects under budget/risk/dependency">Project Selection</a>
 <a class="nav-item" href="#revenue_management" data-target="revenue_management" data-search="revenue management network capacity allocation and stochastic overbooking">Revenue Management</a>
+</div>
+<div class="nav-group"><div class="nav-group-label">Inference &amp; Calibration</div>
+<a class="nav-item" href="#inverse_optimization" data-target="inverse_optimization" data-search="inverse optimization infer costs from exact, noisy, routed, and market observations">Inverse Optimization</a>
 </div>
 <div class="nav-group"><div class="nav-group-label">Land &amp; Agriculture</div>
 <a class="nav-item" href="#crop_planning" data-target="crop_planning" data-search="crop planning allocate acreage across crops">Crop Planning</a>
@@ -511,6 +514,18 @@ window.MathJax={
   <p class="card-tag">Network capacity allocation and stochastic overbooking</p>
   <div class="chips">
     <span class="chip chip-sense">Max</span>
+    <span class="chip chip-continuous">Continuous</span>
+  </div>
+</a>
+</div></div>
+<div class="fam-block" data-family="inference">
+<div class="fam-head"><span class="fam-dot fam-inference"></span><h3>Inference &amp; Calibration</h3><p>Recover optimization parameters from observed decisions and outcomes.</p></div>
+<div class="card-grid">
+<a class="card fam-border-inference" href="#inverse_optimization" data-target="inverse_optimization" data-search="inverse optimization the `inverse_optimization` category generates lps whose variables are parameters of a forward optimization model. observed decisions, routes, or dispatches are data; the inverse model recovers objective coefficients that explain them. the family deliberately spans exact, noisy, structured, and application-specific inverse optimization. the distributions are calibrated synthetic profiles, not claims that one fitted distribution represents every inverse-optimization application. | variant | evidence | identification and loss | | --- | --- | --- | | `standard` (default) | one exact solution of a sparse covering lp | box-bounded costs; weighted l1 distance from a prior | | `classical_normalized` | one exact solution of a sparse packing lp | `sum(c) = 1`; weighted l1 distance | | `linf` | one exact covering-lp solution | box-bounded costs; weighted l-infinity distance | | `noisy_observations` | multiple feasible, imperfect packing decisions | normalized mean duality gap plus weighted l1 regularization | | `restricted_optimal_value` | an exact plan and a target value | keep the plan optimal while attaining the target | | `shortest_path` | multiple routes on one spatial road network | box-bounded arc times; weighted l1 distance | | `shortest_path_layered` | one route on a controlled layered dag | box-bounded arc costs; weighted l1 distance | | `market_clearing` | multi-period copper-plate dispatch | generator offers; weighted l1 distance | all constructors own a local `mersennetwister`, store every sampled datum, and leave `build_model` deterministic. requests are capped at 250,000 variables. infer costs from exact, noisy, routed, and market observations">
+  <div class="card-top"><span class="card-title">Inverse Optimization</span></div>
+  <p class="card-tag">Infer costs from exact, noisy, routed, and market observations</p>
+  <div class="chips">
+    <span class="chip chip-sense">Min</span>
     <span class="chip chip-continuous">Continuous</span>
   </div>
 </a>
@@ -2364,6 +2379,58 @@ projects = collect(1:n_projects)</pre>
                  \ge (1-a_j)q_{j,s}l_j.\]</div>
 <p>The generator selects the scenario with the largest sum of these mandatory served loads and puts the selected leg&#x27;s capacity strictly below that sum. The stored <code>StochasticOverbookingCertificate</code> records the resource, scenario, mandatory load, capacity, and positive excess. The helper <code>SyntheticLPs._stochastic_overbooking_certificate_is_valid(problem)</code> verifies the certificate without solving the LP.</p>
 <p>For either variant, an <code>unknown</code> request resolves reproducibly to a feasible or infeasible profile. The actual choice is recorded in <code>resolved_status</code>, and exactly one corresponding audit artifact is present.</p></div>
+</section>
+</article>
+<article id="inverse_optimization" class="view article">
+  <a class="back" href="#overview" data-target="overview">← All generators</a>
+  <header class="art-head fam-border-inference">
+    <div class="art-eyebrow"><span class="fam-dot fam-inference"></span>Inference &amp; Calibration</div>
+    <h2>Inverse Optimization</h2>
+    <p class="art-intro">The <code>inverse_optimization</code> category generates LPs whose variables are parameters of a forward optimization model. Observed decisions, routes, or dispatches are data; the inverse model recovers objective coefficients that explain them. The family deliberately spans exact, noisy, structured, and application-specific inverse optimization. The distributions are calibrated synthetic profiles, not claims that one fitted distribution represents every inverse-optimization application. | Variant | Evidence | Identification and loss | | --- | --- | --- | | <code>standard</code> (default) | One exact solution of a sparse covering LP | Box-bounded costs; weighted L1 distance from a prior | | <code>classical_normalized</code> | One exact solution of a sparse packing LP | <code>sum(c) = 1</code>; weighted L1 distance | | <code>linf</code> | One exact covering-LP solution | Box-bounded costs; weighted L-infinity distance | | <code>noisy_observations</code> | Multiple feasible, imperfect packing decisions | Normalized mean duality gap plus weighted L1 regularization | | <code>restricted_optimal_value</code> | An exact plan and a target value | Keep the plan optimal while attaining the target | | <code>shortest_path</code> | Multiple routes on one spatial road network | Box-bounded arc times; weighted L1 distance | | <code>shortest_path_layered</code> | One route on a controlled layered DAG | Box-bounded arc costs; weighted L1 distance | | <code>market_clearing</code> | Multi-period copper-plate dispatch | Generator offers; weighted L1 distance | All constructors own a local <code>MersenneTwister</code>, store every sampled datum, and leave <code>build_model</code> deterministic. Requests are capped at 250,000 variables.</p>
+    <div class="chips">
+      <span class="chip chip-sense">Objective: Min</span>
+      <span class="chip chip-continuous">Continuous variables</span>
+    </div>
+  </header>
+  <section class="doc-section">
+  <h3><span class="sec-icon">§</span>Exact inverse LPs</h3>
+  <div class="sec-body"><p><code>standard</code> uses the forward model</p>
+<div class="math">\[\min_{x \ge 0} c^T x \quad\text{s.t.}\quad Ax \ge b.\]</div>
+<p>An observed feasible <code>x_hat</code> is optimal precisely when a dual vector <code>y &gt;= 0</code> satisfies</p>
+<div class="math">\[A^T y \le c, \qquad b^T y = c^T x_{hat}.\]</div>
+<p>The cost box is bounded away from zero, preventing the uninformative solution <code>c = y = 0</code>. A planted active-row set, shadow prices, sparse activity support, and a corrupted prior create diverse normal cones.</p>
+<p><code>classical_normalized</code> provides the complementary packing convention</p>
+<div class="math">\[\max_{x \ge 0} c^T x \quad\text{s.t.}\quad Ax \le b,\]</div>
+<p>with <code>sum(c) = 1</code>. Its exact observation is positive, so the stationarity equalities <code>A&#x27; y = c</code> are valid. The two variants make the important modeling choice between prior-centered interval identification and scale normalization explicit.</p>
+<p><code>linf</code> shares the <code>standard</code> data mechanism but minimizes one epigraph variable subject to <code>w_j * abs(c_j - prior_j) &lt;= t</code>. It uses the direct two-inequality form, without redundant positive/negative deviation variables.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Noisy observation panels</h3>
+  <div class="sec-body"><p><code>noisy_observations</code> draws several context-specific capacity vectors. Latent optimal plans are reduced according to routine, heterogeneous, or outlier-contaminated utilization profiles. Every recorded decision remains forward-feasible but has a positive duality gap.</p>
+<p>For each observation <code>k</code>, the inverse LP creates its own dual prices and gap:</p>
+<div class="math">\[A^T y_k \ge c,
+\qquad
+g_k = b_k^T y_k - c^T x_k \ge 0.\]</div>
+<p>The objective combines dimensionless mean gap with a sampled weighted-L1 regularizer. This is the tractable absolute-suboptimality model; it should not be interpreted as the nonconvex statistically consistent estimator for general measurement noise.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Inverse shortest paths</h3>
+  <div class="sec-body"><p>The default <code>shortest_path</code> variant constructs a connected spatial network, adds both directions of each physical link, samples road classes and distance/speed-based travel times, and records multiple separated OD routes. The prior is explicitly conditioned so at least one route is no longer optimal, preventing zero-adjustment instances.</p>
+<p>For every route, node potentials enforce reduced-cost inequalities, with the destination potential equal to the route cost. <code>shortest_path_layered</code> retains a smaller controlled family in which route length, topology, and reduced-cost margins are transparent. Its prior is conditioned in the same way.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Restricted optimal value and market inference</h3>
+  <div class="sec-body"><p>The general inverse optimal-value problem is NP-hard. The <code>restricted_optimal_value</code> LP implements the tractable restriction in which a specified plan must remain optimal while its value reaches a target. Separate rows pin both the primal and dual value to that target.</p>
+<p><code>market_clearing</code> infers time-invariant generator offer costs from a multi-period merit-order dispatch with capacity and ramp constraints. It is a copper-plate economic-dispatch benchmark, not a network-constrained LMP model. The fleet mixes baseload, intermediate, and peaking units, with type-dependent capacity and offer distributions and a diurnal demand profile.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Feasibility profiles</h3>
+  <div class="sec-body"><p>Status requests alter the inverse evidence rather than adding unrelated contradictory rows.</p>
+<ul><li><code>feasible</code> stores an independently checkable ground-truth witness.</li><li><code>infeasible</code> stores a certificate tied to the observation:<ul><li>a strictly interior positive decision under positive normalized costs;</li><li>a panel fit tolerance below a lower bound implied by feasible improvements;</li><li>an unattainable target value;</li><li>an alternative route cheaper under every admissible arc-cost vector;</li><li>or a dispatch that reverses every admissible merit order.</li></ul></li><li><code>unknown</code> stores neither witness nor certificate. It samples exact, near<p>conflict, and ambiguous mechanisms so both solver outcomes occur across a corpus.</p></li></ul>
+<p>Because noisy absolute-suboptimality is feasible without a fit requirement, its infeasible profile includes a meaningful maximum mean-gap tolerance. The certificate derives a lower bound from the known feasible latent plans and the componentwise cost floors.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Validation</h3>
+  <div class="sec-body"><p>The focused tests check:</p>
+<ul><li>exact or near-exact target sizing and deterministic rebuilds;</li><li>sparse-matrix, topology, fleet, and observation invariants;</li><li>witness and certificate arithmetic recomputed from raw fields;</li><li>feasible and infeasible solver contracts across variants and scales;</li><li>informative priors for both path families; and</li><li>end-to-end semantics by solving the inverse model and then independently<p>solving or evaluating the recovered forward model.</p></li></ul></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>References</h3>
+  <div class="sec-body"><ul><li>R. K. Ahuja and J. B. Orlin, *Inverse Optimization*, Operations Research<p>49(5), 2001.</p></li><li>A. Aswani, Z.-J. M. Shen, and A. Siddiq, *Inverse Optimization with Noisy<p>Data*, Operations Research 66(3), 2018.</p></li><li>T. C. Y. Chan, R. Mahmood, and I. Y. Zhu, *Inverse Optimization: Theory and<p>Applications*, Operations Research 73(2), 2025.</p></li><li>J. Jia, X. Guan, X. Qian, and P. M. Pardalos, *Restricted Inverse Optimal<p>Value Problem on Linear Programming under Weighted L1 Norm*, 2023.</p></li><li>C. Ruiz, A. J. Conejo, and D. Bertsimas, *Revealing Rival Marginal Offer<p>Prices via Inverse Optimization*, IEEE Transactions on Power Systems 28(3), 2013.</p></li></ul></div>
 </section>
 </article>
 <article id="crop_planning" class="view article">

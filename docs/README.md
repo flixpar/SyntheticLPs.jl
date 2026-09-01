@@ -52,6 +52,7 @@ where relaxation changes the solved model.
 - [Feed Blending](feed_blending.md)
 - [Hub Location](hub_location.md)
 - [Inventory](inventory.md)
+- [Inverse Optimization](inverse_optimization.md)
 - [Knapsack](knapsack.md)
 - [Land Use](land_use.md)
 - [Load Balancing](load_balancing.md)

@@ -4,6 +4,46 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-09-01 (inverse-optimization generators)
+
+**Previous Commit**: `b455f17`
+
+**Commits**: (pending)
+
+**Summary**: Added a research-grounded inverse-optimization category with eight
+pure-LP variants spanning exact and noisy inference, two identification
+schemes, value targets, structured routing, and market offer recovery.
+
+**Details**:
+
+- Added `standard` and `classical_normalized`, weighted-L1 inverse covering and
+  packing LPs using prior-centered boxes and simplex normalization,
+  respectively, plus a direct weighted-L-infinity `linf` formulation.
+- Added `noisy_observations`, a regularized absolute-suboptimality LP over
+  multiple context-specific feasible observations. Routine, heterogeneous, and
+  outlier-contaminated profiles use bounded utilization losses around latent
+  optimal plans.
+- Added `shortest_path`, a weighted-L1 inverse network LP with sparse spatial
+  road graphs, class-calibrated speeds, asymmetric travel times, multiple OD
+  observations, and shortest-path dual potentials. Prior errors are conditioned
+  on making at least one observed path nonoptimal, avoiding zero-adjustment
+  instances.
+- Added `shortest_path_layered` as a controlled single-route DAG family,
+  `restricted_optimal_value` for tractable target-value inference, and
+  `market_clearing` for multi-period copper-plate offer recovery. Market priors
+  are likewise conditioned on requiring a genuine inverse adjustment.
+- Added target-aware dimension planners, constructor-local randomness, exact
+  feasible witnesses, observation-native infeasibility certificates, natural
+  unknown-status mixtures, and solver-independent audit helpers. Infeasibility
+  now comes from strict interiority, impossible panel-fit tolerances,
+  unavoidable shortcuts, unattainable values, or merit-order inversions rather
+  than unrelated contradictory scalar rows.
+- Added focused tests for model algebra, sizing, sparsity and distributional
+  profiles, path correctness, reproducibility, status artifacts, and HiGHS
+  feasibility contracts, including recovered-forward-model checks and unknown
+  outcome mixtures. Documented the formulations, research basis, assumptions,
+  distributions, and status semantics.
+
 ## 2026-08-31 (radiotherapy generator consolidation and expansion)
 
 **Previous Commit**: `88d3c1b`
