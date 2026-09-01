@@ -228,7 +228,7 @@ Categories with multiple variants are listed with them below.
 The corpus deliberately mixes three model classes; treat the names accordingly:
 - **Pure LPs**: continuous formulations (e.g. transportation variants, diet
   variants, blending variants, most energy variants, `network_flow/generalized_flow`,
-  both portfolio variants `cvar`/`tracking_error`, all three inverse-optimization
+  both portfolio variants `cvar`/`tracking_error`, all eight inverse-optimization
   variants, `supply_chain/network_planning`
   (multi-period, multi-product planning with inventory), regression variants,
   revenue management, stochastic program, and `workforce_shift_scheduling/covering`).

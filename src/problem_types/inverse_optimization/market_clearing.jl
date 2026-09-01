@@ -85,10 +85,13 @@ partially loaded each period (setting `λ_t`), supra-marginal units off. The
 prices `λ_t` therefore swing with the diurnal demand curve exactly as
 market-clearing prices do. The prior is the true offer plus additive truncated
 Gaussian noise (a few \$/MWh, matching the noise levels used in the market
-inference literature), and the admissible box is an absolute \$/MWh interval
-around it. Ramping limits are derived from the dispatch with strict slack, so
-the ramping duals vanish at the observation — as Liang–Dvorkin observe for the
-systems they study.
+inference literature), conditioned on making the recorded dispatch strictly
+suboptimal. If repeated noise draws preserve the merit order, the closest
+actionable offer pair is crossed around its midpoint as a minimal deterministic
+fallback. The admissible box is then expanded to retain the planted offers.
+Ramping limits are derived from the dispatch with strict slack, so the ramping
+duals vanish at the observation — as Liang–Dvorkin observe for the systems they
+study.
 
 # Feasibility profiles
 - `feasible`: stores a `DispatchPricingWitness` (true offers and duals).
@@ -163,25 +166,116 @@ function _merit_order_dispatch(costs::Vector{Float64}, capacities::Vector{Float6
 end
 
 """
+    _dispatch_prior_is_informative(costs, capacities, demands, observed_dispatch)
+
+Return whether `observed_dispatch` is strictly suboptimal under `costs` for the
+uncoupled merit-order dispatch problem. Comparing objective values, rather than
+the dispatch matrices themselves, avoids treating an alternative ordering of
+equal-cost units as useful inverse evidence.
+"""
+function _dispatch_prior_is_informative(
+    costs::Vector{Float64},
+    capacities::Vector{Float64},
+    demands::Vector{Float64},
+    observed_dispatch::Matrix{Float64},
+)
+    prior_dispatch = _merit_order_dispatch(costs, capacities, demands)
+    prior_value = sum(prior_dispatch[t, g] * costs[g]
+                      for t in eachindex(demands), g in eachindex(costs))
+    observed_value = sum(observed_dispatch[t, g] * costs[g]
+                         for t in eachindex(demands), g in eachindex(costs))
+    tolerance = 1.0e-9 * max(1.0, abs(prior_value), abs(observed_value))
+    return observed_value > prior_value + tolerance
+end
+
+"""
+    _make_dispatch_prior_informative!(prior, true_cost, capacities, demands,
+                                      observed_dispatch)
+
+Introduce the smallest actionable merit-order disagreement when ordinary
+measurement-noise draws still rationalize the observed dispatch. Among pairs
+where one unit is producing and the other has headroom in the same period, the
+closest true-cost pair is crossed around its midpoint. This makes a positive
+load transfer strictly cheaper under the prior while minimizing the required
+distortion from the planted offers.
+"""
+function _make_dispatch_prior_informative!(
+    prior::Vector{Float64},
+    true_cost::Vector{Float64},
+    capacities::Vector{Float64},
+    demands::Vector{Float64},
+    observed_dispatch::Matrix{Float64},
+)
+    candidates = Tuple{Float64,Int,Int}[]
+    T, G = size(observed_dispatch)
+    merit_order = sortperm(true_cost)
+    # Under the planted merit-order dispatch, producing units form a prefix of
+    # this order and units with headroom form a suffix. Therefore the
+    # minimum-gap actionable pair is always adjacent at one of the period
+    # boundaries; scanning adjacent pairs avoids a quadratic fleet-size pass.
+    for t in 1:T, position in 1:(G - 1)
+        producing = merit_order[position]
+        available = merit_order[position + 1]
+        observed_dispatch[t, producing] > 1.0e-8 || continue
+        observed_dispatch[t, available] < capacities[available] - 1.0e-8 || continue
+        push!(candidates,
+              (true_cost[available] - true_cost[producing], producing, available))
+    end
+    sort!(candidates)
+
+    for (_, producing, available) in candidates
+        midpoint = 0.5 * (true_cost[producing] + true_cost[available])
+        margin = max(0.10, 0.01 * midpoint)
+        prior[producing] = midpoint + margin
+        prior[available] = max(0.05, midpoint - margin)
+        _dispatch_prior_is_informative(
+            prior, capacities, demands, observed_dispatch,
+        ) && return prior
+    end
+    error("Could not construct an informative market-clearing cost prior")
+end
+
+"""
     _dispatch_dims(target)
 
 Solve the fleet shape for a target model size. The built model carries
 `3G + T + T*G + 2r` variables — offers plus deviation split (3G), prices (T),
 capacity duals (T·G), and ramping duals (two per constrained `(unit, period)`
-pair) — so the horizon and fleet are searched around their ideal proportions
-for a pair whose remainder is an even number of ramping pairs in range.
-Falls back to the smallest fleet (T=4, G=3) for very small targets.
+pair). For each candidate horizon, the admissible fleet-size interval is solved
+analytically and its largest parity-compatible fleet is used, leaving an even
+remainder for ramping pairs. Thus every request of at least 31 variables is hit
+exactly without a size-dependent search window. The three unattainable counts
+below that threshold round down by one; smaller requests use the smallest fleet
+(T=4, G=3).
 """
 function _dispatch_dims(target::Int)
     periods0 = clamp(round(Int, sqrt(target / 6.0)), 4, 24)
-    units0 = clamp(round(Int, target / (periods0 + 3.0)), 3, 300)
-    for periods in _around(periods0, 4), units in _around(units0, 3)
-        remainder = target - 3 * units - periods - periods * units
-        0 <= remainder <= 2 * units * (periods - 1) && remainder % 2 == 0 &&
-            return (periods, units, remainder ÷ 2)
+    period_candidates = sort!(collect(4:24); by=periods ->
+                              (abs(periods - periods0), periods))
+    for periods in period_candidates
+        residual = target - periods
+        residual > 0 || continue
+        min_units = max(3, cld(residual, 3 * periods + 1))
+        max_units = fld(residual, periods + 3)
+        min_units <= max_units || continue
+
+        # The ramp block contributes two variables per selected pair. When the
+        # base coefficient is odd, moving down one fleet size flips parity.
+        units = max_units
+        remainder = residual - units * (periods + 3)
+        if isodd(remainder)
+            isodd(periods + 3) || continue
+            units -= 1
+            remainder = residual - units * (periods + 3)
+        end
+        units >= min_units || continue
+        0 <= remainder <= 2 * units * (periods - 1) || continue
+        return (periods, units, remainder ÷ 2)
     end
+
+    target <= 30 || error("Could not size market-clearing model to $target variables")
     periods, units = 4, 3
-    ramp_pairs = clamp(target - 3 * units - periods - periods * units, 0, 2 * units * (periods - 1)) ÷ 2
+    ramp_pairs = max(0, (target - 25) ÷ 2)
     return (periods, units, ramp_pairs)
 end
 
@@ -227,6 +321,7 @@ function InverseDispatchCostProblem(target_variables::Int, feasibility_status::F
     offer = [round(type == :baseload ? rand(rng, Uniform(12.0, 32.0)) :
                     type == :intermediate ? rand(rng, Uniform(25.0, 55.0)) :
                     rand(rng, Uniform(45.0, 85.0)); digits=1) for type in types]
+    true_dispatch = _merit_order_dispatch(offer, capacities, demands)
 
     prior_cost = similar(offer)
     box_radius = similar(offer)
@@ -273,13 +368,27 @@ function InverseDispatchCostProblem(target_variables::Int, feasibility_status::F
         perturb_observation = feasibility_status == unknown && rand(rng) < 0.6
         noise_sigma = (feasibility_status == feasible || perturb_observation) ?
                       rand(rng, Uniform(1.5, 3.0)) : rand(rng, Uniform(2.0, 6.0))
-        for g in 1:G
-            drift = rand(rng, truncated(Normal(0.0, noise_sigma),
-                                        -2.5 * noise_sigma, 2.5 * noise_sigma))
-            prior_cost[g] = round(max(offer[g] + drift, 0.5 * offer[g]); digits=1)
-            box_radius[g] = rand(rng, (feasibility_status == feasible ||
-                                       perturb_observation) ?
-                                      Uniform(4.0, 12.0) : Uniform(2.5, 8.0))
+        max_draws = feasibility_status == feasible ? 64 : 1
+        for _ in 1:max_draws
+            for g in 1:G
+                drift = rand(rng, truncated(Normal(0.0, noise_sigma),
+                                            -2.5 * noise_sigma, 2.5 * noise_sigma))
+                prior_cost[g] = round(max(offer[g] + drift, 0.5 * offer[g]); digits=1)
+                box_radius[g] = rand(rng, (feasibility_status == feasible ||
+                                           perturb_observation) ?
+                                          Uniform(4.0, 12.0) : Uniform(2.5, 8.0))
+            end
+            feasibility_status == feasible || break
+            _dispatch_prior_is_informative(
+                prior_cost, capacities, demands, true_dispatch,
+            ) && break
+        end
+        if feasibility_status == feasible && !_dispatch_prior_is_informative(
+            prior_cost, capacities, demands, true_dispatch,
+        )
+            _make_dispatch_prior_informative!(
+                prior_cost, offer, capacities, demands, true_dispatch,
+            )
         end
         if feasibility_status == feasible || perturb_observation
             # The box must contain the true offer, so its radius stays safely

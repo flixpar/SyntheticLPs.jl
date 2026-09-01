@@ -30,7 +30,8 @@ schemes, value targets, structured routing, and market offer recovery.
   instances.
 - Added `shortest_path_layered` as a controlled single-route DAG family,
   `restricted_optimal_value` for tractable target-value inference, and
-  `market_clearing` for multi-period copper-plate offer recovery.
+  `market_clearing` for multi-period copper-plate offer recovery. Market priors
+  are likewise conditioned on requiring a genuine inverse adjustment.
 - Added target-aware dimension planners, constructor-local randomness, exact
   feasible witnesses, observation-native infeasibility certificates, natural
   unknown-status mixtures, and solver-independent audit helpers. Infeasibility

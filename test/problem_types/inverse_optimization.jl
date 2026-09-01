@@ -57,6 +57,21 @@ const INVERSE_VARIANTS = (
               3 * path_problem.n_arcs +
               path_problem.n_observations * path_problem.n_nodes
 
+        # The market planner must not silently fall back to its tiny model for
+        # large requests. Every representable target from 31 through the public
+        # cap has an exact analytical shape.
+        for target in (31, 10_000, 50_000, 250_000)
+            periods, units, ramp_pairs = SyntheticLPs._dispatch_dims(target)
+            @test 3 * units + periods + periods * units + 2 * ramp_pairs == target
+            @test 0 <= ramp_pairs <= units * (periods - 1)
+        end
+        cap_market = SyntheticLPs.InverseDispatchCostProblem(
+            250_000, feasible, 3,
+        )
+        @test 3 * cap_market.num_units + cap_market.num_periods +
+              cap_market.num_periods * cap_market.num_units +
+              2 * length(cap_market.ramp_pairs) == 250_000
+
         for ref in INVERSE_VARIANTS
             @test_throws ArgumentError generate_problem(ref, 250_001, unknown, 1)
         end
@@ -228,6 +243,25 @@ const INVERSE_VARIANTS = (
             primal_value = sum(prob.observed_dispatch[t, g] * witness.cost[g]
                                for t in 1:prob.num_periods, g in 1:prob.num_units)
             @test dual_value ≈ primal_value
+            @test SyntheticLPs._dispatch_prior_is_informative(
+                prob.prior_cost, prob.capacities, prob.demands,
+                prob.observed_dispatch,
+            )
+        end
+
+        # Small fleets have broad merit-order cones, so unconditioned noisy
+        # priors frequently yield a zero-adjustment inverse problem. Check the
+        # sizes where that failure mode is most likely.
+        for target in (12, 50, 100), seed in 0:20
+            prob = SyntheticLPs.InverseDispatchCostProblem(
+                target, feasible, seed,
+            )
+            @test SyntheticLPs._dispatch_prior_is_informative(
+                prob.prior_cost, prob.capacities, prob.demands,
+                prob.observed_dispatch,
+            )
+            @test all(prob.cost_lower .<= prob.feasible_witness.cost .<=
+                      prob.cost_upper)
         end
     end
 
@@ -365,6 +399,20 @@ const INVERSE_VARIANTS = (
                     layered.num_nodes, layered.source, layered.sink,
                     layered.tail, layered.head, recovered, layered.path_arcs,
                 )
+
+                # Directly verify that informative market priors translate to
+                # a nonzero inverse adjustment even with the ramp rows present.
+                for target in (50, 100), seed in 0:4
+                    inverse, _ = generate_problem(
+                        :inverse_optimization, target, feasible, seed;
+                        variant=:market_clearing,
+                    )
+                    set_optimizer(inverse, HiGHS.Optimizer)
+                    set_silent(inverse)
+                    optimize!(inverse)
+                    @test termination_status(inverse) == MOI.OPTIMAL
+                    @test objective_value(inverse) > 1.0e-8
+                end
             end
 
             @testset "unknown profiles contain both outcomes" begin

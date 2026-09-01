@@ -101,7 +101,12 @@ rows pin both the primal and dual value to that target.
 multi-period merit-order dispatch with capacity and ramp constraints. It is a
 copper-plate economic-dispatch benchmark, not a network-constrained LMP model.
 The fleet mixes baseload, intermediate, and peaking units, with type-dependent
-capacity and offer distributions and a diurnal demand profile.
+capacity and offer distributions and a diurnal demand profile. Feasible priors
+are conditioned so the recorded dispatch is strictly suboptimal under the
+prior: ordinary measurement-noise draws are resampled first, and if they all
+preserve the merit order, the closest actionable offer pair is crossed around
+its midpoint. This avoids zero-adjustment inverse instances while minimizing
+the fallback distortion from the planted offers.
 
 ## Feasibility profiles
 
@@ -132,7 +137,7 @@ The focused tests check:
 - sparse-matrix, topology, fleet, and observation invariants;
 - witness and certificate arithmetic recomputed from raw fields;
 - feasible and infeasible solver contracts across variants and scales;
-- informative priors for both path families; and
+- informative priors for both path families and market dispatch; and
 - end-to-end semantics by solving the inverse model and then independently
   solving or evaluating the recovered forward model.
 
