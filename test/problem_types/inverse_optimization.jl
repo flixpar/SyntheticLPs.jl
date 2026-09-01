@@ -1,23 +1,30 @@
 using SparseArrays
 
 const INVERSE_VARIANTS = (
-    "inverse_optimization/classical",
+    "inverse_optimization/classical_normalized",
+    "inverse_optimization/linf",
+    "inverse_optimization/market_clearing",
     "inverse_optimization/noisy_observations",
+    "inverse_optimization/restricted_optimal_value",
     "inverse_optimization/shortest_path",
+    "inverse_optimization/shortest_path_layered",
+    "inverse_optimization/standard",
 )
 
 @testset "Inverse Optimization" begin
     @test :inverse_optimization in list_categories()
     @test list_variants(:inverse_optimization) ==
-          [:classical, :noisy_observations, :shortest_path]
-    @test problem_info(:inverse_optimization)[:default_variant] == :classical
+          [:classical_normalized, :linf, :market_clearing,
+           :noisy_observations, :restricted_optimal_value, :shortest_path,
+           :shortest_path_layered, :standard]
+    @test problem_info(:inverse_optimization)[:default_variant] == :standard
     @test occursin(
         "inverse",
         lowercase(problem_info(:inverse_optimization)[:description]),
     )
 
     @testset "sizing and deterministic builds" begin
-        for ref in INVERSE_VARIANTS, target in (1, 50, 100, 501, 2_000)
+        for ref in INVERSE_VARIANTS, target in (12, 50, 100, 501, 2_000)
             model1, prob1 = generate_problem(ref, target, feasible, 19)
             model2, prob2 = generate_problem(ref, target, feasible, 19)
             @test num_variables(model1) == num_variables(model2)
@@ -33,7 +40,7 @@ const INVERSE_VARIANTS = (
 
         # The resource formulations have closed-form variable counts.
         classical_model, classical = generate_problem(
-            "inverse_optimization/classical", 301, feasible, 3,
+            "inverse_optimization/classical_normalized", 301, feasible, 3,
         )
         @test num_variables(classical_model) ==
               3 * classical.n_activities + classical.n_resources
@@ -49,12 +56,16 @@ const INVERSE_VARIANTS = (
         @test num_variables(path_model) ==
               3 * path_problem.n_arcs +
               path_problem.n_observations * path_problem.n_nodes
+
+        for ref in INVERSE_VARIANTS
+            @test_throws ArgumentError generate_problem(ref, 250_001, unknown, 1)
+        end
     end
 
     @testset "classical inverse LP data and algebra" begin
         for seed in 0:20
             model, prob = generate_problem(
-                "inverse_optimization/classical", 180, feasible, seed,
+                "inverse_optimization/classical_normalized", 180, feasible, seed,
             )
             data = prob.data
             @test data.consumption isa SparseMatrixCSC{Float64,Int}
@@ -167,32 +178,127 @@ const INVERSE_VARIANTS = (
         @test profiles == Set((:urban_grid, :regional_roads, :mixed_corridor))
     end
 
+    @testset "generic, value, layered, and market witnesses" begin
+        for variant in (:standard, :linf, :restricted_optimal_value), seed in 0:8
+            model, prob = generate_problem(:inverse_optimization, 240, feasible, seed;
+                                           variant=variant)
+            witness = prob.feasible_witness
+            @test witness !== nothing
+            @test all(prob.forward_matrix * prob.reference_point .>=
+                      prob.forward_rhs .- 1.0e-8)
+            @test prob.forward_matrix' * witness.duals ≈ witness.cost
+            @test all(prob.cost_lower .<= witness.cost .<= prob.cost_upper)
+            @test dot(prob.forward_rhs, witness.duals) ≈
+                  dot(prob.reference_point, witness.cost)
+            if variant == :linf
+                @test num_variables(model) == prob.num_cols + prob.num_rows + 1
+                @test !haskey(object_dictionary(model), :dev_plus)
+            elseif variant == :restricted_optimal_value
+                @test dot(prob.reference_point, witness.cost) ≈ prob.target_value
+            end
+        end
+
+        for seed in 0:12
+            _, prob = generate_problem(:inverse_optimization, 240, feasible, seed;
+                                       variant=:shortest_path_layered)
+            witness = prob.feasible_witness
+            @test witness !== nothing
+            @test !SyntheticLPs._layered_prior_is_optimal(
+                prob.num_nodes, prob.source, prob.sink, prob.tail, prob.head,
+                prob.prior_cost, prob.path_arcs,
+            )
+            for e in 1:prob.num_arcs
+                @test witness.potentials[prob.head[e]] -
+                      witness.potentials[prob.tail[e]] <= witness.cost[e] + 1.0e-8
+            end
+            @test all(prob.cost_lower .<= witness.cost .<= prob.cost_upper)
+        end
+
+        for seed in 0:8
+            _, prob = generate_problem(:inverse_optimization, 240, feasible, seed;
+                                       variant=:market_clearing)
+            witness = prob.feasible_witness
+            @test witness !== nothing
+            @test all(t -> sum(prob.observed_dispatch[t, :]) ≈ prob.demands[t],
+                      1:prob.num_periods)
+            dual_value = sum(prob.demands[t] * witness.energy_duals[t]
+                             for t in 1:prob.num_periods) -
+                         sum(prob.capacities[g] * witness.capacity_duals[t, g]
+                             for t in 1:prob.num_periods, g in 1:prob.num_units)
+            primal_value = sum(prob.observed_dispatch[t, g] * witness.cost[g]
+                               for t in 1:prob.num_periods, g in 1:prob.num_units)
+            @test dual_value ≈ primal_value
+        end
+    end
+
+    @testset "native infeasibility certificates" begin
+        _, classical = generate_problem(:inverse_optimization, 180, infeasible, 4;
+                                        variant=:classical_normalized)
+        @test SyntheticLPs._packing_interior_certificate_is_valid(
+            classical.infeasibility_certificate,
+        )
+        @test classical.capacity ≈ classical.data.consumption *
+              classical.observed_decision + classical.infeasibility_certificate.slacks
+
+        _, panel = generate_problem(:inverse_optimization, 180, infeasible, 4;
+                                    variant=:noisy_observations)
+        @test SyntheticLPs._gap_tolerance_certificate_is_valid(
+            panel.infeasibility_certificate,
+        )
+        @test panel.gap_tolerance == panel.infeasibility_certificate.tolerance
+
+        _, spatial = generate_problem(:inverse_optimization, 180, infeasible, 4;
+                                      variant=:shortest_path)
+        @test SyntheticLPs._inverse_path_conflict_certificate_is_valid(spatial)
+
+        _, layered = generate_problem(:inverse_optimization, 180, infeasible, 4;
+                                      variant=:shortest_path_layered)
+        @test SyntheticLPs._layered_shortcut_certificate_is_valid(layered)
+
+        for variant in (:standard, :linf)
+            _, prob = generate_problem(:inverse_optimization, 180, infeasible, 4;
+                                       variant=variant)
+            @test all(>(0.0), prob.infeasibility_certificate.slacks)
+            @test prob.forward_matrix * prob.reference_point ≈
+                  prob.forward_rhs + prob.infeasibility_certificate.slacks
+        end
+
+        _, value_problem = generate_problem(
+            :inverse_optimization, 180, infeasible, 4;
+            variant=:restricted_optimal_value,
+        )
+        value_certificate = value_problem.infeasibility_certificate
+        @test value_certificate.target_value < value_certificate.value_floor ||
+              value_certificate.target_value > value_certificate.value_ceiling
+
+        _, market = generate_problem(:inverse_optimization, 180, infeasible, 4;
+                                     variant=:market_clearing)
+        market_certificate = market.infeasibility_certificate
+        @test market_certificate.maxed_cost_lower > market_certificate.idle_cost_upper
+        @test market.observed_dispatch[market_certificate.period,
+                                       market_certificate.maxed_unit] ==
+              market.capacities[market_certificate.maxed_unit]
+        @test market.observed_dispatch[market_certificate.period,
+                                       market_certificate.idle_unit] == 0.0
+    end
+
     @testset "constructive status contracts" begin
         for ref in INVERSE_VARIANTS, seed in 0:20
             _, feasible_prob = generate_problem(ref, 140, feasible, seed)
-            @test feasible_prob.resolved_status == feasible
             @test feasible_prob.feasible_witness !== nothing
             @test feasible_prob.infeasibility_certificate === nothing
 
             _, infeasible_prob = generate_problem(ref, 140, infeasible, seed)
-            @test infeasible_prob.resolved_status == infeasible
             @test infeasible_prob.feasible_witness === nothing
-            @test SyntheticLPs._inverse_cost_certificate_is_valid(
-                infeasible_prob.infeasibility_certificate,
-            )
+            @test infeasible_prob.infeasibility_certificate !== nothing
         end
 
         for ref in INVERSE_VARIANTS
-            statuses = Set{FeasibilityStatus}()
             for seed in 0:80
                 _, prob = generate_problem(ref, 140, unknown, seed)
-                push!(statuses, prob.resolved_status)
-                @test (prob.feasible_witness !== nothing) ==
-                      (prob.resolved_status == feasible)
-                @test (prob.infeasibility_certificate !== nothing) ==
-                      (prob.resolved_status == infeasible)
+                @test prob.feasible_witness === nothing
+                @test prob.infeasibility_certificate === nothing
             end
-            @test statuses == Set((feasible, infeasible))
         end
     end
 
@@ -206,6 +312,75 @@ const INVERSE_VARIANTS = (
                 optimize!(model)
                 @test termination_status(model) ==
                       (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
+            end
+
+            @testset "recovered parameters explain forward behavior" begin
+                for variant in (:standard, :linf, :restricted_optimal_value)
+                    inverse, prob = generate_problem(
+                        :inverse_optimization, 180, feasible, 9; variant=variant,
+                    )
+                    set_optimizer(inverse, HiGHS.Optimizer)
+                    set_silent(inverse)
+                    optimize!(inverse)
+                    recovered = value.(inverse[:c])
+
+                    forward = Model(HiGHS.Optimizer)
+                    set_silent(forward)
+                    @variable(forward, x[1:prob.num_cols] >= 0)
+                    for i in 1:prob.num_rows
+                        @constraint(forward,
+                            sum(prob.forward_matrix[i, j] * x[j]
+                                for j in 1:prob.num_cols) >= prob.forward_rhs[i])
+                    end
+                    @objective(forward, Min,
+                               sum(recovered[j] * x[j] for j in 1:prob.num_cols))
+                    optimize!(forward)
+                    observed_value = dot(recovered, prob.reference_point)
+                    @test objective_value(forward) ≈ observed_value rtol=1.0e-6
+                    if variant == :restricted_optimal_value
+                        @test objective_value(forward) ≈ prob.target_value rtol=1.0e-6
+                    end
+                end
+
+                inverse, spatial = generate_problem(
+                    :inverse_optimization, 240, feasible, 9; variant=:shortest_path,
+                )
+                set_optimizer(inverse, HiGHS.Optimizer)
+                set_silent(inverse)
+                optimize!(inverse)
+                recovered = value.(inverse[:arc_cost])
+                @test SyntheticLPs._inverse_paths_are_optimal(
+                    spatial.n_nodes, spatial.arcs, spatial.observations, recovered,
+                )
+
+                inverse, layered = generate_problem(
+                    :inverse_optimization, 240, feasible, 9;
+                    variant=:shortest_path_layered,
+                )
+                set_optimizer(inverse, HiGHS.Optimizer)
+                set_silent(inverse)
+                optimize!(inverse)
+                recovered = value.(inverse[:arc_cost])
+                @test SyntheticLPs._layered_prior_is_optimal(
+                    layered.num_nodes, layered.source, layered.sink,
+                    layered.tail, layered.head, recovered, layered.path_arcs,
+                )
+            end
+
+            @testset "unknown profiles contain both outcomes" begin
+                for ref in INVERSE_VARIANTS
+                    outcomes = Set{MOI.TerminationStatusCode}()
+                    for seed in 0:19
+                        model, _ = generate_problem(ref, 140, unknown, seed)
+                        set_optimizer(model, HiGHS.Optimizer)
+                        set_silent(model)
+                        optimize!(model)
+                        @test termination_status(model) in
+                              (MOI.OPTIMAL, MOI.INFEASIBLE)
+                        push!(outcomes, termination_status(model))
+                    end
+                    @test outcomes == Set((MOI.OPTIMAL, MOI.INFEASIBLE))
+                end
             end
         else
             @info "HiGHS not available; skipping inverse-optimization solver contracts"

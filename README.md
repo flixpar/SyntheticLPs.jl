@@ -43,7 +43,7 @@ with more than one variant are annotated below.
 - Graph Optimization — variants: `independent_set`, `generalized_independent_set`, `vertex_cover`, `vertex_coloring`, `map_labeling`, `quasi_clique`
 - Hub Location — variants: `p_hub_median` (tight four-index single allocation), `compact_single_allocation` (origin-indexed `O(n^3)` formulation), `r_allocation` (primary/backup hubs), `multiple_allocation` (fixed-charge AP-style routing), `capacitated` (loose/tight AP profiles), `hub_covering` (OD service thresholds), `hub_network` (modular regional links), `budgeted_backbone` (exact-p capacitated link investment); see [generator notes](docs/hub_location.md)
 - Inventory — variants: `standard`, `lot_sizing`, `multi_item`, `multi_echelon`
-- Inverse Optimization — variants: `classical` (exact weighted-L1 objective recovery), `noisy_observations` (multi-context absolute-suboptimality fitting), `shortest_path` (spatial inverse routing); see [generator notes](docs/inverse_optimization.md)
+- Inverse Optimization — variants: `standard`, `classical_normalized`, `linf`, `noisy_observations`, `restricted_optimal_value`, `shortest_path`, `shortest_path_layered`, `market_clearing`; see [generator notes](docs/inverse_optimization.md)
 - Job Shop Scheduling
 - Land Use
 - Load Balancing — variants: `standard`, `discrete_placement`
@@ -167,14 +167,14 @@ variables, even targets of at least two are exact, odd targets round up by one,
 and smaller targets produce two variables.
 
 The `inverse_optimization` family learns forward objective coefficients from
-observed decisions. Its three pure-LP variants cover classical exact inverse
-linear optimization, regularized absolute-suboptimality fitting over noisy
-multi-context decision panels, and inverse shortest paths on sparse spatial road
-networks. Cost normalization prevents the all-zero degeneracy; sparse
-right-skewed production data, bounded behavioral-noise profiles, and
-road-class-calibrated travel times provide diverse grounded structure. Feasible
-instances carry exact primal/dual or shortest-path-potential witnesses, and
-infeasible instances carry a contradictory admissible-cost-set certificate.
+exact decisions, imperfect decision panels, target values, routes, and market
+dispatches. Eight pure-LP variants span box-identified and simplex-normalized
+inverse LPs, L1 and L-infinity losses, multi-observation absolute suboptimality,
+restricted inverse optimal value, spatial and controlled layered routing, and
+copper-plate offer inference. Feasible instances carry independent primal/dual
+or potential witnesses. Infeasible instances use observation-native
+certificates such as strict interiority, impossible fit tolerances, unavoidable
+route shortcuts, unattainable values, and merit-order inversions.
 
 The `radiotherapy` family builds reduced but spatially grounded IMRT fluence-map
 LPs and MILPs. Six TG-119/CORT-style anatomy profiles generate contoured 3-D

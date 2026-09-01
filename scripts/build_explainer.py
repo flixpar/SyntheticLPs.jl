@@ -36,6 +36,7 @@ FAMILIES = {
     "production": ("Production & Planning", "Allocate shared capacity across products and time."),
     "scheduling": ("Assignment & Scheduling", "Match discrete entities to tasks, shifts, or patterns."),
     "selection": ("Selection & Finance", "Pick a subset / weighting under budget and risk limits."),
+    "inference": ("Inference & Calibration", "Recover optimization parameters from observed decisions and outcomes."),
     "land": ("Land & Agriculture", "Allocate parcels and acreage under physical limits."),
     "healthcare": ("Healthcare", "Plan clinical resources and treatment under safety constraints."),
 }
@@ -71,12 +72,13 @@ META = {
     "project_selection":     dict(family="selection", sense="Max",     vclass="Binary",     tag="Pick projects under budget/risk/dependency"),
     "portfolio":             dict(family="selection", sense="Max",     vclass="Continuous", tag="CVaR portfolio with policy constraints"),
     "revenue_management":    dict(family="selection", sense="Max",     vclass="Continuous", tag="Network capacity allocation and stochastic overbooking"),
+    "inverse_optimization":  dict(family="inference", sense="Min",     vclass="Continuous", tag="Infer costs from exact, noisy, routed, and market observations"),
     "radiotherapy":           dict(family="healthcare",sense="Min",     vclass="Mixed",      tag="IMRT fluence maps, DVH tails, robust setup scenarios, and beam selection"),
     "land_use":              dict(family="land",      sense="Max",     vclass="Binary",     tag="Assign parcels to zoning types"),
     "crop_planning":         dict(family="land",      sense="Max",     vclass="Continuous", tag="Allocate acreage across crops"),
 }
 
-FAMILY_ORDER = ["network", "facility", "blending", "production", "scheduling", "selection", "land", "healthcare"]
+FAMILY_ORDER = ["network", "facility", "blending", "production", "scheduling", "selection", "inference", "land", "healthcare"]
 
 SECTION_ICONS = {
     "Overview": "◆",

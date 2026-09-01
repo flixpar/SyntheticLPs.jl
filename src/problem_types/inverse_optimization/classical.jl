@@ -12,10 +12,10 @@ problem is a nonnegative packing LP. Given one observed optimal activity plan,
 the inverse model minimally adjusts a prior normalized profit vector while
 enforcing dual feasibility and zero duality gap.
 
-The generator plants a strictly positive plan, exhausts every resource at that
-plan, and constructs the true profit vector from positive resource shadow
-prices. This gives an inspectable exact optimality witness without solving a
-forward problem in the constructor.
+The feasible profile plants a strictly positive plan, exhausts every resource
+at that plan, and constructs the true profit vector from positive resource
+shadow prices. The infeasible profile gives every resource strict headroom, so
+no normalized positive profit vector can rationalize the interior plan.
 """
 struct ClassicalInverseLPProblem <: ProblemGenerator
     n_activities::Int
@@ -25,7 +25,7 @@ struct ClassicalInverseLPProblem <: ProblemGenerator
     capacity::Vector{Float64}
     resolved_status::FeasibilityStatus
     feasible_witness::Union{Nothing,ClassicalInverseWitness}
-    infeasibility_certificate::Union{Nothing,InverseCostSetCertificate}
+    infeasibility_certificate::Union{Nothing,PackingInteriorCertificate}
 end
 
 function _classical_inverse_dimensions(target_variables::Int, ratio::Float64)
@@ -51,6 +51,7 @@ function ClassicalInverseLPProblem(
     feasibility_status::FeasibilityStatus,
     seed::Int,
 )
+    _check_inverse_target(target_variables)
     rng = MersenneTwister(seed)
     ratio = rand(rng, Uniform(2.5, 6.5))
     n_activities, n_resources =
@@ -58,19 +59,39 @@ function ClassicalInverseLPProblem(
     data = _inverse_packing_data(rng, n_resources, n_activities)
 
     observed = rand(rng, LogNormal(log(18.0), 0.48), n_activities)
-    capacity = Vector(data.consumption * observed)
-    resolved_status = _inverse_resolved_status(rng, feasibility_status)
-    witness = resolved_status == feasible ?
+    consumption = Vector(data.consumption * observed)
+    capacity = copy(consumption)
+    witness = feasibility_status == feasible ?
         ClassicalInverseWitness(copy(data.true_cost), copy(data.true_dual)) : nothing
-    certificate = resolved_status == infeasible ?
-        _inverse_cost_certificate(true, data.true_cost) : nothing
+    certificate = nothing
+
+    if feasibility_status == infeasible
+        slacks = consumption .* rand(rng, Uniform(0.12, 0.40), n_resources)
+        capacity .+= slacks
+        certificate = PackingInteriorCertificate(slacks)
+    elseif feasibility_status == unknown
+        # Mix tight and slack resource rows without attaching an oracle label.
+        # Whether the remaining active-row cone intersects the admissible cost
+        # simplex is decided by the sampled data.
+        channel = rand(rng)
+        if channel < 0.25
+            # Known-feasible mechanism, but deliberately no stored witness.
+        elseif channel < 0.50
+            capacity .+= consumption .* rand(rng, Uniform(0.08, 0.35), n_resources)
+        else
+            for i in 1:n_resources
+                rand(rng) < 0.55 || continue
+                capacity[i] += consumption[i] * rand(rng, Uniform(0.05, 0.30))
+            end
+        end
+    end
     return ClassicalInverseLPProblem(
         n_activities,
         n_resources,
         data,
         observed,
         capacity,
-        resolved_status,
+        feasibility_status,
         witness,
         certificate,
     )
@@ -111,11 +132,6 @@ function build_model(prob::ClassicalInverseLPProblem)
         sum(prob.observed_decision[j] * inferred_cost[j] for j in 1:n) ==
             sum(prob.capacity[i] * shadow_price[i] for i in 1:m),
     )
-    if prob.infeasibility_certificate !== nothing
-        certificate = prob.infeasibility_certificate
-        @constraint(model, inadmissible_cost_mass,
-                    sum(inferred_cost) <= certificate.total_upper)
-    end
     return model
 end
 
@@ -135,8 +151,7 @@ end
 
 register_variant(
     :inverse_optimization,
-    :classical,
+    :classical_normalized,
     ClassicalInverseLPProblem,
-    "Classical weighted-L1 inverse LP with a planted exact decision and strong-duality certificate";
-    default=true,
+    "Simplex-normalized classical weighted-L1 inverse packing LP with exact, strictly-interior, and unresolved observations",
 )

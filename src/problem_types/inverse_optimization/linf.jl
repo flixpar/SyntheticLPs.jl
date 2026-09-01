@@ -20,9 +20,9 @@ largest weighted deviation, linearized with one epigraph variable `t`:
     minimize    t
     subject to  A'y <= c                       (dual feasibility, n rows)
                 b'y == x̂'c                     (strong duality, 1 row)
-                c - p + q == ĉ                 (deviation split, n rows)
-                w_j (p_j + q_j) <= t           (epigraph, n rows)
-                0 <= y <= ȳ,  ℓ <= c <= u,  p, q >= 0,  t >= 0
+                w_j (c_j - ĉ_j) <= t            (upper deviation, n rows)
+                w_j (ĉ_j - c_j) <= t            (lower deviation, n rows)
+                0 <= y <= ȳ,  ℓ <= c <= u,  t >= 0
 
 with `ȳ` the implied dual upper bounds of `standard` (valid, cutting nothing,
 and needed for the solver to certify infeasibility at scale).
@@ -62,19 +62,18 @@ end
 """
     InverseLPMaxErrorProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
-Construct a min–max inverse LP instance. The built model carries
-`3n + m + 1` variables — as `standard` plus the epigraph variable — so the
-column/row split is solved from `target_variables - 1` and the target is hit
-exactly whenever the row count is not clamped at its floor.
+Construct a min–max inverse LP instance. The direct epigraph formulation
+carries `n + m + 1` variables: inferred costs, forward duals, and one maximum
+deviation. It avoids the redundant split variables used by an L1 model.
 """
 function InverseLPMaxErrorProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     _check_inverse_target(target_variables)
     rng = MersenneTwister(seed)
 
     row_ratio = rand(rng, Uniform(0.5, 1.6))
-    num_cols = clamp(round(Int, (target_variables - 1) / (3.0 + row_ratio)), 4,
-                     max(4, target_variables - 7))
-    num_rows = max(2, (target_variables - 1) - 3 * num_cols)
+    num_cols = clamp(round(Int, (target_variables - 1) / (1.0 + row_ratio)), 4,
+                     max(4, target_variables - 3))
+    num_rows = max(2, (target_variables - 1) - num_cols)
 
     data = _sample_cost_inference_data(rng, num_cols, num_rows, feasibility_status)
 
@@ -99,8 +98,6 @@ function build_model(prob::InverseLPMaxErrorProblem)
 
     @variable(model, 0 <= y[i=1:m] <= _implied_dual_upper(A, prob.cost_upper)[i])
     @variable(model, prob.cost_lower[j] <= c[j=1:n] <= prob.cost_upper[j])
-    @variable(model, dev_plus[1:n] >= 0)
-    @variable(model, dev_minus[1:n] >= 0)
     @variable(model, max_dev >= 0)
 
     for j in 1:n
@@ -113,9 +110,10 @@ function build_model(prob::InverseLPMaxErrorProblem)
                 sum(prob.reference_point[j] * c[j] for j in 1:n))
 
     for j in 1:n
-        @constraint(model, c[j] - dev_plus[j] + dev_minus[j] == prob.prior_cost[j])
         @constraint(model,
-                    prob.deviation_weights[j] * (dev_plus[j] + dev_minus[j]) <= max_dev)
+                    prob.deviation_weights[j] * (c[j] - prob.prior_cost[j]) <= max_dev)
+        @constraint(model,
+                    prob.deviation_weights[j] * (prob.prior_cost[j] - c[j]) <= max_dev)
     end
 
     @objective(model, Min, max_dev)

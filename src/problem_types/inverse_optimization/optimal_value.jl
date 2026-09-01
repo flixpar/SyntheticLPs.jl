@@ -4,7 +4,7 @@ using Distributions
 using SparseArrays
 
 """
-Planted ground truth for a `feasible` `inverse_optimization/optimal_value`
+Planted ground truth for a `feasible` `inverse_optimization/restricted_optimal_value`
 instance: the cost vector `cost` and its dual certificate `duals`. The plan that
 must stay optimal is `reference_point` (a struct field); under `cost` the plan
 is optimal *and* its optimal value equals the requested target, with
@@ -17,7 +17,7 @@ end
 
 """
 Structured infeasibility certificate for
-`inverse_optimization/optimal_value`: the requested target value lies strictly
+`inverse_optimization/restricted_optimal_value`: the requested target value lies strictly
 outside the interval `[value_floor, value_ceiling]` that *any* admissible cost
 vector can give the observed plan — `value_floor = ℓ'x⁰` (all costs at their
 lower bounds) and `value_ceiling = u'x⁰` (all at their upper bounds).
@@ -228,7 +228,7 @@ end
 
 register_variant(
     :inverse_optimization,
-    :optimal_value,
+    :restricted_optimal_value,
     InverseOptimalValueProblem,
     "Inverse optimal value problem (Ahmed-Guan / Jia-Guan-Qian-Pardalos restricted LP form): adjust box-bounded costs minimally so an observed plan stays optimal while its optimal value hits a target",
 )

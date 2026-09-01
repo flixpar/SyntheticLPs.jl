@@ -19,6 +19,21 @@ struct InverseShortestPathWitness
     potentials::Matrix{Float64}
 end
 
+"""
+Native infeasibility certificate for a route observation. After cancelling
+arcs shared by the observed and alternative routes, every admissible observed
+route costs at least `observed_floor`, while the alternative costs at most
+`alternative_ceiling`.
+"""
+struct InversePathConflictCertificate
+    observation::Int
+    alternative_path::Vector{Int}
+    observed_only::Vector{Int}
+    alternative_only::Vector{Int}
+    observed_floor::Float64
+    alternative_ceiling::Float64
+end
+
 struct InverseShortestPathProblem <: ProblemGenerator
     n_nodes::Int
     n_arcs::Int
@@ -34,7 +49,7 @@ struct InverseShortestPathProblem <: ProblemGenerator
     deviation_weight::Vector{Float64}
     resolved_status::FeasibilityStatus
     feasible_witness::Union{Nothing,InverseShortestPathWitness}
-    infeasibility_certificate::Union{Nothing,InverseCostSetCertificate}
+    infeasibility_certificate::Union{Nothing,InversePathConflictCertificate}
 end
 
 function _inverse_network_dimensions(target_variables::Int, average_degree::Float64)
@@ -395,11 +410,78 @@ function _inverse_make_prior_informative!(
     return false
 end
 
+function _inverse_alternative_path(
+    n_nodes::Int,
+    arcs::Vector{InverseNetworkArc},
+    costs::Vector{Float64},
+    observation::InversePathObservation,
+)
+    for removed_edge in observation.path_arcs
+        removed = arcs[removed_edge]
+        alternative_cost = copy(costs)
+        for (e, arc) in enumerate(arcs)
+            if (arc.tail == removed.tail && arc.head == removed.head) ||
+               (arc.tail == removed.head && arc.head == removed.tail)
+                alternative_cost[e] = Inf
+            end
+        end
+        distances, predecessor = _inverse_shortest_distances(
+            n_nodes, arcs, alternative_cost, observation.source,
+        )
+        isfinite(distances[observation.destination]) || continue
+        alternative = _inverse_reconstruct_path(
+            arcs, predecessor, observation.source, observation.destination,
+        )
+        observed_only = setdiff(observation.path_arcs, alternative)
+        alternative_only = setdiff(alternative, observation.path_arcs)
+        !isempty(observed_only) && !isempty(alternative_only) && return alternative
+    end
+    error("Could not recover the alternative route guaranteed during generation")
+end
+
+function _impose_inverse_path_conflict!(
+    rng::AbstractRNG,
+    n_nodes::Int,
+    arcs::Vector{InverseNetworkArc},
+    observations::Vector{InversePathObservation},
+    true_cost::Vector{Float64},
+    prior_cost::Vector{Float64},
+    cost_lower::Vector{Float64},
+    cost_upper::Vector{Float64};
+    guaranteed::Bool,
+)
+    observation_index = rand(rng, eachindex(observations))
+    observation = observations[observation_index]
+    alternative = _inverse_alternative_path(n_nodes, arcs, true_cost, observation)
+    observed_only = setdiff(observation.path_arcs, alternative)
+    alternative_only = setdiff(alternative, observation.path_arcs)
+    observed_floor = sum(cost_lower[e] for e in observed_only)
+    factor = guaranteed ? rand(rng, Uniform(0.45, 0.82)) :
+                          rand(rng, Uniform(0.78, 1.28))
+    alternative_ceiling = factor * observed_floor
+    weights = prior_cost[alternative_only]
+    weights ./= sum(weights)
+    for (position, e) in enumerate(alternative_only)
+        cost_upper[e] = alternative_ceiling * weights[position]
+        cost_lower[e] = 0.35 * cost_upper[e]
+        prior_cost[e] = 0.70 * cost_upper[e]
+    end
+    return InversePathConflictCertificate(
+        observation_index,
+        alternative,
+        observed_only,
+        alternative_only,
+        observed_floor,
+        sum(cost_upper[e] for e in alternative_only),
+    )
+end
+
 function InverseShortestPathProblem(
     target_variables::Int,
     feasibility_status::FeasibilityStatus,
     seed::Int,
 )
+    _check_inverse_target(target_variables)
     rng = MersenneTwister(seed)
     profile_data = _inverse_network_profile(rng)
     n_nodes, n_edges, K = _inverse_network_dimensions(
@@ -436,15 +518,26 @@ function InverseShortestPathProblem(
     cost_upper = 1.85 .* max.(true_cost, prior_cost)
     deviation_weight = 1.0 ./ max.(prior_cost, 0.1)
 
-    resolved_status = _inverse_resolved_status(rng, feasibility_status)
-    witness = resolved_status == feasible ?
+    witness = feasibility_status == feasible ?
         InverseShortestPathWitness(copy(true_cost), potentials) : nothing
-    certificate = resolved_status == infeasible ?
-        _inverse_cost_certificate(false, true_cost) : nothing
+    certificate = nothing
+    if feasibility_status == infeasible
+        certificate = _impose_inverse_path_conflict!(
+            rng, n_nodes, arcs, observations, true_cost,
+            prior_cost, cost_lower, cost_upper; guaranteed=true,
+        )
+    elseif feasibility_status == unknown && rand(rng) >= 0.30
+        # A sampled near-conflict may or may not exclude all rationalizing
+        # costs. No outcome metadata is stored for unknown requests.
+        _impose_inverse_path_conflict!(
+            rng, n_nodes, arcs, observations, true_cost,
+            prior_cost, cost_lower, cost_upper; guaranteed=false,
+        )
+    end
     return InverseShortestPathProblem(
         n_nodes, length(arcs), K, profile_data.name, coordinates, arcs,
         observations, true_cost, prior_cost, cost_lower, cost_upper,
-        deviation_weight, resolved_status, witness, certificate,
+        deviation_weight, feasibility_status, witness, certificate,
     )
 end
 
@@ -483,14 +576,22 @@ function build_model(prob::InverseShortestPathProblem)
         potential[k, prob.observations[k].destination] ==
             sum(arc_cost[e] for e in prob.observations[k].path_arcs),
     )
-    if prob.infeasibility_certificate !== nothing
-        certificate = prob.infeasibility_certificate
-        @constraint(model, cost_mass_lower,
-                    sum(arc_cost) >= certificate.total_lower)
-        @constraint(model, cost_mass_upper,
-                    sum(arc_cost) <= certificate.total_upper)
-    end
     return model
+end
+
+function _inverse_path_conflict_certificate_is_valid(prob::InverseShortestPathProblem)
+    certificate = prob.infeasibility_certificate
+    certificate isa InversePathConflictCertificate || return false
+    observation = prob.observations[certificate.observation]
+    certificate.observed_only == setdiff(observation.path_arcs,
+                                         certificate.alternative_path) || return false
+    certificate.alternative_only == setdiff(certificate.alternative_path,
+                                            observation.path_arcs) || return false
+    observed_floor = sum(prob.cost_lower[e] for e in certificate.observed_only)
+    alternative_ceiling = sum(prob.cost_upper[e] for e in certificate.alternative_only)
+    return isapprox(certificate.observed_floor, observed_floor) &&
+           isapprox(certificate.alternative_ceiling, alternative_ceiling) &&
+           alternative_ceiling < observed_floor
 end
 
 function _inverse_shortest_path_witness_is_valid(prob::InverseShortestPathProblem)

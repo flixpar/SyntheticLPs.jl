@@ -4,14 +4,18 @@ using Distributions
 using LinearAlgebra
 using SparseArrays
 
+"""Certificate that a positive packing decision is strictly interior."""
+struct PackingInteriorCertificate
+    slacks::Vector{Float64}
+end
+
 """
-An algebraic infeasibility certificate for an inverse model's admissible cost
-set. The model requires the total inferred cost to be at least `total_lower`
-and at most `total_upper`, with `total_lower > total_upper`.
+Certificate that every admissible normalized objective incurs an average
+duality gap above `lower_bound`, contradicting `tolerance`.
 """
-struct InverseCostSetCertificate
-    total_lower::Float64
-    total_upper::Float64
+struct GapToleranceCertificate
+    lower_bound::Float64
+    tolerance::Float64
 end
 
 """Shared sparse packing-system data used by the exact and panel variants."""
@@ -23,19 +27,6 @@ struct InversePackingData
     cost_lower::Vector{Float64}
     cost_upper::Vector{Float64}
     deviation_weight::Vector{Float64}
-end
-
-@inline function _inverse_resolved_status(
-    rng::AbstractRNG,
-    requested::FeasibilityStatus,
-)
-    requested == unknown || return requested
-    return rand(rng) < 0.84 ? feasible : infeasible
-end
-
-function _inverse_cost_certificate(normalized::Bool, true_cost::Vector{Float64})
-    center = normalized ? 1.0 : sum(true_cost)
-    return InverseCostSetCertificate(1.08 * center, 0.82 * center)
 end
 
 function _inverse_sparse_consumption(
@@ -108,7 +99,12 @@ function _inverse_row_expression(A, decision, i::Int)
     return sum(coefficients[k] * decision[columns[k]] for k in eachindex(columns))
 end
 
-function _inverse_cost_certificate_is_valid(certificate)
-    return certificate isa InverseCostSetCertificate &&
-           certificate.total_lower > certificate.total_upper
+function _packing_interior_certificate_is_valid(certificate)
+    return certificate isa PackingInteriorCertificate &&
+           all(>(0.0), certificate.slacks)
+end
+
+function _gap_tolerance_certificate_is_valid(certificate)
+    return certificate isa GapToleranceCertificate &&
+           certificate.lower_bound > certificate.tolerance >= 0.0
 end

@@ -49,7 +49,7 @@ end
 """
     InverseDispatchCostProblem <: ProblemGenerator
 
-Generator for *market offer-cost inference*: the inverse problem behind
+Generator for copper-plate *market offer-cost inference*: the inverse problem behind
 reconstructing rival generators' offer curves from cleared market data (Ruiz,
 Conejo & Bertsimas, *IEEE Trans. Power Systems* 28(3), 2013; Liang & Dvorkin,
 ACM e-Energy 2023; see also Birge, Hortaçsu & Pavlin, *Operations Research*
@@ -411,5 +411,5 @@ register_variant(
     :inverse_optimization,
     :market_clearing,
     InverseDispatchCostProblem,
-    "Market offer-cost inference: recover generator offer costs closest to a prior that make an observed multi-period economic dispatch the market-clearing outcome",
+    "Copper-plate market offer-cost inference: recover generator costs closest to a prior that explain an observed multi-period dispatch",
 )

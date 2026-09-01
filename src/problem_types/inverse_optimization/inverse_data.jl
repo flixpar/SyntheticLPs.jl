@@ -127,7 +127,7 @@ end
     _sample_cost_inference_data(rng, n, m, status)
 
 Sample the shared pieces of a cost-inference instance (`standard`, `linf`, and
-`optimal_value` variants): the forward rows `A`, `b`; the observed
+`restricted_optimal_value` variants): the forward rows `A`, `b`; the observed
 `reference_point`; the analyst's `prior_cost` and the admissible box
 `cost_lower`/`cost_upper` around it; heteroscedastic `deviation_weights`; the
 status-specific metadata — a planted [`InverseCostWitness`](@ref) for

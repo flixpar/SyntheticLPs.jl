@@ -12,7 +12,9 @@ Data-driven inverse LP using average absolute suboptimality (duality gap) over
 multiple feasible observations. Each observation has context-specific resource
 capacities. Routine under-utilization, heterogeneous behavior, or a contaminated
 panel creates nonzero but controlled suboptimality, while all observations
-remain feasible for the forward packing problem.
+remain feasible for the forward packing problem. Infeasibility is expressed as
+a maximum mean-gap tolerance below a data-derived lower bound, rather than an
+unrelated contradiction in the admissible cost set.
 """
 struct NoisyInverseLPProblem <: ProblemGenerator
     n_activities::Int
@@ -25,24 +27,34 @@ struct NoisyInverseLPProblem <: ProblemGenerator
     capacities::Matrix{Float64}
     regularization::Float64
     gap_scale::Float64
+    gap_tolerance::Union{Nothing,Float64}
     resolved_status::FeasibilityStatus
     feasible_witness::Union{Nothing,NoisyInverseWitness}
-    infeasibility_certificate::Union{Nothing,InverseCostSetCertificate}
+    infeasibility_certificate::Union{Nothing,GapToleranceCertificate}
 end
 
 function _noisy_inverse_dimensions(target_variables::Int, preferred_k::Int)
     target = max(target_variables, 1)
-    best = (error=typemax(Int), activities=3, resources=2,
+    best = (error=typemax(Int), shape_error=Inf, activities=3, resources=2,
             observations=2, count=15)
-    max_n = max(3, cld(target, 3) + 3)
-    for n in 3:max_n
-        for m in 2:min(n - 1, max(2, round(Int, n / 2)))
-            for k in max(2, preferred_k - 2):(preferred_k + 2)
+    # Search resource counts and solve for the nearest activity count from
+    # 3n + k*m + k = target. This is linear in the requested size; the former
+    # nested n-by-m scan was quadratic and unusable near the documented cap.
+    for k in max(2, preferred_k - 2):(preferred_k + 2)
+        max_m = max(2, target ÷ (k + 6) + 3)
+        for m in 2:max_m
+            raw_n = (target - k * m - k) / 3
+            for n in unique((max(3, floor(Int, raw_n)),
+                             max(3, ceil(Int, raw_n))))
+                m < n || continue
+                m <= max(2, round(Int, n / 2)) || continue
                 count = 3 * n + k * m + k
-                candidate = (error=abs(count - target), activities=n,
+                candidate = (error=abs(count - target),
+                             shape_error=abs(m / n - 0.30), activities=n,
                              resources=m, observations=k, count=count)
-                (candidate.error, abs(k - preferred_k), count) <
-                    (best.error, abs(best.observations - preferred_k), best.count) &&
+                (candidate.error, abs(k - preferred_k), candidate.shape_error, count) <
+                    (best.error, abs(best.observations - preferred_k),
+                     best.shape_error, best.count) &&
                     (best = candidate)
             end
         end
@@ -79,6 +91,7 @@ function NoisyInverseLPProblem(
     feasibility_status::FeasibilityStatus,
     seed::Int,
 )
+    _check_inverse_target(target_variables)
     rng = MersenneTwister(seed)
     profiles = (:routine, :heterogeneous, :outlier_contaminated)
     profile = profiles[rand(rng, eachindex(profiles))]
@@ -107,15 +120,38 @@ function NoisyInverseLPProblem(
         dot(@view(observed[k, :]), data.true_cost) for k in 1:K
     ))
     regularization = rand(rng, Uniform(0.03, 0.18))
-    resolved_status = _inverse_resolved_status(rng, feasibility_status)
     dual_matrix = repeat(transpose(data.true_dual), K, 1)
-    witness = resolved_status == feasible ?
+    witness = feasibility_status == feasible ?
         NoisyInverseWitness(copy(data.true_cost), dual_matrix, true_gaps) : nothing
-    certificate = resolved_status == infeasible ?
-        _inverse_cost_certificate(true, data.true_cost) : nothing
+    certificate = nothing
+
+    # Every admissible cost has c >= cost_lower, and each latent optimum is
+    # feasible. Weak duality therefore gives a data-derived lower bound on the
+    # mean gap at the observed decisions.
+    gap_lower_bound = mean(
+        sum(data.cost_lower[j] * (optimal[k, j] - observed[k, j]) for j in 1:n)
+        for k in 1:K
+    )
+    gap_tolerance = nothing
+    if feasibility_status == infeasible
+        gap_tolerance = gap_lower_bound * rand(rng, Uniform(0.55, 0.90))
+        certificate = GapToleranceCertificate(gap_lower_bound, gap_tolerance)
+    elseif feasibility_status == unknown
+        channel = rand(rng)
+        if channel < 0.30
+            # No fit threshold: always feasible, but no oracle metadata.
+        elseif channel < 0.60
+            gap_tolerance = gap_lower_bound * rand(rng, Uniform(0.65, 0.98))
+        else
+            planted_mean = mean(true_gaps)
+            gap_tolerance = rand(rng, Uniform(0.95 * gap_lower_bound,
+                                               1.08 * planted_mean))
+        end
+    end
     return NoisyInverseLPProblem(
         n, m, K, profile, data, observed, optimal, capacities,
-        regularization, gap_scale, resolved_status, witness, certificate,
+        regularization, gap_scale, gap_tolerance, feasibility_status,
+        witness, certificate,
     )
 end
 
@@ -157,10 +193,9 @@ function build_model(prob::NoisyInverseLPProblem)
         inferred_cost[j] - data.prior_cost[j] ==
             deviation_positive[j] - deviation_negative[j],
     )
-    if prob.infeasibility_certificate !== nothing
-        certificate = prob.infeasibility_certificate
-        @constraint(model, inadmissible_cost_mass,
-                    sum(inferred_cost) <= certificate.total_upper)
+    if prob.gap_tolerance !== nothing
+        @constraint(model, fit_tolerance,
+                    sum(suboptimality_gap) / K <= prob.gap_tolerance)
     end
     return model
 end
