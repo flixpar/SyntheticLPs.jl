@@ -4,6 +4,56 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-09-01 (documentation cleanup)
+
+**Previous Commit**: `033de59`
+
+**Commits**: (pending)
+
+**Datetime**: 2026-09-01 01:18 UTC
+
+**Summary**: Trimmed the project-level documentation. `CLAUDE.md` (349 → 231
+lines) and `README.md` (589 → 415 lines) had accumulated per-variant prose that
+duplicated the registry, the per-category pages under `docs/`, and each other.
+Removed the stale `docs/variant_branch_review.md`. No source or test changes.
+
+**Details**:
+
+- `CLAUDE.md`: replaced the hand-maintained enumeration of all 45 categories and
+  their variants, and the long "model classes" inventory of which variants are
+  LPs/MIPs/relaxations, with a pointer to the live registry
+  (`list_categories`/`list_variants`/`list_problems`/`problem_info`) plus a short
+  statement of the operative rule (the corpus mixes all three classes;
+  `relax_integer=true` is the default; a relaxation is not an integer solution).
+  Folded the per-generator special cases (variable caps, witness/certificate
+  fields) into two general conventions under "Key design principles". Merged the
+  duplicated "add a variant" / "add a category" checklists into one section, and
+  condensed the command examples. Kept verbatim the non-obvious operational
+  facts: the three `_classify_termination` verdicts, transform ordering, the
+  constructor-local RNG rule, and the `HAS_HIGHS` guard requirement in
+  `test/problem_types/*.jl`.
+- `README.md`: replaced the annotated category list with a compact generated
+  list (45 categories, default variant first) and dropped the six long
+  per-family paragraphs (supply chain, telecom, hub location, basis pursuit,
+  inverse optimization, radiotherapy) whose content is already in
+  `docs/<category>.md` and the generator docstrings — including the radiotherapy
+  clinical-use disclaimer, which remains in `docs/radiotherapy.md`. Deduplicated
+  the CLI section (the `list` example appeared twice), tightened the usage and
+  dataset examples, dropped the docstring boilerplate from the extension
+  template, switched examples from Clp to HiGHS, and folded the model-class
+  caveat into the variants section.
+- Deleted `docs/variant_branch_review.md`, a June 2026 snapshot of porting
+  pre-variant-system branches. Several variants it listed as deferred
+  (`knapsack/multidimensional`, `knapsack/bounded`, `facility_location/p_median`,
+  `portfolio/tracking_error`, `vehicle_routing/cvrp`,
+  `assignment/workload_balance`) have since been implemented, so it had become
+  misleading; nothing linked to it, and the record survives in this changelog and
+  in git history.
+- Corrected the README's testing section: the suite's size assertion is ±25%
+  of the target (relaxed for problems at or below 50 variables), not the ±10%
+  the README claimed.
+- Left `docs/README.md`, the per-category pages, and this changelog unchanged.
+
 ## 2026-09-01 (inverse-optimization generators)
 
 **Previous Commit**: `b455f17`
