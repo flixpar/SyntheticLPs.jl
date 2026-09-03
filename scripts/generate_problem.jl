@@ -17,7 +17,7 @@
 
 using Pkg
 Pkg.activate(@__DIR__)
-Pkg.develop(path = dirname(@__DIR__))
+Pkg.develop(; path=dirname(@__DIR__))
 Pkg.instantiate()
 
 using SyntheticLPs
@@ -39,8 +39,7 @@ dualize_probability = 0.0
 # script's top level (soft scope), so assignments would otherwise create locals
 # and silently leave these globals at their defaults.
 for arg in ARGS[3:end]
-    global feasibility_status, seed, output_file, bounds_to_constraints, dualize,
-           dualize_probability
+    global feasibility_status, seed, output_file, bounds_to_constraints, dualize, dualize_probability
     if arg == "--solve"
         # Handled later
     elseif arg == "--feasible"
@@ -54,7 +53,7 @@ for arg in ARGS[3:end]
     elseif arg == "--dualize"
         dualize = true
     elseif startswith(arg, "--dualize-probability=")
-        dualize_probability = parse(Float64, split(arg, "=", limit = 2)[2])
+        dualize_probability = parse(Float64, split(arg, "="; limit=2)[2])
     elseif startswith(arg, "--seed=")
         seed = parse(Int, split(arg, "=")[2])
     elseif !startswith(arg, "--")
@@ -78,11 +77,11 @@ elseif problem_arg == "random"
     println("Feasibility status: $feasibility_status")
     model, selected_ref, problem = generate_random_problem(
         target_variables;
-        feasibility_status = feasibility_status,
-        bounds_to_constraints = bounds_to_constraints,
-        dualize = dualize,
-        dualize_probability = dualize_probability,
-        seed = seed,
+        feasibility_status=feasibility_status,
+        bounds_to_constraints=bounds_to_constraints,
+        dualize=dualize,
+        dualize_probability=dualize_probability,
+        seed=seed,
     )
     println("Problem selected: $selected_ref")
     println("Dual reformulation: $(is_dual_reformulation(model))")
@@ -92,7 +91,9 @@ else
     # Accept a category (default variant) or an explicit `category/variant`.
     parts = split(problem_arg, '/')
     if length(parts) > 2
-        println("Error: Invalid problem reference '$problem_arg'; expected 'category' or 'category/variant'")
+        println(
+            "Error: Invalid problem reference '$problem_arg'; expected 'category' or 'category/variant'",
+        )
         exit(1)
     end
     category = Symbol(parts[1])
@@ -107,15 +108,17 @@ else
         println("Available variants: $(list_variants(category))")
         exit(1)
     end
-    ref = length(parts) == 2 ? ProblemVariant(category, Symbol(parts[2])) :
-                               ProblemVariant(category)
+    ref = length(parts) == 2 ? ProblemVariant(category, Symbol(parts[2])) : ProblemVariant(category)
 
     println("Generating $ref problem targeting ~$target_variables variables")
     println("Feasibility status: $feasibility_status")
     model, problem = generate_problem(
-        ref, target_variables, feasibility_status, seed;
-        bounds_to_constraints = bounds_to_constraints,
-        dualize = dualize,
+        ref,
+        target_variables,
+        feasibility_status,
+        seed;
+        bounds_to_constraints=bounds_to_constraints,
+        dualize=dualize,
     )
 end
 
@@ -129,7 +132,7 @@ if "--solve" in ARGS
     println("\nSolving problem...")
     set_optimizer(model, HiGHS.Optimizer)
     optimize!(model)
-    
+
     println("Solution status: $(termination_status(model))")
     println("Objective value: $(objective_value(model))")
 end

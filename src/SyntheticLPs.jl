@@ -87,13 +87,13 @@ it, and which variant is used by default when none is named.
 mutable struct CategorySpec
     category::Symbol
     description::String
-    variants::Dict{Symbol,VariantSpec}
-    default_variant::Union{Symbol,Nothing}
+    variants::Dict{Symbol, VariantSpec}
+    default_variant::Union{Symbol, Nothing}
     explicit_default::Bool
 end
 
 # Maps category symbol -> CategorySpec.
-const LP_REGISTRY = Dict{Symbol,CategorySpec}()
+const LP_REGISTRY = Dict{Symbol, CategorySpec}()
 
 """
     register_category(category::Symbol, description::AbstractString)
@@ -109,8 +109,7 @@ using the variant's description, so single-variant categories need no explicit
 """
 function register_category(category::Symbol, description::AbstractString)
     cat = get!(LP_REGISTRY, category) do
-        CategorySpec(category, String(description),
-                     Dict{Symbol,VariantSpec}(), nothing, false)
+        CategorySpec(category, String(description), Dict{Symbol, VariantSpec}(), nothing, false)
     end
     # Always apply the explicit description, even if the category was already
     # created lazily by `register_variant`, so registration order doesn't matter.
@@ -130,9 +129,13 @@ The first variant registered becomes the category default; pass `default=true`
 to designate a specific variant instead (only one variant may be the explicit
 default).
 """
-function register_variant(category::Symbol, variant::Symbol,
-                          problem_type::Type{<:ProblemGenerator},
-                          description::AbstractString; default::Bool=false)
+function register_variant(
+    category::Symbol,
+    variant::Symbol,
+    problem_type::Type{<:ProblemGenerator},
+    description::AbstractString;
+    default::Bool=false,
+)
     cat = get(LP_REGISTRY, category, nothing)
     if cat === nothing
         cat = register_category(category, description)
@@ -144,8 +147,10 @@ function register_variant(category::Symbol, variant::Symbol,
     cat.variants[variant] = spec
     if default
         if cat.explicit_default
-            error("Category $category already has an explicit default variant " *
-                  "($(cat.default_variant)); cannot also mark $variant as default.")
+            error(
+                "Category $category already has an explicit default variant " *
+                "($(cat.default_variant)); cannot also mark $variant as default.",
+            )
         end
         cat.default_variant = variant
         cat.explicit_default = true
@@ -161,9 +166,10 @@ end
 Internal: fetch a category's registry entry, erroring helpfully if unknown.
 """
 function get_category(category::Symbol)
-    haskey(LP_REGISTRY, category) ||
-        error("Unknown problem category: $category. " *
-              "Use list_categories() to see available categories.")
+    haskey(LP_REGISTRY, category) || error(
+        "Unknown problem category: $category. " *
+        "Use list_categories() to see available categories.",
+    )
     return LP_REGISTRY[category]
 end
 
@@ -174,10 +180,11 @@ Internal: fetch a variant's registry entry, erroring helpfully if unknown.
 """
 function get_variant(ref::ProblemVariant)
     cat = get_category(ref.category)
-    haskey(cat.variants, ref.variant) ||
-        error("Unknown variant $(ref.category)/$(ref.variant). " *
-              "Available variants of $(ref.category): " *
-              "$(join(sort(collect(keys(cat.variants))), ", ")).")
+    haskey(cat.variants, ref.variant) || error(
+        "Unknown variant $(ref.category)/$(ref.variant). " *
+        "Available variants of $(ref.category): " *
+        "$(join(sort(collect(keys(cat.variants))), ", ")).",
+    )
     return cat.variants[ref.variant]
 end
 
@@ -188,8 +195,7 @@ The default variant symbol for a category.
 """
 function default_variant(category::Symbol)
     cat = get_category(category)
-    cat.default_variant === nothing &&
-        error("Category $category has no registered variants.")
+    cat.default_variant === nothing && error("Category $category has no registered variants.")
     return cat.default_variant
 end
 
@@ -204,8 +210,7 @@ function ProblemVariant(s::AbstractString)
     elseif length(parts) == 2
         return ProblemVariant(Symbol(strip(parts[1])), Symbol(strip(parts[2])))
     end
-    error("Invalid problem reference \"$s\"; expected \"category\" or " *
-          "\"category/variant\".")
+    error("Invalid problem reference \"$s\"; expected \"category\" or " * "\"category/variant\".")
 end
 
 """
@@ -234,10 +239,12 @@ Build a JuMP model from a problem generator instance.
 Each variant must implement this method.
 
 # Arguments
-- `problem`: A problem generator instance containing all necessary data
+
+  - `problem`: A problem generator instance containing all necessary data
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model end
 
@@ -269,14 +276,18 @@ Returns `(model, problem, resolved_seed)`. With `optimizer=nothing` (or status
 is itself deterministic — attempts walk `seed, seed+1, …` — so a given
 `(seed, optimizer)` pair always resolves to the same model.
 """
-function _generate_problem_verified(::Type{T}, target_variables::Int,
-                                    feasibility_status::FeasibilityStatus, seed::Int;
-                                    relax_integer::Bool=true,
-                                    bounds_to_constraints::Bool=false,
-                                    dualize::Bool=false,
-                                    optimizer=nothing,
-                                    max_feasibility_retries::Int=10,
-                                    feasibility_timeout::Float64=10.0) where T <: ProblemGenerator
+function _generate_problem_verified(
+    ::Type{T},
+    target_variables::Int,
+    feasibility_status::FeasibilityStatus,
+    seed::Int;
+    relax_integer::Bool=true,
+    bounds_to_constraints::Bool=false,
+    dualize::Bool=false,
+    optimizer=nothing,
+    max_feasibility_retries::Int=10,
+    feasibility_timeout::Float64=10.0,
+) where {T <: ProblemGenerator}
     max_feasibility_retries >= 1 ||
         error("max_feasibility_retries must be >= 1 (got $max_feasibility_retries).")
     needs_check = optimizer !== nothing && feasibility_status !== unknown
@@ -292,37 +303,47 @@ function _generate_problem_verified(::Type{T}, target_variables::Int,
         if !needs_check
             return dualize ? dualize_model(model) : model, problem, current_seed
         end
-        verdict, ts = _check_feasibility_contract(model, optimizer, feasibility_status;
-                                                  timeout=feasibility_timeout)
+        verdict, ts = _check_feasibility_contract(
+            model, optimizer, feasibility_status; timeout=feasibility_timeout
+        )
         if verdict === :holds
             return dualize ? dualize_model(model) : model, problem, current_seed
         elseif verdict === :inconclusive
             # The solve certified nothing, so we have no evidence against this
             # instance and rebuilding would just re-ask an unanswerable question.
             # Report the real cause instead of charging it to the retry budget.
-            error("Feasibility contract could not be verified for $T " *
-                  "(target_variables=$target_variables, status=$feasibility_status, " *
-                  "seed=$current_seed): the verification solve returned $ts " *
-                  "after a $(feasibility_timeout)s limit. This is not evidence of a " *
-                  "contract violation. Raise `feasibility_timeout`, use a stronger " *
-                  "optimizer, or drop `optimizer` to skip verification.")
+            error(
+                "Feasibility contract could not be verified for $T " *
+                "(target_variables=$target_variables, status=$feasibility_status, " *
+                "seed=$current_seed): the verification solve returned $ts " *
+                "after a $(feasibility_timeout)s limit. This is not evidence of a " *
+                "contract violation. Raise `feasibility_timeout`, use a stronger " *
+                "optimizer, or drop `optimizer` to skip verification.",
+            )
         end
         # Contract disproved — rebuild with a fresh seed if another attempt remains.
         attempt < max_feasibility_retries && (current_seed += 1)
     end
 
-    error("Feasibility contract not satisfied for $T " *
-          "(target_variables=$target_variables, status=$feasibility_status) " *
-          "after $max_feasibility_retries attempts " *
-          "(seeds $seed through $current_seed); no model was returned.")
+    error(
+        "Feasibility contract not satisfied for $T " *
+        "(target_variables=$target_variables, status=$feasibility_status) " *
+        "after $max_feasibility_retries attempts " *
+        "(seeds $seed through $current_seed); no model was returned.",
+    )
 end
 
 # Ref-based overload delegating to the type-based builder above.
-function _generate_problem_verified(ref::ProblemVariant, target_variables::Int,
-                                    feasibility_status::FeasibilityStatus, seed::Int;
-                                    kwargs...)
-    return _generate_problem_verified(get_problem_type(ref), target_variables,
-                                      feasibility_status, seed; kwargs...)
+function _generate_problem_verified(
+    ref::ProblemVariant,
+    target_variables::Int,
+    feasibility_status::FeasibilityStatus,
+    seed::Int;
+    kwargs...,
+)
+    return _generate_problem_verified(
+        get_problem_type(ref), target_variables, feasibility_status, seed; kwargs...
+    )
 end
 
 # Classify a solver termination status against the requested `feasibility_status`.
@@ -366,9 +387,9 @@ end
 # Solve `model` and classify the result via `_classify_termination`, returning
 # `(verdict, termination_status)`. Solves a structural copy so the caller's model is
 # returned pristine (no optimizer attached, no time limit set, not pre-solved).
-function _check_feasibility_contract(model::Model, optimizer,
-                                     feasibility_status::FeasibilityStatus;
-                                     timeout::Float64=10.0)
+function _check_feasibility_contract(
+    model::Model, optimizer, feasibility_status::FeasibilityStatus; timeout::Float64=10.0
+)
     check = copy(model)
     set_optimizer(check, optimizer)
     set_silent(check)
@@ -407,25 +428,34 @@ returns a status separating neither case — raises rather than counting as a vi
 With `optimizer=nothing` (the default) no solving is performed.
 
 # Returns
-- `model`: The JuMP model
-- `problem`: The problem generator instance containing all parameters
+
+  - `model`: The JuMP model
+  - `problem`: The problem generator instance containing all parameters
 """
-function generate_problem(::Type{T}, target_variables::Int,
-                          feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
-                          relax_integer::Bool=true,
-                          bounds_to_constraints::Bool=false,
-                          dualize::Bool=false,
-                          optimizer=nothing,
-                          max_feasibility_retries::Int=10,
-                          feasibility_timeout::Float64=10.0) where T <: ProblemGenerator
-    model, problem, _ = _generate_problem_verified(T, target_variables,
-                                                   feasibility_status, seed;
-                                                   relax_integer=relax_integer,
-                                                   bounds_to_constraints=bounds_to_constraints,
-                                                   dualize=dualize,
-                                                   optimizer=optimizer,
-                                                   max_feasibility_retries=max_feasibility_retries,
-                                                   feasibility_timeout=feasibility_timeout)
+function generate_problem(
+    ::Type{T},
+    target_variables::Int,
+    feasibility_status::FeasibilityStatus=unknown,
+    seed::Int=0;
+    relax_integer::Bool=true,
+    bounds_to_constraints::Bool=false,
+    dualize::Bool=false,
+    optimizer=nothing,
+    max_feasibility_retries::Int=10,
+    feasibility_timeout::Float64=10.0,
+) where {T <: ProblemGenerator}
+    model, problem, _ = _generate_problem_verified(
+        T,
+        target_variables,
+        feasibility_status,
+        seed;
+        relax_integer=relax_integer,
+        bounds_to_constraints=bounds_to_constraints,
+        dualize=dualize,
+        optimizer=optimizer,
+        max_feasibility_retries=max_feasibility_retries,
+        feasibility_timeout=feasibility_timeout,
+    )
     return model, problem
 end
 
@@ -437,19 +467,30 @@ end
 
 Generate a problem from a fully-qualified `category/variant` reference.
 """
-function generate_problem(ref::ProblemVariant, target_variables::Int,
-                          feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
-                          relax_integer::Bool=true, bounds_to_constraints::Bool=false,
-                          dualize::Bool=false,
-                          optimizer=nothing, max_feasibility_retries::Int=10,
-                          feasibility_timeout::Float64=10.0)
-    return generate_problem(get_problem_type(ref), target_variables,
-                            feasibility_status, seed; relax_integer=relax_integer,
-                            bounds_to_constraints=bounds_to_constraints,
-                            dualize=dualize,
-                            optimizer=optimizer,
-                            max_feasibility_retries=max_feasibility_retries,
-                            feasibility_timeout=feasibility_timeout)
+function generate_problem(
+    ref::ProblemVariant,
+    target_variables::Int,
+    feasibility_status::FeasibilityStatus=unknown,
+    seed::Int=0;
+    relax_integer::Bool=true,
+    bounds_to_constraints::Bool=false,
+    dualize::Bool=false,
+    optimizer=nothing,
+    max_feasibility_retries::Int=10,
+    feasibility_timeout::Float64=10.0,
+)
+    return generate_problem(
+        get_problem_type(ref),
+        target_variables,
+        feasibility_status,
+        seed;
+        relax_integer=relax_integer,
+        bounds_to_constraints=bounds_to_constraints,
+        dualize=dualize,
+        optimizer=optimizer,
+        max_feasibility_retries=max_feasibility_retries,
+        feasibility_timeout=feasibility_timeout,
+    )
 end
 
 """
@@ -461,19 +502,30 @@ end
 Generate a problem from a `"category"` or `"category/variant"` string, parsed via
 [`ProblemVariant`](@ref).
 """
-function generate_problem(ref::AbstractString, target_variables::Int,
-                          feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
-                          relax_integer::Bool=true, bounds_to_constraints::Bool=false,
-                          dualize::Bool=false,
-                          optimizer=nothing, max_feasibility_retries::Int=10,
-                          feasibility_timeout::Float64=10.0)
-    return generate_problem(ProblemVariant(ref), target_variables,
-                            feasibility_status, seed; relax_integer=relax_integer,
-                            bounds_to_constraints=bounds_to_constraints,
-                            dualize=dualize,
-                            optimizer=optimizer,
-                            max_feasibility_retries=max_feasibility_retries,
-                            feasibility_timeout=feasibility_timeout)
+function generate_problem(
+    ref::AbstractString,
+    target_variables::Int,
+    feasibility_status::FeasibilityStatus=unknown,
+    seed::Int=0;
+    relax_integer::Bool=true,
+    bounds_to_constraints::Bool=false,
+    dualize::Bool=false,
+    optimizer=nothing,
+    max_feasibility_retries::Int=10,
+    feasibility_timeout::Float64=10.0,
+)
+    return generate_problem(
+        ProblemVariant(ref),
+        target_variables,
+        feasibility_status,
+        seed;
+        relax_integer=relax_integer,
+        bounds_to_constraints=bounds_to_constraints,
+        dualize=dualize,
+        optimizer=optimizer,
+        max_feasibility_retries=max_feasibility_retries,
+        feasibility_timeout=feasibility_timeout,
+    )
 end
 
 """
@@ -487,43 +539,55 @@ Generate a problem for a category. With `variant=nothing` the category's default
 variant is used; pass `variant=:name` to select a specific variant.
 
 # Arguments
-- `category`: Problem category symbol (e.g. `:transportation`)
-- `target_variables`: Target number of variables in the LP formulation
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
-- `variant`: Optional variant symbol; defaults to the category default
-- `relax_integer`: Relax integrality of the generated model
-- `bounds_to_constraints`: Reformulate variable bounds (other than `x ≥ 0`) as
-  explicit affine constraints
-- `dualize`: Replace the continuous generated model with its dual formulation
-- `optimizer`: Optional solver used to verify the feasibility contract (see
-  [`_generate_problem_verified`](@ref)). `nothing` disables verification.
-- `max_feasibility_retries`: Maximum number of rebuild attempts when verification
-  disproves the requested status.
-- `feasibility_timeout`: Time limit (seconds) for each verification solve. Exceeding
-  it raises rather than consuming a retry; unrelaxed MIPs may need more than the
-  10s default.
+
+  - `category`: Problem category symbol (e.g. `:transportation`)
+  - `target_variables`: Target number of variables in the LP formulation
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
+  - `variant`: Optional variant symbol; defaults to the category default
+  - `relax_integer`: Relax integrality of the generated model
+  - `bounds_to_constraints`: Reformulate variable bounds (other than `x ≥ 0`) as
+    explicit affine constraints
+  - `dualize`: Replace the continuous generated model with its dual formulation
+  - `optimizer`: Optional solver used to verify the feasibility contract (see
+    [`_generate_problem_verified`](@ref)). `nothing` disables verification.
+  - `max_feasibility_retries`: Maximum number of rebuild attempts when verification
+    disproves the requested status.
+  - `feasibility_timeout`: Time limit (seconds) for each verification solve. Exceeding
+    it raises rather than consuming a retry; unrelaxed MIPs may need more than the
+    10s default.
 
 # Returns
-- `model`: The JuMP model
-- `problem`: The problem generator instance
+
+  - `model`: The JuMP model
+  - `problem`: The problem generator instance
 """
-function generate_problem(category::Symbol, target_variables::Int,
-                          feasibility_status::FeasibilityStatus=unknown, seed::Int=0;
-                          variant::Union{Symbol,Nothing}=nothing, relax_integer::Bool=true,
-                          bounds_to_constraints::Bool=false,
-                          dualize::Bool=false,
-                          optimizer=nothing, max_feasibility_retries::Int=10,
-                          feasibility_timeout::Float64=10.0)
-    ref = variant === nothing ? ProblemVariant(category) :
-                                ProblemVariant(category, variant)
-    return generate_problem(ref, target_variables, feasibility_status, seed;
-                            relax_integer=relax_integer,
-                            bounds_to_constraints=bounds_to_constraints,
-                            dualize=dualize,
-                            optimizer=optimizer,
-                            max_feasibility_retries=max_feasibility_retries,
-                            feasibility_timeout=feasibility_timeout)
+function generate_problem(
+    category::Symbol,
+    target_variables::Int,
+    feasibility_status::FeasibilityStatus=unknown,
+    seed::Int=0;
+    variant::Union{Symbol, Nothing}=nothing,
+    relax_integer::Bool=true,
+    bounds_to_constraints::Bool=false,
+    dualize::Bool=false,
+    optimizer=nothing,
+    max_feasibility_retries::Int=10,
+    feasibility_timeout::Float64=10.0,
+)
+    ref = variant === nothing ? ProblemVariant(category) : ProblemVariant(category, variant)
+    return generate_problem(
+        ref,
+        target_variables,
+        feasibility_status,
+        seed;
+        relax_integer=relax_integer,
+        bounds_to_constraints=bounds_to_constraints,
+        dualize=dualize,
+        optimizer=optimizer,
+        max_feasibility_retries=max_feasibility_retries,
+        feasibility_timeout=feasibility_timeout,
+    )
 end
 
 # ---------------------------------------------------------------------------
@@ -614,18 +678,23 @@ the probability. When `optimizer` is supplied and `feasibility_status` is
 [`generate_problem`](@ref)).
 
 # Returns
-- `model`: The JuMP model
-- `ref`: The `ProblemVariant` that was selected
-- `problem`: The problem generator instance
+
+  - `model`: The JuMP model
+  - `ref`: The `ProblemVariant` that was selected
+  - `problem`: The problem generator instance
 """
-function generate_random_problem(target_variables::Int;
-                                 feasibility_status::FeasibilityStatus=unknown,
-                                 relax_integer::Bool=true,
-                                 bounds_to_constraints::Bool=false,
-                                 dualize::Bool=false,
-                                 dualize_probability::Real=0.0, seed::Int=0,
-                                 optimizer=nothing, max_feasibility_retries::Int=10,
-                                 feasibility_timeout::Float64=10.0)
+function generate_random_problem(
+    target_variables::Int;
+    feasibility_status::FeasibilityStatus=unknown,
+    relax_integer::Bool=true,
+    bounds_to_constraints::Bool=false,
+    dualize::Bool=false,
+    dualize_probability::Real=0.0,
+    seed::Int=0,
+    optimizer=nothing,
+    max_feasibility_retries::Int=10,
+    feasibility_timeout::Float64=10.0,
+)
     probability = _validate_dualize_probability(dualize_probability)
     rng = MersenneTwister(seed)
 
@@ -636,13 +705,18 @@ function generate_random_problem(target_variables::Int;
 
     ref = rand(rng, problems)
     apply_dualization = _should_dualize(rng, dualize, probability)
-    model, problem = generate_problem(ref, target_variables, feasibility_status, seed;
-                                      relax_integer=relax_integer,
-                                      bounds_to_constraints=bounds_to_constraints,
-                                      dualize=apply_dualization,
-                                      optimizer=optimizer,
-                                      max_feasibility_retries=max_feasibility_retries,
-                                      feasibility_timeout=feasibility_timeout)
+    model, problem = generate_problem(
+        ref,
+        target_variables,
+        feasibility_status,
+        seed;
+        relax_integer=relax_integer,
+        bounds_to_constraints=bounds_to_constraints,
+        dualize=apply_dualization,
+        optimizer=optimizer,
+        max_feasibility_retries=max_feasibility_retries,
+        feasibility_timeout=feasibility_timeout,
+    )
 
     return model, ref, problem
 end

@@ -9,6 +9,7 @@ using StatsBase
 Generator for cutting stock optimization problems with a fixed setup cost per pattern.
 
 # Overview
+
 Models one-dimensional cutting stock where, in addition to consuming stock pieces,
 activating (setting up) a cutting pattern incurs a fixed cost. The decisions are a
 continuous usage count `x[j]` for each pattern and a binary activation `y[j]`
@@ -25,13 +26,14 @@ setup is worth a small number of rolls, which makes the consolidation tradeoff
 than setup-dominated.
 
 # Fields
-- `piece_lengths::Vector{Float64}`: Length of each piece type required
-- `demands::Vector{Int}`: Demand for each piece type
-- `patterns::Vector{Vector{Int}}`: Cutting patterns (how many of each piece per stock)
-- `stock_length::Float64`: Length of stock material
-- `stock_limit::Int`: Maximum number of stock pieces available (0 = unlimited)
-- `setup_costs::Vector{Float64}`: Fixed setup cost incurred when a pattern is activated
-- `big_m::Vector{Float64}`: Per-pattern big-M coefficient linking `x[j]` to its activation `y[j]`
+
+  - `piece_lengths::Vector{Float64}`: Length of each piece type required
+  - `demands::Vector{Int}`: Demand for each piece type
+  - `patterns::Vector{Vector{Int}}`: Cutting patterns (how many of each piece per stock)
+  - `stock_length::Float64`: Length of stock material
+  - `stock_limit::Int`: Maximum number of stock pieces available (0 = unlimited)
+  - `setup_costs::Vector{Float64}`: Fixed setup cost incurred when a pattern is activated
+  - `big_m::Vector{Float64}`: Per-pattern big-M coefficient linking `x[j]` to its activation `y[j]`
 """
 struct SetupCostCuttingStockProblem <: ProblemGenerator
     piece_lengths::Vector{Float64}
@@ -53,11 +55,14 @@ and binary activation `y[1:n_patterns]`. Total variables = 2 * n_patterns, so th
 number of generated patterns is sized to roughly `target_variables / 2`.
 
 # Arguments
-- `target_variables`: Target number of variables (= 2 * number of cutting patterns)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (= 2 * number of cutting patterns)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function SetupCostCuttingStockProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function SetupCostCuttingStockProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # Variable count = n_patterns (x) + n_patterns (y) = 2 * n_patterns.
@@ -110,11 +115,12 @@ function SetupCostCuttingStockProblem(target_variables::Int, feasibility_status:
             base_length = rand(rng, common_lengths)
             if base_length > effective_max_length
                 valid_lengths = filter(x -> x <= effective_max_length, common_lengths)
-                base_length = isempty(valid_lengths) ? effective_max_length * 0.8 : rand(rng, valid_lengths)
+                base_length =
+                    isempty(valid_lengths) ? effective_max_length * 0.8 : rand(rng, valid_lengths)
             end
             variation = rand(rng, Normal(0, 0.02))
             length = clamp(base_length + variation, 0.1, effective_max_length)
-            push!(piece_lengths, round(length, digits=2))
+            push!(piece_lengths, round(length; digits=2))
         else
             α, β = 2.0, 3.0
             normalized = rand(rng, Beta(α, β))
@@ -154,7 +160,9 @@ function SetupCostCuttingStockProblem(target_variables::Int, feasibility_status:
     # Always generate a full set of feasible patterns (single-piece + mixed) so
     # that demand is satisfiable in principle; feasibility is then controlled
     # purely through the stock limit.
-    patterns = generate_setup_cost_patterns(rng, stock_length, piece_lengths, max_patterns, waste_factor)
+    patterns = generate_setup_cost_patterns(
+        rng, stock_length, piece_lengths, max_patterns, waste_factor
+    )
     n_patterns = length(patterns)
 
     # Apply demand variation (realistic manufacturing scenario).
@@ -185,8 +193,13 @@ function SetupCostCuttingStockProblem(target_variables::Int, feasibility_status:
     max_rolls_needed = max(1, sum(min_rolls_per_piece))
 
     # Determine target feasibility (unknown -> natural instance, no forced infeasibility).
-    target_feasible = feasibility_status == feasible ? true :
-                      feasibility_status == infeasible ? false : true
+    target_feasible = if feasibility_status == feasible
+        true
+    elseif feasibility_status == infeasible
+        false
+    else
+        true
+    end
 
     if feasibility_status == infeasible
         target_feasible = false
@@ -255,7 +268,9 @@ Produces direct single-piece patterns (guaranteeing demand is satisfiable in
 principle) plus sampled mixed patterns up to `max_patterns`. Self-contained so it
 does not collide with helpers defined in sibling variant files.
 """
-function generate_setup_cost_patterns(rng::AbstractRNG, standard_length, piece_lengths, max_patterns, waste_factor=0.1)
+function generate_setup_cost_patterns(
+    rng::AbstractRNG, standard_length, piece_lengths, max_patterns, waste_factor=0.1
+)
     patterns = Vector{Vector{Int}}()
 
     # Single-piece patterns
@@ -276,10 +291,11 @@ function generate_setup_cost_patterns(rng::AbstractRNG, standard_length, piece_l
         remaining_length = standard_length
         indices = collect(1:length(piece_lengths))
 
-        num_types_to_use = min(length(piece_lengths),
-                               max(1, round(Int, rand(rng, Exponential(2.0)))))
+        num_types_to_use = min(
+            length(piece_lengths), max(1, round(Int, rand(rng, Exponential(2.0))))
+        )
 
-        selected_indices = sample(rng, indices, num_types_to_use, replace=false)
+        selected_indices = sample(rng, indices, num_types_to_use; replace=false)
 
         while !isempty(selected_indices)
             weights = [standard_length / piece_lengths[i] for i in selected_indices]
@@ -312,7 +328,8 @@ Build a JuMP model for the cutting-stock-with-setup-cost problem. Deterministic 
 uses only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::SetupCostCuttingStockProblem)
     model = Model()

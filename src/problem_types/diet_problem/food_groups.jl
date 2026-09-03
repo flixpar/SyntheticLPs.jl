@@ -8,6 +8,7 @@ using Distributions
 Generator for diet problems with per-food-group minimum total quantity requirements.
 
 # Overview
+
 Models a realistic diet planning problem in which each food is assigned to a food
 group (e.g. grains, proteins, vegetables) and the diet must include at least a
 minimum total quantity from each group, in addition to meeting nutrient minimum
@@ -17,16 +18,17 @@ total food cost. Constraints enforce nutrient minimums, per-food supply limits, 
 overall cost budget, and a minimum total served quantity for every food group.
 
 # Fields
-- `n_foods::Int`: Number of different foods (equals the decision-variable count)
-- `n_nutrients::Int`: Number of different nutrients
-- `costs::Vector{Float64}`: Cost per unit of each food
-- `nutrient_content::Matrix{Float64}`: Nutrient content per unit of food (`n_foods × n_nutrients`)
-- `requirements::Vector{Float64}`: Minimum required intake for each nutrient
-- `food_supply_limits::Vector{Float64}`: Maximum available amount of each food
-- `cost_budget::Float64`: Maximum total food cost
-- `n_food_groups::Int`: Number of food groups
-- `food_group_assignments::Vector{Int}`: Food-group index for each food
-- `min_servings_per_group::Vector{Float64}`: Minimum total served quantity per food group
+
+  - `n_foods::Int`: Number of different foods (equals the decision-variable count)
+  - `n_nutrients::Int`: Number of different nutrients
+  - `costs::Vector{Float64}`: Cost per unit of each food
+  - `nutrient_content::Matrix{Float64}`: Nutrient content per unit of food (`n_foods × n_nutrients`)
+  - `requirements::Vector{Float64}`: Minimum required intake for each nutrient
+  - `food_supply_limits::Vector{Float64}`: Maximum available amount of each food
+  - `cost_budget::Float64`: Maximum total food cost
+  - `n_food_groups::Int`: Number of food groups
+  - `food_group_assignments::Vector{Int}`: Food-group index for each food
+  - `min_servings_per_group::Vector{Float64}`: Minimum total served quantity per food group
 """
 struct FoodGroupsDietProblem <: ProblemGenerator
     n_foods::Int
@@ -51,21 +53,25 @@ The model creates exactly one decision variable per food (`x[1:n_foods]`), so
 the target exactly.
 
 Feasibility handling:
-- `feasible`: a concrete baseline diet is constructed first; every constraint
-  (nutrient minimums, supply limits, cost budget, and group floors) is then set so
-  that this baseline diet satisfies it with margin, guaranteeing a feasible point.
-- `infeasible`: the feasible instance is built, then one food group's minimum
-  servings is forced above the group's total available supply, a deterministic
-  contradiction with a clear margin.
-- `unknown`: a natural instance is generated with no forced infeasibility (it is
-  built exactly like the feasible case).
+
+  - `feasible`: a concrete baseline diet is constructed first; every constraint
+    (nutrient minimums, supply limits, cost budget, and group floors) is then set so
+    that this baseline diet satisfies it with margin, guaranteeing a feasible point.
+  - `infeasible`: the feasible instance is built, then one food group's minimum
+    servings is forced above the group's total available supply, a deterministic
+    contradiction with a clear margin.
+  - `unknown`: a natural instance is generated with no forced infeasibility (it is
+    built exactly like the feasible case).
 
 # Arguments
-- `target_variables`: Target number of variables (equals `n_foods`)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (equals `n_foods`)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function FoodGroupsDietProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function FoodGroupsDietProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # Variable count = n_foods (one consumption variable per food), so n_foods = target.
@@ -114,7 +120,7 @@ function FoodGroupsDietProblem(target_variables::Int, feasibility_status::Feasib
     # Rank foods by nutrition per unit cost and allocate a realistic diet.
     nutrition_scores = [sum(nutrient_content[i, :]) / n_nutrients for i in 1:n_foods]
     cost_effectiveness = nutrition_scores ./ costs
-    order = sortperm(cost_effectiveness, rev=true)
+    order = sortperm(cost_effectiveness; rev=true)
 
     baseline_diet = zeros(n_foods)
     primary_count = max(3, round(Int, n_foods * 0.6))
@@ -179,7 +185,8 @@ function FoodGroupsDietProblem(target_variables::Int, feasibility_status::Feasib
     if actual_status == infeasible
         # Require more from one group than the group can ever supply (clear margin).
         target_group = rand(rng, 1:n_food_groups)
-        min_servings_per_group[target_group] = group_availability[target_group] * (1.5 + rand(rng) * 0.5)
+        min_servings_per_group[target_group] =
+            group_availability[target_group] * (1.5 + rand(rng) * 0.5)
     end
 
     return FoodGroupsDietProblem(
@@ -203,7 +210,8 @@ Build a JuMP model for the food-groups diet problem. Deterministic — uses only
 data stored in the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::FoodGroupsDietProblem)
     model = Model()
@@ -216,7 +224,10 @@ function build_model(prob::FoodGroupsDietProblem)
 
     # Nutrient minimum requirements.
     for j in 1:prob.n_nutrients
-        @constraint(model, sum(prob.nutrient_content[i, j] * x[i] for i in 1:prob.n_foods) >= prob.requirements[j])
+        @constraint(
+            model,
+            sum(prob.nutrient_content[i, j] * x[i] for i in 1:prob.n_foods) >= prob.requirements[j]
+        )
     end
 
     # Per-food supply limits.

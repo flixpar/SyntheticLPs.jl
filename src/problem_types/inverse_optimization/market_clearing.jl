@@ -56,6 +56,7 @@ ACM e-Energy 2023; see also Birge, Hortaçsu & Pavlin, *Operations Research*
 65(4), 2017 for market-structure inference from outcomes).
 
 # Overview
+
 A multi-period economic dispatch is given as **data**: generator `capacities`
 (MW), a diurnal `demands` profile (MWh per period), `ramp_limits` between
 consecutive periods, and the `observed_dispatch` that was actually cleared.
@@ -78,6 +79,7 @@ slackness is automatic, so the observed dispatch is optimal for the dispatch LP
 under the inferred offers — the inferred costs rationalize the market outcome.
 
 # Planted ground truth
+
 True offers are sampled by unit type — baseload (large, cheap), intermediate,
 peaker (small, expensive) — and the observation is the *exact* merit-order
 dispatch against them: infra-marginal units at their ceiling, one marginal unit
@@ -94,30 +96,32 @@ duals vanish at the observation — as Liang–Dvorkin observe for the systems t
 study.
 
 # Feasibility profiles
-- `feasible`: stores a `DispatchPricingWitness` (true offers and duals).
-- `infeasible`: the observation maxes an expensive-by-box unit in every period
-  while a cheap-by-box unit never runs — a merit-order inversion refuted by a
-  `MeritOrderInversionCertificate` from LP rows alone.
-- `unknown`: a coin flip between two unguaranteed channels — prior noise and
-  box sampled independently (the true offers may or may not lie inside the
-  box), or a box-consistent prior whose observed dispatch is nudged out of
-  merit order in one period (shifted load from the marginal unit to an offline
-  dearer one), which the sampled boxes may or may not be able to rationalize.
+
+  - `feasible`: stores a `DispatchPricingWitness` (true offers and duals).
+  - `infeasible`: the observation maxes an expensive-by-box unit in every period
+    while a cheap-by-box unit never runs — a merit-order inversion refuted by a
+    `MeritOrderInversionCertificate` from LP rows alone.
+  - `unknown`: a coin flip between two unguaranteed channels — prior noise and
+    box sampled independently (the true offers may or may not lie inside the
+    box), or a box-consistent prior whose observed dispatch is nudged out of
+    merit order in one period (shifted load from the marginal unit to an offline
+    dearer one), which the sampled boxes may or may not be able to rationalize.
 
 # Fields
-- `num_periods::Int`, `num_units::Int`: Dispatch horizon and fleet size
-- `capacities::Vector{Float64}`: Generator ceilings `C_g` (MW)
-- `demands::Vector{Float64}`: Energy demand `D_t` per period (MWh)
-- `ramp_limits::Vector{Float64}`: Ramping allowance `R_g`
-- `ramp_pairs::Vector{Tuple{Int,Int}}`: `(unit, period)` pairs with ramp rows
-- `observed_dispatch::Matrix{Float64}`: Cleared quantities `x̂` (T × G)
-- `unit_types::Vector{Symbol}`: Sampled fleet composition
-- `prior_cost::Vector{Float64}`: Prior offers `ĉ`
-- `cost_lower::Vector{Float64}`, `cost_upper::Vector{Float64}`: Admissible box
-- `deviation_weights::Vector{Float64}`: Weighted-deviation weights
-- `feasible_witness::Union{Nothing,DispatchPricingWitness}`: set for `feasible`
-- `infeasibility_certificate::Union{Nothing,MeritOrderInversionCertificate}`: set for `infeasible`
-- `feasibility_status::FeasibilityStatus`: Requested profile
+
+  - `num_periods::Int`, `num_units::Int`: Dispatch horizon and fleet size
+  - `capacities::Vector{Float64}`: Generator ceilings `C_g` (MW)
+  - `demands::Vector{Float64}`: Energy demand `D_t` per period (MWh)
+  - `ramp_limits::Vector{Float64}`: Ramping allowance `R_g`
+  - `ramp_pairs::Vector{Tuple{Int,Int}}`: `(unit, period)` pairs with ramp rows
+  - `observed_dispatch::Matrix{Float64}`: Cleared quantities `x̂` (T × G)
+  - `unit_types::Vector{Symbol}`: Sampled fleet composition
+  - `prior_cost::Vector{Float64}`: Prior offers `ĉ`
+  - `cost_lower::Vector{Float64}`, `cost_upper::Vector{Float64}`: Admissible box
+  - `deviation_weights::Vector{Float64}`: Weighted-deviation weights
+  - `feasible_witness::Union{Nothing,DispatchPricingWitness}`: set for `feasible`
+  - `infeasibility_certificate::Union{Nothing,MeritOrderInversionCertificate}`: set for `infeasible`
+  - `feasibility_status::FeasibilityStatus`: Requested profile
 """
 struct InverseDispatchCostProblem <: ProblemGenerator
     num_periods::Int
@@ -125,15 +129,15 @@ struct InverseDispatchCostProblem <: ProblemGenerator
     capacities::Vector{Float64}
     demands::Vector{Float64}
     ramp_limits::Vector{Float64}
-    ramp_pairs::Vector{Tuple{Int,Int}}
+    ramp_pairs::Vector{Tuple{Int, Int}}
     observed_dispatch::Matrix{Float64}
     unit_types::Vector{Symbol}
     prior_cost::Vector{Float64}
     cost_lower::Vector{Float64}
     cost_upper::Vector{Float64}
     deviation_weights::Vector{Float64}
-    feasible_witness::Union{Nothing,DispatchPricingWitness}
-    infeasibility_certificate::Union{Nothing,MeritOrderInversionCertificate}
+    feasible_witness::Union{Nothing, DispatchPricingWitness}
+    infeasibility_certificate::Union{Nothing, MeritOrderInversionCertificate}
     feasibility_status::FeasibilityStatus
 end
 
@@ -146,8 +150,9 @@ unit takes the remainder, and supra-marginal units stay off. Returns the `T × G
 dispatch matrix. Deterministic (ties broken by unit index; continuous offers
 make ties measure-zero).
 """
-function _merit_order_dispatch(costs::Vector{Float64}, capacities::Vector{Float64},
-                               demands::Vector{Float64})
+function _merit_order_dispatch(
+    costs::Vector{Float64}, capacities::Vector{Float64}, demands::Vector{Float64}
+)
     T, G = length(demands), length(costs)
     order = sortperm(costs)
     dispatch = zeros(T, G)
@@ -180,10 +185,12 @@ function _dispatch_prior_is_informative(
     observed_dispatch::Matrix{Float64},
 )
     prior_dispatch = _merit_order_dispatch(costs, capacities, demands)
-    prior_value = sum(prior_dispatch[t, g] * costs[g]
-                      for t in eachindex(demands), g in eachindex(costs))
-    observed_value = sum(observed_dispatch[t, g] * costs[g]
-                         for t in eachindex(demands), g in eachindex(costs))
+    prior_value = sum(
+        prior_dispatch[t, g] * costs[g] for t in eachindex(demands), g in eachindex(costs)
+    )
+    observed_value = sum(
+        observed_dispatch[t, g] * costs[g] for t in eachindex(demands), g in eachindex(costs)
+    )
     tolerance = 1.0e-9 * max(1.0, abs(prior_value), abs(observed_value))
     return observed_value > prior_value + tolerance
 end
@@ -206,7 +213,7 @@ function _make_dispatch_prior_informative!(
     demands::Vector{Float64},
     observed_dispatch::Matrix{Float64},
 )
-    candidates = Tuple{Float64,Int,Int}[]
+    candidates = Tuple{Float64, Int, Int}[]
     T, G = size(observed_dispatch)
     merit_order = sortperm(true_cost)
     # Under the planted merit-order dispatch, producing units form a prefix of
@@ -218,8 +225,7 @@ function _make_dispatch_prior_informative!(
         available = merit_order[position + 1]
         observed_dispatch[t, producing] > 1.0e-8 || continue
         observed_dispatch[t, available] < capacities[available] - 1.0e-8 || continue
-        push!(candidates,
-              (true_cost[available] - true_cost[producing], producing, available))
+        push!(candidates, (true_cost[available] - true_cost[producing], producing, available))
     end
     sort!(candidates)
 
@@ -228,9 +234,8 @@ function _make_dispatch_prior_informative!(
         margin = max(0.10, 0.01 * midpoint)
         prior[producing] = midpoint + margin
         prior[available] = max(0.05, midpoint - margin)
-        _dispatch_prior_is_informative(
-            prior, capacities, demands, observed_dispatch,
-        ) && return prior
+        _dispatch_prior_is_informative(prior, capacities, demands, observed_dispatch) &&
+            return prior
     end
     error("Could not construct an informative market-clearing cost prior")
 end
@@ -250,8 +255,7 @@ below that threshold round down by one; smaller requests use the smallest fleet
 """
 function _dispatch_dims(target::Int)
     periods0 = clamp(round(Int, sqrt(target / 6.0)), 4, 24)
-    period_candidates = sort!(collect(4:24); by=periods ->
-                              (abs(periods - periods0), periods))
+    period_candidates = sort!(collect(4:24); by=periods -> (abs(periods - periods0), periods))
     for periods in period_candidates
         residual = target - periods
         residual > 0 || continue
@@ -288,7 +292,9 @@ from tens (peakers) to hundreds (baseload) of MW, a diurnal demand curve at
 55–70% of fleet capacity with a 15–35% peak–valley swing, and prior noise of a
 few \$/MWh.
 """
-function InverseDispatchCostProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function InverseDispatchCostProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     _check_inverse_target(target_variables)
     rng = MersenneTwister(seed)
 
@@ -297,12 +303,19 @@ function InverseDispatchCostProblem(target_variables::Int, feasibility_status::F
     # --- Fleet --------------------------------------------------------------
     # Baseload units are large and cheap, peakers small and expensive; the mix
     # sets the shape of the offer curve the inverse problem must recover.
-    types = [sample(rng, [:baseload, :intermediate, :peaker],
-                    Weights([0.30, 0.45, 0.25])) for _ in 1:G]
-    capacities = [round(type == :baseload ? rand(rng, LogNormal(log(450.0), 0.25)) :
-                          type == :intermediate ? rand(rng, LogNormal(log(180.0), 0.3)) :
-                          rand(rng, LogNormal(log(90.0), 0.35)); digits=1)
-                  for type in types]
+    types = [
+        sample(rng, [:baseload, :intermediate, :peaker], Weights([0.30, 0.45, 0.25])) for _ in 1:G
+    ]
+    capacities = [round(
+        if type == :baseload
+            rand(rng, LogNormal(log(450.0), 0.25))
+        elseif type == :intermediate
+            rand(rng, LogNormal(log(180.0), 0.3))
+        else
+            rand(rng, LogNormal(log(90.0), 0.35))
+        end;
+        digits=1,
+    ) for type in types]
     total_capacity = sum(capacities)
 
     # --- Demand profile -------------------------------------------------------
@@ -311,16 +324,24 @@ function InverseDispatchCostProblem(target_variables::Int, feasibility_status::F
     base = rand(rng, Uniform(0.55, 0.70))
     amplitude = rand(rng, Uniform(0.15, 0.35))
     phase = rand(rng, Uniform(0.0, 2.0 * pi))
-    demands = [base * total_capacity *
-               (1.0 + amplitude * sin(2.0 * pi * (t - 1) / T + phase)) for t in 1:T]
+    demands = [
+        base * total_capacity * (1.0 + amplitude * sin(2.0 * pi * (t - 1) / T + phase)) for t in 1:T
+    ]
     ceiling = 0.85 * (total_capacity - maximum(capacities))
     maximum(demands) > ceiling && (demands .*= ceiling / maximum(demands))
     demands = round.(demands; digits=1)
 
     # --- True offers and the observed dispatch -------------------------------
-    offer = [round(type == :baseload ? rand(rng, Uniform(12.0, 32.0)) :
-                    type == :intermediate ? rand(rng, Uniform(25.0, 55.0)) :
-                    rand(rng, Uniform(45.0, 85.0)); digits=1) for type in types]
+    offer = [round(
+        if type == :baseload
+            rand(rng, Uniform(12.0, 32.0))
+        elseif type == :intermediate
+            rand(rng, Uniform(25.0, 55.0))
+        else
+            rand(rng, Uniform(45.0, 85.0))
+        end;
+        digits=1,
+    ) for type in types]
     true_dispatch = _merit_order_dispatch(offer, capacities, demands)
 
     prior_cost = similar(offer)
@@ -351,8 +372,9 @@ function InverseDispatchCostProblem(target_variables::Int, feasibility_status::F
                 prior_cost[g] = round(rand(rng, Uniform(58.0, 80.0)); digits=1)
                 box_radius[g] = round(rand(rng, Uniform(3.0, 8.0)); digits=1)
             else
-                prior_cost[g] = round(max(offer[g] + rand(rng, Normal(0.0, 2.5)),
-                                          0.5 * offer[g]); digits=1)
+                prior_cost[g] = round(
+                    max(offer[g] + rand(rng, Normal(0.0, 2.5)), 0.5 * offer[g]); digits=1
+                )
                 box_radius[g] = round(rand(rng, Uniform(4.0, 10.0)); digits=1)
             end
         end
@@ -366,29 +388,33 @@ function InverseDispatchCostProblem(target_variables::Int, feasibility_status::F
         # offer vector explains that period then depends on whether the two
         # affected units' boxes overlap, which the data decides.
         perturb_observation = feasibility_status == unknown && rand(rng) < 0.6
-        noise_sigma = (feasibility_status == feasible || perturb_observation) ?
-                      rand(rng, Uniform(1.5, 3.0)) : rand(rng, Uniform(2.0, 6.0))
+        noise_sigma = if (feasibility_status == feasible || perturb_observation)
+            rand(rng, Uniform(1.5, 3.0))
+        else
+            rand(rng, Uniform(2.0, 6.0))
+        end
         max_draws = feasibility_status == feasible ? 64 : 1
         for _ in 1:max_draws
             for g in 1:G
-                drift = rand(rng, truncated(Normal(0.0, noise_sigma),
-                                            -2.5 * noise_sigma, 2.5 * noise_sigma))
+                drift = rand(
+                    rng, truncated(Normal(0.0, noise_sigma), -2.5 * noise_sigma, 2.5 * noise_sigma)
+                )
                 prior_cost[g] = round(max(offer[g] + drift, 0.5 * offer[g]); digits=1)
-                box_radius[g] = rand(rng, (feasibility_status == feasible ||
-                                           perturb_observation) ?
-                                          Uniform(4.0, 12.0) : Uniform(2.5, 8.0))
+                box_radius[g] = rand(
+                    rng,
+                    if (feasibility_status == feasible || perturb_observation)
+                        Uniform(4.0, 12.0)
+                    else
+                        Uniform(2.5, 8.0)
+                    end,
+                )
             end
             feasibility_status == feasible || break
-            _dispatch_prior_is_informative(
-                prior_cost, capacities, demands, true_dispatch,
-            ) && break
+            _dispatch_prior_is_informative(prior_cost, capacities, demands, true_dispatch) && break
         end
-        if feasibility_status == feasible && !_dispatch_prior_is_informative(
-            prior_cost, capacities, demands, true_dispatch,
-        )
-            _make_dispatch_prior_informative!(
-                prior_cost, offer, capacities, demands, true_dispatch,
-            )
+        if feasibility_status == feasible &&
+            !_dispatch_prior_is_informative(prior_cost, capacities, demands, true_dispatch)
+            _make_dispatch_prior_informative!(prior_cost, offer, capacities, demands, true_dispatch)
         end
         if feasibility_status == feasible || perturb_observation
             # The box must contain the true offer, so its radius stays safely
@@ -401,10 +427,9 @@ function InverseDispatchCostProblem(target_variables::Int, feasibility_status::F
     cost_upper = prior_cost .+ box_radius
 
     if feasibility_status == infeasible
-        certificate = MeritOrderInversionCertificate(argmax(demands),
-                                                     idle_unit, maxed_unit,
-                                                     cost_upper[idle_unit],
-                                                     cost_lower[maxed_unit])
+        certificate = MeritOrderInversionCertificate(
+            argmax(demands), idle_unit, maxed_unit, cost_upper[idle_unit], cost_lower[maxed_unit]
+        )
     end
 
     dispatch = _merit_order_dispatch(offer, capacities, demands)
@@ -428,31 +453,33 @@ function InverseDispatchCostProblem(target_variables::Int, feasibility_status::F
     # --- Ramping limits ------------------------------------------------------
     # Derived from the observed dispatch with strict slack on every ramping
     # row, so the ramping duals vanish at the observation.
-    ramp_limits = [let deltas = [abs(dispatch[t + 1, g] - dispatch[t, g]) for t in 1:T-1]
-                       needed = isempty(deltas) ? 0.0 : maximum(deltas)
-                       physical = 0.20 * capacities[g] * rand(rng, Uniform(0.8, 1.5))
-                       round(max(physical, 1.15 * needed, 0.1); digits=1)
-                   end for g in 1:G]
+    ramp_limits = [
+        let deltas = [abs(dispatch[t + 1, g] - dispatch[t, g]) for t in 1:(T - 1)]
+            needed = isempty(deltas) ? 0.0 : maximum(deltas)
+            physical = 0.20 * capacities[g] * rand(rng, Uniform(0.8, 1.5))
+            round(max(physical, 1.15 * needed, 0.1); digits=1)
+        end for g in 1:G
+    ]
     for g in 1:G
-        for t in 1:T-1
+        for t in 1:(T - 1)
             ramp_limits[g] > abs(dispatch[t + 1, g] - dispatch[t, g]) ||
                 (ramp_limits[g] = round(abs(dispatch[t + 1, g] - dispatch[t, g]) + 0.1; digits=1))
         end
     end
 
-    ramp_pairs = Tuple{Int,Int}[]
+    ramp_pairs = Tuple{Int, Int}[]
     if T > 1 && num_ramp_pairs > 0
-        all_pairs = collect((g, t) for g in 1:G for t in 1:T-1)
-        ramp_pairs = sort!(sample(rng, all_pairs, min(num_ramp_pairs, length(all_pairs));
-                                  replace=false))
+        all_pairs = collect((g, t) for g in 1:G for t in 1:(T - 1))
+        ramp_pairs = sort!(
+            sample(rng, all_pairs, min(num_ramp_pairs, length(all_pairs)); replace=false)
+        )
     end
 
     # --- Witness -------------------------------------------------------------
     if feasibility_status == feasible
         # The clearing price of each period is the offer of its marginal unit —
         # the most expensive unit the stack actually dispatches.
-        energy_duals = [maximum(offer[g] for g in 1:G if dispatch[t, g] > 0.0)
-                        for t in 1:T]
+        energy_duals = [maximum(offer[g] for g in 1:G if dispatch[t, g] > 0.0) for t in 1:T]
         capacity_duals = [max(0.0, energy_duals[t] - offer[g]) for t in 1:T, g in 1:G]
         feasible_witness = DispatchPricingWitness(copy(offer), energy_duals, capacity_duals)
     end
@@ -460,12 +487,23 @@ function InverseDispatchCostProblem(target_variables::Int, feasibility_status::F
     deviation_weights = 1.0 ./ (0.10 .* max.(prior_cost, 1.0))
     deviation_weights .*= G / sum(deviation_weights)
 
-    return InverseDispatchCostProblem(T, G, capacities, demands, ramp_limits,
-                                      ramp_pairs, dispatch, types,
-                                      prior_cost, cost_lower, cost_upper,
-                                      deviation_weights,
-                                      feasible_witness, certificate,
-                                      feasibility_status)
+    return InverseDispatchCostProblem(
+        T,
+        G,
+        capacities,
+        demands,
+        ramp_limits,
+        ramp_pairs,
+        dispatch,
+        types,
+        prior_cost,
+        cost_lower,
+        cost_upper,
+        deviation_weights,
+        feasible_witness,
+        certificate,
+        feasibility_status,
+    )
 end
 
 """
@@ -478,7 +516,7 @@ function build_model(prob::InverseDispatchCostProblem)
     model = Model()
     T, G = prob.num_periods, prob.num_units
 
-    @variable(model, prob.cost_lower[g] <= c[g=1:G] <= prob.cost_upper[g])
+    @variable(model, prob.cost_lower[g] <= c[g = 1:G] <= prob.cost_upper[g])
     @variable(model, energy_dual[1:T] >= 0)
     @variable(model, cap_dual[1:T, 1:G] >= 0)
     ramp_set = Set(prob.ramp_pairs)
@@ -491,27 +529,28 @@ function build_model(prob::InverseDispatchCostProblem)
     for t in 1:T, g in 1:G
         expr = energy_dual[t] - cap_dual[t, g] - c[g]
         (g, t) in ramp_set && (expr += ramp_up[(g, t)] - ramp_down[(g, t)])
-        t > 1 && (g, t - 1) in ramp_set &&
-            (expr += ramp_down[(g, t - 1)] - ramp_up[(g, t - 1)])
+        t > 1 && (g, t - 1) in ramp_set && (expr += ramp_down[(g, t - 1)] - ramp_up[(g, t - 1)])
         @constraint(model, expr <= 0.0)
     end
 
     # Strong duality between the market's primal (dispatch cost) and dual
     # (price) sides pins the observed dispatch as the clearing outcome.
-    @constraint(model,
-                sum(prob.demands[t] * energy_dual[t] for t in 1:T) -
-                sum(prob.capacities[g] * cap_dual[t, g] for t in 1:T, g in 1:G) -
-                sum(prob.ramp_limits[g] * (ramp_up[(g, t)] + ramp_down[(g, t)])
-                    for (g, t) in prob.ramp_pairs) ==
-                sum(prob.observed_dispatch[t, g] * c[g] for t in 1:T, g in 1:G))
+    @constraint(
+        model,
+        sum(prob.demands[t] * energy_dual[t] for t in 1:T) -
+        sum(prob.capacities[g] * cap_dual[t, g] for t in 1:T, g in 1:G) - sum(
+            prob.ramp_limits[g] * (ramp_up[(g, t)] + ramp_down[(g, t)]) for
+            (g, t) in prob.ramp_pairs
+        ) == sum(prob.observed_dispatch[t, g] * c[g] for t in 1:T, g in 1:G)
+    )
 
     for g in 1:G
         @constraint(model, c[g] - dev_plus[g] + dev_minus[g] == prob.prior_cost[g])
     end
 
-    @objective(model, Min,
-               sum(prob.deviation_weights[g] * (dev_plus[g] + dev_minus[g])
-                   for g in 1:G))
+    @objective(
+        model, Min, sum(prob.deviation_weights[g] * (dev_plus[g] + dev_minus[g]) for g in 1:G)
+    )
 
     return model
 end

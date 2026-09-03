@@ -24,9 +24,9 @@ which never exceeds that link's capacity; `installation_cost` is the design's
 spend, which never exceeds the budget.
 """
 struct TelecomRouteWitness
-    installed_links::Vector{Tuple{Int,Int}}
-    routes::Vector{Vector{Tuple{Vector{Int},Float64}}}
-    link_loads::Dict{Tuple{Int,Int},Float64}
+    installed_links::Vector{Tuple{Int, Int}}
+    routes::Vector{Vector{Tuple{Vector{Int}, Float64}}}
+    link_loads::Dict{Tuple{Int, Int}, Float64}
     installation_cost::Float64
 end
 
@@ -40,7 +40,7 @@ the LP relaxation as well as the integer model.
 """
 struct TelecomCapacityCutCertificate
     side::Vector{Int}
-    crossing_links::Vector{Tuple{Int,Int}}
+    crossing_links::Vector{Tuple{Int, Int}}
     crossing_demand::Float64
     crossing_capacity::Float64
 end
@@ -48,15 +48,13 @@ end
 """
 Relaxation-proof budget certificate: the node set `side` exchanges
 `crossing_demand` units with its complement, so the crossing links must supply
-at least that much installed capacity, `sum_{a in cut} cap_a * y_a >=
-crossing_demand`. Every crossing link costs at least `cost_per_capacity =
-min_{a in cut} c_a / cap_a` per unit of capacity, hence any solution spends at
+at least that much installed capacity, `sum_{a in cut} cap_a * y_a >= crossing_demand`. Every crossing link costs at least `cost_per_capacity = min_{a in cut} c_a / cap_a` per unit of capacity, hence any solution spends at
 least `implied_minimum = crossing_demand * cost_per_capacity > budget`. The
 bound uses `y >= 0` only, so it holds for the LP relaxation too.
 """
 struct TelecomBudgetCertificate
     side::Vector{Int}
-    crossing_links::Vector{Tuple{Int,Int}}
+    crossing_links::Vector{Tuple{Int, Int}}
     crossing_demand::Float64
     cost_per_capacity::Float64
     implied_minimum::Float64
@@ -73,6 +71,7 @@ and how to route multiple traffic demands (commodities) to minimize total cost w
 capacity constraints. It is a multicommodity network design problem with discrete capacity installation.
 
 # Overview
+
 Models fixed-charge telecom network design with multicommodity routing. The
 decisions install physical links and route each traffic commodity over directed
 arcs. The objective minimizes installation cost plus routing cost. Flow
@@ -85,63 +84,65 @@ installation cost.
 Topology, capacities, demand and budget are *not* sampled independently. A
 planted nominal design ties them together:
 
-1. a proximity-driven topology is drawn and each link is given a SONET/OTN
-   capacity module sized from the traffic it carries under the nominal routing;
-2. the unit-demand traffic matrix is routed over that topology with a
-   Frank-Wolfe congestion-balancing routing, giving per-link loads and hence
-   `routable_scale`, the largest total demand this planted routing carries;
-3. a family of cuts (singletons, geometric sweeps, nearest-neighbour balls)
-   gives `cut_bound_scale`, the smallest total demand that provably cannot be
-   routed (`routable_scale <= cut_bound_scale` always);
-4. the realised total demand is placed relative to those two anchors according
-   to the requested feasibility status, and the budget is set relative to
-   `nominal_cost`, the spend of the planted design.
+ 1. a proximity-driven topology is drawn and each link is given a SONET/OTN
+    capacity module sized from the traffic it carries under the nominal routing;
+ 2. the unit-demand traffic matrix is routed over that topology with a
+    Frank-Wolfe congestion-balancing routing, giving per-link loads and hence
+    `routable_scale`, the largest total demand this planted routing carries;
+ 3. a family of cuts (singletons, geometric sweeps, nearest-neighbour balls)
+    gives `cut_bound_scale`, the smallest total demand that provably cannot be
+    routed (`routable_scale <= cut_bound_scale` always);
+ 4. the realised total demand is placed relative to those two anchors according
+    to the requested feasibility status, and the budget is set relative to
+    `nominal_cost`, the spend of the planted design.
 
 # Fields
-- `n_nodes::Int`: Number of nodes in the network
-- `n_arcs::Int`: Number of potential arcs/links
-- `n_commodities::Int`: Number of traffic demands (origin-destination pairs)
-- `arcs::Vector{Tuple{Int,Int}}`: Potential physical links (canonical form: i < j)
-- `directed_arcs::Vector{Tuple{Int,Int}}`: Directed arcs (both directions for each physical link)
-- `node_locations::Vector{Tuple{Float64,Float64}}`: Geographic coordinates of nodes
-- `distances::Dict{Tuple{Int,Int},Float64}`: Distance for each arc
-- `installation_costs::Dict{Tuple{Int,Int},Float64}`: Cost to install each physical link
-- `link_capacities::Dict{Tuple{Int,Int},Float64}`: Capacity of each physical link
-- `flow_costs::Dict{Tuple{Int,Int},Float64}`: Cost per unit flow on each directed arc
-- `commodities::Vector{Dict{Symbol,Any}}`: Traffic demands with :source, :sink, :demand
-- `budget::Float64`: Budget constraint for installation costs
-- `outgoing_arcs::Dict{Int,Vector{Tuple{Int,Int}}}`: Outgoing directed arcs for each node
-- `incoming_arcs::Dict{Int,Vector{Tuple{Int,Int}}}`: Incoming directed arcs for each node
-- `total_demand::Float64`: Realised sum of commodity demands
-- `routable_scale::Float64`: Total demand the planted routing carries exactly
-- `cut_bound_scale::Float64`: Total demand at which the tightest cut saturates
-- `nominal_cost::Float64`: Installation cost of the planted nominal design
-- `feasible_witness::Union{Nothing,TelecomRouteWitness}`: planted feasible point
-- `infeasibility_certificate::Union{Nothing,TelecomCapacityCutCertificate,TelecomBudgetCertificate}`
-- `feasibility_status::FeasibilityStatus`
+
+  - `n_nodes::Int`: Number of nodes in the network
+  - `n_arcs::Int`: Number of potential arcs/links
+  - `n_commodities::Int`: Number of traffic demands (origin-destination pairs)
+  - `arcs::Vector{Tuple{Int,Int}}`: Potential physical links (canonical form: i < j)
+  - `directed_arcs::Vector{Tuple{Int,Int}}`: Directed arcs (both directions for each physical link)
+  - `node_locations::Vector{Tuple{Float64,Float64}}`: Geographic coordinates of nodes
+  - `distances::Dict{Tuple{Int,Int},Float64}`: Distance for each arc
+  - `installation_costs::Dict{Tuple{Int,Int},Float64}`: Cost to install each physical link
+  - `link_capacities::Dict{Tuple{Int,Int},Float64}`: Capacity of each physical link
+  - `flow_costs::Dict{Tuple{Int,Int},Float64}`: Cost per unit flow on each directed arc
+  - `commodities::Vector{Dict{Symbol,Any}}`: Traffic demands with :source, :sink, :demand
+  - `budget::Float64`: Budget constraint for installation costs
+  - `outgoing_arcs::Dict{Int,Vector{Tuple{Int,Int}}}`: Outgoing directed arcs for each node
+  - `incoming_arcs::Dict{Int,Vector{Tuple{Int,Int}}}`: Incoming directed arcs for each node
+  - `total_demand::Float64`: Realised sum of commodity demands
+  - `routable_scale::Float64`: Total demand the planted routing carries exactly
+  - `cut_bound_scale::Float64`: Total demand at which the tightest cut saturates
+  - `nominal_cost::Float64`: Installation cost of the planted nominal design
+  - `feasible_witness::Union{Nothing,TelecomRouteWitness}`: planted feasible point
+  - `infeasibility_certificate::Union{Nothing,TelecomCapacityCutCertificate,TelecomBudgetCertificate}`
+  - `feasibility_status::FeasibilityStatus`
 """
 struct TelecomNetworkDesignProblem <: ProblemGenerator
     n_nodes::Int
     n_arcs::Int
     n_commodities::Int
-    arcs::Vector{Tuple{Int,Int}}
-    directed_arcs::Vector{Tuple{Int,Int}}
-    node_locations::Vector{Tuple{Float64,Float64}}
-    distances::Dict{Tuple{Int,Int},Float64}
-    installation_costs::Dict{Tuple{Int,Int},Float64}
-    link_capacities::Dict{Tuple{Int,Int},Float64}
-    flow_costs::Dict{Tuple{Int,Int},Float64}
-    commodities::Vector{Dict{Symbol,Any}}
+    arcs::Vector{Tuple{Int, Int}}
+    directed_arcs::Vector{Tuple{Int, Int}}
+    node_locations::Vector{Tuple{Float64, Float64}}
+    distances::Dict{Tuple{Int, Int}, Float64}
+    installation_costs::Dict{Tuple{Int, Int}, Float64}
+    link_capacities::Dict{Tuple{Int, Int}, Float64}
+    flow_costs::Dict{Tuple{Int, Int}, Float64}
+    commodities::Vector{Dict{Symbol, Any}}
     budget::Float64
-    outgoing_arcs::Dict{Int,Vector{Tuple{Int,Int}}}
-    incoming_arcs::Dict{Int,Vector{Tuple{Int,Int}}}
+    outgoing_arcs::Dict{Int, Vector{Tuple{Int, Int}}}
+    incoming_arcs::Dict{Int, Vector{Tuple{Int, Int}}}
     total_demand::Float64
     routable_scale::Float64
     cut_bound_scale::Float64
     nominal_cost::Float64
-    feasible_witness::Union{Nothing,TelecomRouteWitness}
-    infeasibility_certificate::Union{Nothing,TelecomCapacityCutCertificate,
-                                    TelecomBudgetCertificate}
+    feasible_witness::Union{Nothing, TelecomRouteWitness}
+    infeasibility_certificate::Union{
+        Nothing, TelecomCapacityCutCertificate, TelecomBudgetCertificate
+    }
     feasibility_status::FeasibilityStatus
 end
 
@@ -154,8 +155,7 @@ end
 """
     _telecom_dimensions(target::Int, rng) -> (n_arcs, n_commodities, n_nodes)
 
-Pick topology dimensions whose exact model size, `n_arcs * (2 * n_commodities +
-1)`, lands as close as possible to `target`.
+Pick topology dimensions whose exact model size, `n_arcs * (2 * n_commodities + 1)`, lands as close as possible to `target`.
 
 The model has one binary per physical link and one flow variable per
 (commodity, directed arc) pair, so the size is a product of two integers. The
@@ -214,11 +214,10 @@ end
 Geographic node placement: population clusters (metro areas) with Gaussian
 scatter around each cluster centre.
 """
-function _telecom_node_locations(rng::AbstractRNG, n_nodes::Int, width::Float64,
-                                 height::Float64)
+function _telecom_node_locations(rng::AbstractRNG, n_nodes::Int, width::Float64, height::Float64)
     n_clusters = max(1, div(n_nodes, 4))
     centers = [(width * rand(rng), height * rand(rng)) for _ in 1:n_clusters]
-    locations = Vector{Tuple{Float64,Float64}}(undef, n_nodes)
+    locations = Vector{Tuple{Float64, Float64}}(undef, n_nodes)
     for i in 1:n_nodes
         c = centers[rand(rng, 1:n_clusters)]
         x = clamp(c[1] + randn(rng) * (width / 8), 0.0, width)
@@ -235,10 +234,10 @@ Proximity-driven topology with exactly `n_arcs` links: a Euclidean minimum
 spanning tree (guaranteeing connectivity) plus the shortest remaining pairs,
 with a lognormal perturbation of the ranking so a few long-haul links appear.
 """
-function _telecom_topology(rng::AbstractRNG, n_nodes::Int, n_arcs::Int,
-                           locations::Vector{Tuple{Float64,Float64}})
-    dist(i, j) = hypot(locations[i][1] - locations[j][1],
-                       locations[i][2] - locations[j][2])
+function _telecom_topology(
+    rng::AbstractRNG, n_nodes::Int, n_arcs::Int, locations::Vector{Tuple{Float64, Float64}}
+)
+    dist(i, j) = hypot(locations[i][1] - locations[j][1], locations[i][2] - locations[j][2])
 
     # Prim's MST.
     in_tree = falses(n_nodes)
@@ -249,7 +248,7 @@ function _telecom_topology(rng::AbstractRNG, n_nodes::Int, n_arcs::Int,
         best_cost[j] = dist(1, j)
         best_from[j] = 1
     end
-    links = Set{Tuple{Int,Int}}()
+    links = Set{Tuple{Int, Int}}()
     for _ in 2:n_nodes
         u = 0
         best = Inf
@@ -274,7 +273,7 @@ function _telecom_topology(rng::AbstractRNG, n_nodes::Int, n_arcs::Int,
     end
 
     if length(links) < n_arcs
-        candidates = Tuple{Float64,Int,Int}[]
+        candidates = Tuple{Float64, Int, Int}[]
         for i in 1:n_nodes, j in (i + 1):n_nodes
             (i, j) in links && continue
             push!(candidates, (dist(i, j) * exp(randn(rng) * 0.35), i, j))
@@ -323,8 +322,9 @@ end
 # Shortest paths (binary-heap Dijkstra over the sparse link list)
 # ---------------------------------------------------------------------------
 
-function _telecom_heap_push!(heap_keys::Vector{Float64}, heap_vals::Vector{Int},
-                             key::Float64, val::Int)
+function _telecom_heap_push!(
+    heap_keys::Vector{Float64}, heap_vals::Vector{Int}, key::Float64, val::Int
+)
     push!(heap_keys, key)
     push!(heap_vals, val)
     c = length(heap_keys)
@@ -366,8 +366,9 @@ Dijkstra from `source` over the undirected link list. `adjacency[u]` holds
 `(neighbour, link_index)` pairs and `lengths[a]` is link `a`'s length. Returns
 `(dist, parent_node, parent_link)`.
 """
-function _telecom_shortest_path_tree(adjacency::Vector{Vector{Tuple{Int,Int}}},
-                                     lengths::Vector{Float64}, source::Int)
+function _telecom_shortest_path_tree(
+    adjacency::Vector{Vector{Tuple{Int, Int}}}, lengths::Vector{Float64}, source::Int
+)
     n = length(adjacency)
     dist = fill(Inf, n)
     parent_node = zeros(Int, n)
@@ -391,8 +392,9 @@ function _telecom_shortest_path_tree(adjacency::Vector{Vector{Tuple{Int,Int}}},
     return dist, parent_node, parent_link
 end
 
-function _telecom_extract_path(parent_node::Vector{Int}, parent_link::Vector{Int},
-                               source::Int, sink::Int)
+function _telecom_extract_path(
+    parent_node::Vector{Int}, parent_link::Vector{Int}, source::Int, sink::Int
+)
     path = Int[]
     node = sink
     while node != source
@@ -418,20 +420,24 @@ congestion. Iteration 1 is the plain cheapest-path routing; later iterations
 take Frank-Wolfe steps on `sum_a (load_a / cap_a)^4`, which spreads traffic off
 the bottlenecks. The best iterate (lowest maximum utilisation) is returned as
 
-- `loads[a]`: link load per unit of total demand,
-- `weights[k]`: `path (link indices) => fraction of commodity k` (sums to 1),
-- `ratio`: the maximum utilisation `max_a loads[a] / cap_a`.
+  - `loads[a]`: link load per unit of total demand,
+  - `weights[k]`: `path (link indices) => fraction of commodity k` (sums to 1),
+  - `ratio`: the maximum utilisation `max_a loads[a] / cap_a`.
 
 Consequently the routing carries a total demand of `1 / ratio` exactly.
 """
-function _telecom_nominal_routing(adjacency::Vector{Vector{Tuple{Int,Int}}},
-                                  capacity::Vector{Float64},
-                                  link_cost::Vector{Float64},
-                                  sources::Vector{Int}, sinks::Vector{Int},
-                                  shares::Vector{Float64}; iterations::Int=8)
+function _telecom_nominal_routing(
+    adjacency::Vector{Vector{Tuple{Int, Int}}},
+    capacity::Vector{Float64},
+    link_cost::Vector{Float64},
+    sources::Vector{Int},
+    sinks::Vector{Int},
+    shares::Vector{Float64};
+    iterations::Int=8,
+)
     m = length(capacity)
     n_commodities = length(shares)
-    by_source = Dict{Int,Vector{Int}}()
+    by_source = Dict{Int, Vector{Int}}()
     for k in 1:n_commodities
         push!(get!(by_source, sources[k], Int[]), k)
     end
@@ -441,7 +447,7 @@ function _telecom_nominal_routing(adjacency::Vector{Vector{Tuple{Int,Int}}},
     normalized_cost = link_cost ./ cost_scale
 
     loads = zeros(m)
-    weights = [Dict{Vector{Int},Float64}() for _ in 1:n_commodities]
+    weights = [Dict{Vector{Int}, Float64}() for _ in 1:n_commodities]
     best_loads = zeros(m)
     best_weights = weights
     best_ratio = Inf
@@ -461,8 +467,10 @@ function _telecom_nominal_routing(adjacency::Vector{Vector{Tuple{Int,Int}}},
         # and then fades, so the later iterates chase pure min-congestion.
         cost_weight = 0.05 / t
         for a in 1:m
-            lengths[a] = (gradient_max > 0 ? lengths[a] / gradient_max : 0.0) +
-                         cost_weight * normalized_cost[a] + 1e-9
+            lengths[a] =
+                (gradient_max > 0 ? lengths[a] / gradient_max : 0.0) +
+                cost_weight * normalized_cost[a] +
+                1e-9
         end
 
         fill!(step_loads, 0.0)
@@ -522,20 +530,25 @@ Scan a family of node cuts - every singleton, geometric sweep cuts along random
 directions, and nearest-neighbour balls - and return the two extreme ones per
 unit of total demand:
 
-- `capacity_cut`: minimises `crossing capacity / crossing demand share`; the
-  reciprocal-scaled value `cut_scale` is the smallest total demand that provably
-  cannot be routed;
-- `budget_cut`: maximises `crossing demand share * min_{a in cut} c_a / cap_a`,
-  the strongest per-unit-demand lower bound on installation spend.
+  - `capacity_cut`: minimises `crossing capacity / crossing demand share`; the
+    reciprocal-scaled value `cut_scale` is the smallest total demand that provably
+    cannot be routed;
+  - `budget_cut`: maximises `crossing demand share * min_{a in cut} c_a / cap_a`,
+    the strongest per-unit-demand lower bound on installation spend.
 
-Each entry is `(side, crossing_links, crossing_capacity, crossing_share,
-cost_per_capacity)`.
+Each entry is `(side, crossing_links, crossing_capacity, crossing_share, cost_per_capacity)`.
 """
-function _telecom_cut_bounds(arcs::Vector{Tuple{Int,Int}}, capacity::Vector{Float64},
-                             install_cost::Vector{Float64}, n_nodes::Int,
-                             locations::Vector{Tuple{Float64,Float64}},
-                             sources::Vector{Int}, sinks::Vector{Int},
-                             shares::Vector{Float64}, rng::AbstractRNG)
+function _telecom_cut_bounds(
+    arcs::Vector{Tuple{Int, Int}},
+    capacity::Vector{Float64},
+    install_cost::Vector{Float64},
+    n_nodes::Int,
+    locations::Vector{Tuple{Float64, Float64}},
+    sources::Vector{Int},
+    sinks::Vector{Int},
+    shares::Vector{Float64},
+    rng::AbstractRNG,
+)
     best_capacity = nothing
     best_capacity_value = Inf
     best_budget = nothing
@@ -582,8 +595,9 @@ function _telecom_cut_bounds(arcs::Vector{Tuple{Int,Int}}, capacity::Vector{Floa
 
     for _ in 1:12
         theta = rand(rng, Uniform(0.0, pi))
-        order = sortperm([locations[v][1] * cos(theta) + locations[v][2] * sin(theta)
-                          for v in 1:n_nodes])
+        order = sortperm([
+            locations[v][1] * cos(theta) + locations[v][2] * sin(theta) for v in 1:n_nodes
+        ])
         step = max(1, div(n_nodes, 16))
         fill!(mask, false)
         for (idx, v) in enumerate(order)
@@ -595,9 +609,10 @@ function _telecom_cut_bounds(arcs::Vector{Tuple{Int,Int}}, capacity::Vector{Floa
 
     for _ in 1:min(12, n_nodes)
         center = rand(rng, 1:n_nodes)
-        order = sortperm([hypot(locations[v][1] - locations[center][1],
-                                locations[v][2] - locations[center][2])
-                          for v in 1:n_nodes])
+        order = sortperm([
+            hypot(locations[v][1] - locations[center][1], locations[v][2] - locations[center][2])
+            for v in 1:n_nodes
+        ])
         ball_size = rand(rng, 2:max(2, div(n_nodes, 2)))
         fill!(mask, false)
         for idx in 1:min(ball_size, n_nodes - 1)
@@ -619,32 +634,38 @@ end
 Construct a telecommunication network design problem instance.
 
 # Arguments
-- `target_variables`: Target number of variables in the LP formulation
-  (`n_arcs * (2 * n_commodities + 1)`, at most `TELECOM_MAX_VARIABLES`)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables in the LP formulation
+    (`n_arcs * (2 * n_commodities + 1)`, at most `TELECOM_MAX_VARIABLES`)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 
 # Feasibility (relaxation-aware)
-- `feasible`: total demand is set to 55-90% of `routable_scale`, so the planted
-  nominal design routes everything inside the installed capacities, and the
-  budget exceeds that design's cost. Stored as `feasible_witness`.
-- `infeasible`: either a *capacity* shortfall (demand pushed 15-80% past the
-  tightest cut, `TelecomCapacityCutCertificate`) or a *budget* shortfall
-  (routable demand but a budget below the cut-implied minimum spend,
-  `TelecomBudgetCertificate`). Both certificates only use `0 <= y <= 1`, so the
-  instance stays infeasible after `relax_integrality`.
-- `unknown`: total demand is placed in a +-35% log band just above
-  `routable_scale`, which brackets the true routing threshold at every scale,
-  so whether the instance is routable is a genuine question - and the position
-  inside the band is a low-discrepancy function of the seed, so any block of
-  seeds is an even mix rather than a lucky or unlucky draw.
+
+  - `feasible`: total demand is set to 55-90% of `routable_scale`, so the planted
+    nominal design routes everything inside the installed capacities, and the
+    budget exceeds that design's cost. Stored as `feasible_witness`.
+  - `infeasible`: either a *capacity* shortfall (demand pushed 15-80% past the
+    tightest cut, `TelecomCapacityCutCertificate`) or a *budget* shortfall
+    (routable demand but a budget below the cut-implied minimum spend,
+    `TelecomBudgetCertificate`). Both certificates only use `0 <= y <= 1`, so the
+    instance stays infeasible after `relax_integrality`.
+  - `unknown`: total demand is placed in a +-35% log band just above
+    `routable_scale`, which brackets the true routing threshold at every scale,
+    so whether the instance is routable is a genuine question - and the position
+    inside the band is a low-discrepancy function of the seed, so any block of
+    seeds is an even mix rather than a lucky or unlucky draw.
 """
-function TelecomNetworkDesignProblem(target_variables::Int,
-                                     feasibility_status::FeasibilityStatus, seed::Int)
+function TelecomNetworkDesignProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     if target_variables > TELECOM_MAX_VARIABLES
-        throw(ArgumentError(
-            "telecom_network_design/standard supports at most " *
-            "$(TELECOM_MAX_VARIABLES) variables (requested $(target_variables))"))
+        throw(
+            ArgumentError(
+                "telecom_network_design/standard supports at most " *
+                "$(TELECOM_MAX_VARIABLES) variables (requested $(target_variables))",
+            ),
+        )
     end
     rng = MersenneTwister(seed)
     target = max(target_variables, 12)
@@ -662,13 +683,16 @@ function TelecomNetworkDesignProblem(target_variables::Int,
     arcs = _telecom_topology(rng, n_nodes, n_arcs, node_locations)
     n_arcs = length(arcs)
 
-    link_distance = [hypot(node_locations[i][1] - node_locations[j][1],
-                           node_locations[i][2] - node_locations[j][2])
-                     for (i, j) in arcs]
-    link_flow_cost = [link_distance[a] * flow_cost_per_unit *
-                      rand(rng, Uniform(0.9, 1.1)) for a in 1:n_arcs]
+    link_distance = [
+        hypot(
+            node_locations[i][1] - node_locations[j][1], node_locations[i][2] - node_locations[j][2]
+        ) for (i, j) in arcs
+    ]
+    link_flow_cost = [
+        link_distance[a] * flow_cost_per_unit * rand(rng, Uniform(0.9, 1.1)) for a in 1:n_arcs
+    ]
 
-    adjacency = [Tuple{Int,Int}[] for _ in 1:n_nodes]
+    adjacency = [Tuple{Int, Int}[] for _ in 1:n_nodes]
     for (a, (i, j)) in enumerate(arcs)
         push!(adjacency[i], (j, a))
         push!(adjacency[j], (i, a))
@@ -680,9 +704,9 @@ function TelecomNetworkDesignProblem(target_variables::Int,
     # traffic each link is naturally asked to carry; the SONET/OTN module is
     # then sized from that load (long-haul backbone links get the big pipes).
     unit_capacity = ones(n_arcs)
-    reference_loads, _, _ = _telecom_nominal_routing(adjacency, unit_capacity,
-                                                     link_flow_cost, sources, sinks,
-                                                     shares; iterations=3)
+    reference_loads, _, _ = _telecom_nominal_routing(
+        adjacency, unit_capacity, link_flow_cost, sources, sinks, shares; iterations=3
+    )
     load_ceiling = maximum(reference_loads)
     load_ceiling <= TELECOM_EPS && (load_ceiling = 1.0)
     top_module = capacity_modules[end]
@@ -691,17 +715,18 @@ function TelecomNetworkDesignProblem(target_variables::Int,
     for a in 1:n_arcs
         # A spare floor keeps unused links installable (and useful for reroutes)
         # instead of leaving dead capacity-zero edges in the topology.
-        required = max(reference_loads[a], 0.12 * load_ceiling) *
-                   rand(rng, Uniform(1.0, 1.5)) / load_ceiling * top_module
+        required =
+            max(reference_loads[a], 0.12 * load_ceiling) * rand(rng, Uniform(1.0, 1.5)) /
+            load_ceiling * top_module
         idx = findfirst(c -> c >= required, capacity_modules)
         module_index[a] = idx === nothing ? length(capacity_modules) : idx
         capacity[a] = capacity_modules[module_index[a]]
     end
 
-    install_cost = [base_installation_cost *
-                    (0.8 + 0.4 * module_index[a] / length(capacity_modules)) +
-                    link_distance[a] * cost_per_km * rand(rng, Uniform(0.9, 1.1))
-                    for a in 1:n_arcs]
+    install_cost = [
+        base_installation_cost * (0.8 + 0.4 * module_index[a] / length(capacity_modules)) +
+        link_distance[a] * cost_per_km * rand(rng, Uniform(0.9, 1.1)) for a in 1:n_arcs
+    ]
 
     # Pass 2: the planted nominal routing over the realised capacities.
     # Small topologies are cheap to route, so spend more Frank-Wolfe steps on
@@ -710,18 +735,17 @@ function TelecomNetworkDesignProblem(target_variables::Int,
     # skews feasible.
     routing_steps = clamp(div(4000, max(n_arcs, 1)), 10, 80)
     unit_loads, path_weights, congestion = _telecom_nominal_routing(
-        adjacency, capacity, link_flow_cost, sources, sinks, shares;
-        iterations=routing_steps)
+        adjacency, capacity, link_flow_cost, sources, sinks, shares; iterations=routing_steps
+    )
     routable_scale = congestion > TELECOM_EPS ? 1.0 / congestion : 1.0
 
-    capacity_cut, budget_cut = _telecom_cut_bounds(arcs, capacity, install_cost,
-                                                   n_nodes, node_locations, sources,
-                                                   sinks, shares, rng)
+    capacity_cut, budget_cut = _telecom_cut_bounds(
+        arcs, capacity, install_cost, n_nodes, node_locations, sources, sinks, shares, rng
+    )
     # A connected topology carrying at least one commodity always yields a
     # valid cut (that commodity's source singleton), so the `nothing` branch is
     # a defensive fallback only.
-    cut_scale = capacity_cut === nothing ? routable_scale * 4.0 :
-                capacity_cut[3] / capacity_cut[4]
+    cut_scale = capacity_cut === nothing ? routable_scale * 4.0 : capacity_cut[3] / capacity_cut[4]
     cut_scale = max(cut_scale, routable_scale)
 
     nominal_links = [a for a in 1:n_arcs if unit_loads[a] > TELECOM_EPS]
@@ -733,9 +757,11 @@ function TelecomNetworkDesignProblem(target_variables::Int,
         total_demand = routable_scale * rand(rng, Uniform(0.55, 0.9))
     elseif feasibility_status == infeasible
         mode = rand(rng, Bool) ? :capacity : :budget
-        total_demand = mode == :capacity ?
-                       cut_scale * rand(rng, Uniform(1.15, 1.8)) :
-                       routable_scale * rand(rng, Uniform(0.4, 0.8))
+        total_demand = if mode == :capacity
+            cut_scale * rand(rng, Uniform(1.15, 1.8))
+        else
+            routable_scale * rand(rng, Uniform(0.4, 0.8))
+        end
     else
         # `routable_scale` brackets the true routing threshold from below and
         # `cut_scale` from above, and the planted routing is tight: solving the
@@ -753,7 +779,7 @@ function TelecomNetworkDesignProblem(target_variables::Int,
         total_demand = routable_scale * exp(0.04 + 0.7 * (position - 0.5))
     end
 
-    demands = [round(total_demand * shares[k], digits=4) for k in 1:n_commodities]
+    demands = [round(total_demand * shares[k]; digits=4) for k in 1:n_commodities]
     demands = [max(d, 1e-3) for d in demands]
 
     # --- status-specific repairs on the realised (rounded) demands ----------
@@ -766,24 +792,27 @@ function TelecomNetworkDesignProblem(target_variables::Int,
         end
         overflow = maximum(loads[a] / capacity[a] for a in 1:n_arcs)
         if overflow > 1.0
-            demands = [round(d / (overflow * 1.001), digits=4) for d in demands]
+            demands = [round(d / (overflow * 1.001); digits=4) for d in demands]
         end
     elseif feasibility_status == infeasible && mode == :capacity
         side_set = Set(capacity_cut[1])
-        crossing_demand = sum(demands[k] for k in 1:n_commodities
-                              if (sources[k] in side_set) != (sinks[k] in side_set);
-                              init=0.0)
+        crossing_demand = sum(
+            demands[k] for
+            k in 1:n_commodities if (sources[k] in side_set) != (sinks[k] in side_set);
+            init=0.0,
+        )
         if crossing_demand <= capacity_cut[3] * 1.05
             factor = capacity_cut[3] * 1.15 / max(crossing_demand, TELECOM_EPS)
-            demands = [round(d * factor, digits=4) for d in demands]
+            demands = [round(d * factor; digits=4) for d in demands]
         end
     end
 
     total_demand = sum(demands)
 
-    commodities = [Dict{Symbol,Any}(:source => sources[k], :sink => sinks[k],
-                                    :demand => demands[k])
-                   for k in 1:n_commodities]
+    commodities = [
+        Dict{Symbol, Any}(:source => sources[k], :sink => sinks[k], :demand => demands[k]) for
+        k in 1:n_commodities
+    ]
 
     # --- witness / certificate / budget -------------------------------------
     witness = nothing
@@ -792,9 +821,9 @@ function TelecomNetworkDesignProblem(target_variables::Int,
 
     if feasibility_status == feasible
         loads = zeros(n_arcs)
-        routes = Vector{Vector{Tuple{Vector{Int},Float64}}}(undef, n_commodities)
+        routes = Vector{Vector{Tuple{Vector{Int}, Float64}}}(undef, n_commodities)
         for k in 1:n_commodities
-            entries = Tuple{Vector{Int},Float64}[]
+            entries = Tuple{Vector{Int}, Float64}[]
             for (path, w) in sort!(collect(path_weights[k]); by=first)
                 flow = demands[k] * w
                 flow <= TELECOM_EPS && continue
@@ -819,35 +848,40 @@ function TelecomNetworkDesignProblem(target_variables::Int,
         )
     elseif feasibility_status == infeasible && mode == :capacity
         side_set = Set(capacity_cut[1])
-        crossing_demand = sum(demands[k] for k in 1:n_commodities
-                              if (sources[k] in side_set) != (sinks[k] in side_set);
-                              init=0.0)
-        certificate = TelecomCapacityCutCertificate(capacity_cut[1], capacity_cut[2],
-                                                    crossing_demand, capacity_cut[3])
+        crossing_demand = sum(
+            demands[k] for
+            k in 1:n_commodities if (sources[k] in side_set) != (sinks[k] in side_set);
+            init=0.0,
+        )
+        certificate = TelecomCapacityCutCertificate(
+            capacity_cut[1], capacity_cut[2], crossing_demand, capacity_cut[3]
+        )
     elseif feasibility_status == infeasible
         side_set = Set(budget_cut[1])
-        crossing_demand = sum(demands[k] for k in 1:n_commodities
-                              if (sources[k] in side_set) != (sinks[k] in side_set);
-                              init=0.0)
+        crossing_demand = sum(
+            demands[k] for
+            k in 1:n_commodities if (sources[k] in side_set) != (sinks[k] in side_set);
+            init=0.0,
+        )
         implied_minimum = crossing_demand * budget_cut[5]
         budget = implied_minimum * rand(rng, Uniform(0.45, 0.85))
-        certificate = TelecomBudgetCertificate(budget_cut[1], budget_cut[2],
-                                               crossing_demand, budget_cut[5],
-                                               implied_minimum, budget)
+        certificate = TelecomBudgetCertificate(
+            budget_cut[1], budget_cut[2], crossing_demand, budget_cut[5], implied_minimum, budget
+        )
     end
 
     # --- materialise the dictionary-keyed model data -------------------------
-    directed_arcs = Vector{Tuple{Int,Int}}()
+    directed_arcs = Vector{Tuple{Int, Int}}()
     sizehint!(directed_arcs, 2 * n_arcs)
     for (i, j) in arcs
         push!(directed_arcs, (i, j))
         push!(directed_arcs, (j, i))
     end
 
-    distances = Dict{Tuple{Int,Int},Float64}()
-    installation_costs = Dict{Tuple{Int,Int},Float64}()
-    link_capacities = Dict{Tuple{Int,Int},Float64}()
-    flow_costs = Dict{Tuple{Int,Int},Float64}()
+    distances = Dict{Tuple{Int, Int}, Float64}()
+    installation_costs = Dict{Tuple{Int, Int}, Float64}()
+    link_capacities = Dict{Tuple{Int, Int}, Float64}()
+    flow_costs = Dict{Tuple{Int, Int}, Float64}()
     for (a, (i, j)) in enumerate(arcs)
         distances[(i, j)] = link_distance[a]
         distances[(j, i)] = link_distance[a]
@@ -857,11 +891,11 @@ function TelecomNetworkDesignProblem(target_variables::Int,
         flow_costs[(j, i)] = link_flow_cost[a]
     end
 
-    outgoing_arcs = Dict{Int,Vector{Tuple{Int,Int}}}()
-    incoming_arcs = Dict{Int,Vector{Tuple{Int,Int}}}()
+    outgoing_arcs = Dict{Int, Vector{Tuple{Int, Int}}}()
+    incoming_arcs = Dict{Int, Vector{Tuple{Int, Int}}}()
     for node in 1:n_nodes
-        outgoing_arcs[node] = Tuple{Int,Int}[]
-        incoming_arcs[node] = Tuple{Int,Int}[]
+        outgoing_arcs[node] = Tuple{Int, Int}[]
+        incoming_arcs[node] = Tuple{Int, Int}[]
     end
     for arc in directed_arcs
         push!(outgoing_arcs[arc[1]], arc)
@@ -869,14 +903,27 @@ function TelecomNetworkDesignProblem(target_variables::Int,
     end
 
     return TelecomNetworkDesignProblem(
-        n_nodes, n_arcs, n_commodities,
-        arcs, directed_arcs,
-        node_locations, distances,
-        installation_costs, link_capacities, flow_costs,
-        commodities, budget,
-        outgoing_arcs, incoming_arcs,
-        total_demand, routable_scale, cut_scale, nominal_cost,
-        witness, certificate, feasibility_status,
+        n_nodes,
+        n_arcs,
+        n_commodities,
+        arcs,
+        directed_arcs,
+        node_locations,
+        distances,
+        installation_costs,
+        link_capacities,
+        flow_costs,
+        commodities,
+        budget,
+        outgoing_arcs,
+        incoming_arcs,
+        total_demand,
+        routable_scale,
+        cut_scale,
+        nominal_cost,
+        witness,
+        certificate,
+        feasibility_status,
     )
 end
 
@@ -886,36 +933,46 @@ end
 Build a JuMP model for the telecommunication network design problem.
 
 # Arguments
-- `prob`: TelecomNetworkDesignProblem instance
+
+  - `prob`: TelecomNetworkDesignProblem instance
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 
 # Model Details
+
 Variables:
-    - y[arc]: Binary variable, 1 if link is installed on arc
-    - f[k,(i,j)]: Continuous flow variable for commodity k on directed arc (i → j)
+
+  - y[arc]: Binary variable, 1 if link is installed on arc
+  - f[k,(i,j)]: Continuous flow variable for commodity k on directed arc (i → j)
 
 Objective:
-    - Minimize: installation costs + routing costs
+
+  - Minimize: installation costs + routing costs
 
 Constraints:
-    - Flow conservation: at each node, inflow = outflow (except source/sink)
-    - Capacity: total flow in both directions on a link ≤ installed capacity * y[arc]
-    - Demand satisfaction: each commodity routed from source to destination
-    - Budget: total installation cost ≤ budget
+
+  - Flow conservation: at each node, inflow = outflow (except source/sink)
+  - Capacity: total flow in both directions on a link ≤ installed capacity * y[arc]
+  - Demand satisfaction: each commodity routed from source to destination
+  - Budget: total installation cost ≤ budget
 """
 function build_model(prob::TelecomNetworkDesignProblem)
     model = Model()
 
     # Decision variables
     @variable(model, y[arc in prob.arcs], Bin)  # 1 if link is installed
-    @variable(model, f[k=1:prob.n_commodities, arc in prob.directed_arcs] >= 0)  # flow of commodity k on directed arc
+    @variable(model, f[k = 1:prob.n_commodities, arc in prob.directed_arcs] >= 0)  # flow of commodity k on directed arc
 
     # Objective: Minimize total cost (installation + routing)
-    @objective(model, Min,
-        sum(prob.installation_costs[arc] * y[arc] for arc in prob.arcs) +
-        sum(prob.flow_costs[arc] * sum(f[k, arc] for k in 1:prob.n_commodities) for arc in prob.directed_arcs)
+    @objective(
+        model,
+        Min,
+        sum(prob.installation_costs[arc] * y[arc] for arc in prob.arcs) + sum(
+            prob.flow_costs[arc] * sum(f[k, arc] for k in 1:prob.n_commodities) for
+            arc in prob.directed_arcs
+        )
     )
 
     # Flow conservation constraints for each commodity at each node
@@ -948,14 +1005,16 @@ function build_model(prob::TelecomNetworkDesignProblem)
     for arc in prob.arcs
         forward_arc = arc
         reverse_arc = (arc[2], arc[1])
-        @constraint(model,
-            sum(f[k, forward_arc] + f[k, reverse_arc] for k in 1:prob.n_commodities) <= prob.link_capacities[arc] * y[arc]
+        @constraint(
+            model,
+            sum(f[k, forward_arc] + f[k, reverse_arc] for k in 1:prob.n_commodities) <=
+                prob.link_capacities[arc] * y[arc]
         )
     end
 
     # Budget constraint
-    @constraint(model,
-        sum(prob.installation_costs[arc] * y[arc] for arc in prob.arcs) <= prob.budget
+    @constraint(
+        model, sum(prob.installation_costs[arc] * y[arc] for arc in prob.arcs) <= prob.budget
     )
 
     return model

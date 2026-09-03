@@ -17,9 +17,11 @@
 #                      modular backbone links (telecom backbone)
 #   budgeted_backbone  exact-p hub and capacitated physical-link investment
 
-register_category(:hub_location,
+register_category(
+    :hub_location,
     "Hub location and hub-and-spoke network design: route origin-destination " *
-    "traffic through consolidated hubs with discounted inter-hub economies of scale")
+    "traffic through consolidated hubs with discounted inter-hub economies of scale",
+)
 
 include("hub_data.jl")
 include("p_hub_median.jl")

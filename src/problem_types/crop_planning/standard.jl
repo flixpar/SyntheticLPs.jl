@@ -9,6 +9,7 @@ using Statistics
 Generator for crop planning optimization problems.
 
 # Overview
+
 Models agricultural land allocation. The decisions are continuous planted areas
 for each crop. The objective maximizes net profit from crop revenue minus
 production cost. Constraints limit total land, water, labor, and market demand,
@@ -16,24 +17,25 @@ and may require minimum area for selected crops or minimum acreage in crop-type
 groups for diversity.
 
 # Fields
-- `n_crops::Int`: Number of different crops
-- `total_land::Float64`: Total available land in hectares
-- `crop_types::Vector{Symbol}`: Type of each crop (:cereal, :vegetable, :legume, :industrial, :oilseed)
-- `crop_names::Vector{String}`: Name of each crop option
-- `management_systems::Vector{Symbol}`: Agronomic system used by each option
-- `yields::Vector{Float64}`: Yield in tons/hectare for each crop
-- `prices::Vector{Float64}`: Price in dollars/ton for each crop
-- `production_costs::Vector{Float64}`: Production cost in dollars/hectare for each crop
-- `water_requirements::Vector{Float64}`: Water requirement in mm/season for each crop
-- `labor_requirements::Vector{Float64}`: Labor requirement in hours/hectare for each crop
-- `net_profit_per_ha::Vector{Float64}`: Net profit per hectare for each crop
-- `market_demand_tonnes::Vector{Float64}`: Saleable production limit in tonnes for each crop
-- `min_area_per_crop::Vector{Float64}`: Minimum area requirement in hectares for each crop
-- `water_capacity::Float64`: Available water capacity
-- `labor_capacity::Float64`: Available labor capacity
-- `diversity_requirements::Vector{CropDiversityRequirement}`: Crop-group acreage floors
-- `feasible_witness::Union{Nothing,Vector{Float64}}`: Planted area plan for feasible requests
-- `infeasibility_certificate::Union{Nothing,CropResourceCertificate}`: Mandatory-resource cut for infeasible requests
+
+  - `n_crops::Int`: Number of different crops
+  - `total_land::Float64`: Total available land in hectares
+  - `crop_types::Vector{Symbol}`: Type of each crop (:cereal, :vegetable, :legume, :industrial, :oilseed)
+  - `crop_names::Vector{String}`: Name of each crop option
+  - `management_systems::Vector{Symbol}`: Agronomic system used by each option
+  - `yields::Vector{Float64}`: Yield in tons/hectare for each crop
+  - `prices::Vector{Float64}`: Price in dollars/ton for each crop
+  - `production_costs::Vector{Float64}`: Production cost in dollars/hectare for each crop
+  - `water_requirements::Vector{Float64}`: Water requirement in mm/season for each crop
+  - `labor_requirements::Vector{Float64}`: Labor requirement in hours/hectare for each crop
+  - `net_profit_per_ha::Vector{Float64}`: Net profit per hectare for each crop
+  - `market_demand_tonnes::Vector{Float64}`: Saleable production limit in tonnes for each crop
+  - `min_area_per_crop::Vector{Float64}`: Minimum area requirement in hectares for each crop
+  - `water_capacity::Float64`: Available water capacity
+  - `labor_capacity::Float64`: Available labor capacity
+  - `diversity_requirements::Vector{CropDiversityRequirement}`: Crop-group acreage floors
+  - `feasible_witness::Union{Nothing,Vector{Float64}}`: Planted area plan for feasible requests
+  - `infeasibility_certificate::Union{Nothing,CropResourceCertificate}`: Mandatory-resource cut for infeasible requests
 """
 struct CropDiversityRequirement
     crop_type::Symbol
@@ -42,7 +44,8 @@ struct CropDiversityRequirement
 end
 
 Base.:(==)(a::CropDiversityRequirement, b::CropDiversityRequirement) =
-    a.crop_type == b.crop_type && a.minimum_area == b.minimum_area &&
+    a.crop_type == b.crop_type &&
+    a.minimum_area == b.minimum_area &&
     a.crop_indices == b.crop_indices
 Base.isequal(a::CropDiversityRequirement, b::CropDiversityRequirement) = a == b
 Base.hash(a::CropDiversityRequirement, h::UInt) =
@@ -55,11 +58,9 @@ struct CropResourceCertificate
 end
 
 Base.:(==)(a::CropResourceCertificate, b::CropResourceCertificate) =
-    a.resource == b.resource && a.forced_usage == b.forced_usage &&
-    a.capacity == b.capacity
+    a.resource == b.resource && a.forced_usage == b.forced_usage && a.capacity == b.capacity
 Base.isequal(a::CropResourceCertificate, b::CropResourceCertificate) = a == b
-Base.hash(a::CropResourceCertificate, h::UInt) =
-    hash((a.resource, a.forced_usage, a.capacity), h)
+Base.hash(a::CropResourceCertificate, h::UInt) = hash((a.resource, a.forced_usage, a.capacity), h)
 
 struct CropPlanningProblem <: ProblemGenerator
     n_crops::Int
@@ -78,24 +79,35 @@ struct CropPlanningProblem <: ProblemGenerator
     water_capacity::Float64
     labor_capacity::Float64
     diversity_requirements::Vector{CropDiversityRequirement}
-    feasible_witness::Union{Nothing,Vector{Float64}}
-    infeasibility_certificate::Union{Nothing,CropResourceCertificate}
+    feasible_witness::Union{Nothing, Vector{Float64}}
+    infeasibility_certificate::Union{Nothing, CropResourceCertificate}
 end
 
 const _CROP_CATALOG = [
-    ("Wheat", :cereal), ("Maize", :cereal), ("Rice", :cereal),
-    ("Barley", :cereal), ("Oats", :cereal),
-    ("Tomatoes", :vegetable), ("Peppers", :vegetable),
-    ("Lettuce", :vegetable), ("Carrots", :vegetable),
+    ("Wheat", :cereal),
+    ("Maize", :cereal),
+    ("Rice", :cereal),
+    ("Barley", :cereal),
+    ("Oats", :cereal),
+    ("Tomatoes", :vegetable),
+    ("Peppers", :vegetable),
+    ("Lettuce", :vegetable),
+    ("Carrots", :vegetable),
     ("Onions", :vegetable),
-    ("Soybeans", :legume), ("Field peas", :legume),
-    ("Lentils", :legume), ("Dry beans", :legume),
+    ("Soybeans", :legume),
+    ("Field peas", :legume),
+    ("Lentils", :legume),
+    ("Dry beans", :legume),
     ("Chickpeas", :legume),
-    ("Cotton", :industrial), ("Sugarcane", :industrial),
-    ("Tobacco", :industrial), ("Hemp", :industrial),
+    ("Cotton", :industrial),
+    ("Sugarcane", :industrial),
+    ("Tobacco", :industrial),
+    ("Hemp", :industrial),
     ("Fiber flax", :industrial),
-    ("Sunflower", :oilseed), ("Canola", :oilseed),
-    ("Safflower", :oilseed), ("Sesame", :oilseed),
+    ("Sunflower", :oilseed),
+    ("Canola", :oilseed),
+    ("Safflower", :oilseed),
+    ("Sesame", :oilseed),
     ("Peanuts", :oilseed),
 ]
 
@@ -107,11 +119,14 @@ const _CROP_MANAGEMENT_SYSTEMS = (:rainfed, :irrigated, :low_input, :intensive)
 Construct a crop planning problem instance.
 
 # Arguments
-- `target_variables`: Target number of variables (crops)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (crops)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function CropPlanningProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function CropPlanningProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = Random.MersenneTwister(seed)
 
     # For crop planning, target_variables = n_crops
@@ -145,8 +160,13 @@ function CropPlanningProblem(target_variables::Int, feasibility_status::Feasibil
     min_area_requirements = rand(rng) < 0.85
 
     # Convert feasibility status
-    solution_status = feasibility_status == feasible ? :feasible :
-                     feasibility_status == infeasible ? :infeasible : :all
+    solution_status = if feasibility_status == feasible
+        :feasible
+    elseif feasibility_status == infeasible
+        :infeasible
+    else
+        :all
+    end
 
     # A variable is a crop-management option, not an anonymous synthetic crop.
     # Each catalog block is independently shuffled; large instances therefore
@@ -350,8 +370,7 @@ function CropPlanningProblem(target_variables::Int, feasibility_status::Feasibil
     market_demand_tonnes = zeros(n_crops)
     market_area_caps = zeros(n_crops)
     for i in 1:n_crops
-        market_area_caps[i] = total_land * rand(rng, Uniform(0.1, 0.4)) *
-                              market_demand_factor
+        market_area_caps[i] = total_land * rand(rng, Uniform(0.1, 0.4)) * market_demand_factor
         market_demand_tonnes[i] = yields[i] * market_area_caps[i]
     end
 
@@ -359,15 +378,19 @@ function CropPlanningProblem(target_variables::Int, feasibility_status::Feasibil
     min_area_per_crop = zeros(n_crops)
     if min_area_requirements
         # Require minimum area for 30-50% of crops (essential for food security)
-        n_essential = clamp(round(Int, n_crops * rand(rng, Uniform(0.3, 0.5))),
-                            1, n_crops)
+        n_essential = clamp(round(Int, n_crops * rand(rng, Uniform(0.3, 0.5))), 1, n_crops)
         # Prefer cereals and legumes as essential
-        essential_candidates = [i for i in 1:n_crops if assigned_crop_types[i] in [:cereal, :legume]]
+        essential_candidates = [
+            i for i in 1:n_crops if assigned_crop_types[i] in [:cereal, :legume]
+        ]
         if length(essential_candidates) < n_essential
             # Add more crops if needed
             other_crops = collect(setdiff(1:n_crops, essential_candidates))
             shuffle!(rng, other_crops)
-            essential_candidates = vcat(essential_candidates, other_crops[1:min(n_essential - length(essential_candidates), length(other_crops))])
+            essential_candidates = vcat(
+                essential_candidates,
+                other_crops[1:min(n_essential - length(essential_candidates), length(other_crops))],
+            )
         end
         shuffle!(rng, essential_candidates)
         essential_crops = essential_candidates[1:min(n_essential, length(essential_candidates))]
@@ -451,8 +474,7 @@ function CropPlanningProblem(target_variables::Int, feasibility_status::Feasibil
         # A certificate is based only on mandatory crop minima. Since land is
         # an upper bound, no assumed use of fallow land enters this proof.
         if sum(min_area_per_crop) <= 0.0
-            n_essential = clamp(round(Int, n_crops * rand(rng, Uniform(0.25, 0.5))),
-                                1, n_crops)
+            n_essential = clamp(round(Int, n_crops * rand(rng, Uniform(0.25, 0.5))), 1, n_crops)
             essential = randperm(rng, n_crops)[1:n_essential]
             for i in essential
                 floor_i = market_area_caps[i] * rand(rng, Uniform(0.3, 0.6))
@@ -476,12 +498,14 @@ function CropPlanningProblem(target_variables::Int, feasibility_status::Feasibil
             water_capacity = min_water_bound * violation_factor
             labor_capacity = min_labor_bound * rand(rng, Uniform(1.1, 1.4))
             infeasibility_certificate = CropResourceCertificate(
-                :water, min_water_bound, water_capacity)
+                :water, min_water_bound, water_capacity
+            )
         else
             water_capacity = min_water_bound * rand(rng, Uniform(1.1, 1.4))
             labor_capacity = min_labor_bound * violation_factor
             infeasibility_certificate = CropResourceCertificate(
-                :labor, min_labor_bound, labor_capacity)
+                :labor, min_labor_bound, labor_capacity
+            )
         end
 
     else  # :all
@@ -510,17 +534,20 @@ function CropPlanningProblem(target_variables::Int, feasibility_status::Feasibil
                     current_type_area = sum(baseline_allocation[crop_indices])
                     if current_type_area > 0.0
                         desired = total_land * rand(rng, Uniform(0.05, 0.15))
-                        minimum_area = min(desired,
-                                           current_type_area * rand(rng, Uniform(0.75, 0.95)))
-                        push!(diversity_requirements,
-                              CropDiversityRequirement(ctype, minimum_area,
-                                                       copy(crop_indices)))
+                        minimum_area = min(
+                            desired, current_type_area * rand(rng, Uniform(0.75, 0.95))
+                        )
+                        push!(
+                            diversity_requirements,
+                            CropDiversityRequirement(ctype, minimum_area, copy(crop_indices)),
+                        )
                     end
                 else
                     minimum_area = total_land * rand(rng, Uniform(0.05, 0.15))
-                    push!(diversity_requirements,
-                          CropDiversityRequirement(ctype, minimum_area,
-                                                   copy(crop_indices)))
+                    push!(
+                        diversity_requirements,
+                        CropDiversityRequirement(ctype, minimum_area, copy(crop_indices)),
+                    )
                 end
             end
         end
@@ -556,10 +583,12 @@ end
 Build a JuMP model for the crop planning problem.
 
 # Arguments
-- `prob`: CropPlanningProblem instance
+
+  - `prob`: CropPlanningProblem instance
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::CropPlanningProblem)
     model = Model()
@@ -568,34 +597,50 @@ function build_model(prob::CropPlanningProblem)
     @variable(model, x[1:prob.n_crops] >= 0)
 
     # Objective: maximize total net profit
-    @objective(model, Max,
-        sum((prob.prices[i] * prob.yields[i] - prob.production_costs[i]) * x[i] for i in 1:prob.n_crops))
+    @objective(
+        model,
+        Max,
+        sum(
+            (prob.prices[i] * prob.yields[i] - prob.production_costs[i]) * x[i] for
+            i in 1:prob.n_crops
+        )
+    )
 
     # Constraint: total land area
-    @constraint(model, land_capacity,
-                sum(x[i] for i in 1:prob.n_crops) <= prob.total_land)
+    @constraint(model, land_capacity, sum(x[i] for i in 1:prob.n_crops) <= prob.total_land)
 
     # Constraint: water availability
-    @constraint(model, water_capacity,
-        sum(prob.water_requirements[i] * x[i] for i in 1:prob.n_crops) <= prob.water_capacity)
+    @constraint(
+        model,
+        water_capacity,
+        sum(prob.water_requirements[i] * x[i] for i in 1:prob.n_crops) <= prob.water_capacity
+    )
 
     # Constraint: labor availability
-    @constraint(model, labor_capacity,
-        sum(prob.labor_requirements[i] * x[i] for i in 1:prob.n_crops) <= prob.labor_capacity)
+    @constraint(
+        model,
+        labor_capacity,
+        sum(prob.labor_requirements[i] * x[i] for i in 1:prob.n_crops) <= prob.labor_capacity
+    )
 
     # Market limits apply to harvested tonnes, not planted hectares.
-    @constraint(model, market_demand[i in 1:prob.n_crops],
-                prob.yields[i] * x[i] <= prob.market_demand_tonnes[i])
+    @constraint(
+        model,
+        market_demand[i in 1:prob.n_crops],
+        prob.yields[i] * x[i] <= prob.market_demand_tonnes[i]
+    )
 
     # Constraints: minimum area requirements for essential crops
     mandatory = findall(>(0.0), prob.min_area_per_crop)
-    @constraint(model, minimum_area[i in mandatory],
-                x[i] >= prob.min_area_per_crop[i])
+    @constraint(model, minimum_area[i in mandatory], x[i] >= prob.min_area_per_crop[i])
 
     # Optional: crop diversity constraints
-    @constraint(model, diversity[k in eachindex(prob.diversity_requirements)],
+    @constraint(
+        model,
+        diversity[k in eachindex(prob.diversity_requirements)],
         sum(x[i] for i in prob.diversity_requirements[k].crop_indices) >=
-        prob.diversity_requirements[k].minimum_area)
+            prob.diversity_requirements[k].minimum_area
+    )
 
     return model
 end

@@ -9,6 +9,7 @@ Generator for two-stage stochastic linear programs with recourse (a stochastic
 capacity / production–distribution problem).
 
 # Overview
+
 Models a two-stage decision under demand uncertainty. In the **first stage**, a
 capacity `x[i]` is committed at each facility `i` before demand is known, subject
 to per-facility bounds and a shared first-stage resource budget. In the **second
@@ -29,18 +30,19 @@ infeasible exactly when the minimum committed capacity violates the first-stage
 resource budget.
 
 # Fields
-- `n_facilities::Int`: Number of facilities (first-stage decisions)
-- `n_customers::Int`: Number of customers (second-stage demand points)
-- `n_scenarios::Int`: Number of demand scenarios
-- `build_cost::Vector{Float64}`: First-stage cost per unit capacity at each facility
-- `resource_use::Vector{Float64}`: First-stage resource consumed per unit capacity
-- `resource_budget::Float64`: Total first-stage resource available
-- `capacity_min::Vector{Float64}`: Minimum capacity that must be committed per facility
-- `capacity_max::Vector{Float64}`: Maximum capacity per facility
-- `ship_cost::Matrix{Float64}`: Second-stage shipping cost (n_facilities × n_customers)
-- `shortfall_cost::Vector{Float64}`: Penalty per unit of unmet demand per customer
-- `scenario_prob::Vector{Float64}`: Probability of each scenario (sums to 1)
-- `demand::Matrix{Float64}`: Demand per customer per scenario (n_customers × n_scenarios)
+
+  - `n_facilities::Int`: Number of facilities (first-stage decisions)
+  - `n_customers::Int`: Number of customers (second-stage demand points)
+  - `n_scenarios::Int`: Number of demand scenarios
+  - `build_cost::Vector{Float64}`: First-stage cost per unit capacity at each facility
+  - `resource_use::Vector{Float64}`: First-stage resource consumed per unit capacity
+  - `resource_budget::Float64`: Total first-stage resource available
+  - `capacity_min::Vector{Float64}`: Minimum capacity that must be committed per facility
+  - `capacity_max::Vector{Float64}`: Maximum capacity per facility
+  - `ship_cost::Matrix{Float64}`: Second-stage shipping cost (n_facilities × n_customers)
+  - `shortfall_cost::Vector{Float64}`: Penalty per unit of unmet demand per customer
+  - `scenario_prob::Vector{Float64}`: Probability of each scenario (sums to 1)
+  - `demand::Matrix{Float64}`: Demand per customer per scenario (n_customers × n_scenarios)
 """
 struct StochasticProgramProblem <: ProblemGenerator
     n_facilities::Int
@@ -66,11 +68,14 @@ Variables: `x[i]` (first stage) plus `y[i, j, s]` and `z[j, s]` (second stage),
 for a total of `n_facilities + n_scenarios * (n_facilities * n_customers + n_customers)`.
 
 # Arguments
-- `target_variables`: Target number of variables
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function StochasticProgramProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function StochasticProgramProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
@@ -132,9 +137,18 @@ function StochasticProgramProblem(target_variables::Int, feasibility_status::Fea
     end
 
     return StochasticProgramProblem(
-        I, J, S, build_cost, resource_use, resource_budget,
-        capacity_min, capacity_max, ship_cost, shortfall_cost,
-        scenario_prob, demand,
+        I,
+        J,
+        S,
+        build_cost,
+        resource_use,
+        resource_budget,
+        capacity_min,
+        capacity_max,
+        ship_cost,
+        shortfall_cost,
+        scenario_prob,
+        demand,
     )
 end
 
@@ -145,7 +159,8 @@ Build a JuMP model for the two-stage stochastic program. Deterministic — uses
 only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::StochasticProgramProblem)
     model = Model()
@@ -162,12 +177,15 @@ function build_model(prob::StochasticProgramProblem)
     @variable(model, z[1:J, 1:S] >= 0)
 
     # Objective: first-stage cost + expected second-stage cost.
-    @objective(model, Min,
-        sum(prob.build_cost[i] * x[i] for i in 1:I) +
-        sum(prob.scenario_prob[s] * (
+    @objective(
+        model,
+        Min,
+        sum(prob.build_cost[i] * x[i] for i in 1:I) + sum(
+            prob.scenario_prob[s] * (
                 sum(prob.ship_cost[i, j] * y[i, j, s] for i in 1:I, j in 1:J) +
                 sum(prob.shortfall_cost[j] * z[j, s] for j in 1:J)
-            ) for s in 1:S)
+            ) for s in 1:S
+        )
     )
 
     # First-stage resource budget (couples the first-stage decisions).

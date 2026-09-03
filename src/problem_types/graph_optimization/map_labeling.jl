@@ -11,16 +11,12 @@ both be used.
 struct MapLabelingProblem <: ProblemGenerator
     n_features::Int
     feature_candidates::Vector{Vector{Int}}
-    conflicts::Vector{Tuple{Int,Int}}
+    conflicts::Vector{Tuple{Int, Int}}
     label_values::Vector{Float64}
     minimum_placed::Int
 end
 
-function MapLabelingProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
-)
+function MapLabelingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     target_variables >= 8 || throw(ArgumentError("map labeling needs at least 8 variables"))
     rng = MersenneTwister(seed)
     n_candidates = target_variables
@@ -31,26 +27,30 @@ function MapLabelingProblem(
         push!(feature_candidates[mod(candidate - 1, n_features) + 1], candidate)
     end
     planted = Set(first(candidates) for candidates in feature_candidates)
-    forbidden = Set{Tuple{Int,Int}}()
+    forbidden = Set{Tuple{Int, Int}}()
     for candidates in feature_candidates
         for a in 1:(length(candidates) - 1), b in (a + 1):length(candidates)
             push!(forbidden, (candidates[a], candidates[b]))
         end
     end
-    maximum = n_candidates * (n_candidates - 1) ÷ 2 - length(forbidden) -
-              length(planted) * (length(planted) - 1) ÷ 2
+    maximum =
+        n_candidates * (n_candidates - 1) ÷ 2 - length(forbidden) -
+        length(planted) * (length(planted) - 1) ÷ 2
     conflict_count = min(maximum, max(n_features, 2n_candidates))
     conflicts = _graph_sample_edges(
-        rng, n_candidates, conflict_count;
-        forbidden=forbidden,
-        planted_independent=planted,
+        rng, n_candidates, conflict_count; forbidden=forbidden, planted_independent=planted
     )
     label_values = _graph_weights(rng, n_candidates; low=10, high=100)
 
-    minimum_placed = feasibility_status == feasible ? n_features :
-                     feasibility_status == infeasible ? n_features + 1 : 0
+    minimum_placed = if feasibility_status == feasible
+        n_features
+    elseif feasibility_status == infeasible
+        n_features + 1
+    else
+        0
+    end
     return MapLabelingProblem(
-        n_features, feature_candidates, conflicts, label_values, minimum_placed,
+        n_features, feature_candidates, conflicts, label_values, minimum_placed
     )
 end
 

@@ -15,6 +15,7 @@ absolute deviation (MAD) of the active return across scenarios. This linearizes
 exactly into a pure LP, so the model is a continuous LP (no integer variables).
 
 # Overview
+
 The decisions are long-only portfolio weights `x[i]` plus per-scenario absolute
 active-return auxiliaries `u[s]`. The objective maximizes expected return. The
 portfolio must be fully invested (`sum x_i = 1`), respect per-asset position
@@ -26,17 +27,18 @@ benchmark via MAD tracking error (not absolute tail CVaR), and sector limits are
 two-sided *deviation* bands around benchmark weights (not absolute upper caps).
 
 # Fields
-- `n_assets::Int`: Number of investable assets
-- `n_scenarios::Int`: Number of return scenarios for the MAD linearization
-- `n_sectors::Int`: Number of industry sectors
-- `n_factors::Int`: Number of common risk factors driving scenario returns
-- `expected_returns::Vector{Float64}`: Expected (mean + alpha) return per asset
-- `scenario_returns::Matrix{Float64}`: Return matrix (n_scenarios × n_assets)
-- `benchmark::Vector{Float64}`: Benchmark index weights (sum to 1)
-- `te_budget::Float64`: Maximum allowable average absolute active return (tracking error)
-- `sector_assignments::Vector{Int}`: Sector index per asset
-- `sector_band::Vector{Float64}`: Two-sided deviation band per sector
-- `max_position::Vector{Float64}`: Maximum weight per asset
+
+  - `n_assets::Int`: Number of investable assets
+  - `n_scenarios::Int`: Number of return scenarios for the MAD linearization
+  - `n_sectors::Int`: Number of industry sectors
+  - `n_factors::Int`: Number of common risk factors driving scenario returns
+  - `expected_returns::Vector{Float64}`: Expected (mean + alpha) return per asset
+  - `scenario_returns::Matrix{Float64}`: Return matrix (n_scenarios × n_assets)
+  - `benchmark::Vector{Float64}`: Benchmark index weights (sum to 1)
+  - `te_budget::Float64`: Maximum allowable average absolute active return (tracking error)
+  - `sector_assignments::Vector{Int}`: Sector index per asset
+  - `sector_band::Vector{Float64}`: Two-sided deviation band per sector
+  - `max_position::Vector{Float64}`: Maximum weight per asset
 """
 struct TrackingErrorPortfolioProblem <: ProblemGenerator
     n_assets::Int
@@ -67,23 +69,27 @@ Dimensions are sized as `n_assets = max(5, round(target / 5))` and
 `target_variables`.
 
 # Arguments
-- `target_variables`: Target number of decision variables
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of decision variables
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 
 # Feasibility
-- `feasible`/`unknown` (biased feasible): the benchmark portfolio `x = b` is
-  admissible by construction. It is fully invested (`sum b_i = 1`), it produces
-  zero active return in every scenario (so `TE = 0 <= te_budget`), it has zero
-  sector deviation (within any `sector_band >= 0`), and position limits are set
-  to `max_position_i >= b_i`. Hence the LP has a finite optimum.
-- `infeasible`: the per-asset position limits are scaled so that
-  `sum_i max_position_i < 1`. Then `sum_i x_i <= sum_i max_position_i < 1`
-  contradicts the full-investment constraint `sum_i x_i = 1`. This is a pure-LP
-  aggregate contradiction that survives the relaxation (the model is already an
-  LP).
+
+  - `feasible`/`unknown` (biased feasible): the benchmark portfolio `x = b` is
+    admissible by construction. It is fully invested (`sum b_i = 1`), it produces
+    zero active return in every scenario (so `TE = 0 <= te_budget`), it has zero
+    sector deviation (within any `sector_band >= 0`), and position limits are set
+    to `max_position_i >= b_i`. Hence the LP has a finite optimum.
+  - `infeasible`: the per-asset position limits are scaled so that
+    `sum_i max_position_i < 1`. Then `sum_i x_i <= sum_i max_position_i < 1`
+    contradicts the full-investment constraint `sum_i x_i = 1`. This is a pure-LP
+    aggregate contradiction that survives the relaxation (the model is already an
+    LP).
 """
-function TrackingErrorPortfolioProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function TrackingErrorPortfolioProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # --- Dimension sizing: total = n_assets + n_scenarios ---
@@ -133,7 +139,7 @@ function TrackingErrorPortfolioProblem(target_variables::Int, feasibility_status
     scenario_returns = factor_returns * factor_loadings' + idiosyncratic
 
     # --- Expected returns: mean scenario return plus small alpha noise ---
-    expected_returns = vec(mean(scenario_returns, dims=1))
+    expected_returns = vec(mean(scenario_returns; dims=1))
     expected_returns .+= rand(rng, Normal(0.0, 0.01), n_assets)
 
     # --- Benchmark weights (log-normal market-cap style, normalized) ---
@@ -151,7 +157,9 @@ function TrackingErrorPortfolioProblem(target_variables::Int, feasibility_status
     pos_lo = clamp(2.0 * ew, 0.005, 0.30)
     pos_hi = max(clamp(6.0 * ew, 0.02, 0.40), pos_lo * 1.5)
     base_position = [rand(rng, Uniform(pos_lo, pos_hi)) for _ in 1:n_assets]
-    max_position = [max(benchmark[i], base_position[i]) * rand(rng, Uniform(1.1, 1.6)) for i in 1:n_assets]
+    max_position = [
+        max(benchmark[i], base_position[i]) * rand(rng, Uniform(1.1, 1.6)) for i in 1:n_assets
+    ]
 
     # --- Sector deviation bands (two-sided, around benchmark) ---
     sector_band = [rand(rng, Uniform(0.03, 0.12)) for _ in 1:n_sectors]
@@ -188,9 +196,17 @@ function TrackingErrorPortfolioProblem(target_variables::Int, feasibility_status
     end
 
     return TrackingErrorPortfolioProblem(
-        n_assets, n_scenarios, n_sectors, n_factors,
-        expected_returns, scenario_returns, benchmark, te_budget,
-        sector_assignments, sector_band, max_position,
+        n_assets,
+        n_scenarios,
+        n_sectors,
+        n_factors,
+        expected_returns,
+        scenario_returns,
+        benchmark,
+        te_budget,
+        sector_assignments,
+        sector_band,
+        max_position,
     )
 end
 
@@ -201,7 +217,8 @@ Build a JuMP model for the index-tracking portfolio problem. Deterministic — u
 only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::TrackingErrorPortfolioProblem)
     model = Model()

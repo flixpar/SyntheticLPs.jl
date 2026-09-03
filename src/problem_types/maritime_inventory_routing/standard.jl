@@ -11,12 +11,13 @@ All period-indexed trajectories that exist for periods `0..T` are stored with
 period `t` in column `t + 1`.
 
 # Fields
-- `position::Matrix{Int}`: `position[v, t + 1]` is the port index (1 = depot)
-  occupied by vessel `v` at period `t`, for `t = 0..T`
-- `pickup::Matrix{Float64}`: `pickup[v, t]` loaded at the depot in period `t`
-- `delivery::Array{Float64,3}`: `delivery[v, c, t]` discharged at customer `c`
-- `load::Matrix{Float64}`: `load[v, t + 1]` onboard cargo after period `t`
-- `inventory::Matrix{Float64}`: `inventory[c, t + 1]` tank level after period `t`
+
+  - `position::Matrix{Int}`: `position[v, t + 1]` is the port index (1 = depot)
+    occupied by vessel `v` at period `t`, for `t = 0..T`
+  - `pickup::Matrix{Float64}`: `pickup[v, t]` loaded at the depot in period `t`
+  - `delivery::Array{Float64,3}`: `delivery[v, c, t]` discharged at customer `c`
+  - `load::Matrix{Float64}`: `load[v, t + 1]` onboard cargo after period `t`
+  - `inventory::Matrix{Float64}`: `inventory[c, t + 1]` tank level after period `t`
 
 The witness is a complete primal point of the (unrelaxed, binary) model: the
 route indicators follow directly from `position`, so feasibility can be checked
@@ -25,7 +26,7 @@ by pure arithmetic against every constraint row.
 struct MaritimeScheduleWitness
     position::Matrix{Int}
     pickup::Matrix{Float64}
-    delivery::Array{Float64,3}
+    delivery::Array{Float64, 3}
     load::Matrix{Float64}
     inventory::Matrix{Float64}
 end
@@ -38,16 +39,16 @@ Consumption in the prefix must be covered by the material already in the tanks
 plus everything the fleet can discharge, and the discharge is bounded twice
 over:
 
-* **supply bound** - deliveries only move material that is already afloat or
-  taken from the depot, so
-  `sum(deliveries) <= sum(initial_load) + sum(depot_supply[1:H])`
-  (load balance with `load >= 0`, plus the depot-supply rows).
-* **throughput bound** - summing the flow-conservation rows gives
-  `sum_p location[v, p, t] == 1` for every vessel and period, so the linking
-  rows `pickup <= cap * location[v, 1, t]` and
-  `delivery <= cap * location[v, c + 1, t]` add up to
-  `pickup[v, t] + sum_c delivery[v, c, t] <= cap_v`. Over `H` periods that
-  caps deliveries at `(initial_load_v + H * cap_v) / 2` per vessel.
+  - **supply bound** - deliveries only move material that is already afloat or
+    taken from the depot, so
+    `sum(deliveries) <= sum(initial_load) + sum(depot_supply[1:H])`
+    (load balance with `load >= 0`, plus the depot-supply rows).
+  - **throughput bound** - summing the flow-conservation rows gives
+    `sum_p location[v, p, t] == 1` for every vessel and period, so the linking
+    rows `pickup <= cap * location[v, 1, t]` and
+    `delivery <= cap * location[v, c + 1, t]` add up to
+    `pickup[v, t] + sum_c delivery[v, c, t] <= cap_v`. Over `H` periods that
+    caps deliveries at `(initial_load_v + H * cap_v) / 2` per vessel.
 
 `deliverable = initial_inventory + min(supply, throughput)` is therefore a valid
 upper bound on what the customers can receive, and `deliverable < consumption`
@@ -55,16 +56,17 @@ refutes the instance. Every row used is a linear row of the model, so the
 certificate refutes the LP relaxation as well as the integer model.
 
 # Fields
-- `horizon::Int`: prefix length `H` the argument is made over
-- `consumption::Float64`: total customer consumption in periods `1..H`
-- `initial_inventory::Float64`: material already in the customer tanks
-- `initial_load::Float64`: material already onboard the fleet
-- `depot_supply::Float64`: total depot availability in periods `1..H`
-- `supply_bound::Float64`: `initial_inventory + initial_load + depot_supply`
-- `throughput_bound::Float64`:
-  `initial_inventory + sum_v (initial_load_v + H * capacity_v) / 2`
-- `deliverable::Float64`: `min(supply_bound, throughput_bound)`, strictly below
-  `consumption`
+
+  - `horizon::Int`: prefix length `H` the argument is made over
+  - `consumption::Float64`: total customer consumption in periods `1..H`
+  - `initial_inventory::Float64`: material already in the customer tanks
+  - `initial_load::Float64`: material already onboard the fleet
+  - `depot_supply::Float64`: total depot availability in periods `1..H`
+  - `supply_bound::Float64`: `initial_inventory + initial_load + depot_supply`
+  - `throughput_bound::Float64`:
+    `initial_inventory + sum_v (initial_load_v + H * capacity_v) / 2`
+  - `deliverable::Float64`: `min(supply_bound, throughput_bound)`, strictly below
+    `consumption`
 """
 struct MaritimeSupplyCertificate
     horizon::Int
@@ -97,23 +99,24 @@ increasing travel time. The arc count is the sizing knob that lets the realised
 variable count track the requested target (see the constructor docstring).
 
 # Fields
-- `n_ports::Int`: ports, including the depot at index 1
-- `n_customers::Int`: `n_ports - 1` consumption ports
-- `n_vessels::Int`, `n_periods::Int`: fleet size and planning horizon
-- `arcs::Vector{Tuple{Int,Int}}`: sailing/waiting legs of the time-expanded network
-- `travel_time::Matrix{Float64}`: sailing days between ports (zero diagonal)
-- `period_length::Float64`: days per period; every arc fits inside it
-- `vessel_capacity::Vector{Float64}`, `initial_load::Vector{Float64}`
-- `initial_inventory::Vector{Float64}`, `inventory_capacity::Vector{Float64}`
-- `consumption::Matrix{Float64}`: `consumption[c, t]` drawn from tank `c`
-- `depot_supply::Vector{Float64}`: material released by the depot per period
-- `travel_cost::Matrix{Float64}`: cost of a leg (zero for waiting arcs)
-- `holding_cost::Vector{Float64}`: per-unit tank holding cost
-- `feasible_witness::Union{Nothing,MaritimeScheduleWitness}`: populated only for
-  a requested-`feasible` instance
-- `infeasibility_certificate::Union{Nothing,MaritimeSupplyCertificate}`:
-  populated only for a requested-`infeasible` instance
-- `feasibility_status::FeasibilityStatus`
+
+  - `n_ports::Int`: ports, including the depot at index 1
+  - `n_customers::Int`: `n_ports - 1` consumption ports
+  - `n_vessels::Int`, `n_periods::Int`: fleet size and planning horizon
+  - `arcs::Vector{Tuple{Int,Int}}`: sailing/waiting legs of the time-expanded network
+  - `travel_time::Matrix{Float64}`: sailing days between ports (zero diagonal)
+  - `period_length::Float64`: days per period; every arc fits inside it
+  - `vessel_capacity::Vector{Float64}`, `initial_load::Vector{Float64}`
+  - `initial_inventory::Vector{Float64}`, `inventory_capacity::Vector{Float64}`
+  - `consumption::Matrix{Float64}`: `consumption[c, t]` drawn from tank `c`
+  - `depot_supply::Vector{Float64}`: material released by the depot per period
+  - `travel_cost::Matrix{Float64}`: cost of a leg (zero for waiting arcs)
+  - `holding_cost::Vector{Float64}`: per-unit tank holding cost
+  - `feasible_witness::Union{Nothing,MaritimeScheduleWitness}`: populated only for
+    a requested-`feasible` instance
+  - `infeasibility_certificate::Union{Nothing,MaritimeSupplyCertificate}`:
+    populated only for a requested-`infeasible` instance
+  - `feasibility_status::FeasibilityStatus`
 
 This is a genuine MIP (vessel positions and legs are binary); with the package
 default `relax_integer=true` it is returned as its LP relaxation, in which a
@@ -125,7 +128,7 @@ struct MaritimeInventoryRoutingProblem <: ProblemGenerator
     n_customers::Int
     n_vessels::Int
     n_periods::Int
-    arcs::Vector{Tuple{Int,Int}}
+    arcs::Vector{Tuple{Int, Int}}
     travel_time::Matrix{Float64}
     period_length::Float64
     vessel_capacity::Vector{Float64}
@@ -136,8 +139,8 @@ struct MaritimeInventoryRoutingProblem <: ProblemGenerator
     depot_supply::Vector{Float64}
     travel_cost::Matrix{Float64}
     holding_cost::Vector{Float64}
-    feasible_witness::Union{Nothing,MaritimeScheduleWitness}
-    infeasibility_certificate::Union{Nothing,MaritimeSupplyCertificate}
+    feasible_witness::Union{Nothing, MaritimeScheduleWitness}
+    infeasibility_certificate::Union{Nothing, MaritimeSupplyCertificate}
     feasibility_status::FeasibilityStatus
 end
 
@@ -165,8 +168,7 @@ end
 Exact number of variables of the built model: `_mirp_base_variables(P, V, T)`
 plus the `V * A * T` leg indicators.
 """
-_mirp_variable_count(P::Int, V::Int, T::Int, A::Int) =
-    _mirp_base_variables(P, V, T) + V * A * T
+_mirp_variable_count(P::Int, V::Int, T::Int, A::Int) = _mirp_base_variables(P, V, T) + V * A * T
 
 """
     _mirp_dimensions(rng, target) -> (P, V, T, A)
@@ -212,13 +214,14 @@ function _mirp_dimensions(rng::AbstractRNG, target::Int)
         hi = clamp(ceil(Int, p_star) + 4, 2, p_cap)
         for P in lo:hi
             base = _mirp_base_variables(P, V, T)
-            A = clamp(round(Int, (target - base) / (V * T)),
-                      _mirp_min_arcs(P), _mirp_max_arcs(P))
+            A = clamp(round(Int, (target - base) / (V * T)), _mirp_min_arcs(P), _mirp_max_arcs(P))
             total = _mirp_variable_count(P, V, T, A)
             err = abs(total - target) / target
-            shape = abs(V - v_pref) / vmax + abs(T - t_pref) / tmax +
-                    abs(A / _mirp_max_arcs(P) - rho_pref)
-            score = (round(err, digits=5), shape)
+            shape =
+                abs(V - v_pref) / vmax +
+                abs(T - t_pref) / tmax +
+                abs(A / _mirp_max_arcs(P) - rho_pref)
+            score = (round(err; digits=5), shape)
             if score < best_score
                 best_score = score
                 best = (P, V, T, A)
@@ -238,13 +241,13 @@ selected sailing time, so a leg is in the network exactly when it can be sailed
 within one period.
 """
 function _mirp_arc_set(P::Int, travel_time::Matrix{Float64}, n_arcs::Int)
-    arcs = Tuple{Int,Int}[(i, i) for i in 1:P]
+    arcs = Tuple{Int, Int}[(i, i) for i in 1:P]
     for c in 2:P
         push!(arcs, (1, c))
         push!(arcs, (c, 1))
     end
-    optional = Tuple{Int,Int}[(i, j) for i in 2:P for j in (i + 1):P]
-    sort!(optional, by = a -> (travel_time[a[1], a[2]], a[1], a[2]))
+    optional = Tuple{Int, Int}[(i, j) for i in 2:P for j in (i + 1):P]
+    sort!(optional; by=a -> (travel_time[a[1], a[2]], a[1], a[2]))
     remaining = n_arcs - length(arcs)
     for (i, j) in optional
         remaining <= 0 && break
@@ -274,8 +277,7 @@ resulting `load` / `inventory` trajectories; by construction loads return to
 zero after every discharge and tank levels hit zero just before each visit, so
 the plan is feasible for any resources at least as large as its own peaks.
 """
-function _mirp_plan(consumption::Matrix{Float64}, V::Int, T::Int,
-                    order::Vector{Int})
+function _mirp_plan(consumption::Matrix{Float64}, V::Int, T::Int, order::Vector{Int})
     C = size(consumption, 1)
     rotation = [Int[] for _ in 1:V]
     for (k, c) in enumerate(order)
@@ -301,8 +303,8 @@ function _mirp_plan(consumption::Matrix{Float64}, V::Int, T::Int,
     initial_inventory = zeros(Float64, C)
     for c in 1:C
         times = visit_times[c]
-        initial_inventory[c] = isempty(times) ? sum(consumption[c, :]) :
-                               sum(consumption[c, 1:(times[1] - 1)])
+        initial_inventory[c] =
+            isempty(times) ? sum(consumption[c, :]) : sum(consumption[c, 1:(times[1] - 1)])
         v = visit_vessel[c]
         for (idx, t) in enumerate(times)
             nxt = idx < length(times) ? times[idx + 1] : T + 1
@@ -322,13 +324,18 @@ function _mirp_plan(consumption::Matrix{Float64}, V::Int, T::Int,
             pickup[v, t] = sum(delivery[v, c, t + 1] for c in 1:C)
         end
         for t in 1:T
-            load[v, t + 1] = load[v, t] + pickup[v, t] -
-                             sum(delivery[v, c, t] for c in 1:C)
+            load[v, t + 1] = load[v, t] + pickup[v, t] - sum(delivery[v, c, t] for c in 1:C)
         end
     end
 
-    return (position=position, pickup=pickup, delivery=delivery, load=load,
-            inventory=inventory, initial_inventory=initial_inventory)
+    return (
+        position=position,
+        pickup=pickup,
+        delivery=delivery,
+        load=load,
+        inventory=inventory,
+        initial_inventory=initial_inventory,
+    )
 end
 
 # Round up to cents so derived capacities never fall below the quantity they
@@ -342,19 +349,21 @@ _mirp_ceil2(x::Real) = ceil(x * 100) / 100
 Size the fleet and the customer tanks a comfortable margin above the peaks of
 the planted rotation, so the plan fits inside them with room to spare.
 """
-function _mirp_plan_resources!(vessel_capacity::Vector{Float64},
-                               inventory_capacity::Vector{Float64},
-                               rng::AbstractRNG, peak_load::Vector{Float64},
-                               peak_inventory::Vector{Float64}, unit::Float64)
+function _mirp_plan_resources!(
+    vessel_capacity::Vector{Float64},
+    inventory_capacity::Vector{Float64},
+    rng::AbstractRNG,
+    peak_load::Vector{Float64},
+    peak_inventory::Vector{Float64},
+    unit::Float64,
+)
     for v in eachindex(vessel_capacity)
-        vessel_capacity[v] = _mirp_ceil2(max(peak_load[v] *
-                                             rand(rng, Uniform(1.05, 1.35)),
-                                             unit))
+        vessel_capacity[v] = _mirp_ceil2(max(peak_load[v] * rand(rng, Uniform(1.05, 1.35)), unit))
     end
     for c in eachindex(inventory_capacity)
-        inventory_capacity[c] = _mirp_ceil2(max(peak_inventory[c] *
-                                                rand(rng, Uniform(1.05, 1.40)),
-                                                unit))
+        inventory_capacity[c] = _mirp_ceil2(
+            max(peak_inventory[c] * rand(rng, Uniform(1.05, 1.40)), unit)
+        )
     end
     return nothing
 end
@@ -366,11 +375,13 @@ end
 Scan every prefix horizon and return the [`MaritimeSupplyCertificate`](@ref)
 with the largest shortage, or `nothing` if no prefix is short.
 """
-function _mirp_certificate(consumption::Matrix{Float64},
-                           initial_inventory::Vector{Float64},
-                           initial_load::Vector{Float64},
-                           depot_supply::Vector{Float64},
-                           vessel_capacity::Vector{Float64})
+function _mirp_certificate(
+    consumption::Matrix{Float64},
+    initial_inventory::Vector{Float64},
+    initial_load::Vector{Float64},
+    depot_supply::Vector{Float64},
+    vessel_capacity::Vector{Float64},
+)
     T = size(consumption, 2)
     inv0 = sum(initial_inventory)
     load0 = sum(initial_load)
@@ -382,16 +393,23 @@ function _mirp_certificate(consumption::Matrix{Float64},
         cumulative_supply += depot_supply[H]
         cumulative_consumption += sum(consumption[:, H])
         supply_bound = inv0 + load0 + cumulative_supply
-        throughput_bound = inv0 + sum((initial_load[v] + H * vessel_capacity[v]) / 2
-                                      for v in 1:length(vessel_capacity))
+        throughput_bound =
+            inv0 +
+            sum((initial_load[v] + H * vessel_capacity[v]) / 2 for v in 1:length(vessel_capacity))
         deliverable = min(supply_bound, throughput_bound)
         gap = cumulative_consumption - deliverable
         if gap > best_gap
             best_gap = gap
-            best = MaritimeSupplyCertificate(H, cumulative_consumption, inv0,
-                                             load0, cumulative_supply,
-                                             supply_bound, throughput_bound,
-                                             deliverable)
+            best = MaritimeSupplyCertificate(
+                H,
+                cumulative_consumption,
+                inv0,
+                load0,
+                cumulative_supply,
+                supply_bound,
+                throughput_bound,
+                deliverable,
+            )
         end
     end
     return best
@@ -416,26 +434,25 @@ count in closed form and then reads the arc count off exactly, so the realised
 count usually equals the target and is otherwise within one `V*T` block of it.
 
 # Feasibility (relaxation-aware)
-- `feasible`: a depot-shuttle rotation is planted (odd periods at the depot,
-  discharge at the `k`-th rotation customer in period `2k`) and every resource -
-  vessel capacity, tank capacity, initial tank level and depot availability - is
-  sized from the peaks of that plan, so the schedule stored in `feasible_witness`
-  is a feasible point of the integer model and of its relaxation.
-- `infeasible`: the fleet and the depot are starved - initial material plus the
-  whole horizon's depot supply is only `0.55..0.88` of total consumption - which
-  is refuted by the aggregate material argument in
-  `infeasibility_certificate` using LP rows only.
-- `unknown`: fleet and tanks are sized at or above the plan (vessel capacity
-  `1.00..1.50`, tank capacity `1.00..1.60` of the plan peaks), while the depot
-  is scaled by a global scarcity factor in `0.80..1.15` with per-period noise
-  in `0.90..1.10`. Whether a short period can be absorbed by loading earlier
-  depends on the onboard capacity the fleet happens to have, so feasibility is
-  genuinely undecided - and mixed both ways - at every scale.
+
+  - `feasible`: a depot-shuttle rotation is planted (odd periods at the depot,
+    discharge at the `k`-th rotation customer in period `2k`) and every resource -
+    vessel capacity, tank capacity, initial tank level and depot availability - is
+    sized from the peaks of that plan, so the schedule stored in `feasible_witness`
+    is a feasible point of the integer model and of its relaxation.
+  - `infeasible`: the fleet and the depot are starved - initial material plus the
+    whole horizon's depot supply is only `0.55..0.88` of total consumption - which
+    is refuted by the aggregate material argument in
+    `infeasibility_certificate` using LP rows only.
+  - `unknown`: fleet and tanks are sized at or above the plan (vessel capacity
+    `1.00..1.50`, tank capacity `1.00..1.60` of the plan peaks), while the depot
+    is scaled by a global scarcity factor in `0.80..1.15` with per-period noise
+    in `0.90..1.10`. Whether a short period can be absorbed by loading earlier
+    depends on the onboard capacity the fleet happens to have, so feasibility is
+    genuinely undecided - and mixed both ways - at every scale.
 """
 function MaritimeInventoryRoutingProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
     target = max(target_variables, 1)
@@ -444,8 +461,7 @@ function MaritimeInventoryRoutingProblem(
     C = P - 1
 
     # Port geography on a 1200 x 1200 km sea grid; the depot is port 1.
-    coords = [(rand(rng, Uniform(0.0, 1200.0)), rand(rng, Uniform(0.0, 1200.0)))
-              for _ in 1:P]
+    coords = [(rand(rng, Uniform(0.0, 1200.0)), rand(rng, Uniform(0.0, 1200.0))) for _ in 1:P]
     speed = rand(rng, Uniform(450.0, 650.0))          # km sailed per day
     port_fee = rand(rng, Uniform(400.0, 1600.0))      # USD per call
     bunker_rate = rand(rng, Uniform(0.8, 1.8))        # USD per km
@@ -454,15 +470,16 @@ function MaritimeInventoryRoutingProblem(
     for i in 1:P, j in 1:P
         i == j && continue
         d = hypot(coords[i][1] - coords[j][1], coords[i][2] - coords[j][2])
-        travel_time[i, j] = round(d / speed, digits=3)
-        travel_cost[i, j] = round(port_fee + bunker_rate * d, digits=2)
+        travel_time[i, j] = round(d / speed; digits=3)
+        travel_cost[i, j] = round(port_fee + bunker_rate * d; digits=2)
     end
     arcs, period_length = _mirp_arc_set(P, travel_time, A)
 
     base_rate = [rand(rng, Uniform(20.0, 120.0)) for _ in 1:C]
-    consumption = [round(base_rate[c] * rand(rng, Uniform(0.8, 1.2)), digits=2)
-                   for c in 1:C, _ in 1:T]
-    holding_cost = [round(rand(rng, Uniform(0.1, 1.6)), digits=3) for _ in 1:C]
+    consumption = [
+        round(base_rate[c] * rand(rng, Uniform(0.8, 1.2)); digits=2) for c in 1:C, _ in 1:T
+    ]
+    holding_cost = [round(rand(rng, Uniform(0.1, 1.6)); digits=3) for _ in 1:C]
 
     plan = _mirp_plan(consumption, V, T, randperm(rng, C))
     peak_load = [maximum(plan.load[v, :]) for v in 1:V]
@@ -479,25 +496,26 @@ function MaritimeInventoryRoutingProblem(
     certificate = nothing
 
     if feasibility_status == feasible
-        _mirp_plan_resources!(vessel_capacity, inventory_capacity, rng,
-                              peak_load, peak_inventory, unit)
+        _mirp_plan_resources!(
+            vessel_capacity, inventory_capacity, rng, peak_load, peak_inventory, unit
+        )
         initial_inventory .= plan.initial_inventory
         for t in 1:T
-            depot_supply[t] = _mirp_ceil2(max(plan_pickup[t] *
-                                              rand(rng, Uniform(1.05, 1.40)),
-                                              unit))
+            depot_supply[t] = _mirp_ceil2(
+                max(plan_pickup[t] * rand(rng, Uniform(1.05, 1.40)), unit)
+            )
         end
-        witness = MaritimeScheduleWitness(plan.position, plan.pickup,
-                                          plan.delivery, plan.load,
-                                          plan.inventory)
+        witness = MaritimeScheduleWitness(
+            plan.position, plan.pickup, plan.delivery, plan.load, plan.inventory
+        )
     elseif feasibility_status == infeasible
-        _mirp_plan_resources!(vessel_capacity, inventory_capacity, rng,
-                              peak_load, peak_inventory, unit)
+        _mirp_plan_resources!(
+            vessel_capacity, inventory_capacity, rng, peak_load, peak_inventory, unit
+        )
         # Starve the system: everything the customers could ever receive is a
         # strict fraction of what they consume over the horizon.
         budget = rand(rng, Uniform(0.55, 0.88)) * sum(consumption)
-        initial_inventory .= plan.initial_inventory .*
-                             rand(rng, Uniform(0.0, 0.4))
+        initial_inventory .= plan.initial_inventory .* rand(rng, Uniform(0.0, 0.4))
         initial_load .= vessel_capacity .* rand(rng, Uniform(0.0, 0.3))
         held = sum(initial_inventory) + sum(initial_load)
         if held > 0.5 * budget
@@ -508,9 +526,9 @@ function MaritimeInventoryRoutingProblem(
         end
         weights = [rand(rng, Uniform(0.7, 1.3)) for _ in 1:T]
         depot_supply .= (budget - held) .* weights ./ sum(weights)
-        certificate = _mirp_certificate(consumption, initial_inventory,
-                                        initial_load, depot_supply,
-                                        vessel_capacity)
+        certificate = _mirp_certificate(
+            consumption, initial_inventory, initial_load, depot_supply, vessel_capacity
+        )
     else
         # Fleet and tanks are sized like the feasible branch, but the depot is
         # scaled by a global scarcity factor straddling 1 and shaken by
@@ -519,28 +537,39 @@ function MaritimeInventoryRoutingProblem(
         # to have, so feasibility is genuinely undecided at every scale.
         scarcity = rand(rng, Uniform(0.80, 1.15))
         for v in 1:V
-            vessel_capacity[v] = _mirp_ceil2(max(peak_load[v] *
-                                                 rand(rng, Uniform(1.0, 1.5)),
-                                                 unit))
+            vessel_capacity[v] = _mirp_ceil2(max(peak_load[v] * rand(rng, Uniform(1.0, 1.5)), unit))
             initial_load[v] = vessel_capacity[v] * rand(rng, Uniform(0.0, 0.3))
         end
         for c in 1:C
-            inventory_capacity[c] = _mirp_ceil2(max(peak_inventory[c] *
-                                                    rand(rng, Uniform(1.0, 1.6)),
-                                                    unit))
+            inventory_capacity[c] = _mirp_ceil2(
+                max(peak_inventory[c] * rand(rng, Uniform(1.0, 1.6)), unit)
+            )
             initial_inventory[c] = plan.initial_inventory[c]
         end
         for t in 1:T
-            depot_supply[t] = _mirp_ceil2(plan_pickup[t] * scarcity *
-                                          rand(rng, Uniform(0.9, 1.1)))
+            depot_supply[t] = _mirp_ceil2(plan_pickup[t] * scarcity * rand(rng, Uniform(0.9, 1.1)))
         end
     end
 
     return MaritimeInventoryRoutingProblem(
-        P, C, V, T, arcs, travel_time, period_length,
-        vessel_capacity, initial_load, initial_inventory, inventory_capacity,
-        consumption, depot_supply, travel_cost, holding_cost,
-        witness, certificate, feasibility_status,
+        P,
+        C,
+        V,
+        T,
+        arcs,
+        travel_time,
+        period_length,
+        vessel_capacity,
+        initial_load,
+        initial_inventory,
+        inventory_capacity,
+        consumption,
+        depot_supply,
+        travel_cost,
+        holding_cost,
+        witness,
+        certificate,
+        feasibility_status,
     )
 end
 
@@ -550,11 +579,13 @@ end
 Build the time-expanded MIRP model. Deterministic - uses only struct fields.
 
 # Model
+
 Variables:
-- `location[v, p, t] in {0,1}`: vessel `v` is at port `p` at period `t = 0..T`
-- `move[v, a, t] in {0,1}`: vessel `v` traverses leg `prob.arcs[a]` in period `t`
-- `delivery[v, c, t] >= 0`, `pickup[v, t] >= 0`: cargo discharged / loaded
-- `0 <= load[v, t] <= capacity_v`, `0 <= inventory[c, t] <= tank_c`
+
+  - `location[v, p, t] in {0,1}`: vessel `v` is at port `p` at period `t = 0..T`
+  - `move[v, a, t] in {0,1}`: vessel `v` traverses leg `prob.arcs[a]` in period `t`
+  - `delivery[v, c, t] >= 0`, `pickup[v, t] >= 0`: cargo discharged / loaded
+  - `0 <= load[v, t] <= capacity_v`, `0 <= inventory[c, t] <= tank_c`
 
 Constraints: vessels start at the depot with their initial load; leg flow
 conservation ties `move` to `location` on both ends; pickups and deliveries are
@@ -585,10 +616,13 @@ function build_model(prob::MaritimeInventoryRoutingProblem)
     @variable(model, 0 <= load[v in 1:V, 0:T] <= prob.vessel_capacity[v])
     @variable(model, 0 <= inventory[c in 1:C, 0:T] <= prob.inventory_capacity[c])
 
-    @objective(model, Min,
-        sum(prob.travel_cost[arcs[a][1], arcs[a][2]] * move[v, a, t]
-            for v in 1:V, a in 1:A, t in 1:T) +
-        sum(prob.holding_cost[c] * inventory[c, t] for c in 1:C, t in 1:T)
+    @objective(
+        model,
+        Min,
+        sum(
+            prob.travel_cost[arcs[a][1], arcs[a][2]] * move[v, a, t] for
+            v in 1:V, a in 1:A, t in 1:T
+        ) + sum(prob.holding_cost[c] * inventory[c, t] for c in 1:C, t in 1:T)
     )
 
     for v in 1:V
@@ -604,32 +638,27 @@ function build_model(prob::MaritimeInventoryRoutingProblem)
 
     for v in 1:V, t in 1:T
         for i in 1:P
-            @constraint(model,
-                sum(move[v, a, t] for a in out_arcs[i]) == location[v, i, t - 1])
+            @constraint(model, sum(move[v, a, t] for a in out_arcs[i]) == location[v, i, t - 1])
         end
         for j in 1:P
-            @constraint(model,
-                sum(move[v, a, t] for a in in_arcs[j]) == location[v, j, t])
+            @constraint(model, sum(move[v, a, t] for a in in_arcs[j]) == location[v, j, t])
         end
         @constraint(model, pickup[v, t] <= prob.vessel_capacity[v] * location[v, 1, t])
-        @constraint(model,
-            load[v, t] == load[v, t - 1] + pickup[v, t] -
-                          sum(delivery[v, c, t] for c in 1:C)
+        @constraint(
+            model, load[v, t] == load[v, t - 1] + pickup[v, t] - sum(delivery[v, c, t] for c in 1:C)
         )
         for c in 1:C
-            @constraint(model,
-                delivery[v, c, t] <= prob.vessel_capacity[v] * location[v, c + 1, t]
-            )
+            @constraint(model, delivery[v, c, t] <= prob.vessel_capacity[v] * location[v, c + 1, t])
         end
     end
     for t in 1:T
         @constraint(model, sum(pickup[v, t] for v in 1:V) <= prob.depot_supply[t])
     end
     for c in 1:C, t in 1:T
-        @constraint(model,
-            inventory[c, t] == inventory[c, t - 1] +
-                               sum(delivery[v, c, t] for v in 1:V) -
-                               prob.consumption[c, t]
+        @constraint(
+            model,
+            inventory[c, t] ==
+                inventory[c, t - 1] + sum(delivery[v, c, t] for v in 1:V) - prob.consumption[c, t]
         )
     end
 

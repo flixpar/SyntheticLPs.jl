@@ -9,6 +9,7 @@ appointment-delivery routing — as a mixed-integer program with a meaningful
 continuous relaxation.
 
 # Overview
+
 A delivery vehicle leaves its home base (node 1) at time 0, must serve every
 stop exactly once within that stop's time window, and return before the end of
 the shift. Data is a symmetric metric of travel times (a shared-geography road
@@ -20,44 +21,46 @@ The formulation propagates time along the selected arcs (no MTZ block is
 needed — with `τ > 0` any depot-free cycle would force arrival times to
 strictly increase around the cycle, which is impossible):
 
-- Binary arc variables `x[i,j] ∈ {0,1}` select which arcs are traversed.
-- Continuous arrival times `t[j] ∈ [a_j, b_j]` for stops `j = 2..n` (waiting
-  for a window to open is allowed, so `t_j` is the service start, not the
-  arrival).
-- A continuous return time `r ∈ [0, L]` for the leg back to the base.
+  - Binary arc variables `x[i,j] ∈ {0,1}` select which arcs are traversed.
+  - Continuous arrival times `t[j] ∈ [a_j, b_j]` for stops `j = 2..n` (waiting
+    for a window to open is allowed, so `t_j` is the service start, not the
+    arrival).
+  - A continuous return time `r ∈ [0, L]` for the leg back to the base.
 
 Key structural couplings:
-- **Degree constraints**: one in-arc and one out-arc per node.
-- **Time propagation with per-arc big-M**: `t_j ≥ t_i + s_i + τ_ij − M_ij(1−x_ij)`
-  where `M_ij = max(0, b_i + s_i + τ_ij − a_j)` is the smallest value that makes
-  the row non-binding when `x_ij = 0` (at `t_i = b_i` it reduces to
-  `t_j ≥ a_j`, already a variable bound). The `max(0, ·)` clamp matters: a raw
-  negative `M` would make the row *more* binding on unused arcs and cut off
-  genuine tours.
-- **Budget row** `Σ τ_ij x_ij ≤ F`: total route (travel) time fits the vehicle's
-  charge/planned duration.
-- **Shift row** `r ≤ L` with return propagation `r ≥ t_j + s_j + τ_j1 − M_j(1−x_j1)`.
+
+  - **Degree constraints**: one in-arc and one out-arc per node.
+  - **Time propagation with per-arc big-M**: `t_j ≥ t_i + s_i + τ_ij − M_ij(1−x_ij)`
+    where `M_ij = max(0, b_i + s_i + τ_ij − a_j)` is the smallest value that makes
+    the row non-binding when `x_ij = 0` (at `t_i = b_i` it reduces to
+    `t_j ≥ a_j`, already a variable bound). The `max(0, ·)` clamp matters: a raw
+    negative `M` would make the row *more* binding on unused arcs and cut off
+    genuine tours.
+  - **Budget row** `Σ τ_ij x_ij ≤ F`: total route (travel) time fits the vehicle's
+    charge/planned duration.
+  - **Shift row** `r ≤ L` with return propagation `r ≥ t_j + s_j + τ_j1 − M_j(1−x_j1)`.
 
 This is a MIP whose continuous relaxation is a genuine tour relaxation: the
 relaxed model is a useful LP test instance, but a fractional `x` is not an
 implementable tour.
 
 # Fields
-- `n_stops::Int`: Total node count `n` (node 1 = home base, nodes `2..n` = stops)
-- `locations::Vector{Tuple{Float64,Float64}}`: Node coordinates (index 1 = home base)
-- `travel_time::Matrix{Float64}`: Symmetric travel-time matrix in minutes;
-  `travel_time[i,j] = travel_time[j,i] > 0` off the diagonal, `[i,i] = 0`
-- `service::Vector{Float64}`: Service duration per node in minutes (index 1 = 0)
-- `window_start::Vector{Float64}`: Window opening `a_j` per node (index 1 = 0)
-- `window_end::Vector{Float64}`: Window closing `b_j` per node (index 1 = 0)
-- `route_budget::Float64`: Maximum total travel time `F`
-- `shift_length::Float64`: Maximum return time `L`
-- `planted_tour::Vector{Int}`: The planted `[1, …, 1]` tour (equal to the data
-  tour; windows are built around it in the feasible branch)
+
+  - `n_stops::Int`: Total node count `n` (node 1 = home base, nodes `2..n` = stops)
+  - `locations::Vector{Tuple{Float64,Float64}}`: Node coordinates (index 1 = home base)
+  - `travel_time::Matrix{Float64}`: Symmetric travel-time matrix in minutes;
+    `travel_time[i,j] = travel_time[j,i] > 0` off the diagonal, `[i,i] = 0`
+  - `service::Vector{Float64}`: Service duration per node in minutes (index 1 = 0)
+  - `window_start::Vector{Float64}`: Window opening `a_j` per node (index 1 = 0)
+  - `window_end::Vector{Float64}`: Window closing `b_j` per node (index 1 = 0)
+  - `route_budget::Float64`: Maximum total travel time `F`
+  - `shift_length::Float64`: Maximum return time `L`
+  - `planted_tour::Vector{Int}`: The planted `[1, …, 1]` tour (equal to the data
+    tour; windows are built around it in the feasible branch)
 """
 struct TSPTimeWindowsProblem <: ProblemGenerator
     n_stops::Int
-    locations::Vector{Tuple{Float64,Float64}}
+    locations::Vector{Tuple{Float64, Float64}}
     travel_time::Matrix{Float64}
     service::Vector{Float64}
     window_start::Vector{Float64}
@@ -73,6 +76,7 @@ end
 Construct a TSPTW instance.
 
 # Variable-count formula
+
 The model creates one binary `x` per arc (`n*(n-1)`), one arrival time per stop
 (`n-1`), and one return time:
 
@@ -84,31 +88,35 @@ statuses. For `target = 100` this gives `n = 10` (100 vars); for `target = 500`,
 `n = 22` (484 vars).
 
 # Arguments
-- `target_variables`: Target number of decision variables (`x`, `t`, and `r`)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of decision variables (`x`, `t`, and `r`)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 
 # Feasibility
-- `feasible`: a concrete tour is planted and the windows are built around its
-  schedule. Window openings `a_j` sit at or below the tour's no-wait arrival
-  (tight for ~25% appointment stops, earlier otherwise); window closings `b_j`
-  sit at or above the *realized* arrival computed by a forward pass with
-  waiting, so serving the planted tour in order — waiting where a window opens
-  late — satisfies every row. `F` exceeds the planted tour's travel time by
-  10-30% and `L` its return time by 5-20%. The planted integer point survives
-  `relax_integrality` verbatim (relaxation only widens `x`), so the delivered
-  relaxation is feasible and bounded.
-- `infeasible`: the route budget is set strictly below the minimum possible
-  total travel time: `F = 0.85 · Σ_i min_{j≠i} τ_ij`. Summing the out-degree
-  rows gives `Σ_{ij} τ_ij x_ij = Σ_i (Σ_{j≠i} τ_ij x_ij) ≥ Σ_i min_{j≠i} τ_ij > F`
-  for every feasible `x`, using only the degree rows — so the model is
-  infeasible even in the LP relaxation. Windows and shift are sampled naturally.
-- `unknown`: windows are sampled independently of any tour (`a_j` uniform over
-  the first 60% of the horizon, widths 20-90 min) and the budget sits at
-  0.9-1.2× a random reference tour's travel time; the instance may or may not
-  admit a feasible tour.
+
+  - `feasible`: a concrete tour is planted and the windows are built around its
+    schedule. Window openings `a_j` sit at or below the tour's no-wait arrival
+    (tight for ~25% appointment stops, earlier otherwise); window closings `b_j`
+    sit at or above the *realized* arrival computed by a forward pass with
+    waiting, so serving the planted tour in order — waiting where a window opens
+    late — satisfies every row. `F` exceeds the planted tour's travel time by
+    10-30% and `L` its return time by 5-20%. The planted integer point survives
+    `relax_integrality` verbatim (relaxation only widens `x`), so the delivered
+    relaxation is feasible and bounded.
+  - `infeasible`: the route budget is set strictly below the minimum possible
+    total travel time: `F = 0.85 · Σ_i min_{j≠i} τ_ij`. Summing the out-degree
+    rows gives `Σ_{ij} τ_ij x_ij = Σ_i (Σ_{j≠i} τ_ij x_ij) ≥ Σ_i min_{j≠i} τ_ij > F`
+    for every feasible `x`, using only the degree rows — so the model is
+    infeasible even in the LP relaxation. Windows and shift are sampled naturally.
+  - `unknown`: windows are sampled independently of any tour (`a_j` uniform over
+    the first 60% of the horizon, widths 20-90 min) and the budget sits at
+    0.9-1.2× a random reference tour's travel time; the instance may or may not
+    admit a feasible tour.
 """
-function TSPTimeWindowsProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function TSPTimeWindowsProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
@@ -119,7 +127,7 @@ function TSPTimeWindowsProblem(target_variables::Int, feasibility_status::Feasib
     locations = _tsp_stops(rng, n)
     dist = _tsp_distance(rng, locations)
     minutes_per_km = rand(rng, 1.2:0.1:2.0)             # urban driving pace
-    tau = round.(dist .* minutes_per_km, digits = 2)
+    tau = round.(dist .* minutes_per_km; digits=2)
     # Time propagation is the subtour eliminator; it needs strictly positive
     # travel times on distinct stops (guaranteed by the distance floor).
     @assert minimum(tau[i, j] for i in 1:n, j in 1:n if i != j) > 0
@@ -129,12 +137,12 @@ function TSPTimeWindowsProblem(target_variables::Int, feasibility_status::Feasib
     tour = [1; shuffle(rng, collect(2:n)); 1]
     arr = zeros(n)                                  # no-wait arrivals, depot at 0
     for idx in 2:n
-        i, j = tour[idx-1], tour[idx]
+        i, j = tour[idx - 1], tour[idx]
         arr[j] = arr[i] + service[i] + tau[i, j]
     end
-    tour_tau = sum(tau[tour[idx-1], tour[idx]] for idx in 2:n+1)
+    tour_tau = sum(tau[tour[idx - 1], tour[idx]] for idx in 2:(n + 1))
     no_wait_return = arr[tour[n]] + service[tour[n]] + tau[tour[n], 1]
-    horizon = round(no_wait_return * 1.5, digits = 2)
+    horizon = round(no_wait_return * 1.5; digits=2)
 
     a = zeros(n)
     b = zeros(n)
@@ -144,37 +152,37 @@ function TSPTimeWindowsProblem(target_variables::Int, feasibility_status::Feasib
         tight = rand(rng, n) .< 0.25                     # appointment stops
         for j in 2:n
             target_a = tight[j] ? arr[j] : max(0.0, arr[j] * (0.75 + 0.2 * rand(rng)))
-            a[j] = max(0.0, round(target_a - 0.01, digits = 2))
+            a[j] = max(0.0, round(target_a - 0.01; digits=2))
         end
         # Forward pass WITH waiting: the schedule the vehicle actually runs.
         t = zeros(n)
         for idx in 2:n
-            i, j = tour[idx-1], tour[idx]
+            i, j = tour[idx - 1], tour[idx]
             t[j] = max(t[i] + service[i] + tau[i, j], a[j])
         end
         for j in 2:n
-            b[j] = round(t[j] + 0.01, digits = 2)   # > t[j] after rounding
+            b[j] = round(t[j] + 0.01; digits=2)   # > t[j] after rounding
         end
         planted_return = t[tour[n]] + service[tour[n]] + tau[tour[n], 1]
-        F = round(tour_tau * (1.10 + 0.20 * rand(rng)), digits = 2)
-        L = round(planted_return * (1.05 + 0.15 * rand(rng)), digits = 2)
+        F = round(tour_tau * (1.10 + 0.20 * rand(rng)); digits=2)
+        L = round(planted_return * (1.05 + 0.15 * rand(rng)); digits=2)
 
     else
         # Natural windows, independent of the tour (the infeasible and unknown
         # branches differ only in the budget F).
         for j in 2:n
-            a[j] = round(rand(rng) * 0.6 * horizon, digits = 2)
-            b[j] = round(a[j] + rand(rng, 20.0:5.0:90.0), digits = 2)
+            a[j] = round(rand(rng) * 0.6 * horizon; digits=2)
+            b[j] = round(a[j] + rand(rng, 20.0:5.0:90.0); digits=2)
         end
-        L = round(horizon * 1.2, digits = 2)
+        L = round(horizon * 1.2; digits=2)
         if feasibility_status == infeasible
             # Below the degree-row lower bound on total travel time
             # (see constructor docstring), so infeasible even relaxed.
             sum_min = sum(minimum(tau[i, j] for j in 1:n if j != i) for i in 1:n)
-            F = round(0.85 * sum_min, digits = 2)
+            F = round(0.85 * sum_min; digits=2)
         else
             # unknown: a plausible budget that may or may not suffice.
-            F = round(tour_tau * (0.9 + 0.3 * rand(rng)), digits = 2)
+            F = round(tour_tau * (0.9 + 0.3 * rand(rng)); digits=2)
         end
     end
 
@@ -191,12 +199,14 @@ Node indexing: node `1` is the home base (departure at time 0); nodes `2..n`
 are stops. All arcs of the complete graph are available.
 
 Decision variables:
-- `x[i,j] ∈ {0,1}`: arc `(i,j)` is traversed
-- `t[j] ∈ [a_j, b_j]`: service start time at stop `j` (waiting allowed)
-- `r ∈ [0, L]`: return time at the home base
+
+  - `x[i,j] ∈ {0,1}`: arc `(i,j)` is traversed
+  - `t[j] ∈ [a_j, b_j]`: service start time at stop `j` (waiting allowed)
+  - `r ∈ [0, L]`: return time at the home base
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::TSPTimeWindowsProblem)
     model = Model()
@@ -216,8 +226,7 @@ function build_model(prob::TSPTimeWindowsProblem)
     @variable(model, 0 <= r <= prob.shift_length)
 
     # --- Objective: minimize total travel time ---
-    @objective(model, Min,
-        sum(tau[i, j] * x[i, j] for i in nodes, j in nodes if i != j))
+    @objective(model, Min, sum(tau[i, j] * x[i, j] for i in nodes, j in nodes if i != j))
 
     # --- Degree constraints: exactly one in-arc and one out-arc per node ---
     for j in nodes
@@ -226,9 +235,9 @@ function build_model(prob::TSPTimeWindowsProblem)
     end
 
     # --- Route budget: total travel time within the vehicle's range ---
-    @constraint(model,
-        sum(tau[i, j] * x[i, j] for i in nodes, j in nodes if i != j) <=
-        prob.route_budget)
+    @constraint(
+        model, sum(tau[i, j] * x[i, j] for i in nodes, j in nodes if i != j) <= prob.route_budget
+    )
 
     # --- Time propagation, stop -> stop (waiting allowed; M is the smallest
     # value that makes the row non-binding at x = 0; clamped at 0) ---

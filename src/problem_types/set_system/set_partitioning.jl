@@ -16,16 +16,12 @@ struct SetPartitioningProblem <: ProblemGenerator
 end
 
 function SetPartitioningProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
     n_columns, n_elements = _set_system_size(target_variables, 0.4)
     max_size = max(2, min(6, round(Int, sqrt(n_elements)) + 1))
-    columns, n_planted = _set_columns_with_partition(
-        rng, n_elements, n_columns; max_size=max_size,
-    )
+    columns, n_planted = _set_columns_with_partition(rng, n_elements, n_columns; max_size=max_size)
 
     maximum_selected = if feasibility_status == infeasible
         # Summing exact-cover rows gives

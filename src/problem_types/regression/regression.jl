@@ -24,16 +24,18 @@ Generate the shared data for a constrained regression LP: a dense design matrix
 
 The regression loss itself is always feasible and bounded; feasibility is
 controlled through the side constraint relative to the coefficient box:
-- `feasible`: `side_rhs` lies within the achievable range, so the box (and hence
-  the feasible region) is non-empty.
-- `infeasible`: `side_rhs` is set strictly below `sum(beta_lower)` (the minimum
-  achievable value of `dot(ones, beta)`), making the region empty.
-- `unknown`: resolved at random to either `feasible` or `infeasible`.
+
+  - `feasible`: `side_rhs` lies within the achievable range, so the box (and hence
+    the feasible region) is non-empty.
+  - `infeasible`: `side_rhs` is set strictly below `sum(beta_lower)` (the minimum
+    achievable value of `dot(ones, beta)`), making the region empty.
+  - `unknown`: resolved at random to either `feasible` or `infeasible`.
 
 Returns a `NamedTuple` `(X, y, beta_lower, beta_upper, side_coef, side_rhs)`.
 """
-function generate_regression_data(rng::AbstractRNG, n_features::Int, n_samples::Int,
-                                  feasibility_status::FeasibilityStatus)
+function generate_regression_data(
+    rng::AbstractRNG, n_features::Int, n_samples::Int, feasibility_status::FeasibilityStatus
+)
     n = n_features
     m = n_samples
 
@@ -66,8 +68,14 @@ function generate_regression_data(rng::AbstractRNG, n_features::Int, n_samples::
         side_rhs = lo - rand(rng, Uniform(1.0, 3.0))     # strictly below the minimum sum
     end
 
-    return (X = X, y = y, beta_lower = beta_lower, beta_upper = beta_upper,
-            side_coef = side_coef, side_rhs = side_rhs)
+    return (
+        X=X,
+        y=y,
+        beta_lower=beta_lower,
+        beta_upper=beta_upper,
+        side_coef=side_coef,
+        side_rhs=side_rhs,
+    )
 end
 
 include("lad.jl")

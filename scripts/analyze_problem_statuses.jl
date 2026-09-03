@@ -15,7 +15,7 @@
 
 using Pkg
 Pkg.activate(@__DIR__)
-Pkg.develop(path = dirname(@__DIR__))
+Pkg.develop(; path=dirname(@__DIR__))
 Pkg.instantiate()
 
 using SyntheticLPs
@@ -40,52 +40,70 @@ const DEFAULT_TIMEOUT_SEC = 2.0
 const DEFAULT_SEED = 0
 
 # Map size buckets to target variable ranges
-const SIZE_BUCKETS = Dict(
-    :small => (50, 100),
-    :medium => (150, 300),
-    :large => (400, 800),
-)
+const SIZE_BUCKETS = Dict(:small => (50, 100), :medium => (150, 300), :large => (400, 800))
 
 function parse_commandline()
     s = ArgParseSettings(; autofix_names=true)
     @add_arg_table! s begin
-        "--samples"
-            help = "Number of samples per problem type"
-            arg_type = Int
-            default = DEFAULT_NUM_SAMPLES
-        "--target"
-            help = "Target number of variables per instance (mutually exclusive with --size)"
-            arg_type = Int
-        "--target-min"
-            help = "Minimum target number of variables per instance (use with --target-max; mutually exclusive with --size and --target)"
-            arg_type = Int
-        "--target-max"
-            help = "Maximum target number of variables per instance (use with --target-min; mutually exclusive with --size and --target)"
-            arg_type = Int
-        "--size"
-            help = "Legacy size bucket: small, medium, or large (mutually exclusive with --target/--target-min/--target-max)"
-            arg_type = String
-        "--timeout"
-            help = "Per-solve time limit in seconds"
-            arg_type = Float64
-            default = DEFAULT_TIMEOUT_SEC
-        "--seed"
-            help = "Base random seed"
-            arg_type = Int
-            default = DEFAULT_SEED
-        "--csv"
-            help = "Path to write CSV summary"
-            arg_type = String
-        "--json"
-            help = "Path to write JSON summary"
-            arg_type = String
-        "--types"
-            help = "Filter problem types (space-separated or comma-separated)"
-            arg_type = String
-            nargs = '*'
-        "--solution-status"
-            help = "Desired feasibility status for generated problems: feasible | infeasible | all"
-            arg_type = String
+        """
+        --samples
+        """
+        help = "Number of samples per problem type"
+        arg_type = Int
+        default = DEFAULT_NUM_SAMPLES
+        """
+        --target
+        """
+        help = "Target number of variables per instance (mutually exclusive with --size)"
+        arg_type = Int
+        """
+        --target-min
+        """
+        help = "Minimum target number of variables per instance (use with --target-max; mutually exclusive with --size and --target)"
+        arg_type = Int
+        """
+        --target-max
+        """
+        help = "Maximum target number of variables per instance (use with --target-min; mutually exclusive with --size and --target)"
+        arg_type = Int
+        """
+        --size
+        """
+        help = "Legacy size bucket: small, medium, or large (mutually exclusive with --target/--target-min/--target-max)"
+        arg_type = String
+        """
+        --timeout
+        """
+        help = "Per-solve time limit in seconds"
+        arg_type = Float64
+        default = DEFAULT_TIMEOUT_SEC
+        """
+        --seed
+        """
+        help = "Base random seed"
+        arg_type = Int
+        default = DEFAULT_SEED
+        """
+        --csv
+        """
+        help = "Path to write CSV summary"
+        arg_type = String
+        """
+        --json
+        """
+        help = "Path to write JSON summary"
+        arg_type = String
+        """
+        --types
+        """
+        help = "Filter problem types (space-separated or comma-separated)"
+        arg_type = String
+        nargs = '*'
+        """
+        --solution-status
+        """
+        help = "Desired feasibility status for generated problems: feasible | infeasible | all"
+        arg_type = String
     end
     return parse_args(s; as_symbols=true)
 end
@@ -128,7 +146,7 @@ function format_percentage(n::Int, total::Int)
     return @sprintf("%.1f%%", 100 * n / total)
 end
 
-function write_csv(csv_path::String, rows::Vector{Tuple{Symbol,Int,Int,Int,Int,Int}})
+function write_csv(csv_path::String, rows::Vector{Tuple{Symbol, Int, Int, Int, Int, Int}})
     header = ["problem_type", "feasible", "infeasible", "unbounded", "unknown", "total"]
     open(csv_path, "w") do io
         writedlm(io, permutedims(header), ',')
@@ -138,28 +156,35 @@ function write_csv(csv_path::String, rows::Vector{Tuple{Symbol,Int,Int,Int,Int,I
     end
 end
 
-function build_json_rows(selected_types::Vector{Symbol}, counts_by_type::Dict{Symbol, Dict{Symbol, Int}})
+function build_json_rows(
+    selected_types::Vector{Symbol}, counts_by_type::Dict{Symbol, Dict{Symbol, Int}}
+)
     rows = Vector{Dict{String, Any}}()
     for ptype in selected_types
         totals = counts_by_type[ptype]
         total_n = sum(values(totals))
-        push!(rows, Dict(
-            "problem_type" => String(ptype),
-            "feasible" => totals[:feasible],
-            "infeasible" => totals[:infeasible],
-            "unbounded" => totals[:unbounded],
-            "unknown" => totals[:unknown],
-            "total" => total_n,
-        ))
+        push!(
+            rows,
+            Dict(
+                "problem_type" => String(ptype),
+                "feasible" => totals[:feasible],
+                "infeasible" => totals[:infeasible],
+                "unbounded" => totals[:unbounded],
+                "unknown" => totals[:unknown],
+                "total" => total_n,
+            ),
+        )
     end
     return rows
 end
 
-function write_json(json_path::String, selected_types::Vector{Symbol}, counts_by_type::Dict{Symbol, Dict{Symbol, Int}}, meta::Dict{String, Any})
-    payload = Dict(
-        "meta" => meta,
-        "counts" => build_json_rows(selected_types, counts_by_type),
-    )
+function write_json(
+    json_path::String,
+    selected_types::Vector{Symbol},
+    counts_by_type::Dict{Symbol, Dict{Symbol, Int}},
+    meta::Dict{String, Any},
+)
+    payload = Dict("meta" => meta, "counts" => build_json_rows(selected_types, counts_by_type))
     open(json_path, "w") do io
         JSON.print(io, payload, 2)
     end
@@ -187,10 +212,14 @@ function main()
     has_size = size_val !== nothing
 
     if has_size && (has_target || has_target_min || has_target_max)
-        error("Options --size and any of --target, --target-min, --target-max are mutually exclusive. Use only one.")
+        error(
+            "Options --size and any of --target, --target-min, --target-max are mutually exclusive. Use only one.",
+        )
     end
     if has_target && (has_target_min || has_target_max)
-        error("Options --target and --target-min/--target-max are mutually exclusive. Use only one.")
+        error(
+            "Options --target and --target-min/--target-max are mutually exclusive. Use only one."
+        )
     end
     if has_target_min != has_target_max
         error("Options --target-min and --target-max must be specified together.")
@@ -227,10 +256,11 @@ function main()
     print_header()
 
     all_types = sort(list_problem_types())
-    selected_types = types_filter === nothing ? all_types : [t for t in all_types if t in types_filter]
+    selected_types =
+        types_filter === nothing ? all_types : [t for t in all_types if t in types_filter]
     if isempty(selected_types)
         println("No problem types selected. Exiting.")
-        return
+        return nothing
     end
 
     println("Problem types: $(join(string.(selected_types), ", "))")
@@ -252,7 +282,9 @@ function main()
 
     counts_by_type = Dict{Symbol, Dict{Symbol, Int}}()
     for ptype in selected_types
-        counts_by_type[ptype] = Dict(:feasible => 0, :infeasible => 0, :unbounded => 0, :unknown => 0)
+        counts_by_type[ptype] = Dict(
+            :feasible => 0, :infeasible => 0, :unbounded => 0, :unknown => 0
+        )
     end
 
     for ptype in selected_types
@@ -312,20 +344,46 @@ function main()
 
         totals = counts_by_type[ptype]
         total_n = sum(values(totals))
-        println("  feasible:  $(totals[:feasible])  (" * format_percentage(totals[:feasible], total_n) * ")")
-        println("  infeasible: $(totals[:infeasible]) (" * format_percentage(totals[:infeasible], total_n) * ")")
-        println("  unbounded:  $(totals[:unbounded])  (" * format_percentage(totals[:unbounded], total_n) * ")")
-        println("  unknown:    $(totals[:unknown])    (" * format_percentage(totals[:unknown], total_n) * ")")
+        println(
+            "  feasible:  $(totals[:feasible])  (" *
+            format_percentage(totals[:feasible], total_n) *
+            ")",
+        )
+        println(
+            "  infeasible: $(totals[:infeasible]) (" *
+            format_percentage(totals[:infeasible], total_n) *
+            ")",
+        )
+        println(
+            "  unbounded:  $(totals[:unbounded])  (" *
+            format_percentage(totals[:unbounded], total_n) *
+            ")",
+        )
+        println(
+            "  unknown:    $(totals[:unknown])    (" *
+            format_percentage(totals[:unknown], total_n) *
+            ")",
+        )
         println()
     end
 
     # Optional CSV output
     if csv_path !== nothing
-        rows = Tuple{Symbol,Int,Int,Int,Int,Int}[]
+        rows = Tuple{Symbol, Int, Int, Int, Int, Int}[]
         for ptype in selected_types
             totals = counts_by_type[ptype]
             total_n = sum(values(totals))
-            push!(rows, (ptype, totals[:feasible], totals[:infeasible], totals[:unbounded], totals[:unknown], total_n))
+            push!(
+                rows,
+                (
+                    ptype,
+                    totals[:feasible],
+                    totals[:infeasible],
+                    totals[:unbounded],
+                    totals[:unknown],
+                    total_n,
+                ),
+            )
         end
         write_csv(csv_path, rows)
         println("Wrote CSV to: $(csv_path)")

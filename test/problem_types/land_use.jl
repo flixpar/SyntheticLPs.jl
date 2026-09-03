@@ -15,19 +15,15 @@ const LAND_USE_REF = "land_use/standard"
 
 function assert_connected_spatial_graph(problem)
     @test size(problem.parcel_coordinates) == (problem.n_parcels, 2)
-    @test all(coordinate -> 0.0 < coordinate < 1.0,
-              problem.parcel_coordinates)
-    @test size(problem.adjacency_matrix) ==
-          (problem.n_parcels, problem.n_parcels)
+    @test all(coordinate -> 0.0 < coordinate < 1.0, problem.parcel_coordinates)
+    @test size(problem.adjacency_matrix) == (problem.n_parcels, problem.n_parcels)
     @test issymmetric(problem.adjacency_matrix)
     @test all(!problem.adjacency_matrix[i, i] for i in 1:problem.n_parcels)
-    @test length(problem.adjacency_edges) ==
-          length(unique(problem.adjacency_edges))
+    @test length(problem.adjacency_edges) == length(unique(problem.adjacency_edges))
     @test issorted(problem.adjacency_edges)
     @test all(first(edge) < last(edge) for edge in problem.adjacency_edges)
     @test count(problem.adjacency_matrix) == 2 * length(problem.adjacency_edges)
-    @test all(problem.adjacency_matrix[i, j]
-              for (i, j) in problem.adjacency_edges)
+    @test all(problem.adjacency_matrix[i, j] for (i, j) in problem.adjacency_edges)
 
     visited = falses(problem.n_parcels)
     frontier = [1]
@@ -47,12 +43,14 @@ end
 function assert_feasible_witness(problem)
     witness = problem.feasible_witness
     @test witness !== nothing
-    witness === nothing && return
+    witness === nothing && return nothing
     @test problem.infeasibility_certificate === nothing
     @test length(witness) == problem.n_parcels
     @test all(zoning -> 1 <= zoning <= problem.n_zoning_types, witness)
-    @test all(!problem.environmental_restrictions[parcel, witness[parcel]]
-              for parcel in 1:problem.n_parcels)
+    @test all(
+        !problem.environmental_restrictions[parcel, witness[parcel]] for
+        parcel in 1:problem.n_parcels
+    )
 
     if problem.minimum_zoning_requirements
         for zoning in eachindex(problem.min_counts_by_type)
@@ -70,8 +68,7 @@ function assert_feasible_witness(problem)
 
     for resource in 1:problem.n_resources
         usage = sum(
-            problem.parcel_sizes[parcel] *
-            problem.resource_consumption[witness[parcel], resource]
+            problem.parcel_sizes[parcel] * problem.resource_consumption[witness[parcel], resource]
             for parcel in 1:problem.n_parcels
         )
         @test usage <= problem.resource_capacities[resource] + 1e-8
@@ -82,19 +79,21 @@ function assert_infeasibility_certificate(problem)
     certificate = problem.infeasibility_certificate
     @test problem.feasible_witness === nothing
     @test certificate !== nothing
-    certificate === nothing && return
+    certificate === nothing && return nothing
 
     resource = certificate.resource_index
     @test 1 <= resource <= problem.n_resources
     @test length(certificate.per_parcel_minimum) == problem.n_parcels
     recomputed = zeros(problem.n_parcels)
     for parcel in 1:problem.n_parcels
-        allowed = [zoning for zoning in 1:problem.n_zoning_types
-                   if !problem.environmental_restrictions[parcel, zoning]]
+        allowed = [
+            zoning for zoning in 1:problem.n_zoning_types if
+            !problem.environmental_restrictions[parcel, zoning]
+        ]
         @test !isempty(allowed)
-        recomputed[parcel] = problem.parcel_sizes[parcel] * minimum(
-            problem.resource_consumption[zoning, resource] for zoning in allowed
-        )
+        recomputed[parcel] =
+            problem.parcel_sizes[parcel] *
+            minimum(problem.resource_consumption[zoning, resource] for zoning in allowed)
     end
     @test certificate.per_parcel_minimum ≈ recomputed
     @test certificate.lower_bound ≈ sum(recomputed)
@@ -106,20 +105,20 @@ end
     @testset "Complete catalogs and large sizing" begin
         # These seeds exercise both 11- and 12-zone catalog selections, which
         # used to crash while slicing ten-element metadata vectors.
-        for target in (1001, 2000, 10_000), status in
-            (feasible, infeasible, unknown), seed in (5, 22, 32)
+        for target in (1001, 2000, 10_000),
+            status in (feasible, infeasible, unknown),
+            seed in (5, 22, 32)
+
             problem = SyntheticLPs.LandUseProblem(target, status, seed)
             @test 3 <= problem.n_zoning_types <= 12
             @test 3 <= problem.n_resources <= 8
             @test length(problem.zoning_names) == problem.n_zoning_types
             @test length(unique(problem.zoning_names)) == problem.n_zoning_types
             @test length(problem.resource_names) == problem.n_resources
-            @test size(problem.development_costs) ==
-                  (problem.n_parcels, problem.n_zoning_types)
-            @test size(problem.revenues) ==
-                  (problem.n_parcels, problem.n_zoning_types)
+            @test size(problem.development_costs) == (problem.n_parcels, problem.n_zoning_types)
+            @test size(problem.revenues) == (problem.n_parcels, problem.n_zoning_types)
             @test size(problem.resource_consumption) ==
-                  (problem.n_zoning_types, problem.n_resources)
+                (problem.n_zoning_types, problem.n_resources)
         end
     end
 
@@ -140,10 +139,12 @@ end
                 second_value = getfield(second_problem, field)
                 if field == :infeasibility_certificate && first_value !== nothing
                     @test second_value !== nothing
-                    @test all(isequal(getfield(first_value, certificate_field),
-                                      getfield(second_value, certificate_field))
-                              for certificate_field in
-                              fieldnames(typeof(first_value)))
+                    @test all(
+                        isequal(
+                            getfield(first_value, certificate_field),
+                            getfield(second_value, certificate_field),
+                        ) for certificate_field in fieldnames(typeof(first_value))
+                    )
                 else
                     @test isequal(first_value, second_value)
                 end
@@ -184,38 +185,27 @@ end
         @test problem !== nothing
         if problem !== nothing
             model = SyntheticLPs.build_model(problem)
-            less_than_rows = num_constraints(
-                model,
-                JuMP.AffExpr,
-                LAND_USE_MOI.LessThan{Float64},
-            )
-            @test less_than_rows ==
-                  problem.n_resources + 2 * length(problem.adjacency_edges)
-            @test length(model[:residential_industrial_forward]) ==
-                  length(problem.adjacency_edges)
-            @test length(model[:residential_industrial_reverse]) ==
-                  length(problem.adjacency_edges)
+            less_than_rows = num_constraints(model, JuMP.AffExpr, LAND_USE_MOI.LessThan{Float64})
+            @test less_than_rows == problem.n_resources + 2 * length(problem.adjacency_edges)
+            @test length(model[:residential_industrial_forward]) == length(problem.adjacency_edges)
+            @test length(model[:residential_industrial_reverse]) == length(problem.adjacency_edges)
         end
     end
 
     @testset "Solver status agrees without retry filtering" begin
         if HAS_LAND_USE_HIGHS
-            for relax_integer in (true, false), target in (40, 120), seed in 0:3,
+            for relax_integer in (true, false),
+                target in (40, 120), seed in 0:3,
                 status in (feasible, infeasible)
+
                 model, problem = generate_problem(
-                    LAND_USE_REF,
-                    target,
-                    status,
-                    seed;
-                    relax_integer = relax_integer,
+                    LAND_USE_REF, target, status, seed; relax_integer=relax_integer
                 )
-                @test num_variables(model) ==
-                      problem.n_parcels * problem.n_zoning_types
+                @test num_variables(model) == problem.n_parcels * problem.n_zoning_types
                 set_optimizer(model, HiGHS.Optimizer)
                 set_silent(model)
                 optimize!(model)
-                expected = status == feasible ? LAND_USE_MOI.OPTIMAL :
-                                                 LAND_USE_MOI.INFEASIBLE
+                expected = status == feasible ? LAND_USE_MOI.OPTIMAL : LAND_USE_MOI.INFEASIBLE
                 @test termination_status(model) == expected
             end
         else

@@ -32,7 +32,9 @@
         @test abs(num_variables(m) - target) <= 0.05 * target
     end
     for target in (50, 200, 1000, 4000, 20000),
-        status in (feasible, infeasible, unknown), seed in 0:3
+        status in (feasible, infeasible, unknown),
+        seed in 0:3
+
         m, _ = generate_problem(TND, target, status, seed)
         @test abs(num_variables(m) - target) <= 0.05 * target
     end
@@ -40,7 +42,8 @@
     # Documented size cap (same explicit-error convention as
     # supply_chain/network_planning) rather than silently undersizing.
     @test_throws ArgumentError generate_problem(
-        TND, SyntheticLPs.TELECOM_MAX_VARIABLES + 1, unknown, 0)
+        TND, SyntheticLPs.TELECOM_MAX_VARIABLES + 1, unknown, 0
+    )
 
     # Topology and traffic data contracts.
     for status in (feasible, infeasible, unknown)
@@ -48,23 +51,22 @@
         @test p.arcs == sort(unique(p.arcs))
         @test all(i < j for (i, j) in p.arcs)
         @test all(1 <= i && j <= p.n_nodes for (i, j) in p.arcs)
-        @test Set(p.directed_arcs) == Set(vcat([(i, j) for (i, j) in p.arcs],
-                                               [(j, i) for (i, j) in p.arcs]))
+        @test Set(p.directed_arcs) ==
+            Set(vcat([(i, j) for (i, j) in p.arcs], [(j, i) for (i, j) in p.arcs]))
         @test Set(keys(p.link_capacities)) == Set(p.arcs)
         @test all(p.distances[(i, j)] == p.distances[(j, i)] for (i, j) in p.arcs)
         @test all(p.flow_costs[(i, j)] == p.flow_costs[(j, i)] for (i, j) in p.arcs)
-        @test all(cap in (155.0, 622.0, 2488.0, 9953.0, 39813.0)
-                  for cap in values(p.link_capacities))  # SONET/OTN ladder
+        @test all(
+            cap in (155.0, 622.0, 2488.0, 9953.0, 39813.0) for cap in values(p.link_capacities)
+        )  # SONET/OTN ladder
         @test all(c[:source] != c[:sink] for c in p.commodities)
         @test all(c[:demand] > 0 for c in p.commodities)
         @test length(p.commodities) == p.n_commodities
         @test p.total_demand ≈ sum(c[:demand] for c in p.commodities)
         # Adjacency bookkeeping used by the flow-conservation rows.
         @test sum(length(v) for v in values(p.outgoing_arcs)) == 2 * p.n_arcs
-        @test all(all(a[1] == node for a in p.outgoing_arcs[node])
-                  for node in 1:p.n_nodes)
-        @test all(all(a[2] == node for a in p.incoming_arcs[node])
-                  for node in 1:p.n_nodes)
+        @test all(all(a[1] == node for a in p.outgoing_arcs[node]) for node in 1:p.n_nodes)
+        @test all(all(a[2] == node for a in p.incoming_arcs[node]) for node in 1:p.n_nodes)
         # The topology is connected (an MST seeds it), so every node is usable.
         seen = Set([1])
         frontier = [1]
@@ -100,7 +102,7 @@
         @test p.total_demand <= 0.91 * p.routable_scale
         installed = Set(w.installed_links)
         @test issubset(installed, Set(p.arcs))
-        loads = Dict{Tuple{Int,Int},Float64}()
+        loads = Dict{Tuple{Int, Int}, Float64}()
         for k in 1:p.n_commodities
             c = p.commodities[k]
             routed = 0.0
@@ -119,8 +121,7 @@
         end
         @test all(loads[a] <= p.link_capacities[a] + 1e-9 for a in keys(loads))
         @test all(loads[a] ≈ w.link_loads[a] for a in keys(loads))
-        @test w.installation_cost ≈
-              sum(p.installation_costs[a] for a in w.installed_links)
+        @test w.installation_cost ≈ sum(p.installation_costs[a] for a in w.installed_links)
         @test w.installation_cost <= p.budget
     end
 
@@ -138,21 +139,19 @@
         @test !isempty(side) && length(side) < p.n_nodes
         crossing = [a for a in p.arcs if (a[1] in side) != (a[2] in side)]
         @test Set(cert.crossing_links) == Set(crossing)
-        @test cert.crossing_demand ≈
-              sum(c[:demand] for c in p.commodities
-                  if (c[:source] in side) != (c[:sink] in side); init=0.0)
+        @test cert.crossing_demand ≈ sum(
+            c[:demand] for c in p.commodities if (c[:source] in side) != (c[:sink] in side);
+            init=0.0,
+        )
         if cert isa SyntheticLPs.TelecomCapacityCutCertificate
             capacity_mode += 1
-            @test cert.crossing_capacity ≈
-                  sum(p.link_capacities[a] for a in crossing)
+            @test cert.crossing_capacity ≈ sum(p.link_capacities[a] for a in crossing)
             @test cert.crossing_capacity < cert.crossing_demand
         else
             budget_mode += 1
             @test cert.cost_per_capacity ≈
-                  minimum(p.installation_costs[a] / p.link_capacities[a]
-                          for a in crossing)
-            @test cert.implied_minimum ≈
-                  cert.crossing_demand * cert.cost_per_capacity
+                minimum(p.installation_costs[a] / p.link_capacities[a] for a in crossing)
+            @test cert.implied_minimum ≈ cert.crossing_demand * cert.cost_per_capacity
             @test cert.budget == p.budget
             @test cert.budget < cert.implied_minimum
         end
@@ -166,8 +165,7 @@
     _, p1 = generate_problem(TND, 777, unknown, 42)
     Random.seed!(12345)
     _, p2 = generate_problem(TND, 777, unknown, 42)
-    @test all(isequal(getfield(p1, f), getfield(p2, f))
-              for f in fieldnames(typeof(p1)))
+    @test all(isequal(getfield(p1, f), getfield(p2, f)) for f in fieldnames(typeof(p1)))
 
     if HAS_HIGHS
         # The feasibility contract holds end-to-end on the LP relaxation.
@@ -176,8 +174,7 @@
             set_optimizer(m, HiGHS.Optimizer)
             set_silent(m)
             optimize!(m)
-            @test termination_status(m) ==
-                  (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
+            @test termination_status(m) == (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
         end
 
         # ... and on the unrelaxed integer model: the planted design is an
@@ -188,8 +185,7 @@
             set_silent(m)
             set_time_limit_sec(m, 120.0)
             optimize!(m)
-            @test termination_status(m) ==
-                  (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
+            @test termination_status(m) == (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
         end
 
         # `unknown` is a genuine mix at every scale - the drift that made it

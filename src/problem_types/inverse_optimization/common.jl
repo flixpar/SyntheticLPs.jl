@@ -4,7 +4,9 @@ using Distributions
 using LinearAlgebra
 using SparseArrays
 
-"""Certificate that a positive packing decision is strictly interior."""
+"""
+Certificate that a positive packing decision is strictly interior.
+"""
 struct PackingInteriorCertificate
     slacks::Vector{Float64}
 end
@@ -18,9 +20,11 @@ struct GapToleranceCertificate
     tolerance::Float64
 end
 
-"""Shared sparse packing-system data used by the exact and panel variants."""
+"""
+Shared sparse packing-system data used by the exact and panel variants.
+"""
 struct InversePackingData
-    consumption::SparseMatrixCSC{Float64,Int}
+    consumption::SparseMatrixCSC{Float64, Int}
     true_cost::Vector{Float64}
     true_dual::Vector{Float64}
     prior_cost::Vector{Float64}
@@ -29,11 +33,7 @@ struct InversePackingData
     deviation_weight::Vector{Float64}
 end
 
-function _inverse_sparse_consumption(
-    rng::AbstractRNG,
-    n_resources::Int,
-    n_activities::Int,
-)
+function _inverse_sparse_consumption(rng::AbstractRNG, n_resources::Int, n_activities::Int)
     rows = Int[]
     columns = Int[]
     values = Float64[]
@@ -61,11 +61,7 @@ function _inverse_sparse_consumption(
     return sparse(rows, columns, values, n_resources, n_activities)
 end
 
-function _inverse_packing_data(
-    rng::AbstractRNG,
-    n_resources::Int,
-    n_activities::Int,
-)
+function _inverse_packing_data(rng::AbstractRNG, n_resources::Int, n_activities::Int)
     A = _inverse_sparse_consumption(rng, n_resources, n_activities)
     raw_dual = rand(rng, LogNormal(0.0, 0.55), n_resources)
     raw_cost = transpose(A) * raw_dual
@@ -79,13 +75,7 @@ function _inverse_packing_data(
     cost_upper = 2.80 .* max.(true_cost, prior_cost)
     deviation_weight = 1.0 ./ max.(prior_cost, 1.0e-4)
     return InversePackingData(
-        A,
-        true_cost,
-        true_dual,
-        prior_cost,
-        cost_lower,
-        cost_upper,
-        deviation_weight,
+        A, true_cost, true_dual, prior_cost, cost_lower, cost_upper, deviation_weight
     )
 end
 
@@ -100,8 +90,7 @@ function _inverse_row_expression(A, decision, i::Int)
 end
 
 function _packing_interior_certificate_is_valid(certificate)
-    return certificate isa PackingInteriorCertificate &&
-           all(>(0.0), certificate.slacks)
+    return certificate isa PackingInteriorCertificate && all(>(0.0), certificate.slacks)
 end
 
 function _gap_tolerance_certificate_is_valid(certificate)

@@ -7,6 +7,7 @@ using Random
 Generator for knapsack problems (fractional) that maximize the value of items selected under a weight constraint.
 
 # Overview
+
 Models the continuous relaxation of a knapsack selection problem. The decisions
 are fractional item-selection levels between zero and one. The objective
 maximizes selected item value subject to a total weight capacity. Infeasible
@@ -14,10 +15,11 @@ instances add a minimum total-value requirement above the best achievable value
 for the fractional relaxation.
 
 # Fields
-- `n_items::Int`: Number of items
-- `capacity::Int`: Knapsack capacity
-- `values::Vector{Int}`: Value of each item
-- `weights::Vector{Int}`: Weight of each item
+
+  - `n_items::Int`: Number of items
+  - `capacity::Int`: Knapsack capacity
+  - `values::Vector{Int}`: Value of each item
+  - `weights::Vector{Int}`: Weight of each item
 """
 struct KnapsackProblem <: ProblemGenerator
     n_items::Int
@@ -33,9 +35,10 @@ end
 Construct a knapsack problem instance.
 
 # Arguments
-- `target_variables`: Target number of variables (items)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (items)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
 function KnapsackProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
@@ -83,7 +86,7 @@ function KnapsackProblem(target_variables::Int, feasibility_status::FeasibilityS
         # Calculate max achievable value under capacity constraint
         # For fractional knapsack: sort by value/weight ratio, pack greedily
         ratios = values ./ max.(weights, 1)
-        sorted_idx = sortperm(ratios, rev=true)
+        sorted_idx = sortperm(ratios; rev=true)
         remaining_cap = Float64(capacity)
         max_achievable = 0.0
         for i in sorted_idx
@@ -107,10 +110,12 @@ end
 Build a JuMP model for the knapsack problem.
 
 # Arguments
-- `prob`: KnapsackProblem instance
+
+  - `prob`: KnapsackProblem instance
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::KnapsackProblem)
     model = Model()

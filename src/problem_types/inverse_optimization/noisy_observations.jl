@@ -1,4 +1,6 @@
-"""Feasible parameter point for a multi-observation inverse LP."""
+"""
+Feasible parameter point for a multi-observation inverse LP.
+"""
 struct NoisyInverseWitness
     cost::Vector{Float64}
     dual_prices::Matrix{Float64}
@@ -27,16 +29,17 @@ struct NoisyInverseLPProblem <: ProblemGenerator
     capacities::Matrix{Float64}
     regularization::Float64
     gap_scale::Float64
-    gap_tolerance::Union{Nothing,Float64}
+    gap_tolerance::Union{Nothing, Float64}
     resolved_status::FeasibilityStatus
-    feasible_witness::Union{Nothing,NoisyInverseWitness}
-    infeasibility_certificate::Union{Nothing,GapToleranceCertificate}
+    feasible_witness::Union{Nothing, NoisyInverseWitness}
+    infeasibility_certificate::Union{Nothing, GapToleranceCertificate}
 end
 
 function _noisy_inverse_dimensions(target_variables::Int, preferred_k::Int)
     target = max(target_variables, 1)
-    best = (error=typemax(Int), shape_error=Inf, activities=3, resources=2,
-            observations=2, count=15)
+    best = (
+        error=typemax(Int), shape_error=Inf, activities=3, resources=2, observations=2, count=15
+    )
     # Search resource counts and solve for the nearest activity count from
     # 3n + k*m + k = target. This is linear in the requested size; the former
     # nested n-by-m scan was quadratic and unusable near the documented cap.
@@ -44,17 +47,20 @@ function _noisy_inverse_dimensions(target_variables::Int, preferred_k::Int)
         max_m = max(2, target ÷ (k + 6) + 3)
         for m in 2:max_m
             raw_n = (target - k * m - k) / 3
-            for n in unique((max(3, floor(Int, raw_n)),
-                             max(3, ceil(Int, raw_n))))
+            for n in unique((max(3, floor(Int, raw_n)), max(3, ceil(Int, raw_n))))
                 m < n || continue
                 m <= max(2, round(Int, n / 2)) || continue
                 count = 3 * n + k * m + k
-                candidate = (error=abs(count - target),
-                             shape_error=abs(m / n - 0.30), activities=n,
-                             resources=m, observations=k, count=count)
+                candidate = (
+                    error=abs(count - target),
+                    shape_error=abs(m / n - 0.30),
+                    activities=n,
+                    resources=m,
+                    observations=k,
+                    count=count,
+                )
                 (candidate.error, abs(k - preferred_k), candidate.shape_error, count) <
-                    (best.error, abs(best.observations - preferred_k),
-                     best.shape_error, best.count) &&
+                (best.error, abs(best.observations - preferred_k), best.shape_error, best.count) &&
                     (best = candidate)
             end
         end
@@ -63,10 +69,7 @@ function _noisy_inverse_dimensions(target_variables::Int, preferred_k::Int)
 end
 
 function _noisy_utilization(
-    rng::AbstractRNG,
-    profile::Symbol,
-    n_observations::Int,
-    n_activities::Int,
+    rng::AbstractRNG, profile::Symbol, n_observations::Int, n_activities::Int
 )
     utilization = Matrix{Float64}(undef, n_observations, n_activities)
     for k in 1:n_observations, j in 1:n_activities
@@ -87,15 +90,19 @@ function _noisy_utilization(
 end
 
 function NoisyInverseLPProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     _check_inverse_target(target_variables)
     rng = MersenneTwister(seed)
     profiles = (:routine, :heterogeneous, :outlier_contaminated)
     profile = profiles[rand(rng, eachindex(profiles))]
-    preferred_k = target_variables < 150 ? 3 : target_variables < 800 ? 6 : 9
+    preferred_k = if target_variables < 150
+        3
+    elseif target_variables < 800
+        6
+    else
+        9
+    end
     n, m, K = _noisy_inverse_dimensions(target_variables, preferred_k)
     data = _inverse_packing_data(rng, m, n)
 
@@ -112,25 +119,24 @@ function NoisyInverseLPProblem(
     end
 
     true_gaps = [
-        dot(@view(capacities[k, :]), data.true_dual) -
-        dot(@view(observed[k, :]), data.true_cost)
+        dot(@view(capacities[k, :]), data.true_dual) - dot(@view(observed[k, :]), data.true_cost)
         for k in 1:K
     ]
-    gap_scale = max(1.0, mean(
-        dot(@view(observed[k, :]), data.true_cost) for k in 1:K
-    ))
+    gap_scale = max(1.0, mean(dot(@view(observed[k, :]), data.true_cost) for k in 1:K))
     regularization = rand(rng, Uniform(0.03, 0.18))
     dual_matrix = repeat(transpose(data.true_dual), K, 1)
-    witness = feasibility_status == feasible ?
-        NoisyInverseWitness(copy(data.true_cost), dual_matrix, true_gaps) : nothing
+    witness = if feasibility_status == feasible
+        NoisyInverseWitness(copy(data.true_cost), dual_matrix, true_gaps)
+    else
+        nothing
+    end
     certificate = nothing
 
     # Every admissible cost has c >= cost_lower, and each latent optimum is
     # feasible. Weak duality therefore gives a data-derived lower bound on the
     # mean gap at the observed decisions.
     gap_lower_bound = mean(
-        sum(data.cost_lower[j] * (optimal[k, j] - observed[k, j]) for j in 1:n)
-        for k in 1:K
+        sum(data.cost_lower[j] * (optimal[k, j] - observed[k, j]) for j in 1:n) for k in 1:K
     )
     gap_tolerance = nothing
     if feasibility_status == infeasible
@@ -144,14 +150,24 @@ function NoisyInverseLPProblem(
             gap_tolerance = gap_lower_bound * rand(rng, Uniform(0.65, 0.98))
         else
             planted_mean = mean(true_gaps)
-            gap_tolerance = rand(rng, Uniform(0.95 * gap_lower_bound,
-                                               1.08 * planted_mean))
+            gap_tolerance = rand(rng, Uniform(0.95 * gap_lower_bound, 1.08 * planted_mean))
         end
     end
     return NoisyInverseLPProblem(
-        n, m, K, profile, data, observed, optimal, capacities,
-        regularization, gap_scale, gap_tolerance, feasibility_status,
-        witness, certificate,
+        n,
+        m,
+        K,
+        profile,
+        data,
+        observed,
+        optimal,
+        capacities,
+        regularization,
+        gap_scale,
+        gap_tolerance,
+        feasibility_status,
+        witness,
+        certificate,
     )
 end
 
@@ -169,9 +185,9 @@ function build_model(prob::NoisyInverseLPProblem)
         model,
         Min,
         sum(suboptimality_gap) / (K * prob.gap_scale) +
-        prob.regularization *
-        sum(data.deviation_weight[j] *
-            (deviation_positive[j] + deviation_negative[j]) for j in 1:n),
+            prob.regularization * sum(
+            data.deviation_weight[j] * (deviation_positive[j] + deviation_negative[j]) for j in 1:n
+        ),
     )
     @constraint(model, cost_normalization, sum(inferred_cost) == 1.0)
     @constraint(
@@ -185,17 +201,15 @@ function build_model(prob::NoisyInverseLPProblem)
         gap_definition[k in 1:K],
         suboptimality_gap[k] ==
             sum(prob.capacities[k, i] * shadow_price[k, i] for i in 1:m) -
-            sum(prob.observed_decisions[k, j] * inferred_cost[j] for j in 1:n),
+        sum(prob.observed_decisions[k, j] * inferred_cost[j] for j in 1:n),
     )
     @constraint(
         model,
         prior_deviation[j in 1:n],
-        inferred_cost[j] - data.prior_cost[j] ==
-            deviation_positive[j] - deviation_negative[j],
+        inferred_cost[j] - data.prior_cost[j] == deviation_positive[j] - deviation_negative[j],
     )
     if prob.gap_tolerance !== nothing
-        @constraint(model, fit_tolerance,
-                    sum(suboptimality_gap) / K <= prob.gap_tolerance)
+        @constraint(model, fit_tolerance, sum(suboptimality_gap) / K <= prob.gap_tolerance)
     end
     return model
 end
@@ -208,20 +222,21 @@ function _noisy_inverse_witness_is_valid(prob::NoisyInverseLPProblem)
     observed_feasible = all(
         k -> all(
             data.consumption * @view(prob.observed_decisions[k, :]) .<=
-                @view(prob.capacities[k, :]) .+ 1.0e-9,
+            @view(prob.capacities[k, :]) .+ 1.0e-9,
         ),
         1:prob.n_observations,
     )
     gaps = [
         dot(@view(prob.capacities[k, :]), @view(witness.dual_prices[k, :])) -
-        dot(@view(prob.observed_decisions[k, :]), witness.cost)
-        for k in 1:prob.n_observations
+        dot(@view(prob.observed_decisions[k, :]), witness.cost) for k in 1:prob.n_observations
     ]
-    return observed_feasible && all(witness.cost .>= data.cost_lower .- 1.0e-10) &&
+    return observed_feasible &&
+           all(witness.cost .>= data.cost_lower .- 1.0e-10) &&
            all(witness.cost .<= data.cost_upper .+ 1.0e-10) &&
            isapprox(sum(witness.cost), 1.0; atol=1.0e-10) &&
            all(dual_feasibility .>= reshape(witness.cost, :, 1) .- 1.0e-10) &&
-           all(gaps .>= -1.0e-9) && isapprox(gaps, witness.gaps; atol=1.0e-9)
+           all(gaps .>= -1.0e-9) &&
+           isapprox(gaps, witness.gaps; atol=1.0e-9)
 end
 
 register_variant(

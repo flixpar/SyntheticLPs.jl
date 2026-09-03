@@ -10,6 +10,7 @@ Generator for realistic unit commitment power system planning problems that capt
 thermal, renewable, and peaking generation fleets across multiple time periods.
 
 # Overview
+
 Models the operational scheduling of a heterogeneous generation fleet over a
 multi-period horizon. The fleet mixes baseload units (nuclear/coal), cycling
 combined-cycle gas, fast-ramping combustion turbines, hydro, and variable
@@ -31,29 +32,30 @@ certificate for one period. These artifacts make the requested status checkable
 without solving the model.
 
 # Fields
-- `n_units::Int`: Number of generation units
-- `n_periods::Int`: Number of time periods in the horizon
-- `units::Vector{String}`: Unit identifiers
-- `time_periods::Vector{Int}`: Time period indices
-- `demand::Vector{Float64}`: System demand per period
-- `reserve_requirements::Vector{Float64}`: Spinning reserve requirement per period
-- `max_output::Dict{String,Float64}`: Maximum output per unit
-- `min_output::Dict{String,Float64}`: Minimum stable output per unit (when committed)
-- `ramp_up::Dict{String,Float64}`: Ramp-up limit per unit per period
-- `ramp_down::Dict{String,Float64}`: Ramp-down limit per unit per period
-- `variable_costs::Dict{String,Float64}`: Variable (per-MW) generation cost per unit
-- `no_load_costs::Dict{String,Float64}`: No-load (commitment) cost per unit per period
-- `startup_costs::Dict{String,Float64}`: Startup cost per unit
-- `shutdown_costs::Dict{String,Float64}`: Shutdown cost per unit
-- `min_up_times::Dict{String,Int}`: Minimum up time per unit (periods)
-- `min_down_times::Dict{String,Int}`: Minimum down time per unit (periods)
-- `availability_factors::Dict{String,Vector{Float64}}`: Per-period availability fraction per unit
-- `initial_on::Dict{String,Float64}`: Initial commitment state per unit (0 or 1)
-- `initial_generation::Dict{String,Float64}`: Initial generation per unit
-- `unit_types::Dict{String,Symbol}`: Sampled fleet archetype for each unit
-- `resolved_status::FeasibilityStatus`: Status actually constructed (`unknown` is resolved)
-- `feasible_witness`: Complete feasible point, present exactly for feasible instances
-- `infeasibility_certificate`: Aggregate capacity contradiction, present exactly for infeasible instances
+
+  - `n_units::Int`: Number of generation units
+  - `n_periods::Int`: Number of time periods in the horizon
+  - `units::Vector{String}`: Unit identifiers
+  - `time_periods::Vector{Int}`: Time period indices
+  - `demand::Vector{Float64}`: System demand per period
+  - `reserve_requirements::Vector{Float64}`: Spinning reserve requirement per period
+  - `max_output::Dict{String,Float64}`: Maximum output per unit
+  - `min_output::Dict{String,Float64}`: Minimum stable output per unit (when committed)
+  - `ramp_up::Dict{String,Float64}`: Ramp-up limit per unit per period
+  - `ramp_down::Dict{String,Float64}`: Ramp-down limit per unit per period
+  - `variable_costs::Dict{String,Float64}`: Variable (per-MW) generation cost per unit
+  - `no_load_costs::Dict{String,Float64}`: No-load (commitment) cost per unit per period
+  - `startup_costs::Dict{String,Float64}`: Startup cost per unit
+  - `shutdown_costs::Dict{String,Float64}`: Shutdown cost per unit
+  - `min_up_times::Dict{String,Int}`: Minimum up time per unit (periods)
+  - `min_down_times::Dict{String,Int}`: Minimum down time per unit (periods)
+  - `availability_factors::Dict{String,Vector{Float64}}`: Per-period availability fraction per unit
+  - `initial_on::Dict{String,Float64}`: Initial commitment state per unit (0 or 1)
+  - `initial_generation::Dict{String,Float64}`: Initial generation per unit
+  - `unit_types::Dict{String,Symbol}`: Sampled fleet archetype for each unit
+  - `resolved_status::FeasibilityStatus`: Status actually constructed (`unknown` is resolved)
+  - `feasible_witness`: Complete feasible point, present exactly for feasible instances
+  - `infeasibility_certificate`: Aggregate capacity contradiction, present exactly for infeasible instances
 """
 struct UnitCommitmentWitness
     generation::Matrix{Float64}
@@ -63,8 +65,10 @@ struct UnitCommitmentWitness
 end
 
 Base.:(==)(a::UnitCommitmentWitness, b::UnitCommitmentWitness) =
-    a.generation == b.generation && a.commitment == b.commitment &&
-    a.startup == b.startup && a.shutdown == b.shutdown
+    a.generation == b.generation &&
+    a.commitment == b.commitment &&
+    a.startup == b.startup &&
+    a.shutdown == b.shutdown
 Base.isequal(a::UnitCommitmentWitness, b::UnitCommitmentWitness) = a == b
 Base.hash(a::UnitCommitmentWitness, h::UInt) =
     hash((a.generation, a.commitment, a.startup, a.shutdown), h)
@@ -76,12 +80,12 @@ struct UnitCommitmentCapacityCertificate
     excess::Float64
 end
 
-Base.:(==)(a::UnitCommitmentCapacityCertificate,
-           b::UnitCommitmentCapacityCertificate) =
-    a.period == b.period && a.available_capacity == b.available_capacity &&
-    a.required_capacity == b.required_capacity && a.excess == b.excess
-Base.isequal(a::UnitCommitmentCapacityCertificate,
-             b::UnitCommitmentCapacityCertificate) = a == b
+Base.:(==)(a::UnitCommitmentCapacityCertificate, b::UnitCommitmentCapacityCertificate) =
+    a.period == b.period &&
+    a.available_capacity == b.available_capacity &&
+    a.required_capacity == b.required_capacity &&
+    a.excess == b.excess
+Base.isequal(a::UnitCommitmentCapacityCertificate, b::UnitCommitmentCapacityCertificate) = a == b
 Base.hash(a::UnitCommitmentCapacityCertificate, h::UInt) =
     hash((a.period, a.available_capacity, a.required_capacity, a.excess), h)
 
@@ -92,23 +96,23 @@ struct UnitCommitmentProblem <: ProblemGenerator
     time_periods::Vector{Int}
     demand::Vector{Float64}
     reserve_requirements::Vector{Float64}
-    max_output::Dict{String,Float64}
-    min_output::Dict{String,Float64}
-    ramp_up::Dict{String,Float64}
-    ramp_down::Dict{String,Float64}
-    variable_costs::Dict{String,Float64}
-    no_load_costs::Dict{String,Float64}
-    startup_costs::Dict{String,Float64}
-    shutdown_costs::Dict{String,Float64}
-    min_up_times::Dict{String,Int}
-    min_down_times::Dict{String,Int}
-    availability_factors::Dict{String,Vector{Float64}}
-    initial_on::Dict{String,Float64}
-    initial_generation::Dict{String,Float64}
-    unit_types::Dict{String,Symbol}
+    max_output::Dict{String, Float64}
+    min_output::Dict{String, Float64}
+    ramp_up::Dict{String, Float64}
+    ramp_down::Dict{String, Float64}
+    variable_costs::Dict{String, Float64}
+    no_load_costs::Dict{String, Float64}
+    startup_costs::Dict{String, Float64}
+    shutdown_costs::Dict{String, Float64}
+    min_up_times::Dict{String, Int}
+    min_down_times::Dict{String, Int}
+    availability_factors::Dict{String, Vector{Float64}}
+    initial_on::Dict{String, Float64}
+    initial_generation::Dict{String, Float64}
+    unit_types::Dict{String, Symbol}
     resolved_status::FeasibilityStatus
-    feasible_witness::Union{Nothing,UnitCommitmentWitness}
-    infeasibility_certificate::Union{Nothing,UnitCommitmentCapacityCertificate}
+    feasible_witness::Union{Nothing, UnitCommitmentWitness}
+    infeasibility_certificate::Union{Nothing, UnitCommitmentCapacityCertificate}
 end
 
 """
@@ -121,9 +125,10 @@ by (unit, period). Total = 4 * n_units * n_periods. The constructor sizes
 `n_units` and `n_periods` so this product lands near `target_variables`.
 
 # Arguments
-- `target_variables`: Target number of variables (4 × n_units × n_periods)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (4 × n_units × n_periods)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 
 For `feasible`, the constructor builds commitment, transition, and dispatch
 trajectories first, then defines demand and reserve from that trajectory. The
@@ -132,10 +137,15 @@ period has demand plus reserve strictly above all available nameplate capacity;
 the stored certificate records the corresponding aggregate cut. For `unknown`,
 the constructor resolves to one of these two profiles and records the result.
 """
-function UnitCommitmentProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function UnitCommitmentProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
-    resolved_status = feasibility_status == unknown ?
-                      (rand(rng) < 0.65 ? feasible : infeasible) : feasibility_status
+    resolved_status = if feasibility_status == unknown
+        (rand(rng) < 0.65 ? feasible : infeasible)
+    else
+        feasibility_status
+    end
     sizing_target = max(target_variables, 48)
 
     # Variable-count formula: 4 * n_units * n_periods (g, on, startup, shutdown
@@ -144,8 +154,15 @@ function UnitCommitmentProblem(target_variables::Int, feasibility_status::Feasib
     # Switch bands at the smallest formulation supported by the next band. This
     # avoids artificial jumps (for example, 3,000 requested variables formerly
     # jumped to the 3,840-variable large-band floor).
-    scale = sizing_target < 192 ? :tiny : sizing_target < 960 ? :small :
-            sizing_target < 3840 ? :medium : :large
+    scale = if sizing_target < 192
+        :tiny
+    elseif sizing_target < 960
+        :small
+    elseif sizing_target < 3840
+        :medium
+    else
+        :large
+    end
 
     if scale == :tiny
         # Small synthetic instances: allow short horizons / few units so the
@@ -178,7 +195,9 @@ function UnitCommitmentProblem(target_variables::Int, feasibility_status::Feasib
         ratio = sqrt(sizing_target / max(current_vars, 1))
         if ratio > 1.05
             if n_periods < period_range[2]
-                n_periods = min(period_range[2], max(period_range[1], round(Int, n_periods * ratio)))
+                n_periods = min(
+                    period_range[2], max(period_range[1], round(Int, n_periods * ratio))
+                )
             elseif n_units < unit_range[2]
                 n_units = min(unit_range[2], max(unit_range[1], round(Int, n_units * ratio)))
             end
@@ -197,24 +216,84 @@ function UnitCommitmentProblem(target_variables::Int, feasibility_status::Feasib
     time_periods = collect(1:n_periods)
 
     unit_profiles = [
-        (; type=:nuclear, weight=0.08, capacity_range=(700.0, 1300.0), min_ratio=(0.6, 0.85),
-           ramp_fraction=(0.03, 0.07), var_cost=(10.0, 22.0), no_load=(10000.0, 18000.0),
-           startup=(50000.0, 120000.0), shutdown=(10000.0, 25000.0), min_up=(36, 80), min_down=(24, 60)),
-        (; type=:coal, weight=0.22, capacity_range=(200.0, 800.0), min_ratio=(0.4, 0.7),
-           ramp_fraction=(0.05, 0.12), var_cost=(20.0, 35.0), no_load=(6000.0, 12000.0),
-           startup=(20000.0, 70000.0), shutdown=(5000.0, 15000.0), min_up=(12, 48), min_down=(10, 36)),
-        (; type=:ccgt, weight=0.28, capacity_range=(150.0, 500.0), min_ratio=(0.35, 0.6),
-           ramp_fraction=(0.1, 0.2), var_cost=(28.0, 52.0), no_load=(4000.0, 9000.0),
-           startup=(10000.0, 35000.0), shutdown=(3000.0, 10000.0), min_up=(6, 24), min_down=(6, 24)),
-        (; type=:gas_ct, weight=0.18, capacity_range=(40.0, 180.0), min_ratio=(0.0, 0.2),
-           ramp_fraction=(0.5, 1.0), var_cost=(60.0, 120.0), no_load=(500.0, 2000.0),
-           startup=(2000.0, 8000.0), shutdown=(1000.0, 4000.0), min_up=(1, 4), min_down=(1, 4)),
-        (; type=:hydro, weight=0.12, capacity_range=(80.0, 400.0), min_ratio=(0.1, 0.4),
-           ramp_fraction=(0.3, 0.6), var_cost=(5.0, 18.0), no_load=(1000.0, 4000.0),
-           startup=(5000.0, 20000.0), shutdown=(2000.0, 6000.0), min_up=(4, 12), min_down=(2, 10)),
-        (; type=:wind, weight=0.12, capacity_range=(50.0, 250.0), min_ratio=(0.0, 0.05),
-           ramp_fraction=(0.8, 1.2), var_cost=(0.0, 5.0), no_load=(0.0, 0.0),
-           startup=(0.0, 0.0), shutdown=(0.0, 0.0), min_up=(1, 2), min_down=(1, 2))
+        (;
+            type=:nuclear,
+            weight=0.08,
+            capacity_range=(700.0, 1300.0),
+            min_ratio=(0.6, 0.85),
+            ramp_fraction=(0.03, 0.07),
+            var_cost=(10.0, 22.0),
+            no_load=(10000.0, 18000.0),
+            startup=(50000.0, 120000.0),
+            shutdown=(10000.0, 25000.0),
+            min_up=(36, 80),
+            min_down=(24, 60),
+        ),
+        (;
+            type=:coal,
+            weight=0.22,
+            capacity_range=(200.0, 800.0),
+            min_ratio=(0.4, 0.7),
+            ramp_fraction=(0.05, 0.12),
+            var_cost=(20.0, 35.0),
+            no_load=(6000.0, 12000.0),
+            startup=(20000.0, 70000.0),
+            shutdown=(5000.0, 15000.0),
+            min_up=(12, 48),
+            min_down=(10, 36),
+        ),
+        (;
+            type=:ccgt,
+            weight=0.28,
+            capacity_range=(150.0, 500.0),
+            min_ratio=(0.35, 0.6),
+            ramp_fraction=(0.1, 0.2),
+            var_cost=(28.0, 52.0),
+            no_load=(4000.0, 9000.0),
+            startup=(10000.0, 35000.0),
+            shutdown=(3000.0, 10000.0),
+            min_up=(6, 24),
+            min_down=(6, 24),
+        ),
+        (;
+            type=:gas_ct,
+            weight=0.18,
+            capacity_range=(40.0, 180.0),
+            min_ratio=(0.0, 0.2),
+            ramp_fraction=(0.5, 1.0),
+            var_cost=(60.0, 120.0),
+            no_load=(500.0, 2000.0),
+            startup=(2000.0, 8000.0),
+            shutdown=(1000.0, 4000.0),
+            min_up=(1, 4),
+            min_down=(1, 4),
+        ),
+        (;
+            type=:hydro,
+            weight=0.12,
+            capacity_range=(80.0, 400.0),
+            min_ratio=(0.1, 0.4),
+            ramp_fraction=(0.3, 0.6),
+            var_cost=(5.0, 18.0),
+            no_load=(1000.0, 4000.0),
+            startup=(5000.0, 20000.0),
+            shutdown=(2000.0, 6000.0),
+            min_up=(4, 12),
+            min_down=(2, 10),
+        ),
+        (;
+            type=:wind,
+            weight=0.12,
+            capacity_range=(50.0, 250.0),
+            min_ratio=(0.0, 0.05),
+            ramp_fraction=(0.8, 1.2),
+            var_cost=(0.0, 5.0),
+            no_load=(0.0, 0.0),
+            startup=(0.0, 0.0),
+            shutdown=(0.0, 0.0),
+            min_up=(1, 2),
+            min_down=(1, 2),
+        ),
     ]
 
     profile_weights = Weights([profile.weight for profile in unit_profiles])
@@ -311,14 +390,19 @@ function UnitCommitmentProblem(target_variables::Int, feasibility_status::Feasib
             initial_on[u] = 1.0
             initial_generation[u] = 0.0  # filled from the constructed dispatch below
         else
-            preferred_on = profile.type in (:nuclear, :coal) ? rand(rng) < 0.8 :
-                           profile.type == :wind ? true : rand(rng) < 0.6
+            preferred_on = if profile.type in (:nuclear, :coal)
+                rand(rng) < 0.8
+            elseif profile.type == :wind
+                true
+            else
+                rand(rng) < 0.6
+            end
             available_first = cap * availability[1]
             # Strict: `Uniform(min_output, available_first)` below throws unless
             # the unit has real headroom above its stable minimum.
             initial_on[u] = preferred_on && available_first > min_output[u] + 1e-9 ? 1.0 : 0.0
-            initial_generation[u] = initial_on[u] > 0.5 ?
-                rand(rng, Uniform(min_output[u], available_first)) : 0.0
+            initial_generation[u] =
+                initial_on[u] > 0.5 ? rand(rng, Uniform(min_output[u], available_first)) : 0.0
         end
     end
 
@@ -328,9 +412,84 @@ function UnitCommitmentProblem(target_variables::Int, feasibility_status::Feasib
     reserve_fraction = rand(rng, Uniform(0.08, 0.18))
 
     daily_profiles = [
-        [0.55, 0.5, 0.48, 0.47, 0.5, 0.6, 0.75, 0.9, 0.95, 1.0, 0.98, 0.95, 0.92, 0.94, 0.97, 1.0, 0.98, 0.93, 0.85, 0.78, 0.72, 0.68, 0.62, 0.58],
-        [0.45, 0.43, 0.42, 0.41, 0.42, 0.5, 0.65, 0.85, 1.0, 1.0, 0.98, 0.95, 0.92, 0.9, 0.92, 0.95, 0.9, 0.8, 0.65, 0.55, 0.5, 0.48, 0.47, 0.46],
-        [0.6, 0.58, 0.57, 0.56, 0.58, 0.7, 0.85, 0.95, 1.0, 1.0, 0.98, 0.97, 0.95, 0.93, 0.94, 0.96, 0.94, 0.92, 0.88, 0.82, 0.75, 0.7, 0.65, 0.62]
+        [
+            0.55,
+            0.5,
+            0.48,
+            0.47,
+            0.5,
+            0.6,
+            0.75,
+            0.9,
+            0.95,
+            1.0,
+            0.98,
+            0.95,
+            0.92,
+            0.94,
+            0.97,
+            1.0,
+            0.98,
+            0.93,
+            0.85,
+            0.78,
+            0.72,
+            0.68,
+            0.62,
+            0.58,
+        ],
+        [
+            0.45,
+            0.43,
+            0.42,
+            0.41,
+            0.42,
+            0.5,
+            0.65,
+            0.85,
+            1.0,
+            1.0,
+            0.98,
+            0.95,
+            0.92,
+            0.9,
+            0.92,
+            0.95,
+            0.9,
+            0.8,
+            0.65,
+            0.55,
+            0.5,
+            0.48,
+            0.47,
+            0.46,
+        ],
+        [
+            0.6,
+            0.58,
+            0.57,
+            0.56,
+            0.58,
+            0.7,
+            0.85,
+            0.95,
+            1.0,
+            1.0,
+            0.98,
+            0.97,
+            0.95,
+            0.93,
+            0.94,
+            0.96,
+            0.94,
+            0.92,
+            0.88,
+            0.82,
+            0.75,
+            0.7,
+            0.65,
+            0.62,
+        ],
     ]
     demand_profile = daily_profiles[rand(rng, eachindex(daily_profiles))]
 
@@ -345,7 +504,12 @@ function UnitCommitmentProblem(target_variables::Int, feasibility_status::Feasib
         day_index = ceil(Int, t / 24)
         hour = (t - 1) % 24 + 1
         random_effect = rand(rng, Normal(1.0, 0.03))
-        raw_demand = base_peak * demand_profile[hour] * weekly_shape[day_index] * seasonal_trend * random_effect
+        raw_demand =
+            base_peak *
+            demand_profile[hour] *
+            weekly_shape[day_index] *
+            seasonal_trend *
+            random_effect
         demand[t] = max(0.2 * base_peak, raw_demand)
         reserve_requirements[t] = demand[t] * reserve_fraction
     end
@@ -429,29 +593,27 @@ function UnitCommitmentProblem(target_variables::Int, feasibility_status::Feasib
         end
 
         capacity_per_period = [
-            sum(max_output[u] * availability_factors[u][t] for u in units)
-            for t in 1:n_periods
+            sum(max_output[u] * availability_factors[u][t] for u in units) for t in 1:n_periods
         ]
         stress_ratio = [
-            (demand[t] + reserve_requirements[t]) / max(capacity_per_period[t], 1.0)
-            for t in 1:n_periods
+            (demand[t] + reserve_requirements[t]) / max(capacity_per_period[t], 1.0) for
+            t in 1:n_periods
         ]
         critical_period = argmax(stress_ratio)
         available = capacity_per_period[critical_period]
-        local_reserve_fraction = reserve_requirements[critical_period] /
-                                 max(demand[critical_period], eps())
+        local_reserve_fraction =
+            reserve_requirements[critical_period] / max(demand[critical_period], eps())
         local_reserve_fraction = clamp(local_reserve_fraction, 0.08, 0.35)
-        required = available > 0 ?
-                   available * (1.0 + 0.35 * local_reserve_fraction) :
-                   max(1.0, demand[critical_period] + reserve_requirements[critical_period])
+        required = if available > 0
+            available * (1.0 + 0.35 * local_reserve_fraction)
+        else
+            max(1.0, demand[critical_period] + reserve_requirements[critical_period])
+        end
         demand[critical_period] = required / (1.0 + local_reserve_fraction)
         reserve_requirements[critical_period] = required - demand[critical_period]
         excess = required - available
         infeasibility_certificate = UnitCommitmentCapacityCertificate(
-            critical_period,
-            available,
-            required,
-            excess,
+            critical_period, available, required, excess
         )
     end
 
@@ -495,10 +657,7 @@ Check the stored primal witness against every constraint family built by
 `build_model`. This is intentionally solver-independent so generation and tests can
 audit the feasibility contract directly.
 """
-function _unit_commitment_witness_is_valid(
-    prob::UnitCommitmentProblem;
-    atol::Float64=1e-7,
-)
+function _unit_commitment_witness_is_valid(prob::UnitCommitmentProblem; atol::Float64=1e-7)
     prob.resolved_status == feasible || return false
     prob.infeasibility_certificate === nothing || return false
     witness = prob.feasible_witness
@@ -532,33 +691,30 @@ function _unit_commitment_witness_is_valid(
 
             if t == first(prob.time_periods)
                 generation - prob.initial_generation[u] <=
-                    prob.ramp_up[u] * prob.initial_on[u] + prob.max_output[u] * startup + atol ||
+                prob.ramp_up[u] * prob.initial_on[u] + prob.max_output[u] * startup + atol ||
                     return false
                 prob.initial_generation[u] - generation <=
-                    prob.ramp_down[u] * commitment + prob.max_output[u] * shutdown + atol ||
+                prob.ramp_down[u] * commitment + prob.max_output[u] * shutdown + atol ||
                     return false
-                abs(commitment - prob.initial_on[u] - startup + shutdown) <= atol ||
-                    return false
+                abs(commitment - prob.initial_on[u] - startup + shutdown) <= atol || return false
             else
                 previous = t - 1
                 previous_generation = witness.generation[u_idx, previous]
                 previous_commitment = witness.commitment[u_idx, previous]
                 generation - previous_generation <=
-                    prob.ramp_up[u] * previous_commitment + prob.max_output[u] * startup + atol ||
+                prob.ramp_up[u] * previous_commitment + prob.max_output[u] * startup + atol ||
                     return false
                 previous_generation - generation <=
-                    prob.ramp_down[u] * commitment + prob.max_output[u] * shutdown + atol ||
+                prob.ramp_down[u] * commitment + prob.max_output[u] * shutdown + atol ||
                     return false
-                abs(commitment - previous_commitment - startup + shutdown) <= atol ||
-                    return false
+                abs(commitment - previous_commitment - startup + shutdown) <= atol || return false
             end
 
             up_start = max(1, t - prob.min_up_times[u] + 1)
-            sum(witness.startup[u_idx, j] for j in up_start:t) <= commitment + atol ||
-                return false
+            sum(witness.startup[u_idx, j] for j in up_start:t) <= commitment + atol || return false
             down_start = max(1, t - prob.min_down_times[u] + 1)
-            sum(witness.shutdown[u_idx, j] for j in down_start:t) <=
-                1.0 - commitment + atol || return false
+            sum(witness.shutdown[u_idx, j] for j in down_start:t) <= 1.0 - commitment + atol ||
+                return false
         end
     end
 
@@ -566,9 +722,8 @@ function _unit_commitment_witness_is_valid(
         generation = sum(witness.generation[:, t])
         abs(generation - prob.demand[t]) <= atol * max(1.0, prob.demand[t]) || return false
         headroom = sum(
-            prob.max_output[u] * prob.availability_factors[u][t] *
-            witness.commitment[u_idx, t] - witness.generation[u_idx, t]
-            for (u_idx, u) in enumerate(prob.units)
+            prob.max_output[u] * prob.availability_factors[u][t] * witness.commitment[u_idx, t] -
+            witness.generation[u_idx, t] for (u_idx, u) in enumerate(prob.units)
         )
         headroom + atol >= prob.reserve_requirements[t] || return false
     end
@@ -583,10 +738,7 @@ Demand balance and the reserve row imply
 `demand[t] + reserve[t] <= available_capacity[t]`; the certificate records a
 strict violation of that necessary condition.
 """
-function _unit_commitment_certificate_is_valid(
-    prob::UnitCommitmentProblem;
-    atol::Float64=1e-7,
-)
+function _unit_commitment_certificate_is_valid(prob::UnitCommitmentProblem; atol::Float64=1e-7)
     prob.resolved_status == infeasible || return false
     prob.feasible_witness === nothing || return false
     certificate = prob.infeasibility_certificate
@@ -594,16 +746,11 @@ function _unit_commitment_certificate_is_valid(
     1 <= certificate.period <= prob.n_periods || return false
 
     t = certificate.period
-    available = sum(
-        prob.max_output[u] * prob.availability_factors[u][t] for u in prob.units
-    )
+    available = sum(prob.max_output[u] * prob.availability_factors[u][t] for u in prob.units)
     required = prob.demand[t] + prob.reserve_requirements[t]
-    isapprox(certificate.available_capacity, available; atol=atol, rtol=1e-10) ||
-        return false
-    isapprox(certificate.required_capacity, required; atol=atol, rtol=1e-10) ||
-        return false
-    isapprox(certificate.excess, required - available; atol=atol, rtol=1e-10) ||
-        return false
+    isapprox(certificate.available_capacity, available; atol=atol, rtol=1e-10) || return false
+    isapprox(certificate.required_capacity, required; atol=atol, rtol=1e-10) || return false
+    isapprox(certificate.excess, required - available; atol=atol, rtol=1e-10) || return false
     return certificate.excess > atol
 end
 
@@ -615,7 +762,8 @@ struct fields. The public generation API relaxes the three binary families when
 `relax_integer=true` (the package default).
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::UnitCommitmentProblem)
     model = Model()
@@ -639,58 +787,67 @@ function build_model(prob::UnitCommitmentProblem)
         end
     end
 
-    @objective(model, Min,
-        sum(prob.variable_costs[u] * g[u,t] +
-            prob.no_load_costs[u] * on[u,t] +
-            prob.startup_costs[u] * startup[u,t] +
-            prob.shutdown_costs[u] * shutdown[u,t]
-            for u in units, t in periods)
+    @objective(
+        model,
+        Min,
+        sum(
+            prob.variable_costs[u] * g[u, t] +
+            prob.no_load_costs[u] * on[u, t] +
+            prob.startup_costs[u] * startup[u, t] +
+            prob.shutdown_costs[u] * shutdown[u, t] for u in units, t in periods
+        )
     )
 
     for u in units
         for (idx, t) in enumerate(periods)
             max_cap = prob.max_output[u] * prob.availability_factors[u][idx]
-            @constraint(model, g[u,t] <= max_cap)
-            @constraint(model, g[u,t] <= prob.max_output[u] * on[u,t])
-            @constraint(model, g[u,t] >= prob.min_output[u] * on[u,t])
+            @constraint(model, g[u, t] <= max_cap)
+            @constraint(model, g[u, t] <= prob.max_output[u] * on[u, t])
+            @constraint(model, g[u, t] >= prob.min_output[u] * on[u, t])
         end
     end
 
-    @constraint(
-        model,
-        demand_balance[t in periods],
-        sum(g[u, t] for u in units) == prob.demand[t],
-    )
+    @constraint(model, demand_balance[t in periods], sum(g[u, t] for u in units) == prob.demand[t],)
     @constraint(
         model,
         reserve_requirement[t in periods],
         sum(
-            prob.max_output[u] * prob.availability_factors[u][t] * on[u, t] - g[u, t]
-            for u in units
+            prob.max_output[u] * prob.availability_factors[u][t] * on[u, t] - g[u, t] for u in units
         ) >= prob.reserve_requirements[t],
     )
 
     for u in units
         for idx in 2:length(periods)
             t = periods[idx]
-            prev = periods[idx-1]
-            @constraint(model,
-                g[u,t] - g[u,prev] <= prob.ramp_up[u] * on[u,prev] + prob.max_output[u] * startup[u,t]
+            prev = periods[idx - 1]
+            @constraint(
+                model,
+                g[u, t] - g[u, prev] <=
+                    prob.ramp_up[u] * on[u, prev] + prob.max_output[u] * startup[u, t]
             )
-            @constraint(model,
-                g[u,prev] - g[u,t] <= prob.ramp_down[u] * on[u,t] + prob.max_output[u] * shutdown[u,t]
+            @constraint(
+                model,
+                g[u, prev] - g[u, t] <=
+                    prob.ramp_down[u] * on[u, t] + prob.max_output[u] * shutdown[u, t]
             )
-            @constraint(model, on[u,t] - on[u,prev] == startup[u,t] - shutdown[u,t])
+            @constraint(model, on[u, t] - on[u, prev] == startup[u, t] - shutdown[u, t])
         end
 
         first_idx = periods[1]
-        @constraint(model,
-            g[u,first_idx] - prob.initial_generation[u] <= prob.ramp_up[u] * prob.initial_on[u] + prob.max_output[u] * startup[u,first_idx]
+        @constraint(
+            model,
+            g[u, first_idx] - prob.initial_generation[u] <=
+                prob.ramp_up[u] * prob.initial_on[u] + prob.max_output[u] * startup[u, first_idx]
         )
-        @constraint(model,
-            prob.initial_generation[u] - g[u,first_idx] <= prob.ramp_down[u] * on[u,first_idx] + prob.max_output[u] * shutdown[u,first_idx]
+        @constraint(
+            model,
+            prob.initial_generation[u] - g[u, first_idx] <=
+                prob.ramp_down[u] * on[u, first_idx] + prob.max_output[u] * shutdown[u, first_idx]
         )
-        @constraint(model, on[u,first_idx] - prob.initial_on[u] == startup[u,first_idx] - shutdown[u,first_idx])
+        @constraint(
+            model,
+            on[u, first_idx] - prob.initial_on[u] == startup[u, first_idx] - shutdown[u, first_idx]
+        )
 
         for t in periods
             @constraint(model, startup[u, t] + shutdown[u, t] <= 1)
@@ -701,11 +858,18 @@ function build_model(prob::UnitCommitmentProblem)
         for idx in 1:length(periods)
             window_start_up = max(1, idx - min_up + 1)
             if idx - window_start_up + 1 > 0
-                @constraint(model, sum(startup[u,periods[j]] for j in window_start_up:idx) <= on[u,periods[idx]])
+                @constraint(
+                    model,
+                    sum(startup[u, periods[j]] for j in window_start_up:idx) <= on[u, periods[idx]]
+                )
             end
             window_start_down = max(1, idx - min_down + 1)
             if idx - window_start_down + 1 > 0
-                @constraint(model, sum(shutdown[u,periods[j]] for j in window_start_down:idx) <= 1 - on[u,periods[idx]])
+                @constraint(
+                    model,
+                    sum(shutdown[u, periods[j]] for j in window_start_down:idx) <=
+                        1 - on[u, periods[idx]]
+                )
             end
         end
     end

@@ -1,7 +1,6 @@
 using SyntheticLPs
 using JuMP
 
-
 # List all problem types
 problem_types = list_problem_types()
 println("Available problem types ($(length(problem_types))):")
@@ -15,7 +14,9 @@ println("\nTesting problem generation for all problem types...")
 for type in problem_types
     try
         model, problem = generate_problem(type, 50, unknown, 42)
-        println("✓ $type - Successfully generated problem with $(num_variables(model)) variables and $(num_constraints(model, count_variable_in_set_constraints=true)) constraints")
+        println(
+            "✓ $type - Successfully generated problem with $(num_variables(model)) variables and $(num_constraints(model, count_variable_in_set_constraints=true)) constraints",
+        )
     catch e
         println("✗ $type - Error generating problem: $(e)")
     end
@@ -47,7 +48,9 @@ end
 println("\nTesting random problem generation...")
 try
     model, ref, problem = generate_random_problem(50; feasibility_status=unknown, seed=42)
-    println("✓ Successfully generated random problem $ref with $(num_variables(model)) variables and $(num_constraints(model, count_variable_in_set_constraints=true)) constraints")
+    println(
+        "✓ Successfully generated random problem $ref with $(num_variables(model)) variables and $(num_constraints(model, count_variable_in_set_constraints=true)) constraints",
+    )
 catch e
     println("✗ Error generating random problem: $(e)")
 end

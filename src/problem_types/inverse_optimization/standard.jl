@@ -12,6 +12,7 @@ Ahuja–Orlin inverse LP, the reference formulation of inverse optimization
 treatments in Zhang & Liu, *J. Comput. Appl. Math.* 72, 1996).
 
 # Overview
+
 A forward cost-minimization LP is given as **data**:
 
     minimize    c'x
@@ -53,6 +54,7 @@ Appl. Math.* 292, 2016), and here they also encode realistic prior knowledge:
 costs known up to a confidence factor.
 
 # Planted ground truth
+
 The instance is planted in the dual→primal direction: shadow prices `y* > 0`
 are sampled on a set of active rows that covers every column, the true cost is
 defined as `c* = A'y*` (dual feasibility holds with equality and complementary
@@ -66,41 +68,43 @@ construction and its optimal objective value is at most the planted deviation
 `Σ w_j |ĉ_j - c*_j|`.
 
 # Feasibility profiles
-- `feasible`: stores an `InverseCostWitness` (the true cost and duals).
-- `infeasible`: the observation is strictly positive and *strictly interior*
-  (`A x̂ > b` in every row) — no cost vector bounded away from zero can explain
-  an interior decision, and a `StrictInteriorCertificate` proves it from the
-  LP rows alone.
-- `unknown`: a coin flip between the planted mechanism with a wider noise /
-  narrower box combination (the true cost may leave the box) and an unplanted
-  prior, so instances land on both sides with no guarantee either way.
+
+  - `feasible`: stores an `InverseCostWitness` (the true cost and duals).
+  - `infeasible`: the observation is strictly positive and *strictly interior*
+    (`A x̂ > b` in every row) — no cost vector bounded away from zero can explain
+    an interior decision, and a `StrictInteriorCertificate` proves it from the
+    LP rows alone.
+  - `unknown`: a coin flip between the planted mechanism with a wider noise /
+    narrower box combination (the true cost may leave the box) and an unplanted
+    prior, so instances land on both sides with no guarantee either way.
 
 # Fields
-- `num_rows::Int`: Forward constraint count `m`
-- `num_cols::Int`: Forward variable count `n`
-- `forward_matrix::SparseMatrixCSC{Float64,Int}`: Technology matrix `A` (m × n, nonnegative)
-- `forward_rhs::Vector{Float64}`: Forward right-hand sides `b`
-- `reference_point::Vector{Float64}`: Observed decision `x̂`
-- `prior_cost::Vector{Float64}`: Analyst's prior cost `ĉ`
-- `cost_lower::Vector{Float64}`: Admissible cost lower bounds `ℓ`
-- `cost_upper::Vector{Float64}`: Admissible cost upper bounds `u`
-- `deviation_weights::Vector{Float64}`: Weighted-deviation weights `w`
-- `feasible_witness::Union{Nothing,InverseCostWitness}`: set for `feasible`
-- `infeasibility_certificate::Union{Nothing,StrictInteriorCertificate}`: set for `infeasible`
-- `feasibility_status::FeasibilityStatus`: Requested profile
+
+  - `num_rows::Int`: Forward constraint count `m`
+  - `num_cols::Int`: Forward variable count `n`
+  - `forward_matrix::SparseMatrixCSC{Float64,Int}`: Technology matrix `A` (m × n, nonnegative)
+  - `forward_rhs::Vector{Float64}`: Forward right-hand sides `b`
+  - `reference_point::Vector{Float64}`: Observed decision `x̂`
+  - `prior_cost::Vector{Float64}`: Analyst's prior cost `ĉ`
+  - `cost_lower::Vector{Float64}`: Admissible cost lower bounds `ℓ`
+  - `cost_upper::Vector{Float64}`: Admissible cost upper bounds `u`
+  - `deviation_weights::Vector{Float64}`: Weighted-deviation weights `w`
+  - `feasible_witness::Union{Nothing,InverseCostWitness}`: set for `feasible`
+  - `infeasibility_certificate::Union{Nothing,StrictInteriorCertificate}`: set for `infeasible`
+  - `feasibility_status::FeasibilityStatus`: Requested profile
 """
 struct InverseLPProblem <: ProblemGenerator
     num_rows::Int
     num_cols::Int
-    forward_matrix::SparseMatrixCSC{Float64,Int}
+    forward_matrix::SparseMatrixCSC{Float64, Int}
     forward_rhs::Vector{Float64}
     reference_point::Vector{Float64}
     prior_cost::Vector{Float64}
     cost_lower::Vector{Float64}
     cost_upper::Vector{Float64}
     deviation_weights::Vector{Float64}
-    feasible_witness::Union{Nothing,InverseCostWitness}
-    infeasibility_certificate::Union{Nothing,StrictInteriorCertificate}
+    feasible_witness::Union{Nothing, InverseCostWitness}
+    infeasibility_certificate::Union{Nothing, StrictInteriorCertificate}
     feasibility_status::FeasibilityStatus
 end
 
@@ -118,19 +122,27 @@ function InverseLPProblem(target_variables::Int, feasibility_status::Feasibility
     rng = MersenneTwister(seed)
 
     row_ratio = rand(rng, Uniform(0.5, 1.6))
-    num_cols = clamp(round(Int, target_variables / (3.0 + row_ratio)), 4,
-                     max(4, target_variables - 6))
+    num_cols = clamp(
+        round(Int, target_variables / (3.0 + row_ratio)), 4, max(4, target_variables - 6)
+    )
     num_rows = max(2, target_variables - 3 * num_cols)
 
     data = _sample_cost_inference_data(rng, num_cols, num_rows, feasibility_status)
 
-    return InverseLPProblem(num_rows, num_cols,
-                            data.forward_matrix, data.forward_rhs,
-                            data.reference_point, data.prior_cost,
-                            data.cost_lower, data.cost_upper,
-                            data.deviation_weights,
-                            data.feasible_witness, data.infeasibility_certificate,
-                            feasibility_status)
+    return InverseLPProblem(
+        num_rows,
+        num_cols,
+        data.forward_matrix,
+        data.forward_rhs,
+        data.reference_point,
+        data.prior_cost,
+        data.cost_lower,
+        data.cost_upper,
+        data.deviation_weights,
+        data.feasible_witness,
+        data.infeasibility_certificate,
+        feasibility_status,
+    )
 end
 
 """
@@ -143,30 +155,31 @@ function build_model(prob::InverseLPProblem)
     m, n = prob.num_rows, prob.num_cols
     A = prob.forward_matrix
 
-    @variable(model, 0 <= y[i=1:m] <= _implied_dual_upper(A, prob.cost_upper)[i])
-    @variable(model, prob.cost_lower[j] <= c[j=1:n] <= prob.cost_upper[j])
+    @variable(model, 0 <= y[i = 1:m] <= _implied_dual_upper(A, prob.cost_upper)[i])
+    @variable(model, prob.cost_lower[j] <= c[j = 1:n] <= prob.cost_upper[j])
     @variable(model, dev_plus[1:n] >= 0)
     @variable(model, dev_minus[1:n] >= 0)
 
     # Dual feasibility: the reduced cost of every forward column is nonnegative.
     for j in 1:n
-        @constraint(model,
-                    sum(A.nzval[k] * y[A.rowval[k]] for k in nzrange(A, j)) <= c[j])
+        @constraint(model, sum(A.nzval[k] * y[A.rowval[k]] for k in nzrange(A, j)) <= c[j])
     end
 
     # Strong duality: the dual objective attains the observed primal cost, which
     # together with dual feasibility certifies optimality of the observation.
-    @constraint(model,
-                sum(prob.forward_rhs[i] * y[i] for i in 1:m) ==
-                sum(prob.reference_point[j] * c[j] for j in 1:n))
+    @constraint(
+        model,
+        sum(prob.forward_rhs[i] * y[i] for i in 1:m) ==
+            sum(prob.reference_point[j] * c[j] for j in 1:n)
+    )
 
     for j in 1:n
         @constraint(model, c[j] - dev_plus[j] + dev_minus[j] == prob.prior_cost[j])
     end
 
-    @objective(model, Min,
-               sum(prob.deviation_weights[j] * (dev_plus[j] + dev_minus[j])
-                   for j in 1:n))
+    @objective(
+        model, Min, sum(prob.deviation_weights[j] * (dev_plus[j] + dev_minus[j]) for j in 1:n)
+    )
 
     return model
 end
@@ -175,6 +188,6 @@ register_variant(
     :inverse_optimization,
     :standard,
     InverseLPProblem,
-    "Weighted-L1 inverse linear program (Ahuja-Orlin): recover the box-bounded cost vector closest to a prior that makes an observed plan optimal for a forward LP",
-    default = true,
+    "Weighted-L1 inverse linear program (Ahuja-Orlin): recover the box-bounded cost vector closest to a prior that makes an observed plan optimal for a forward LP";
+    default=true,
 )

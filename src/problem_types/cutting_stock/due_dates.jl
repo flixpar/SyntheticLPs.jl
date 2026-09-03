@@ -10,6 +10,7 @@ Generator for multi-period (time-phased) cutting stock / lot-sizing problems wit
 per-period due demand, inventory carryover, and a per-period stock cap.
 
 # Overview
+
 Models one-dimensional cutting stock spread over a planning horizon. In each
 period the mill may run cutting patterns (limited by a per-period stock cap), the
 cut pieces satisfy that period's due demand, and any surplus is carried forward as
@@ -24,13 +25,14 @@ Inventory balance for each piece `i` and period `t`:
 `inventory[i, t-1] + (pieces cut in period t) == period_demands[i, t] + inventory[i, t]`.
 
 # Fields
-- `piece_lengths::Vector{Float64}`: Length of each piece type required
-- `patterns::Vector{Vector{Int}}`: Cutting patterns (how many of each piece per stock)
-- `stock_length::Float64`: Length of stock material
-- `n_periods::Int`: Number of planning periods
-- `period_demands::Matrix{Int}`: Due demand per piece type (rows) and period (cols)
-- `holding_costs::Vector{Float64}`: Per-period holding cost per unit of each piece type
-- `period_stock_cap::Int`: Maximum number of stock pieces that can be cut in any single period
+
+  - `piece_lengths::Vector{Float64}`: Length of each piece type required
+  - `patterns::Vector{Vector{Int}}`: Cutting patterns (how many of each piece per stock)
+  - `stock_length::Float64`: Length of stock material
+  - `n_periods::Int`: Number of planning periods
+  - `period_demands::Matrix{Int}`: Due demand per piece type (rows) and period (cols)
+  - `holding_costs::Vector{Float64}`: Per-period holding cost per unit of each piece type
+  - `period_stock_cap::Int`: Maximum number of stock pieces that can be cut in any single period
 """
 struct DueDatesCuttingStockProblem <: ProblemGenerator
     piece_lengths::Vector{Float64}
@@ -46,7 +48,9 @@ end
 Helper: generate feasible single-piece and mixed cutting patterns for a stock length.
 (Self-contained name to avoid clashing with the standard variant's helper.)
 """
-function generate_due_dates_patterns(rng::AbstractRNG, standard_length, piece_lengths, max_patterns, waste_factor=0.1)
+function generate_due_dates_patterns(
+    rng::AbstractRNG, standard_length, piece_lengths, max_patterns, waste_factor=0.1
+)
     patterns = Vector{Vector{Int}}()
 
     # Single-piece patterns (guarantee every piece type is producible)
@@ -69,10 +73,11 @@ function generate_due_dates_patterns(rng::AbstractRNG, standard_length, piece_le
         remaining_length = standard_length
         indices = collect(1:length(piece_lengths))
 
-        num_types_to_use = min(length(piece_lengths),
-                               max(1, round(Int, rand(rng, Exponential(2.0)))))
+        num_types_to_use = min(
+            length(piece_lengths), max(1, round(Int, rand(rng, Exponential(2.0))))
+        )
 
-        selected_indices = sample(rng, indices, num_types_to_use, replace=false)
+        selected_indices = sample(rng, indices, num_types_to_use; replace=false)
 
         while !isempty(selected_indices)
             weights = [standard_length / piece_lengths[i] for i in selected_indices]
@@ -124,17 +129,21 @@ end
 Construct a multi-period cutting stock problem instance with due dates.
 
 # Variable count
+
 The JuMP model creates `x[1:n_patterns, 1:n_periods]` and
 `inventory[1:n_pieces, 0:n_periods]`, so:
 `var_count = n_patterns * n_periods + n_pieces * (n_periods + 1)`.
 Dimensions are sized in the constructor to hit `target_variables`.
 
 # Arguments
-- `target_variables`: Target number of variables
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function DueDatesCuttingStockProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function DueDatesCuttingStockProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # --- Scale-dependent parameters ---
@@ -184,11 +193,12 @@ function DueDatesCuttingStockProblem(target_variables::Int, feasibility_status::
             base_length = rand(rng, common_lengths)
             if base_length > effective_max_length
                 valid_lengths = filter(x -> x <= effective_max_length, common_lengths)
-                base_length = isempty(valid_lengths) ? effective_max_length * 0.8 : rand(rng, valid_lengths)
+                base_length =
+                    isempty(valid_lengths) ? effective_max_length * 0.8 : rand(rng, valid_lengths)
             end
             variation = rand(rng, Normal(0, 0.02))
             len = clamp(base_length + variation, 0.1, effective_max_length)
-            push!(piece_lengths, round(len, digits=2))
+            push!(piece_lengths, round(len; digits=2))
         else
             normalized = rand(rng, Beta(2.0, 3.0))
             len = 0.1 + (effective_max_length - 0.1) * normalized
@@ -207,7 +217,9 @@ function DueDatesCuttingStockProblem(target_variables::Int, feasibility_status::
     n_patterns = max(n_pieces, round(Int, remaining / n_periods))
 
     # --- Generate cutting patterns ---
-    patterns = generate_due_dates_patterns(rng, stock_length, piece_lengths, n_patterns, waste_factor)
+    patterns = generate_due_dates_patterns(
+        rng, stock_length, piece_lengths, n_patterns, waste_factor
+    )
     n_patterns = length(patterns)
 
     # --- Holding costs (small relative to a stock piece; keeps temporal structure
@@ -280,8 +292,13 @@ function DueDatesCuttingStockProblem(target_variables::Int, feasibility_status::
     end
 
     return DueDatesCuttingStockProblem(
-        piece_lengths, patterns, stock_length, n_periods,
-        period_demands, holding_costs, period_stock_cap,
+        piece_lengths,
+        patterns,
+        stock_length,
+        n_periods,
+        period_demands,
+        holding_costs,
+        period_stock_cap,
     )
 end
 
@@ -292,7 +309,8 @@ Build a JuMP model for the multi-period cutting stock problem with due dates.
 Deterministic — uses only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::DueDatesCuttingStockProblem)
     model = Model()
@@ -307,9 +325,11 @@ function build_model(prob::DueDatesCuttingStockProblem)
     @variable(model, inventory[1:n_pieces, 0:n_periods] >= 0)    # end-of-period inventory
 
     # Objective: total stock pieces used + inventory holding cost
-    @objective(model, Min,
+    @objective(
+        model,
+        Min,
         sum(x[j, t] for j in 1:n_patterns, t in 1:n_periods) +
-        sum(prob.holding_costs[i] * inventory[i, t] for i in 1:n_pieces, t in 1:n_periods)
+            sum(prob.holding_costs[i] * inventory[i, t] for i in 1:n_pieces, t in 1:n_periods)
     )
 
     # Initial inventory is zero
@@ -321,8 +341,10 @@ function build_model(prob::DueDatesCuttingStockProblem)
     for i in 1:n_pieces
         for t in 1:n_periods
             production = sum(prob.patterns[j][i] * x[j, t] for j in 1:n_patterns)
-            @constraint(model,
-                inventory[i, t-1] + production == prob.period_demands[i, t] + inventory[i, t])
+            @constraint(
+                model,
+                inventory[i, t - 1] + production == prob.period_demands[i, t] + inventory[i, t]
+            )
         end
     end
 

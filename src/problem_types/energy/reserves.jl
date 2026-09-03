@@ -9,6 +9,7 @@ using Distributions
 Generator for energy generation dispatch problems with operating reserve requirements.
 
 # Overview
+
 Models economic dispatch of a generation fleet over a time horizon while procuring
 spinning and non-spinning operating reserves in every period. The decisions are,
 for each source and period, the energy generated, the spinning reserve provided,
@@ -20,30 +21,31 @@ reserve cannot exceed capacity, and non-spinning reserve cannot exceed the unuse
 capacity after generation.
 
 # Fields
-- `n_sources::Int`: Number of power generation sources
-- `n_periods::Int`: Number of time periods
-- `sources::Vector{String}`: Names of energy sources
-- `time_periods::Vector{Int}`: Time period indices
-- `generation_costs::Dict{String,Float64}`: Cost per MWh for each source
-- `capacities::Dict{String,Float64}`: Maximum capacity (MW) for each source
-- `demands::Vector{Float64}`: Demand (MW) in each period
-- `spinning_reserve_req::Vector{Float64}`: Required spinning reserve (MW) per period
-- `non_spinning_reserve_req::Vector{Float64}`: Required non-spinning reserve (MW) per period
-- `spinning_reserve_cost::Dict{String,Float64}`: Provision cost per MW of spinning reserve for each source
-- `non_spinning_reserve_cost::Dict{String,Float64}`: Provision cost per MW of non-spinning reserve for each source
+
+  - `n_sources::Int`: Number of power generation sources
+  - `n_periods::Int`: Number of time periods
+  - `sources::Vector{String}`: Names of energy sources
+  - `time_periods::Vector{Int}`: Time period indices
+  - `generation_costs::Dict{String,Float64}`: Cost per MWh for each source
+  - `capacities::Dict{String,Float64}`: Maximum capacity (MW) for each source
+  - `demands::Vector{Float64}`: Demand (MW) in each period
+  - `spinning_reserve_req::Vector{Float64}`: Required spinning reserve (MW) per period
+  - `non_spinning_reserve_req::Vector{Float64}`: Required non-spinning reserve (MW) per period
+  - `spinning_reserve_cost::Dict{String,Float64}`: Provision cost per MW of spinning reserve for each source
+  - `non_spinning_reserve_cost::Dict{String,Float64}`: Provision cost per MW of non-spinning reserve for each source
 """
 struct ReservesEnergyProblem <: ProblemGenerator
     n_sources::Int
     n_periods::Int
     sources::Vector{String}
     time_periods::Vector{Int}
-    generation_costs::Dict{String,Float64}
-    capacities::Dict{String,Float64}
+    generation_costs::Dict{String, Float64}
+    capacities::Dict{String, Float64}
     demands::Vector{Float64}
     spinning_reserve_req::Vector{Float64}
     non_spinning_reserve_req::Vector{Float64}
-    spinning_reserve_cost::Dict{String,Float64}
-    non_spinning_reserve_cost::Dict{String,Float64}
+    spinning_reserve_cost::Dict{String, Float64}
+    non_spinning_reserve_cost::Dict{String, Float64}
 end
 
 """
@@ -56,11 +58,14 @@ reserve, non-spinning reserve), so the dimensions are sized as
 `n_sources * n_periods ≈ target_variables / 3`.
 
 # Arguments
-- `target_variables`: Target number of variables (≈ 3 * n_sources * n_periods)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (≈ 3 * n_sources * n_periods)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function ReservesEnergyProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function ReservesEnergyProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # Variable count = 3 * n_sources * n_periods (gen + spin + nonspin per source-period).
@@ -143,32 +148,41 @@ function ReservesEnergyProblem(target_variables::Int, feasibility_status::Feasib
     renewable_indices = findall(s -> s[2], source_types)
     conventional_indices = findall(s -> !s[2], source_types)
 
-    name_counter = Dict{String,Int}()
+    name_counter = Dict{String, Int}()
     function build_fleet(indices, n)
-        fleet = Tuple{String,String,Bool,Float64,Float64,Float64}[]
+        fleet = Tuple{String, String, Bool, Float64, Float64, Float64}[]
         (isempty(indices) || n <= 0) && return fleet
         order = shuffle(rng, indices)
         for k in 1:n
             base = source_types[order[((k - 1) % length(order)) + 1]]
             name_counter[base[1]] = get(name_counter, base[1], 0) + 1
-            uname = name_counter[base[1]] == 1 ? base[1] :
-                    string(base[1], "_", name_counter[base[1]])
-            push!(fleet, (uname, base[1], base[2],
-                clamp(base[3] * rand(rng, Uniform(0.97, 1.03)), 0.5, 1.0),
-                base[4] * rand(rng, Uniform(0.9, 1.1)),
-                base[5] * rand(rng, Uniform(0.9, 1.1))))
+            uname =
+                name_counter[base[1]] == 1 ? base[1] : string(base[1], "_", name_counter[base[1]])
+            push!(
+                fleet,
+                (
+                    uname,
+                    base[1],
+                    base[2],
+                    clamp(base[3] * rand(rng, Uniform(0.97, 1.03)), 0.5, 1.0),
+                    base[4] * rand(rng, Uniform(0.9, 1.1)),
+                    base[5] * rand(rng, Uniform(0.9, 1.1)),
+                ),
+            )
         end
         return fleet
     end
-    selected_sources = vcat(build_fleet(renewable_indices, n_renewables),
-                            build_fleet(conventional_indices, n_conventional))
+    selected_sources = vcat(
+        build_fleet(renewable_indices, n_renewables),
+        build_fleet(conventional_indices, n_conventional),
+    )
 
     sources = [s[1] for s in selected_sources]
     n_sources = length(sources)
     time_periods = collect(1:n_periods)
 
     # Generation costs
-    generation_costs = Dict{String,Float64}()
+    generation_costs = Dict{String, Float64}()
     for (name, _technology, is_renewable, _, _, cost_factor) in selected_sources
         base_cost = base_generation_cost * cost_factor
         if is_renewable
@@ -179,7 +193,7 @@ function ReservesEnergyProblem(target_variables::Int, feasibility_status::Feasib
     end
 
     # Capacities sized to cover peak demand with margin
-    capacities = Dict{String,Float64}()
+    capacities = Dict{String, Float64}()
     total_required_capacity = peak_demand * capacity_margin
     capacity_shares = Float64[]
     for (_name, technology, _, _, _, _) in selected_sources
@@ -199,14 +213,39 @@ function ReservesEnergyProblem(target_variables::Int, feasibility_status::Feasib
     total_share = sum(capacity_shares)
     for (i, (name, _technology, _, availability, capacity_factor, _)) in enumerate(selected_sources)
         normalized_share = capacity_shares[i] / total_share
-        effective_capacity = total_required_capacity * normalized_share / (availability * capacity_factor)
+        effective_capacity =
+            total_required_capacity * normalized_share / (availability * capacity_factor)
         capacities[name] = max(10.0, effective_capacity)
     end
 
     # Demand profile (daily pattern with noise)
     demands = Float64[]
-    hour_factors = [0.6, 0.55, 0.5, 0.5, 0.55, 0.7, 0.85, 1.0, 0.95, 0.9,
-                    0.85, 0.9, 0.95, 1.0, 0.9, 0.85, 0.9, 0.95, 1.0, 0.95, 0.9, 0.8, 0.7, 0.65]
+    hour_factors = [
+        0.6,
+        0.55,
+        0.5,
+        0.5,
+        0.55,
+        0.7,
+        0.85,
+        1.0,
+        0.95,
+        0.9,
+        0.85,
+        0.9,
+        0.95,
+        1.0,
+        0.9,
+        0.85,
+        0.9,
+        0.95,
+        1.0,
+        0.95,
+        0.9,
+        0.8,
+        0.7,
+        0.65,
+    ]
     base_demand = peak_demand * (1 - demand_variation)
     for p in 1:n_periods
         hour_idx = 1 + (p - 1) % 24
@@ -223,8 +262,8 @@ function ReservesEnergyProblem(target_variables::Int, feasibility_status::Feasib
 
     # Small reserve provision (opportunity) costs so reserve allocation is non-degenerate.
     # Spinning reserve is held on synchronized headroom and is pricier than non-spinning.
-    spinning_reserve_cost = Dict{String,Float64}()
-    non_spinning_reserve_cost = Dict{String,Float64}()
+    spinning_reserve_cost = Dict{String, Float64}()
+    non_spinning_reserve_cost = Dict{String, Float64}()
     for name in sources
         gc = generation_costs[name]
         spinning_reserve_cost[name] = gc * rand(rng, Uniform(0.08, 0.20))
@@ -260,9 +299,17 @@ function ReservesEnergyProblem(target_variables::Int, feasibility_status::Feasib
     # For unknown, leave the naturally-generated instance as-is (no forced infeasibility).
 
     return ReservesEnergyProblem(
-        n_sources, n_periods, sources, time_periods, generation_costs,
-        capacities, demands, spinning_reserve_req, non_spinning_reserve_req,
-        spinning_reserve_cost, non_spinning_reserve_cost,
+        n_sources,
+        n_periods,
+        sources,
+        time_periods,
+        generation_costs,
+        capacities,
+        demands,
+        spinning_reserve_req,
+        non_spinning_reserve_req,
+        spinning_reserve_cost,
+        non_spinning_reserve_cost,
     )
 end
 
@@ -273,7 +320,8 @@ Build a JuMP model for the energy dispatch-with-reserves problem. Deterministic 
 uses only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::ReservesEnergyProblem)
     model = Model()
@@ -284,20 +332,33 @@ function build_model(prob::ReservesEnergyProblem)
     @variable(model, nonspin_res[s in prob.sources, t in prob.time_periods] >= 0)
 
     # Objective: generation cost + small reserve provision (opportunity) cost.
-    @objective(model, Min,
+    @objective(
+        model,
+        Min,
         sum(prob.generation_costs[s] * x[s, t] for s in prob.sources, t in prob.time_periods) +
-        sum(prob.spinning_reserve_cost[s] * spin_res[s, t] for s in prob.sources, t in prob.time_periods) +
-        sum(prob.non_spinning_reserve_cost[s] * nonspin_res[s, t] for s in prob.sources, t in prob.time_periods))
+            sum(
+                prob.spinning_reserve_cost[s] * spin_res[s, t] for
+                s in prob.sources, t in prob.time_periods
+            ) +
+            sum(
+                prob.non_spinning_reserve_cost[s] * nonspin_res[s, t] for
+                s in prob.sources, t in prob.time_periods
+            )
+    )
 
     for t in prob.time_periods
         # Meet demand
         @constraint(model, sum(x[s, t] for s in prob.sources) >= prob.demands[t])
 
         # Meet spinning reserve requirement
-        @constraint(model, sum(spin_res[s, t] for s in prob.sources) >= prob.spinning_reserve_req[t])
+        @constraint(
+            model, sum(spin_res[s, t] for s in prob.sources) >= prob.spinning_reserve_req[t]
+        )
 
         # Meet non-spinning reserve requirement
-        @constraint(model, sum(nonspin_res[s, t] for s in prob.sources) >= prob.non_spinning_reserve_req[t])
+        @constraint(
+            model, sum(nonspin_res[s, t] for s in prob.sources) >= prob.non_spinning_reserve_req[t]
+        )
     end
 
     # Capacity coupling: reserves draw on unused headroom above generation.

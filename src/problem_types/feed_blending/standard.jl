@@ -2,7 +2,9 @@ using JuMP
 using Random
 using Distributions
 
-"""Broad economic role of an ingredient in a generated feed recipe."""
+"""
+Broad economic role of an ingredient in a generated feed recipe.
+"""
 @enum FeedIngredientKind begin
     feed_energy_source
     feed_protein_source
@@ -10,7 +12,9 @@ using Distributions
     feed_specialty_additive
 end
 
-"""Nutritional role and scale of a generated quality metric."""
+"""
+Nutritional role and scale of a generated quality metric.
+"""
 @enum FeedNutrientKind begin
     feed_major_nutrient
     feed_mineral
@@ -18,7 +22,9 @@ end
     feed_restricted_compound
 end
 
-"""Direction of an average-content constraint."""
+"""
+Direction of an average-content constraint.
+"""
 @enum FeedRatioSense begin
     feed_ratio_minimum
     feed_ratio_maximum
@@ -39,7 +45,9 @@ struct FeedRatioConstraint
     sense::FeedRatioSense
 end
 
-"""Structural reason that a requested-infeasible blend has no feasible recipe."""
+"""
+Structural reason that a requested-infeasible blend has no feasible recipe.
+"""
 @enum FeedInfeasibilityKind begin
     feed_minimum_ratio_above_achievable_maximum
     feed_maximum_ratio_below_achievable_minimum
@@ -65,17 +73,11 @@ struct FeedInfeasibilityCertificate
 end
 
 const _FEED_INGREDIENT_KINDS = (
-    feed_energy_source,
-    feed_protein_source,
-    feed_mineral_supplement,
-    feed_specialty_additive,
+    feed_energy_source, feed_protein_source, feed_mineral_supplement, feed_specialty_additive
 )
 
 const _FEED_NUTRIENT_KINDS = (
-    feed_major_nutrient,
-    feed_mineral,
-    feed_trace_nutrient,
-    feed_restricted_compound,
+    feed_major_nutrient, feed_mineral, feed_trace_nutrient, feed_restricted_compound
 )
 
 # Rows are nutrient kinds and columns are ingredient kinds. The values describe
@@ -125,8 +127,8 @@ struct FeedBlendingProblem <: ProblemGenerator
     max_limits::Vector{Float64}
     availabilities::Vector{Float64}
     ratio_constraints::Vector{FeedRatioConstraint}
-    feasible_witness::Union{Nothing,Vector{Float64}}
-    infeasibility_certificate::Union{Nothing,FeedInfeasibilityCertificate}
+    feasible_witness::Union{Nothing, Vector{Float64}}
+    infeasibility_certificate::Union{Nothing, FeedInfeasibilityCertificate}
     requested_status::FeasibilityStatus
 end
 
@@ -144,9 +146,7 @@ function _feed_sample_kinds(rng::AbstractRNG, kinds::Tuple, count::Int)
 end
 
 function _feed_sample_content(
-    rng::AbstractRNG,
-    nutrient_kind::FeedNutrientKind,
-    ingredient_kind::FeedIngredientKind,
+    rng::AbstractRNG, nutrient_kind::FeedNutrientKind, ingredient_kind::FeedIngredientKind
 )
     j = Int(nutrient_kind) + 1
     i = Int(ingredient_kind) + 1
@@ -156,14 +156,13 @@ function _feed_sample_content(
     return min(concentration, _FEED_CONTENT_MAXIMUM[j])
 end
 
-function _feed_effective_capacity_sum(
-    availabilities::AbstractVector{<:Real},
-    batch_size::Real,
-)
+function _feed_effective_capacity_sum(availabilities::AbstractVector{<:Real}, batch_size::Real)
     return sum(
-        isfinite(capacity) ? clamp(Float64(capacity), 0.0, Float64(batch_size)) :
-        Float64(batch_size)
-        for capacity in availabilities
+        if isfinite(capacity)
+            clamp(Float64(capacity), 0.0, Float64(batch_size))
+        else
+            Float64(batch_size)
+        end for capacity in availabilities
     )
 end
 
@@ -186,8 +185,7 @@ function _feed_achievable_average(
     for ingredient in order
         remaining <= 1e-10 * max(1.0, batch) && break
         raw_capacity = availabilities[ingredient]
-        capacity = isfinite(raw_capacity) ?
-                   clamp(Float64(raw_capacity), 0.0, batch) : batch
+        capacity = isfinite(raw_capacity) ? clamp(Float64(raw_capacity), 0.0, batch) : batch
         amount = min(capacity, remaining)
         total += nutrient_content[nutrient, ingredient] * amount
         remaining -= amount
@@ -198,16 +196,12 @@ function _feed_achievable_average(
 end
 
 function _feed_reference_recipe(
-    rng::AbstractRNG,
-    costs::Vector{Float64},
-    availabilities::Vector{Float64},
-    batch_size::Float64,
+    rng::AbstractRNG, costs::Vector{Float64}, availabilities::Vector{Float64}, batch_size::Float64
 )
     n = length(costs)
     recipe = batch_size .* rand(rng, Dirichlet(fill(1.0, n)))
     for i in 1:n
-        isfinite(availabilities[i]) &&
-            (recipe[i] = min(recipe[i], max(availabilities[i], 0.0)))
+        isfinite(availabilities[i]) && (recipe[i] = min(recipe[i], max(availabilities[i], 0.0)))
     end
 
     remaining = batch_size - sum(recipe)
@@ -220,8 +214,7 @@ function _feed_reference_recipe(
     priority = sortperm(jittered_costs)
     for i in priority
         remaining <= 1e-10 * max(1.0, batch_size) && break
-        capacity = isfinite(availabilities[i]) ?
-                   max(availabilities[i] - recipe[i], 0.0) : remaining
+        capacity = isfinite(availabilities[i]) ? max(availabilities[i] - recipe[i], 0.0) : remaining
         addition = min(capacity, remaining)
         recipe[i] += addition
         remaining -= addition
@@ -237,9 +230,7 @@ function _feed_ratio_average(
     batch_size::Real,
     nutrient::Int,
 )
-    return sum(
-        nutrient_content[nutrient, i] * recipe[i] for i in eachindex(recipe)
-    ) / batch_size
+    return sum(nutrient_content[nutrient, i] * recipe[i] for i in eachindex(recipe)) / batch_size
 end
 
 """
@@ -250,7 +241,7 @@ solver-independent and is primarily useful for validating `feasible_witness`.
 """
 function feed_recipe_satisfies(
     prob::FeedBlendingProblem,
-    recipe::Union{Nothing,AbstractVector{<:Real}}=prob.feasible_witness;
+    recipe::Union{Nothing, AbstractVector{<:Real}}=prob.feasible_witness;
     atol::Float64=1e-8,
 )
     recipe === nothing && return false
@@ -260,17 +251,13 @@ function feed_recipe_satisfies(
     abs(sum(recipe) - prob.batch_size) <= mass_tolerance || return false
 
     for i in 1:prob.num_ingredients
-        if isfinite(prob.availabilities[i]) &&
-           recipe[i] > prob.availabilities[i] + mass_tolerance
+        if isfinite(prob.availabilities[i]) && recipe[i] > prob.availabilities[i] + mass_tolerance
             return false
         end
     end
 
     for j in 1:prob.num_nutrients
-        total = sum(
-            prob.nutrient_content[j, i] * recipe[i]
-            for i in 1:prob.num_ingredients
-        )
+        total = sum(prob.nutrient_content[j, i] * recipe[i] for i in 1:prob.num_ingredients)
         row_tolerance = atol * max(1.0, abs(total), prob.batch_size)
         total + row_tolerance >= prob.min_requirements[j] || return false
         if isfinite(prob.max_limits[j])
@@ -280,10 +267,7 @@ function feed_recipe_satisfies(
 
     for constraint in prob.ratio_constraints
         average = _feed_ratio_average(
-            prob.nutrient_content,
-            recipe,
-            prob.batch_size,
-            constraint.nutrient,
+            prob.nutrient_content, recipe, prob.batch_size, constraint.nutrient
         )
         ratio_tolerance = atol * max(1.0, abs(average), abs(constraint.target))
         if constraint.sense == feed_ratio_minimum
@@ -303,34 +287,29 @@ end
 Recompute and validate the structural contradiction recorded on a requested-
 infeasible feed blend. No optimization solver is used.
 """
-function feed_infeasibility_certificate_holds(
-    prob::FeedBlendingProblem;
-    atol::Float64=1e-8,
-)
+function feed_infeasibility_certificate_holds(prob::FeedBlendingProblem; atol::Float64=1e-8)
     certificate = prob.infeasibility_certificate
     certificate === nothing && return false
 
     if certificate.kind == feed_insufficient_ingredient_capacity
         certificate.nutrient == 0 || return false
         certificate.ratio_constraint == 0 || return false
-        achievable = _feed_effective_capacity_sum(
-            prob.availabilities, prob.batch_size
-        )
+        achievable = _feed_effective_capacity_sum(prob.availabilities, prob.batch_size)
         required = prob.batch_size
     elseif certificate.kind == feed_minimum_nutrient_above_achievable_maximum
         1 <= certificate.nutrient <= prob.num_nutrients || return false
         certificate.ratio_constraint == 0 || return false
-        achievable = prob.batch_size * _feed_achievable_average(
-            prob.nutrient_content,
-            prob.availabilities,
-            prob.batch_size,
-            certificate.nutrient;
-            maximize=true,
-        )
+        achievable =
+            prob.batch_size * _feed_achievable_average(
+                prob.nutrient_content,
+                prob.availabilities,
+                prob.batch_size,
+                certificate.nutrient;
+                maximize=true,
+            )
         required = prob.min_requirements[certificate.nutrient]
     else
-        1 <= certificate.ratio_constraint <= length(prob.ratio_constraints) ||
-            return false
+        1 <= certificate.ratio_constraint <= length(prob.ratio_constraints) || return false
         constraint = prob.ratio_constraints[certificate.ratio_constraint]
         constraint.nutrient == certificate.nutrient || return false
         if certificate.kind == feed_minimum_ratio_above_achievable_maximum
@@ -381,9 +360,7 @@ function _feed_set_witness_constraints!(
 )
     for j in eachindex(nutrient_types)
         kind = nutrient_types[j]
-        witness_average = _feed_ratio_average(
-            nutrient_content, recipe, batch_size, j
-        )
+        witness_average = _feed_ratio_average(nutrient_content, recipe, batch_size, j)
         minimum_average = _feed_achievable_average(
             nutrient_content, availabilities, batch_size, j; maximize=false
         )
@@ -391,11 +368,22 @@ function _feed_set_witness_constraints!(
             nutrient_content, availabilities, batch_size, j; maximize=true
         )
 
-        minimum_probability = kind == feed_major_nutrient ? 0.95 :
-                              kind == feed_mineral ? 0.78 :
-                              kind == feed_trace_nutrient ? 0.55 : 0.10
-        maximum_probability = kind == feed_restricted_compound ? 0.92 :
-                              kind == feed_major_nutrient ? 0.22 : 0.18
+        minimum_probability = if kind == feed_major_nutrient
+            0.95
+        elseif kind == feed_mineral
+            0.78
+        elseif kind == feed_trace_nutrient
+            0.55
+        else
+            0.10
+        end
+        maximum_probability = if kind == feed_restricted_compound
+            0.92
+        elseif kind == feed_major_nutrient
+            0.22
+        else
+            0.18
+        end
 
         if rand(rng) < minimum_probability && witness_average > 0.0
             q = rand(rng, Uniform(0.50, 0.88))
@@ -431,23 +419,25 @@ function _feed_set_unknown_constraints!(
             nutrient_content, availabilities, batch_size, j; maximize=true
         )
         width = maximum_average - minimum_average
-        minimum_probability = kind == feed_major_nutrient ? 0.90 :
-                              kind == feed_mineral ? 0.65 :
-                              kind == feed_trace_nutrient ? 0.42 : 0.08
+        minimum_probability = if kind == feed_major_nutrient
+            0.90
+        elseif kind == feed_mineral
+            0.65
+        elseif kind == feed_trace_nutrient
+            0.42
+        else
+            0.08
+        end
         maximum_probability = kind == feed_restricted_compound ? 0.85 : 0.18
         if rand(rng) < minimum_probability
             min_requirements[j] =
-                (minimum_average + rand(rng, Uniform(0.15, 0.58)) * width) *
-                batch_size
+                (minimum_average + rand(rng, Uniform(0.15, 0.58)) * width) * batch_size
         end
         if rand(rng) < maximum_probability
-            max_limits[j] =
-                (minimum_average + rand(rng, Uniform(0.65, 0.95)) * width) *
-                batch_size
+            max_limits[j] = (minimum_average + rand(rng, Uniform(0.65, 0.95)) * width) * batch_size
         end
         if isfinite(max_limits[j]) && min_requirements[j] > max_limits[j]
-            min_requirements[j], max_limits[j] =
-                0.95 * max_limits[j], 1.05 * min_requirements[j]
+            min_requirements[j], max_limits[j] = 0.95 * max_limits[j], 1.05 * min_requirements[j]
         end
     end
     return nothing
@@ -460,7 +450,7 @@ function _feed_add_ratio_constraints!(
     nutrient_types::Vector{FeedNutrientKind},
     availabilities::Vector{Float64},
     batch_size::Float64,
-    reference_recipe::Union{Nothing,Vector{Float64}},
+    reference_recipe::Union{Nothing, Vector{Float64}},
 )
     rand(rng) < 0.68 || return nothing
     n_nutrients = length(nutrient_types)
@@ -474,18 +464,19 @@ function _feed_add_ratio_constraints!(
         maximum_average = _feed_achievable_average(
             nutrient_content, availabilities, batch_size, j; maximize=true
         )
-        use_minimum = kind == feed_restricted_compound ? rand(rng) < 0.20 :
-                      kind == feed_major_nutrient ? rand(rng) < 0.78 :
-                      rand(rng) < 0.58
+        use_minimum = if kind == feed_restricted_compound
+            rand(rng) < 0.20
+        elseif kind == feed_major_nutrient
+            rand(rng) < 0.78
+        else
+            rand(rng) < 0.58
+        end
 
         if reference_recipe === nothing
-            q = use_minimum ? rand(rng, Uniform(0.20, 0.62)) :
-                              rand(rng, Uniform(0.38, 0.82))
+            q = use_minimum ? rand(rng, Uniform(0.20, 0.62)) : rand(rng, Uniform(0.38, 0.82))
             target = minimum_average + q * (maximum_average - minimum_average)
         else
-            witness_average = _feed_ratio_average(
-                nutrient_content, reference_recipe, batch_size, j
-            )
+            witness_average = _feed_ratio_average(nutrient_content, reference_recipe, batch_size, j)
             if use_minimum
                 q = rand(rng, Uniform(0.18, 0.55))
                 target = witness_average - q * (witness_average - minimum_average)
@@ -499,11 +490,7 @@ function _feed_add_ratio_constraints!(
         end
         push!(
             constraints,
-            FeedRatioConstraint(
-                j,
-                target,
-                use_minimum ? feed_ratio_minimum : feed_ratio_maximum,
-            ),
+            FeedRatioConstraint(j, target, use_minimum ? feed_ratio_minimum : feed_ratio_maximum),
         )
     end
     return nothing
@@ -517,54 +504,36 @@ Construct a deterministic feed-blending instance. The model has exactly
 constructor-local RNG.
 """
 function FeedBlendingProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = Random.MersenneTwister(seed)
     num_ingredients = max(3, target_variables)
 
     if target_variables <= 250
         num_nutrients = rand(rng, 4:8)
-        batch_size = rand(
-            rng, truncated(Normal(500.0, 200.0), 100.0, 2_000.0)
-        )
+        batch_size = rand(rng, truncated(Normal(500.0, 200.0), 100.0, 2_000.0))
     elseif target_variables <= 1_000
         num_nutrients = rand(rng, 6:12)
-        batch_size = rand(
-            rng, truncated(Normal(2_000.0, 800.0), 500.0, 10_000.0)
-        )
+        batch_size = rand(rng, truncated(Normal(2_000.0, 800.0), 500.0, 10_000.0))
     else
         num_nutrients = rand(rng, 8:20)
-        batch_size = rand(
-            rng, truncated(Normal(10_000.0, 5_000.0), 2_000.0, 50_000.0)
-        )
+        batch_size = rand(rng, truncated(Normal(10_000.0, 5_000.0), 2_000.0, 50_000.0))
     end
 
-    ingredient_types = _feed_sample_kinds(
-        rng, _FEED_INGREDIENT_KINDS, num_ingredients
-    )
-    nutrient_types = _feed_sample_kinds(
-        rng, _FEED_NUTRIENT_KINDS, num_nutrients
-    )
+    ingredient_types = _feed_sample_kinds(rng, _FEED_INGREDIENT_KINDS, num_ingredients)
+    nutrient_types = _feed_sample_kinds(rng, _FEED_NUTRIENT_KINDS, num_nutrients)
 
     costs = Vector{Float64}(undef, num_ingredients)
     for i in 1:num_ingredients
         kind_index = Int(ingredient_types[i]) + 1
         costs[i] = rand(
-            rng,
-            LogNormal(
-                log(_FEED_COST_MEDIAN[kind_index]),
-                _FEED_COST_LOG_SIGMA[kind_index],
-            ),
+            rng, LogNormal(log(_FEED_COST_MEDIAN[kind_index]), _FEED_COST_LOG_SIGMA[kind_index])
         )
     end
 
     nutrient_content = zeros(Float64, num_nutrients, num_ingredients)
     for j in 1:num_nutrients, i in 1:num_ingredients
-        nutrient_content[j, i] = _feed_sample_content(
-            rng, nutrient_types[j], ingredient_types[i]
-        )
+        nutrient_content[j, i] = _feed_sample_content(rng, nutrient_types[j], ingredient_types[i])
     end
 
     # Intentional sparsity is realistic for minor/trace metrics, but empty rows
@@ -574,8 +543,8 @@ function FeedBlendingProblem(
             i = rand(rng, 1:num_ingredients)
             nutrient_content[j, i] = max(
                 _feed_sample_content(rng, nutrient_types[j], ingredient_types[i]),
-                0.1 * _FEED_CONTENT_MEDIAN[Int(nutrient_types[j]) + 1,
-                                            Int(ingredient_types[i]) + 1],
+                0.1 *
+                _FEED_CONTENT_MEDIAN[Int(nutrient_types[j]) + 1, Int(ingredient_types[i]) + 1],
             )
         end
     end
@@ -585,8 +554,8 @@ function FeedBlendingProblem(
             j === nothing && (j = rand(rng, 1:num_nutrients))
             nutrient_content[j, i] = max(
                 _feed_sample_content(rng, nutrient_types[j], ingredient_types[i]),
-                0.1 * _FEED_CONTENT_MEDIAN[Int(nutrient_types[j]) + 1,
-                                            Int(ingredient_types[i]) + 1],
+                0.1 *
+                _FEED_CONTENT_MEDIAN[Int(nutrient_types[j]) + 1, Int(ingredient_types[i]) + 1],
             )
         end
     end
@@ -594,8 +563,7 @@ function FeedBlendingProblem(
     availabilities = fill(Inf, num_ingredients)
     for i in 1:num_ingredients
         kind = ingredient_types[i]
-        finite_probability = kind in (feed_energy_source, feed_protein_source) ?
-                             0.55 : 0.85
+        finite_probability = kind in (feed_energy_source, feed_protein_source) ? 0.55 : 0.85
         if rand(rng) < finite_probability
             fraction = if kind == feed_energy_source
                 rand(rng, Uniform(0.15, 0.80))
@@ -616,9 +584,7 @@ function FeedBlendingProblem(
         cheapest = argmin(costs)
         availabilities[cheapest] = batch_size
     end
-    baseline_recipe = _feed_reference_recipe(
-        rng, costs, availabilities, batch_size
-    )
+    baseline_recipe = _feed_reference_recipe(rng, costs, availabilities, batch_size)
 
     min_requirements = zeros(Float64, num_nutrients)
     max_limits = fill(Inf, num_nutrients)
@@ -671,18 +637,10 @@ function FeedBlendingProblem(
         if mode == 1
             nutrient = rand(rng, 1:num_nutrients)
             achievable = _feed_achievable_average(
-                nutrient_content,
-                availabilities,
-                batch_size,
-                nutrient;
-                maximize=true,
+                nutrient_content, availabilities, batch_size, nutrient; maximize=true
             )
-            required = achievable +
-                       rand(rng, Uniform(0.03, 0.12)) * max(achievable, 1.0)
-            push!(
-                ratio_constraints,
-                FeedRatioConstraint(nutrient, required, feed_ratio_minimum),
-            )
+            required = achievable + rand(rng, Uniform(0.03, 0.12)) * max(achievable, 1.0)
+            push!(ratio_constraints, FeedRatioConstraint(nutrient, required, feed_ratio_minimum))
             certificate = FeedInfeasibilityCertificate(
                 feed_minimum_ratio_above_achievable_maximum,
                 nutrient,
@@ -692,47 +650,27 @@ function FeedBlendingProblem(
             )
         elseif mode == 2
             nutrient = rand(rng, 1:num_nutrients)
-            achievable = batch_size * _feed_achievable_average(
-                nutrient_content,
-                availabilities,
-                batch_size,
-                nutrient;
-                maximize=true,
-            )
-            required = achievable +
-                       rand(rng, Uniform(0.03, 0.12)) * max(achievable, batch_size)
+            achievable =
+                batch_size * _feed_achievable_average(
+                    nutrient_content, availabilities, batch_size, nutrient; maximize=true
+                )
+            required = achievable + rand(rng, Uniform(0.03, 0.12)) * max(achievable, batch_size)
             min_requirements[nutrient] = required
             certificate = FeedInfeasibilityCertificate(
-                feed_minimum_nutrient_above_achievable_maximum,
-                nutrient,
-                0,
-                achievable,
-                required,
+                feed_minimum_nutrient_above_achievable_maximum, nutrient, 0, achievable, required
             )
         elseif mode == 3
             candidates = [
-                j for j in 1:num_nutrients
-                if _feed_achievable_average(
-                    nutrient_content,
-                    availabilities,
-                    batch_size,
-                    j;
-                    maximize=false,
+                j for j in 1:num_nutrients if _feed_achievable_average(
+                    nutrient_content, availabilities, batch_size, j; maximize=false
                 ) > 1e-9
             ]
             nutrient = rand(rng, candidates)
             achievable = _feed_achievable_average(
-                nutrient_content,
-                availabilities,
-                batch_size,
-                nutrient;
-                maximize=false,
+                nutrient_content, availabilities, batch_size, nutrient; maximize=false
             )
             required = achievable * rand(rng, Uniform(0.72, 0.94))
-            push!(
-                ratio_constraints,
-                FeedRatioConstraint(nutrient, required, feed_ratio_maximum),
-            )
+            push!(ratio_constraints, FeedRatioConstraint(nutrient, required, feed_ratio_maximum))
             certificate = FeedInfeasibilityCertificate(
                 feed_maximum_ratio_below_achievable_minimum,
                 nutrient,
@@ -742,19 +680,11 @@ function FeedBlendingProblem(
             )
         else
             total_capacity = batch_size * rand(rng, Uniform(0.65, 0.90))
-            capacity_weights = rand(
-                rng, Dirichlet(fill(1.0, num_ingredients))
-            )
+            capacity_weights = rand(rng, Dirichlet(fill(1.0, num_ingredients)))
             availabilities .= total_capacity .* capacity_weights
-            achievable = _feed_effective_capacity_sum(
-                availabilities, batch_size
-            )
+            achievable = _feed_effective_capacity_sum(availabilities, batch_size)
             certificate = FeedInfeasibilityCertificate(
-                feed_insufficient_ingredient_capacity,
-                0,
-                0,
-                achievable,
-                batch_size,
+                feed_insufficient_ingredient_capacity, 0, 0, achievable, batch_size
             )
         end
     end
@@ -793,66 +723,52 @@ selected by the typed `FeedRatioSense`, never by parsing diagnostic text.
 function build_model(prob::FeedBlendingProblem)
     model = Model()
     @variable(model, x[1:prob.num_ingredients] >= 0)
-    @objective(
-        model,
-        Min,
-        sum(prob.costs[i] * x[i] for i in 1:prob.num_ingredients),
-    )
-    @constraint(
-        model,
-        batch_balance,
-        sum(x[i] for i in 1:prob.num_ingredients) == prob.batch_size,
-    )
+    @objective(model, Min, sum(prob.costs[i] * x[i] for i in 1:prob.num_ingredients),)
+    @constraint(model, batch_balance, sum(x[i] for i in 1:prob.num_ingredients) == prob.batch_size,)
 
     minimum_nutrients = findall(>(0.0), prob.min_requirements)
     maximum_nutrients = findall(isfinite, prob.max_limits)
     finite_ingredients = findall(isfinite, prob.availabilities)
     minimum_ratios = findall(
-        constraint -> constraint.sense == feed_ratio_minimum,
-        prob.ratio_constraints,
+        constraint -> constraint.sense == feed_ratio_minimum, prob.ratio_constraints
     )
     maximum_ratios = findall(
-        constraint -> constraint.sense == feed_ratio_maximum,
-        prob.ratio_constraints,
+        constraint -> constraint.sense == feed_ratio_maximum, prob.ratio_constraints
     )
 
     @constraint(
         model,
         nutrient_min[j in minimum_nutrients],
-        sum(
-            prob.nutrient_content[j, i] * x[i]
-            for i in 1:prob.num_ingredients
-        ) >= prob.min_requirements[j],
+        sum(prob.nutrient_content[j, i] * x[i] for i in 1:prob.num_ingredients) >=
+            prob.min_requirements[j],
     )
     @constraint(
         model,
         nutrient_max[j in maximum_nutrients],
-        sum(
-            prob.nutrient_content[j, i] * x[i]
-            for i in 1:prob.num_ingredients
-        ) <= prob.max_limits[j],
+        sum(prob.nutrient_content[j, i] * x[i] for i in 1:prob.num_ingredients) <=
+            prob.max_limits[j],
     )
     @constraint(
-        model,
-        ingredient_availability[i in finite_ingredients],
-        x[i] <= prob.availabilities[i],
+        model, ingredient_availability[i in finite_ingredients], x[i] <= prob.availabilities[i],
     )
     @constraint(
         model,
         ratio_min[r in minimum_ratios],
         sum(
-            (prob.nutrient_content[prob.ratio_constraints[r].nutrient, i] -
-             prob.ratio_constraints[r].target) * x[i]
-            for i in 1:prob.num_ingredients
+            (
+                prob.nutrient_content[prob.ratio_constraints[r].nutrient, i] -
+                prob.ratio_constraints[r].target
+            ) * x[i] for i in 1:prob.num_ingredients
         ) >= 0,
     )
     @constraint(
         model,
         ratio_max[r in maximum_ratios],
         sum(
-            (prob.nutrient_content[prob.ratio_constraints[r].nutrient, i] -
-             prob.ratio_constraints[r].target) * x[i]
-            for i in 1:prob.num_ingredients
+            (
+                prob.nutrient_content[prob.ratio_constraints[r].nutrient, i] -
+                prob.ratio_constraints[r].target
+            ) * x[i] for i in 1:prob.num_ingredients
         ) <= 0,
     )
     return model

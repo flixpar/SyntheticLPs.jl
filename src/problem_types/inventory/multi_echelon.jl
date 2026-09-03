@@ -9,6 +9,7 @@ using Statistics
 Generator for two-level (echelon) multi-location inventory distribution problems.
 
 # Overview
+
 Models a two-echelon distribution network over a planning horizon. A single
 production source replenishes a central warehouse (location 1). The central
 warehouse holds stock and ships it, via a STAR topology, to retail locations
@@ -31,16 +32,17 @@ and `transfer_from[l, t]` (retail l -> central) exist for retail locations
 variables are generated.
 
 # Fields
-- `n_periods::Int`: Number of time periods
-- `n_locations::Int`: Number of locations (location 1 is the central warehouse)
-- `prod_capacity::Int`: Production capacity into the central warehouse per period
-- `initial_inventory::Vector{Float64}`: Starting inventory at each location
-- `location_demands::Matrix{Int}`: Demand at each location per period (L x T)
-- `location_capacities::Vector{Float64}`: Storage capacity per location
-- `production_costs::Vector{Float64}`: Production cost per period
-- `holding_costs::Vector{Float64}`: Holding cost per period (applied to total stock held)
-- `transfer_cost_to::Vector{Float64}`: Per-unit cost central -> retail l
-- `transfer_cost_from::Vector{Float64}`: Per-unit cost retail l -> central
+
+  - `n_periods::Int`: Number of time periods
+  - `n_locations::Int`: Number of locations (location 1 is the central warehouse)
+  - `prod_capacity::Int`: Production capacity into the central warehouse per period
+  - `initial_inventory::Vector{Float64}`: Starting inventory at each location
+  - `location_demands::Matrix{Int}`: Demand at each location per period (L x T)
+  - `location_capacities::Vector{Float64}`: Storage capacity per location
+  - `production_costs::Vector{Float64}`: Production cost per period
+  - `holding_costs::Vector{Float64}`: Holding cost per period (applied to total stock held)
+  - `transfer_cost_to::Vector{Float64}`: Per-unit cost central -> retail l
+  - `transfer_cost_from::Vector{Float64}`: Per-unit cost retail l -> central
 """
 struct MultiEchelonInventoryProblem <: ProblemGenerator
     n_periods::Int
@@ -61,24 +63,33 @@ end
 Construct a two-echelon multi-location inventory distribution problem instance.
 
 Variables (star topology, no diagonal transfers):
-- production `x[1:T]`                                  => T
-- inventory `I[1:L, 0:T]`                              => L*(T+1)
-- transfers central->retail `transfer_to[2:L, 1:T]`   => (L-1)*T
-- transfers retail->central `transfer_from[2:L, 1:T]` => (L-1)*T
+
+  - production `x[1:T]`                                  => T
+  - inventory `I[1:L, 0:T]`                              => L*(T+1)
+  - transfers central->retail `transfer_to[2:L, 1:T]`   => (L-1)*T
+  - transfers retail->central `transfer_from[2:L, 1:T]` => (L-1)*T
 
 Total = T + L*(T+1) + 2*(L-1)*T = T*(3L - 1) + L.
 
 # Arguments
-- `target_variables`: Target number of variables
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function MultiEchelonInventoryProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function MultiEchelonInventoryProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # Business scale by target size
-    scale = target_variables <= 250 ? :small :
-            target_variables <= 1000 ? :medium : :large
+    scale = if target_variables <= 250
+        :small
+    elseif target_variables <= 1000
+        :medium
+    else
+        :large
+    end
 
     # Number of locations (central + retail). More for larger problems.
     if scale == :small
@@ -158,15 +169,19 @@ function MultiEchelonInventoryProblem(target_variables::Int, feasibility_status:
     prod_cost_max = prod_cost_base * (1 + prod_cost_spread)
     prod_cost_mean = (prod_cost_min + prod_cost_max) / 2
     prod_cost_std = (prod_cost_max - prod_cost_min) / 4
-    production_costs = clamp.(rand(rng, Normal(prod_cost_mean, prod_cost_std), n_periods),
-                             prod_cost_min, prod_cost_max)
+    production_costs = clamp.(
+        rand(rng, Normal(prod_cost_mean, prod_cost_std), n_periods), prod_cost_min, prod_cost_max
+    )
 
     holding_cost_min = max(0.01, prod_cost_base * holding_rate * 0.8)
     holding_cost_max = prod_cost_base * holding_rate * 1.2
     holding_cost_mean = (holding_cost_min + holding_cost_max) / 2
     holding_cost_std = (holding_cost_max - holding_cost_min) / 4
-    holding_costs = clamp.(rand(rng, Normal(holding_cost_mean, holding_cost_std), n_periods),
-                           holding_cost_min, holding_cost_max)
+    holding_costs = clamp.(
+        rand(rng, Normal(holding_cost_mean, holding_cost_std), n_periods),
+        holding_cost_min,
+        holding_cost_max,
+    )
 
     # Transfer costs (per retail location, both directions). Index 1 unused (central).
     mean_prod_cost = mean(production_costs)
@@ -197,7 +212,7 @@ function MultiEchelonInventoryProblem(target_variables::Int, feasibility_status:
     # central warehouse, total demand up to period t must be coverable by total
     # initial inventory plus cumulative production:
     #   sum_{s<=t} total_demand[s] <= sum(initial_inventory) + t * prod_capacity
-    total_demand_per_period = vec(sum(location_demands, dims=1))
+    total_demand_per_period = vec(sum(location_demands; dims=1))
     cum_total = cumsum(total_demand_per_period)
     total_init = sum(initial_inventory)
 
@@ -228,11 +243,15 @@ function MultiEchelonInventoryProblem(target_variables::Int, feasibility_status:
         # capacity must cover both its own peak demand and pass-through staging.
         for l in 1:n_locations
             peak = maximum(location_demands[l, :])
-            location_capacities[l] = max(location_capacities[l], peak * 1.5 + initial_inventory[l] + 1.0)
+            location_capacities[l] = max(
+                location_capacities[l], peak * 1.5 + initial_inventory[l] + 1.0
+            )
         end
         # Central warehouse may need to stage the whole network's flow.
         peak_total = maximum(total_demand_per_period)
-        location_capacities[1] = max(location_capacities[1], peak_total * 1.5 + prod_capacity + total_init + 1.0)
+        location_capacities[1] = max(
+            location_capacities[1], peak_total * 1.5 + prod_capacity + total_init + 1.0
+        )
 
     elseif actual_status == infeasible
         # Deterministic contradiction: shrink production capacity below what the
@@ -252,10 +271,16 @@ function MultiEchelonInventoryProblem(target_variables::Int, feasibility_status:
     end
 
     return MultiEchelonInventoryProblem(
-        n_periods, n_locations, prod_capacity, initial_inventory,
-        location_demands, location_capacities,
-        production_costs, holding_costs,
-        transfer_cost_to, transfer_cost_from,
+        n_periods,
+        n_locations,
+        prod_capacity,
+        initial_inventory,
+        location_demands,
+        location_capacities,
+        production_costs,
+        holding_costs,
+        transfer_cost_to,
+        transfer_cost_from,
     )
 end
 
@@ -266,7 +291,8 @@ Build a JuMP model for the two-echelon inventory distribution problem.
 Deterministic — uses only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::MultiEchelonInventoryProblem)
     model = Model()
@@ -281,12 +307,16 @@ function build_model(prob::MultiEchelonInventoryProblem)
     @variable(model, transfer_from[2:L, 1:T] >= 0)      # retail l -> central
 
     # Objective: production + holding (total stock) + transfer costs
-    @objective(model, Min,
+    @objective(
+        model,
+        Min,
         sum(prob.production_costs[t] * x[t] for t in 1:T) +
-        sum(prob.holding_costs[t] * sum(I[l, t] for l in 1:L) for t in 1:T) +
-        sum(prob.transfer_cost_to[l] * transfer_to[l, t] +
-            prob.transfer_cost_from[l] * transfer_from[l, t]
-            for l in 2:L, t in 1:T))
+            sum(prob.holding_costs[t] * sum(I[l, t] for l in 1:L) for t in 1:T) +
+            sum(
+                prob.transfer_cost_to[l] * transfer_to[l, t] +
+                prob.transfer_cost_from[l] * transfer_from[l, t] for l in 2:L, t in 1:T
+            )
+    )
 
     # Initial inventory at each location
     for l in 1:L
@@ -300,18 +330,20 @@ function build_model(prob::MultiEchelonInventoryProblem)
         # Central warehouse (location 1) balance:
         #   prev stock + production + inbound returns (+)
         #   - outbound shipments to retail (-) - own demand = ending stock
-        @constraint(model,
-            I[1, t-1] + x[t]
-            + sum(transfer_from[l, t] for l in 2:L)
-            - sum(transfer_to[l, t] for l in 2:L)
-            - prob.location_demands[1, t] == I[1, t])
+        @constraint(
+            model,
+            I[1, t - 1] + x[t] + sum(transfer_from[l, t] for l in 2:L) -
+            sum(transfer_to[l, t] for l in 2:L) - prob.location_demands[1, t] == I[1, t]
+        )
 
         # Retail locations (2..L) balance:
         #   prev stock + inbound from central (+) - outbound return (-) - demand = ending stock
         for l in 2:L
-            @constraint(model,
-                I[l, t-1] + transfer_to[l, t] - transfer_from[l, t]
-                - prob.location_demands[l, t] == I[l, t])
+            @constraint(
+                model,
+                I[l, t - 1] + transfer_to[l, t] - transfer_from[l, t] -
+                prob.location_demands[l, t] == I[l, t]
+            )
         end
 
         # Storage capacity per location

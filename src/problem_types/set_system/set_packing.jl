@@ -15,15 +15,11 @@ struct SetPackingProblem <: ProblemGenerator
     minimum_selected::Int
 end
 
-function SetPackingProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
-)
+function SetPackingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
     n_columns, n_elements = _set_system_size(target_variables, 0.4)
     columns, n_planted = _set_columns_with_partition(
-        rng, n_elements, n_columns; max_size=max(2, min(6, n_elements)),
+        rng, n_elements, n_columns; max_size=max(2, min(6, n_elements))
     )
 
     if feasibility_status == infeasible

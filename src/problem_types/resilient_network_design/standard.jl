@@ -12,7 +12,7 @@ struct ResilientNetworkDesignProblem <: ProblemGenerator
     n_nodes::Int
     n_edges::Int
     n_scenarios::Int
-    edges::Vector{Tuple{Int,Int}}
+    edges::Vector{Tuple{Int, Int}}
     sources::Vector{Int}
     sinks::Vector{Int}
     demands::Vector{Float64}
@@ -25,8 +25,8 @@ struct ResilientNetworkDesignProblem <: ProblemGenerator
 end
 
 function _resilient_topology(rng::AbstractRNG, n_nodes::Int, n_edges::Int)
-    edges = Tuple{Int,Int}[]
-    seen = Set{Tuple{Int,Int}}()
+    edges = Tuple{Int, Int}[]
+    seen = Set{Tuple{Int, Int}}()
     order = randperm(rng, n_nodes)
     for idx in 2:n_nodes
         parent = order[rand(rng, 1:(idx - 1))]
@@ -47,9 +47,7 @@ function _resilient_topology(rng::AbstractRNG, n_nodes::Int, n_edges::Int)
 end
 
 function ResilientNetworkDesignProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
     target = max(target_variables, 1)
@@ -72,9 +70,9 @@ function ResilientNetworkDesignProblem(
     end
     demands = Float64.(rand(rng, 5:20, n_scenarios))
     capacities = Float64.(rand(rng, 12:40, n_edges))
-    build_cost = [round(20.0 + 80.0 * rand(rng), digits=2) for _ in 1:n_edges]
-    hardening_cost = [round(8.0 + 45.0 * rand(rng), digits=2) for _ in 1:n_edges]
-    routing_cost = [round(0.5 + 6.0 * rand(rng), digits=3) for _ in 1:n_edges]
+    build_cost = [round(20.0 + 80.0 * rand(rng); digits=2) for _ in 1:n_edges]
+    hardening_cost = [round(8.0 + 45.0 * rand(rng); digits=2) for _ in 1:n_edges]
+    routing_cost = [round(0.5 + 6.0 * rand(rng); digits=3) for _ in 1:n_edges]
     failed = Matrix{Bool}(undef, n_edges, n_scenarios)
     for e in 1:n_edges, s in 1:n_scenarios
         failed[e, s] = rand(rng) < 0.25
@@ -107,8 +105,19 @@ function ResilientNetworkDesignProblem(
     end
 
     return ResilientNetworkDesignProblem(
-        n_nodes, n_edges, n_scenarios, edges, sources, sinks, demands,
-        capacities, build_cost, hardening_cost, routing_cost, failed, design_budget,
+        n_nodes,
+        n_edges,
+        n_scenarios,
+        edges,
+        sources,
+        sinks,
+        demands,
+        capacities,
+        build_cost,
+        hardening_cost,
+        routing_cost,
+        failed,
+        design_budget,
     )
 end
 
@@ -122,22 +131,23 @@ function build_model(prob::ResilientNetworkDesignProblem)
     @variable(model, forward[1:E, 1:S] >= 0)
     @variable(model, reverse[1:E, 1:S] >= 0)
 
-    @objective(model, Min,
-        sum(prob.build_cost[e] * build[e] + prob.hardening_cost[e] * harden[e]
-            for e in 1:E) +
-        sum(prob.routing_cost[e] * (forward[e, s] + reverse[e, s]) / S
-            for e in 1:E, s in 1:S)
+    @objective(
+        model,
+        Min,
+        sum(prob.build_cost[e] * build[e] + prob.hardening_cost[e] * harden[e] for e in 1:E) +
+            sum(prob.routing_cost[e] * (forward[e, s] + reverse[e, s]) / S for e in 1:E, s in 1:S)
     )
-    @constraint(model,
-        sum(prob.build_cost[e] * build[e] + prob.hardening_cost[e] * harden[e]
-            for e in 1:E) <= prob.design_budget
+    @constraint(
+        model,
+        sum(prob.build_cost[e] * build[e] + prob.hardening_cost[e] * harden[e] for e in 1:E) <=
+            prob.design_budget
     )
     for e in 1:E
         @constraint(model, harden[e] <= build[e])
         for s in 1:S
             available_capacity = prob.failed[e, s] ? harden[e] : build[e]
-            @constraint(model,
-                forward[e, s] + reverse[e, s] <= prob.capacities[e] * available_capacity
+            @constraint(
+                model, forward[e, s] + reverse[e, s] <= prob.capacities[e] * available_capacity
             )
         end
     end
@@ -159,8 +169,13 @@ function build_model(prob::ResilientNetworkDesignProblem)
                 add_to_expression!(balance, -1.0, forward[e, s])
             end
         end
-        rhs = node == prob.sources[s] ? prob.demands[s] :
-              node == prob.sinks[s] ? -prob.demands[s] : 0.0
+        rhs = if node == prob.sources[s]
+            prob.demands[s]
+        elseif node == prob.sinks[s]
+            -prob.demands[s]
+        else
+            0.0
+        end
         @constraint(model, balance == rhs)
     end
 

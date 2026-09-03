@@ -8,6 +8,7 @@ using Distributions
 Generator for transportation problems with a global CO2 emission budget.
 
 # Overview
+
 Models the classic transportation planning problem augmented with a
 sustainability constraint. The decisions are shipment amounts on every
 source-destination lane. The objective minimizes total shipping cost, subject to
@@ -20,13 +21,14 @@ The only decision variables are the lane flows `x[i, j]`, so the total variable
 count is `n_sources * n_destinations`, sized to match `target_variables`.
 
 # Fields
-- `n_sources::Int`: Number of supply sources
-- `n_destinations::Int`: Number of demand destinations
-- `supplies::Vector{Int}`: Supply at each source
-- `demands::Vector{Int}`: Demand at each destination
-- `costs::Matrix{Float64}`: Transportation cost from each source to each destination
-- `emission_rates::Matrix{Float64}`: CO2 emitted per unit shipped on each lane
-- `emission_limit::Float64`: Maximum total emissions allowed across all shipments
+
+  - `n_sources::Int`: Number of supply sources
+  - `n_destinations::Int`: Number of demand destinations
+  - `supplies::Vector{Int}`: Supply at each source
+  - `demands::Vector{Int}`: Demand at each destination
+  - `costs::Matrix{Float64}`: Transportation cost from each source to each destination
+  - `emission_rates::Matrix{Float64}`: CO2 emitted per unit shipped on each lane
+  - `emission_limit::Float64`: Maximum total emissions allowed across all shipments
 """
 struct EmissionConstrainedTransportationProblem <: ProblemGenerator
     n_sources::Int
@@ -47,11 +49,14 @@ Variables: x[i, j] (lane flows). Total = n_sources * n_destinations, sized to
 `target_variables`.
 
 # Arguments
-- `target_variables`: Target number of variables (n_sources × n_destinations)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (n_sources × n_destinations)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function EmissionConstrainedTransportationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function EmissionConstrainedTransportationProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
@@ -108,8 +113,10 @@ function EmissionConstrainedTransportationProblem(target_variables::Int, feasibi
 
     distances = zeros(n_sources, n_destinations)
     for i in 1:n_sources, j in 1:n_destinations
-        distances[i, j] = sqrt((source_positions[i][1] - dest_positions[j][1])^2 +
-                               (source_positions[i][2] - dest_positions[j][2])^2)
+        distances[i, j] = sqrt(
+            (source_positions[i][1] - dest_positions[j][1])^2 +
+            (source_positions[i][2] - dest_positions[j][2])^2,
+        )
     end
 
     # --- Costs based on distances with variation ---
@@ -138,7 +145,7 @@ function EmissionConstrainedTransportationProblem(target_variables::Int, feasibi
     # Helper: distribute integer additions across a vector
     function distribute_additions!(vec::Vector{Int}, amount::Int)
         if amount <= 0
-            return
+            return nothing
         end
         w = rand(rng, length(vec))
         w_sum = sum(w)
@@ -235,10 +242,12 @@ Build a JuMP model for the emission-constrained transportation problem.
 Deterministic — uses only data from the struct fields.
 
 # Arguments
-- `prob`: EmissionConstrainedTransportationProblem instance
+
+  - `prob`: EmissionConstrainedTransportationProblem instance
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::EmissionConstrainedTransportationProblem)
     model = Model()
@@ -247,8 +256,11 @@ function build_model(prob::EmissionConstrainedTransportationProblem)
     @variable(model, x[1:prob.n_sources, 1:prob.n_destinations] >= 0)
 
     # Objective: minimize total shipping cost
-    @objective(model, Min, sum(prob.costs[i, j] * x[i, j]
-                               for i in 1:prob.n_sources, j in 1:prob.n_destinations))
+    @objective(
+        model,
+        Min,
+        sum(prob.costs[i, j] * x[i, j] for i in 1:prob.n_sources, j in 1:prob.n_destinations)
+    )
 
     # Supply constraints
     for i in 1:prob.n_sources
@@ -261,8 +273,13 @@ function build_model(prob::EmissionConstrainedTransportationProblem)
     end
 
     # Global emission budget
-    @constraint(model, sum(prob.emission_rates[i, j] * x[i, j]
-                           for i in 1:prob.n_sources, j in 1:prob.n_destinations) <= prob.emission_limit)
+    @constraint(
+        model,
+        sum(
+            prob.emission_rates[i, j] * x[i, j] for
+            i in 1:prob.n_sources, j in 1:prob.n_destinations
+        ) <= prob.emission_limit
+    )
 
     return model
 end

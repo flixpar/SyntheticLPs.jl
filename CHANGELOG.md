@@ -4,6 +4,27 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-09-03 (automated code quality)
+
+**Previous Commit**: `7603f8b`
+
+**Commits**: (pending)
+
+**Datetime**: 2026-09-03 UTC
+
+**Summary**: Added reproducible formatting, linting, package-quality checks,
+and continuous integration for the Julia and Python sources.
+
+**Details**:
+
+- Added JuliaFormatter, Ruff, EditorConfig, and dedicated Julia tooling
+  configuration, with `make format`, `make lint`, and `make check` entry points.
+- Added Aqua package-quality checks and completed the missing standard-library
+  compatibility bounds they identified.
+- Added CI jobs that enforce formatting and linting and test the package on
+  Julia 1.11 and the latest stable Julia release.
+- Applied the configured formatters to the existing Julia and Python sources.
+
 ## 2026-09-01 (documentation cleanup)
 
 **Previous Commit**: `033de59`

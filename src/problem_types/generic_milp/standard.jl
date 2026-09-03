@@ -1,7 +1,9 @@
 using JuMP
 using Random
 
-"""One sparse affine row in a [`GenericMILPProblem`](@ref)."""
+"""
+One sparse affine row in a [`GenericMILPProblem`](@ref).
+"""
 struct GenericMILPRow
     indices::Vector{Int}
     coefficients::Vector{Float64}
@@ -115,9 +117,13 @@ function _generic_coefficients(rng::AbstractRNG, width::Int; nonnegative::Bool=f
     coefficients = Vector{Float64}(undef, width)
     for j in 1:width
         regime = rand(rng)
-        magnitude = regime < 0.75 ? float(rand(rng, 1:20)) :
-                    regime < 0.93 ? rand(rng, 0.1:0.1:9.9) :
-                    10.0 ^ rand(rng, 2:4)
+        magnitude = if regime < 0.75
+            float(rand(rng, 1:20))
+        elseif regime < 0.93
+            rand(rng, 0.1:0.1:9.9)
+        else
+            10.0 ^ rand(rng, 2:4)
+        end
         coefficients[j] = (nonnegative || rand(rng, Bool) ? 1.0 : -1.0) * magnitude
     end
     return coefficients
@@ -127,8 +133,7 @@ function _generic_row(rng::AbstractRNG, n::Int, witness::Vector{Float64}, sense:
     indices = _generic_sparse_support(rng, n)
     # <= and >= rows are recognizable packing and covering structures; equality
     # and ranged rows retain signed heterogeneous coefficients.
-    coefficients = _generic_coefficients(rng, length(indices);
-                                         nonnegative = sense in (:le, :ge))
+    coefficients = _generic_coefficients(rng, length(indices); nonnegative=sense in (:le, :ge))
     activity = sum(coefficients[j] * witness[indices[j]] for j in eachindex(indices))
     margin = max(1.0, 0.05 * abs(activity) + rand(rng, 0.5:0.5:5.0))
     if sense == :le
@@ -138,15 +143,12 @@ function _generic_row(rng::AbstractRNG, n::Int, witness::Vector{Float64}, sense:
     elseif sense == :eq
         return GenericMILPRow(indices, coefficients, :eq, activity, activity)
     elseif sense == :range
-        return GenericMILPRow(indices, coefficients, :range,
-                              activity - margin, activity + margin)
+        return GenericMILPRow(indices, coefficients, :range, activity - margin, activity + margin)
     end
     error("Unsupported generic MILP row sense: $sense")
 end
 
-function GenericMILPProblem(target_variables::Int,
-                            feasibility_status::FeasibilityStatus,
-                            seed::Int)
+function GenericMILPProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
     n = max(2, target_variables)
     domains, lower, upper, witness = _generic_variable_layout(rng, n)
@@ -161,8 +163,11 @@ function GenericMILPProblem(target_variables::Int,
         push!(rows, _generic_row(rng, n, witness, sense))
     end
 
-    actual_status = feasibility_status == unknown ?
-                    (rand(rng) < 0.8 ? feasible : infeasible) : feasibility_status
+    actual_status = if feasibility_status == unknown
+        (rand(rng) < 0.8 ? feasible : infeasible)
+    else
+        feasibility_status
+    end
     if actual_status == infeasible
         # Choose a finite lower bound and contradict it with a singleton row.
         # Binary and integer bounds persist under relaxation, so the certificate
@@ -187,8 +192,7 @@ function GenericMILPProblem(target_variables::Int,
         end
     end
 
-    return GenericMILPProblem(n, domains, lower, upper, objective,
-                              objective_sense, rows, witness)
+    return GenericMILPProblem(n, domains, lower, upper, objective, objective_sense, rows, witness)
 end
 
 function build_model(prob::GenericMILPProblem)
@@ -216,8 +220,7 @@ function build_model(prob::GenericMILPProblem)
     end
 
     for row in prob.rows
-        expression = sum(row.coefficients[j] * x[row.indices[j]]
-                         for j in eachindex(row.indices))
+        expression = sum(row.coefficients[j] * x[row.indices[j]] for j in eachindex(row.indices))
         if row.sense == :le
             @constraint(model, expression <= row.upper)
         elseif row.sense == :ge
@@ -237,6 +240,6 @@ register_variant(
     :generic_milp,
     :standard,
     GenericMILPProblem,
-    "Sparse mixed-integer model with controlled variable domains, row senses, coefficient scales, and a planted primal witness",
-    default = true,
+    "Sparse mixed-integer model with controlled variable domains, row senses, coefficient scales, and a planted primal witness";
+    default=true,
 )

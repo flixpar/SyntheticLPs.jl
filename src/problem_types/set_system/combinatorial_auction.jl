@@ -15,14 +15,12 @@ struct CombinatorialAuctionProblem <: ProblemGenerator
 end
 
 function CombinatorialAuctionProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
     n_bids, n_items = _set_system_size(target_variables, 0.35)
     bundles, n_planted = _set_columns_with_partition(
-        rng, n_items, n_bids; max_size=max(2, min(8, n_items)),
+        rng, n_items, n_bids; max_size=max(2, min(8, n_items))
     )
 
     if feasibility_status == infeasible

@@ -7,13 +7,15 @@ using Random
 Generator for diet problems that minimize the cost of food while meeting nutritional requirements.
 
 This problem models realistic diet optimization with:
-- Multiple foods with varying costs and nutrient content
-- Nutrient minimum requirements
-- Food supply availability limits
-- Total cost budget constraint
-- Minimum and maximum consumption constraints for specific foods
+
+  - Multiple foods with varying costs and nutrient content
+  - Nutrient minimum requirements
+  - Food supply availability limits
+  - Total cost budget constraint
+  - Minimum and maximum consumption constraints for specific foods
 
 # Overview
+
 Models minimum-cost diet planning. The decisions are continuous quantities of
 each food. The objective minimizes food cost while meeting nutrient minimum
 requirements. Additional constraints can impose finite food supplies, an
@@ -22,16 +24,18 @@ The generator can build a baseline diet for feasible data or tighten nutrient,
 budget, and supply limits to create infeasible data.
 
 # Fields
+
 All data generated in constructor based on target_variables and feasibility_status:
-- `n_foods::Int`: Number of different foods
-- `n_nutrients::Int`: Number of different nutrients
-- `costs::Vector{Float64}`: Cost per unit of each food
-- `nutrient_content::Matrix{Float64}`: Nutrient content per unit of food
-- `requirements::Vector{Float64}`: Minimum nutrient requirements
-- `food_supply_limits::Vector{Float64}`: Supply limit for each food
-- `cost_budget::Float64`: Total cost budget
-- `min_food_amounts::Dict{Int, Float64}`: Minimum consumption requirements
-- `max_food_amounts::Dict{Int, Float64}`: Maximum consumption limits
+
+  - `n_foods::Int`: Number of different foods
+  - `n_nutrients::Int`: Number of different nutrients
+  - `costs::Vector{Float64}`: Cost per unit of each food
+  - `nutrient_content::Matrix{Float64}`: Nutrient content per unit of food
+  - `requirements::Vector{Float64}`: Minimum nutrient requirements
+  - `food_supply_limits::Vector{Float64}`: Supply limit for each food
+  - `cost_budget::Float64`: Total cost budget
+  - `min_food_amounts::Dict{Int, Float64}`: Minimum consumption requirements
+  - `max_food_amounts::Dict{Int, Float64}`: Maximum consumption limits
 """
 struct DietProblem <: ProblemGenerator
     n_foods::Int
@@ -51,26 +55,30 @@ end
 Construct a diet problem instance with sophisticated verified impossibility scenarios.
 
 # Sophisticated Feasibility Logic Preserved:
+
 For FEASIBLE instances:
-- **Baseline diet construction**: Uses cost-effectiveness optimization to find realistic diet
-- **Nutrition-cost optimization**: Ranks foods by nutrition per unit cost
-- **Challenging constraints**: Sets tight tolerances (2-12%) around baseline achievement
-- **Supply pressure**: Creates realistic market constraints (seasonal, market, normal)
-- **Budget pressure**: Tight (105-115%), moderate (110-125%), or generous budgets
+
+  - **Baseline diet construction**: Uses cost-effectiveness optimization to find realistic diet
+  - **Nutrition-cost optimization**: Ranks foods by nutrition per unit cost
+  - **Challenging constraints**: Sets tight tolerances (2-12%) around baseline achievement
+  - **Supply pressure**: Creates realistic market constraints (seasonal, market, normal)
+  - **Budget pressure**: Tight (105-115%), moderate (110-125%), or generous budgets
 
 For INFEASIBLE instances (4 verified impossibility scenarios):
-1. **Verified nutrient impossibility**: Calculates true maximum achievable nutrient, sets requirement above it
-2. **Verified budget impossibility**: Calculates proven minimum cost needed, sets budget below it
-3. **Verified supply shortage**: Strategically reduces supply until target nutrient becomes impossible
-4. **Verified over-constrained system**: Multiple individually-reasonable constraints that together are impossible
+
+ 1. **Verified nutrient impossibility**: Calculates true maximum achievable nutrient, sets requirement above it
+ 2. **Verified budget impossibility**: Calculates proven minimum cost needed, sets budget below it
+ 3. **Verified supply shortage**: Strategically reduces supply until target nutrient becomes impossible
+ 4. **Verified over-constrained system**: Multiple individually-reasonable constraints that together are impossible
 
 FINAL VERIFICATION: For all infeasible instances, calculates absolute maximum achievable and forces
 requirement to 200-300% of maximum with large margin to avoid numerical issues.
 
 # Arguments
-- `target_variables`: Target number of variables (n_foods)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (n_foods)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
 function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
@@ -122,7 +130,7 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
         end
 
         cost_effectiveness = nutrition_scores ./ c
-        effectiveness_order = sortperm(cost_effectiveness, rev=true)
+        effectiveness_order = sortperm(cost_effectiveness; rev=true)
 
         # Step 2: Generate realistic baseline diet
         baseline_diet = zeros(n_foods)
@@ -170,7 +178,9 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
             tolerance = tolerance_level
             position_in_band = 0.7 + rand(rng) * 0.15
 
-            total_range = 2 * tolerance * achieved_nutrients[j] / (1 - 2 * tolerance + 2 * tolerance * position_in_band)
+            total_range =
+                2 * tolerance * achieved_nutrients[j] /
+                (1 - 2 * tolerance + 2 * tolerance * position_in_band)
             lower_bound = achieved_nutrients[j] - total_range * position_in_band
 
             b[j] = max(0.0, lower_bound)
@@ -190,7 +200,7 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
             end
         elseif supply_scenario == 2
             # Market supply
-            expensive_foods = sortperm(c, rev=true)[1:max(2, div(n_foods, 4))]
+            expensive_foods = sortperm(c; rev=true)[1:max(2, div(n_foods, 4))]
             for i in 1:n_foods
                 if i in expensive_foods
                     food_supply_limits[i] = baseline_diet[i] * (1.2 + rand(rng) * 0.4)
@@ -230,7 +240,6 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
         end
 
     else  # :infeasible - Create verified mathematical impossibilities
-
         scenario = rand(rng, 1:4)
 
         if scenario == 1
@@ -242,7 +251,9 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
 
             max_achievable_nutrients = zeros(n_nutrients)
             for j in 1:n_nutrients
-                max_achievable_nutrients[j] = sum(a[i, j] * food_supply_limits[i] for i in 1:n_foods)
+                max_achievable_nutrients[j] = sum(
+                    a[i, j] * food_supply_limits[i] for i in 1:n_foods
+                )
             end
 
             target_nutrient = rand(rng, 1:n_nutrients)
@@ -254,7 +265,9 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
                 end
             end
 
-            final_max_achievable = sum(a[i, target_nutrient] * food_supply_limits[i] for i in 1:n_foods)
+            final_max_achievable = sum(
+                a[i, target_nutrient] * food_supply_limits[i] for i in 1:n_foods
+            )
             if final_max_achievable >= b[target_nutrient]
                 b[target_nutrient] = final_max_achievable * 1.15
             end
@@ -301,7 +314,9 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
                 for i in 1:n_foods
                     if a[i, j] > 0
                         cost_for_requirement = (b[j] / a[i, j]) * c[i]
-                        cheapest_cost_for_nutrient = min(cheapest_cost_for_nutrient, cost_for_requirement)
+                        cheapest_cost_for_nutrient = min(
+                            cheapest_cost_for_nutrient, cost_for_requirement
+                        )
                     end
                 end
                 if cheapest_cost_for_nutrient < Inf
@@ -329,8 +344,10 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
             target_nutrient = rand(rng, 1:n_nutrients)
             current_max = sum(a[i, target_nutrient] * food_supply_limits[i] for i in 1:n_foods)
 
-            nutrient_contributions = [(a[i, target_nutrient] * food_supply_limits[i], i) for i in 1:n_foods]
-            sort!(nutrient_contributions, rev=true)
+            nutrient_contributions = [
+                (a[i, target_nutrient] * food_supply_limits[i], i) for i in 1:n_foods
+            ]
+            sort!(nutrient_contributions; rev=true)
 
             reduction_needed = current_max - b[target_nutrient] * 0.95
             remaining_reduction = reduction_needed
@@ -338,10 +355,13 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
             for (contribution, food_idx) in nutrient_contributions
                 if remaining_reduction > 0
                     max_reduction = food_supply_limits[food_idx] * 0.9
-                    actual_reduction = min(remaining_reduction / a[food_idx, target_nutrient], max_reduction)
+                    actual_reduction = min(
+                        remaining_reduction / a[food_idx, target_nutrient], max_reduction
+                    )
 
                     new_supply = max(10.0, food_supply_limits[food_idx] - actual_reduction)
-                    reduction_achieved = (food_supply_limits[food_idx] - new_supply) * a[food_idx, target_nutrient]
+                    reduction_achieved =
+                        (food_supply_limits[food_idx] - new_supply) * a[food_idx, target_nutrient]
 
                     food_supply_limits[food_idx] = new_supply
                     remaining_reduction -= reduction_achieved
@@ -388,7 +408,7 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
             baseline_cost = sum(c[i] * baseline_diet[i] for i in 1:n_foods)
             cost_budget = baseline_cost * (1.1 + rand(rng) * 0.2)
 
-            expensive_foods = sortperm(c, rev=true)[1:max(2, div(n_foods, 5))]
+            expensive_foods = sortperm(c; rev=true)[1:max(2, div(n_foods, 5))]
             num_required = max(1, div(length(expensive_foods), 2))
             required_foods = expensive_foods[1:num_required]
 
@@ -436,7 +456,9 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
                     max_achievable_j = 0.0
                     for i in 1:n_foods
                         min_usage = get(min_food_amounts, i, 0.0)
-                        max_usage = min(food_supply_limits[i], get(max_food_amounts, i, food_supply_limits[i]))
+                        max_usage = min(
+                            food_supply_limits[i], get(max_food_amounts, i, food_supply_limits[i])
+                        )
                         feasible_max = max(0.0, min(max_usage, max(min_usage, max_usage)))
                         max_achievable_j += a[i, j] * feasible_max
                     end
@@ -487,7 +509,8 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
         end
 
         if verified_max_achievable[target_nutrient_final] > 0
-            b[target_nutrient_final] = verified_max_achievable[target_nutrient_final] * (2.0 + rand(rng))
+            b[target_nutrient_final] =
+                verified_max_achievable[target_nutrient_final] * (2.0 + rand(rng))
         else
             b[target_nutrient_final] = 100.0 + rand(rng) * 100.0
         end
@@ -502,7 +525,7 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
         food_supply_limits,
         cost_budget,
         min_food_amounts,
-        max_food_amounts
+        max_food_amounts,
     )
 end
 
@@ -512,10 +535,12 @@ end
 Build a JuMP model for the diet problem (deterministic).
 
 # Arguments
-- `prob`: DietProblem instance
+
+  - `prob`: DietProblem instance
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::DietProblem)
     model = Model()
@@ -526,7 +551,10 @@ function build_model(prob::DietProblem)
 
     # Nutrient requirements
     for j in 1:prob.n_nutrients
-        @constraint(model, sum(prob.nutrient_content[i, j] * x[i] for i in 1:prob.n_foods) >= prob.requirements[j])
+        @constraint(
+            model,
+            sum(prob.nutrient_content[i, j] * x[i] for i in 1:prob.n_foods) >= prob.requirements[j]
+        )
     end
 
     # Food supply limits

@@ -10,7 +10,7 @@ the planted routing.
 struct HubNetworkWitness
     open_hubs::Vector{Int}
     assignment::Vector{Int}
-    backbone::Vector{Tuple{Int,Int}}
+    backbone::Vector{Tuple{Int, Int}}
 end
 
 """
@@ -49,6 +49,7 @@ inter-regional traffic - a genuine multicommodity network design layer on top
 of the hub layer.
 
 # Data conventions (telecom backbone)
+
 Asymmetric demand with heavy skew; access cost multipliers `chi = delta` in
 `[1, 2.5]`; a deep backbone discount `alpha in [0.05, 0.4]` (repeaters and
 dense wavelength-division multiplexing make inter-haul transit cheap per
@@ -57,14 +58,15 @@ ladder 155 / 622 / 2488 / 9953 / 39813 (OC-3/12/48/192/768); link build costs
 with a distance-proportional component.
 
 # Fields
-- `n_nodes`, `hubs::Vector{Int}` (regional gateway candidates)
-- `chi`, `alpha`, `delta`: leg cost multipliers
-- `locations`, `dist::Matrix{Float64}`, `flow::Matrix{Float64}` (asymmetric)
-- `reach::Float64`, `admissible::Vector{Vector{Int}}`: feeder reach windows
-- `links::Vector{Tuple{Int,Int}}`: candidate backbone links (`k < m`)
-- `link_capacity::Vector{Float64}`, `link_cost::Vector{Float64}` (aligned)
-- `fixed_cost::Vector{Float64}`: hub opening costs (aligned with `hubs`)
-- `feasible_witness`, `infeasibility_certificate`, `feasibility_status`
+
+  - `n_nodes`, `hubs::Vector{Int}` (regional gateway candidates)
+  - `chi`, `alpha`, `delta`: leg cost multipliers
+  - `locations`, `dist::Matrix{Float64}`, `flow::Matrix{Float64}` (asymmetric)
+  - `reach::Float64`, `admissible::Vector{Vector{Int}}`: feeder reach windows
+  - `links::Vector{Tuple{Int,Int}}`: candidate backbone links (`k < m`)
+  - `link_capacity::Vector{Float64}`, `link_cost::Vector{Float64}` (aligned)
+  - `fixed_cost::Vector{Float64}`: hub opening costs (aligned with `hubs`)
+  - `feasible_witness`, `infeasibility_certificate`, `feasibility_status`
 """
 struct HubNetworkDesignProblem <: ProblemGenerator
     n_nodes::Int
@@ -72,17 +74,17 @@ struct HubNetworkDesignProblem <: ProblemGenerator
     chi::Float64
     alpha::Float64
     delta::Float64
-    locations::Vector{Tuple{Float64,Float64}}
+    locations::Vector{Tuple{Float64, Float64}}
     dist::Matrix{Float64}
     flow::Matrix{Float64}
     reach::Float64
     admissible::Vector{Vector{Int}}
-    links::Vector{Tuple{Int,Int}}
+    links::Vector{Tuple{Int, Int}}
     link_capacity::Vector{Float64}
     link_cost::Vector{Float64}
     fixed_cost::Vector{Float64}
-    feasible_witness::Union{Nothing,HubNetworkWitness}
-    infeasibility_certificate::Union{Nothing,BackboneCutCertificate}
+    feasible_witness::Union{Nothing, HubNetworkWitness}
+    infeasibility_certificate::Union{Nothing, BackboneCutCertificate}
     feasibility_status::FeasibilityStatus
 end
 
@@ -109,7 +111,7 @@ Minimum spanning tree over `nodes` (Prim's), as canonical `(min, max)` links.
 function _hub_mst_links(dist::Matrix{Float64}, nodes::Vector{Int})
     in_tree = Set(nodes[1:1])
     remaining = Set(nodes[2:end])
-    links = Tuple{Int,Int}[]
+    links = Tuple{Int, Int}[]
     while !isempty(remaining)
         best_d, best_k, best_m = Inf, 0, 0
         for k in in_tree, m in remaining
@@ -134,15 +136,15 @@ accumulate both-direction loads per link (capacities are shared between
 directions). Pass only links whose endpoints are open in the design being
 sized: a link with a closed endpoint cannot carry backbone flow in the model.
 """
-function _hub_tree_link_loads(n::Int, assignment::Vector{Int},
-                              flow::Matrix{Float64},
-                              backbone_links::Vector{Tuple{Int,Int}})
-    adj = Dict{Int,Vector{Int}}()
+function _hub_tree_link_loads(
+    n::Int, assignment::Vector{Int}, flow::Matrix{Float64}, backbone_links::Vector{Tuple{Int, Int}}
+)
+    adj = Dict{Int, Vector{Int}}()
     for (k, m) in backbone_links
         push!(get!(adj, k, Int[]), m)
         push!(get!(adj, m, Int[]), k)
     end
-    loads = Dict{Tuple{Int,Int},Float64}()
+    loads = Dict{Tuple{Int, Int}, Float64}()
     for i in 1:n, j in 1:n
         (i == j || assignment[i] == assignment[j]) && continue
         a, b = assignment[i], assignment[j]
@@ -154,7 +156,7 @@ function _hub_tree_link_loads(n::Int, assignment::Vector{Int},
             for y in get(adj, x, Int[])
                 haskey(prev, y) && continue
                 prev[y] = x
-                y == b && (found = true; break)
+                y == b && (found=true; break)
                 push!(queue, y)
             end
         end
@@ -170,9 +172,9 @@ function _hub_tree_link_loads(n::Int, assignment::Vector{Int},
     return loads
 end
 
-function _build_hub_network(n_nodes::Int, n_hubs::Int,
-                            feasibility_status::FeasibilityStatus,
-                            rng::AbstractRNG)
+function _build_hub_network(
+    n_nodes::Int, n_hubs::Int, feasibility_status::FeasibilityStatus, rng::AbstractRNG
+)
     n = n_nodes
     h = clamp(n_hubs, 2, n)
 
@@ -181,22 +183,26 @@ function _build_hub_network(n_nodes::Int, n_hubs::Int,
     n_regions = min(n_regions, h, n)
     centers = _hub_ring_centers(rng, n_regions)
     node_region = vcat(collect(1:n_regions), rand(rng, 1:n_regions, max(0, n - n_regions)))
-    min_sep = minimum(hypot(centers[a][1] - centers[b][1],
-                            centers[a][2] - centers[b][2])
-                      for a in 1:n_regions for b in (a + 1):n_regions)
+    min_sep = minimum(
+        hypot(centers[a][1] - centers[b][1], centers[a][2] - centers[b][2]) for a in 1:n_regions for
+        b in (a + 1):n_regions
+    )
     spread = 0.15 * min_sep
-    locations = [g <= n_regions ? centers[g] :
-                 (clamp(centers[node_region[g]][1] + rand(rng, Uniform(-spread, spread)),
-                        0.0, 100.0),
-                  clamp(centers[node_region[g]][2] + rand(rng, Uniform(-spread, spread)),
-                        0.0, 100.0))
-                 for g in 1:n]
+    locations = [
+        if g <= n_regions
+            centers[g]
+        else
+            (
+                clamp(centers[node_region[g]][1] + rand(rng, Uniform(-spread, spread)), 0.0, 100.0),
+                clamp(centers[node_region[g]][2] + rand(rng, Uniform(-spread, spread)), 0.0, 100.0),
+            )
+        end for g in 1:n
+    ]
     dist = _hub_distance_matrix(locations)
 
     populations = _hub_populations(rng, n)
     # Gateway candidates: the anchors plus the largest remaining cities.
-    extra = [i for i in sortperm(populations; rev=true)
-             if i > n_regions][1:max(0, h - n_regions)]
+    extra = [i for i in sortperm(populations; rev=true) if i > n_regions][1:max(0, h - n_regions)]
     hubs = sort(unique(vcat(collect(1:n_regions), extra)))
 
     # Regional gateway per region: the heaviest candidate of each region.
@@ -211,16 +217,17 @@ function _build_hub_network(n_nodes::Int, n_hubs::Int,
         reach = 0.40 * min_sep
     else
         cover = maximum(minimum(dist[i, k] for k in planted) for i in 1:n)
-        reach = cover * rand(rng, feasibility_status == feasible ?
-                                   Uniform(1.05, 1.2) : Uniform(0.99, 1.1))
+        reach =
+            cover *
+            rand(rng, feasibility_status == feasible ? Uniform(1.05, 1.2) : Uniform(0.99, 1.1))
     end
     admissible = _hub_reach_admissible(dist, reach; candidates=hubs)
 
     decay = rand(rng, Uniform(0.5, 1.1))
     noise = rand(rng, Uniform(0.7, 1.2))
-    flow = _hub_gravity_flows(rng, n, populations, dist, decay, noise;
-                              symmetric=false,
-                              scale=rand(rng, Uniform(0.5, 2.0)))
+    flow = _hub_gravity_flows(
+        rng, n, populations, dist, decay, noise; symmetric=false, scale=rand(rng, Uniform(0.5, 2.0))
+    )
     outvolume = vec(sum(flow; dims=2))
     involume = vec(sum(flow; dims=1))
 
@@ -230,12 +237,11 @@ function _build_hub_network(n_nodes::Int, n_hubs::Int,
     # Candidate backbone links: a spanning tree over the planted gateways
     # (so a connected witness design exists) plus distance-limited extras.
     links = _hub_mst_links(dist, planted)
-    extra_links = Tuple{Int,Int}[]
+    extra_links = Tuple{Int, Int}[]
     for a in 1:length(hubs), b in (a + 1):length(hubs)
         k, m = hubs[a], hubs[b]
         minmax(k, m) in links && continue
-        dist[k, m] <= 75.0 && rand(rng) < 0.25 &&
-            push!(extra_links, minmax(k, m))
+        dist[k, m] <= 75.0 && rand(rng) < 0.25 && push!(extra_links, minmax(k, m))
     end
     append!(links, extra_links)
     unique!(links)
@@ -244,11 +250,11 @@ function _build_hub_network(n_nodes::Int, n_hubs::Int,
     flow_cost_scale = sum(flow[i, j] * dist[i, j] for i in 1:n, j in 1:n if i != j)
     mean_link_dist = sum(dist[k, m] for (k, m) in links) / max(length(links), 1)
     base_link = flow_cost_scale / max(length(links), 1) * rand(rng, Uniform(0.2, 0.6))
-    link_cost = [base_link * (0.7 + 0.6 * dist[k, m] / max(mean_link_dist, 1e-9))
-                 for (k, m) in links]
+    link_cost = [
+        base_link * (0.7 + 0.6 * dist[k, m] / max(mean_link_dist, 1e-9)) for (k, m) in links
+    ]
     base_fixed = flow_cost_scale / max(length(hubs), 1) * rand(rng, Uniform(0.2, 0.7))
-    fixed_cost = [base_fixed * exp(rand(rng, Uniform(log(0.8), log(1.25))))
-                  for _ in hubs]
+    fixed_cost = [base_fixed * exp(rand(rng, Uniform(log(0.8), log(1.25)))) for _ in hubs]
 
     assignment = _hub_nearest_assignment(dist, planted)
     # The planted design only opens the regional gateways, and the model
@@ -258,8 +264,7 @@ function _build_hub_network(n_nodes::Int, n_hubs::Int,
     # candidate link set would attribute traffic to links the planted
     # solution cannot use, leaving the gateway links under-sized.
     planted_set = Set(planted)
-    planted_backbone = [l for l in links
-                        if l[1] in planted_set && l[2] in planted_set]
+    planted_backbone = [l for l in links if l[1] in planted_set && l[2] in planted_set]
     witness = nothing
     certificate = nothing
     if feasibility_status == infeasible
@@ -267,10 +272,12 @@ function _build_hub_network(n_nodes::Int, n_hubs::Int,
         # must cross its backbone links, whose total capacity is set below
         # that traffic.
         side_a = findall(==(1), node_region)
-        crossing_flow = sum(flow[i, j] + flow[j, i] for i in side_a, j in 1:n
-                            if node_region[j] != 1)
-        crossing = [t for (t, (k, m)) in enumerate(links)
-                    if (node_region[k] == 1) != (node_region[m] == 1)]
+        crossing_flow = sum(
+            flow[i, j] + flow[j, i] for i in side_a, j in 1:n if node_region[j] != 1
+        )
+        crossing = [
+            t for (t, (k, m)) in enumerate(links) if (node_region[k] == 1) != (node_region[m] == 1)
+        ]
         target = crossing_flow * rand(rng, Uniform(0.4, 0.65))
         shares = exp.(rand(rng, Normal(0.0, 0.3), max(length(crossing), 1)))
         shares ./= sum(shares)
@@ -282,27 +289,29 @@ function _build_hub_network(n_nodes::Int, n_hubs::Int,
         intra_loads = _hub_tree_link_loads(n, assignment, flow, planted_backbone)
         for (t, (k, m)) in enumerate(links)
             (node_region[k] == 1) != (node_region[m] == 1) && continue
-            link_capacity[t] = _hub_backbone_module(
-                2.0 * get(intra_loads, (k, m), 0.0))
+            link_capacity[t] = _hub_backbone_module(2.0 * get(intra_loads, (k, m), 0.0))
         end
-        certificate = BackboneCutCertificate(side_a, crossing_flow,
-                                             sum(link_capacity[t] for t in crossing))
+        certificate = BackboneCutCertificate(
+            side_a, crossing_flow, sum(link_capacity[t] for t in crossing)
+        )
     else
         loads = _hub_tree_link_loads(n, assignment, flow, planted_backbone)
         link_capacity = [
-            _hub_backbone_module(rand(rng, Uniform(1.3, 2.0)) *
-                                 get(loads, (k, m), 0.0))
-            for (k, m) in links
+            _hub_backbone_module(rand(rng, Uniform(1.3, 2.0)) * get(loads, (k, m), 0.0)) for
+            (k, m) in links
         ]
         if feasibility_status == feasible
             witness = HubNetworkWitness(planted, assignment, planted_backbone)
         else
             # Unknown: squeeze the crossing capacity toward the crossing flow.
             side_a = findall(==(1), node_region)
-            crossing_flow = sum(flow[i, j] + flow[j, i] for i in side_a, j in 1:n
-                                if node_region[j] != 1)
-            crossing = [t for (t, (k, m)) in enumerate(links)
-                        if (node_region[k] == 1) != (node_region[m] == 1)]
+            crossing_flow = sum(
+                flow[i, j] + flow[j, i] for i in side_a, j in 1:n if node_region[j] != 1
+            )
+            crossing = [
+                t for
+                (t, (k, m)) in enumerate(links) if (node_region[k] == 1) != (node_region[m] == 1)
+            ]
             if !isempty(crossing)
                 squeeze = rand(rng, Uniform(0.85, 1.2))
                 total_cross = sum(link_capacity[t] for t in crossing)
@@ -316,10 +325,25 @@ function _build_hub_network(n_nodes::Int, n_hubs::Int,
         end
     end
 
-    return HubNetworkDesignProblem(n, hubs, chi, alpha, delta, locations, dist,
-                                   flow, reach, admissible, links,
-                                   link_capacity, link_cost, fixed_cost,
-                                   witness, certificate, feasibility_status)
+    return HubNetworkDesignProblem(
+        n,
+        hubs,
+        chi,
+        alpha,
+        delta,
+        locations,
+        dist,
+        flow,
+        reach,
+        admissible,
+        links,
+        link_capacity,
+        link_cost,
+        fixed_cost,
+        witness,
+        certificate,
+        feasibility_status,
+    )
 end
 
 """
@@ -341,17 +365,18 @@ An iterative re-sizing loop adjusts the node-count hint to land near the
 target.
 
 # Feasibility (relaxation-aware)
-- `feasible`: gateways cover every node within the reach window and the
-  planted spanning-tree backbone is sized (module-snapped) above its exact
-  routed loads (`HubNetworkWitness`).
-- `infeasible`: a regional gateway cut whose total crossing capacity is below
-  the traffic that must cross it (`BackboneCutCertificate`).
-- `unknown`: crossing capacities are squeezed toward the crossing traffic, so
-  the backbone may or may not have room for the inter-regional demand.
+
+  - `feasible`: gateways cover every node within the reach window and the
+    planted spanning-tree backbone is sized (module-snapped) above its exact
+    routed loads (`HubNetworkWitness`).
+  - `infeasible`: a regional gateway cut whose total crossing capacity is below
+    the traffic that must cross it (`BackboneCutCertificate`).
+  - `unknown`: crossing capacities are squeezed toward the crossing traffic, so
+    the backbone may or may not have room for the inter-regional demand.
 """
-function HubNetworkDesignProblem(target_variables::Int,
-                                 feasibility_status::FeasibilityStatus,
-                                 seed::Int)
+function HubNetworkDesignProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     target = max(target_variables, 1)
     hint_n = clamp(round(Int, 1.1 * target^(1 / 3)), 4, 80)
     hint_h = clamp(round(Int, hint_n / 3), 2, hint_n)
@@ -362,9 +387,11 @@ function HubNetworkDesignProblem(target_variables::Int,
         candidate = _build_hub_network(hint_n, hint_h, feasibility_status, rng)
         n, h = candidate.n_nodes, length(candidate.hubs)
         A, L = candidate.admissible, length(candidate.links)
-        total = sum(sum(length(A[i]) for i in 1:n if i != j) + 2L + length(A[j])
-                    for j in 1:n) +
-                sum(length(A[i]) for i in 1:n) + h + L
+        total =
+            sum(sum(length(A[i]) for i in 1:n if i != j) + 2L + length(A[j]) for j in 1:n) +
+            sum(length(A[i]) for i in 1:n) +
+            h +
+            L
         gap = abs(total - target) / target
         score = (gap <= 0.25 || total <= 50 ? 0 : 1, gap)
         if score < best_score
@@ -392,23 +419,25 @@ end
 Build the backbone design model. Deterministic - uses only struct fields.
 
 Variables (for each destination `j`; `A_i` admissible gateways, `L` links):
-- `u[(j,i,k)] >= 0`, `k in A_i`: collection arc `i -> k` (`i != j`)
-- `t[(j,k,m)] >= 0` for both orientations of every candidate link:
-  discounted backbone flow
-- `d[(j,k)] >= 0`, `k in A_j`: delivery arc `k -> j`
-- `z[(i,k)] in {0,1}`, `k in A_i`: node `i` allocated to gateway `k`
-- `y[k] in {0,1}`, `k in H`: open gateway `k`
-- `b[(k,m)] in {0,1}`: build backbone link `(k, m)`
+
+  - `u[(j,i,k)] >= 0`, `k in A_i`: collection arc `i -> k` (`i != j`)
+  - `t[(j,k,m)] >= 0` for both orientations of every candidate link:
+    discounted backbone flow
+  - `d[(j,k)] >= 0`, `k in A_j`: delivery arc `k -> j`
+  - `z[(i,k)] in {0,1}`, `k in A_i`: node `i` allocated to gateway `k`
+  - `y[k] in {0,1}`, `k in H`: open gateway `k`
+  - `b[(k,m)] in {0,1}`: build backbone link `(k, m)`
 
 Objective: `sum f_k y_k + sum g_l b_l + sum_j [ chi*d*u + alpha*d*t + delta*d*d ]`.
 
 Constraints:
-- supply / delivery per commodity, hub conservation over the backbone
-  adjacency
-- link capacity, shared by both directions: `sum_j (t_jkm + t_jmk) <= C_l b_l`
-- single allocation with disaggregated coupling to `z` and linking to `y`,
-  as in the capacitated model but restricted to the reach windows
-- gateway self-allocation: `z_kk == y_k`
+
+  - supply / delivery per commodity, hub conservation over the backbone
+    adjacency
+  - link capacity, shared by both directions: `sum_j (t_jkm + t_jmk) <= C_l b_l`
+  - single allocation with disaggregated coupling to `z` and linking to `y`,
+    as in the capacitated model but restricted to the reach windows
+  - gateway self-allocation: `z_kk == y_k`
 """
 function build_model(prob::HubNetworkDesignProblem)
     model = Model()
@@ -419,16 +448,16 @@ function build_model(prob::HubNetworkDesignProblem)
     in_A = [Set(a) for a in A]
     links = prob.links
 
-    backbone_adj = Dict{Int,Vector{Int}}()
+    backbone_adj = Dict{Int, Vector{Int}}()
     for (k, m) in links
         push!(get!(backbone_adj, k, Int[]), m)
         push!(get!(backbone_adj, m, Int[]), k)
     end
 
-    collections = NTuple{3,Int}[]      # (j, i, k)
-    transfers = NTuple{3,Int}[]        # (j, k, m), both orientations
-    deliveries = NTuple{2,Int}[]       # (j, k)
-    allocations = NTuple{2,Int}[]      # (i, k)
+    collections = NTuple{3, Int}[]      # (j, i, k)
+    transfers = NTuple{3, Int}[]        # (j, k, m), both orientations
+    deliveries = NTuple{2, Int}[]       # (j, k)
+    allocations = NTuple{2, Int}[]      # (i, k)
     for j in 1:n
         for i in 1:n, k in A[i]
             i == j && continue
@@ -460,12 +489,15 @@ function build_model(prob::HubNetworkDesignProblem)
     outvolume = vec(sum(prob.flow; dims=2))
     involume = vec(sum(prob.flow; dims=1))
 
-    @objective(model, Min,
+    @objective(
+        model,
+        Min,
         sum(fixed_of(k) * y[k] for k in H) +
-        sum(link_cost_of(l) * b[l] for l in links) +
-        sum(prob.chi * prob.dist[i, k] * u[(j, i, k)] for (j, i, k) in collections) +
-        sum(prob.alpha * prob.dist[k, m] * t[(j, k, m)] for (j, k, m) in transfers) +
-        sum(prob.delta * prob.dist[k, j] * d[(j, k)] for (j, k) in deliveries))
+            sum(link_cost_of(l) * b[l] for l in links) +
+            sum(prob.chi * prob.dist[i, k] * u[(j, i, k)] for (j, i, k) in collections) +
+            sum(prob.alpha * prob.dist[k, m] * t[(j, k, m)] for (j, k, m) in transfers) +
+            sum(prob.delta * prob.dist[k, j] * d[(j, k)] for (j, k) in deliveries)
+    )
 
     for j in 1:n
         w_j = sum(prob.flow[i, j] for i in 1:n if i != j)
@@ -475,12 +507,9 @@ function build_model(prob::HubNetworkDesignProblem)
         end
         @constraint(model, sum(d[(j, k)] for k in A[j]) == w_j)
         for k in H
-            inflow = sum(u[(j, i, k)] for i in 1:n if i != j && k in in_A[i];
-                         init=0.0)
-            in_transfer = sum(t[(j, m, k)] for m in get(backbone_adj, k, Int[]);
-                              init=0.0)
-            out_transfer = sum(t[(j, k, m)] for m in get(backbone_adj, k, Int[]);
-                               init=0.0)
+            inflow = sum(u[(j, i, k)] for i in 1:n if i != j && k in in_A[i]; init=0.0)
+            in_transfer = sum(t[(j, m, k)] for m in get(backbone_adj, k, Int[]); init=0.0)
+            out_transfer = sum(t[(j, k, m)] for m in get(backbone_adj, k, Int[]); init=0.0)
             delivered = k in in_A[j] ? d[(j, k)] : 0.0
             @constraint(model, inflow + in_transfer == out_transfer + delivered)
         end
@@ -503,17 +532,17 @@ function build_model(prob::HubNetworkDesignProblem)
     # Backbone link capacity, shared by both directions, available when built.
     for l in links
         k, m = l
-        @constraint(model,
-            sum(t[(j, k, m)] + t[(j, m, k)] for j in 1:n) <=
-            prob.link_capacity[link_pos[l]] * b[l])
+        @constraint(
+            model,
+            sum(t[(j, k, m)] + t[(j, m, k)] for j in 1:n) <= prob.link_capacity[link_pos[l]] * b[l]
+        )
     end
 
     for i in 1:n
         @constraint(model, sum(z[(i, k)] for k in A[i]) == 1)
     end
     for i in 1:n, k in A[i]
-        @constraint(model,
-            sum(u[(j, i, k)] for j in 1:n if j != i) <= outvolume[i] * z[(i, k)])
+        @constraint(model, sum(u[(j, i, k)] for j in 1:n if j != i) <= outvolume[i] * z[(i, k)])
         @constraint(model, d[(i, k)] <= involume[i] * z[(i, k)])
         @constraint(model, z[(i, k)] <= y[k])
     end

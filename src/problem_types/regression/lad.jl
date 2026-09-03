@@ -8,6 +8,7 @@ Generator for least-absolute-deviations (L1 / LAD) regression as a linear
 program.
 
 # Overview
+
 Fits coefficients `beta` minimizing the sum of absolute residuals
 `Σ_i |y_i − X_i · beta|`, subject to box bounds on the coefficients and a
 coefficient side constraint. The L1 loss is linearized with one residual
@@ -16,14 +17,15 @@ variable per sample (`e_i ≥ ±(y_i − X_i · beta)`). The constraint matrix i
 profile distinct from the sparse network/allocation generators.
 
 # Fields
-- `n_samples::Int`: Number of observations
-- `n_features::Int`: Number of regression coefficients
-- `X::Matrix{Float64}`: Design matrix (n_samples × n_features)
-- `y::Vector{Float64}`: Response vector
-- `beta_lower::Vector{Float64}`: Lower bound on each coefficient
-- `beta_upper::Vector{Float64}`: Upper bound on each coefficient
-- `side_coef::Vector{Float64}`: Coefficients of the side constraint on `beta`
-- `side_rhs::Float64`: Right-hand side of the side constraint
+
+  - `n_samples::Int`: Number of observations
+  - `n_features::Int`: Number of regression coefficients
+  - `X::Matrix{Float64}`: Design matrix (n_samples × n_features)
+  - `y::Vector{Float64}`: Response vector
+  - `beta_lower::Vector{Float64}`: Lower bound on each coefficient
+  - `beta_upper::Vector{Float64}`: Upper bound on each coefficient
+  - `side_coef::Vector{Float64}`: Coefficients of the side constraint on `beta`
+  - `side_rhs::Float64`: Right-hand side of the side constraint
 """
 struct LADRegressionProblem <: ProblemGenerator
     n_samples::Int
@@ -42,7 +44,9 @@ end
 Construct a LAD regression instance. Variables: `beta` (n_features) plus one
 residual `e` per sample, for a total of `n_features + n_samples`.
 """
-function LADRegressionProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function LADRegressionProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # Variables = n + m, with an overdetermined system (m > n).
@@ -52,9 +56,16 @@ function LADRegressionProblem(target_variables::Int, feasibility_status::Feasibi
 
     data = generate_regression_data(rng, n_features, n_samples, feasibility_status)
 
-    return LADRegressionProblem(n_samples, n_features, data.X, data.y,
-                                data.beta_lower, data.beta_upper,
-                                data.side_coef, data.side_rhs)
+    return LADRegressionProblem(
+        n_samples,
+        n_features,
+        data.X,
+        data.y,
+        data.beta_lower,
+        data.beta_upper,
+        data.side_coef,
+        data.side_rhs,
+    )
 end
 
 """
@@ -89,6 +100,6 @@ register_variant(
     :regression,
     :lad,
     LADRegressionProblem,
-    "Least-absolute-deviations (L1) regression as a dense LP with coefficient box and side constraints",
-    default = true,
+    "Least-absolute-deviations (L1) regression as a dense LP with coefficient box and side constraints";
+    default=true,
 )

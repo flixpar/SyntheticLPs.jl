@@ -24,8 +24,9 @@
 
         isempty(legs) && return Set([:base_return])
         # Base return: starts at a crew base and ends back at that same base.
-        if !(base in p.bases) || p.flight_origins[legs[1]] != base ||
-           p.flight_destinations[legs[end]] != base
+        if !(base in p.bases) ||
+            p.flight_origins[legs[1]] != base ||
+            p.flight_destinations[legs[end]] != base
             push!(bad, :base_return)
         end
         length(unique(legs)) == length(legs) || push!(bad, :time)
@@ -56,8 +57,7 @@
             length(d) <= r.max_legs_per_duty || push!(bad, :duty)
             block = sum(p.arrival_times[legs[i]] - p.departure_times[legs[i]] for i in d)
             block <= r.max_block_minutes || push!(bad, :duty)
-            elapsed = p.arrival_times[legs[last(d)]] -
-                      p.departure_times[legs[first(d)]]
+            elapsed = p.arrival_times[legs[last(d)]] - p.departure_times[legs[first(d)]]
             elapsed <= r.max_duty_minutes || push!(bad, :duty)
         end
         return bad
@@ -75,8 +75,7 @@
     # feasibility status. This is the regression guard for the old generator,
     # which chained flights across disconnected airports and then let a
     # filtering step break the sequences that were connected.
-    for target in (50, 120, 600, 2000), status in (feasible, infeasible, unknown),
-        seed in 0:4
+    for target in (50, 120, 600, 2000), status in (feasible, infeasible, unknown), seed in 0:4
         _, p = generate_problem(:airline_crew, target, status, seed)
         @test instance_violations(p) == Set{Symbol}()
         # Columns are whole pairings: distinct, non-empty, no repeated leg.
@@ -86,14 +85,14 @@
 
     # Sizing: one variable per pairing column, and the generator emits exactly
     # the requested number of columns. One covering equality per flight.
-    for target in (50, 100, 500, 1000, 5000),
-        status in (feasible, infeasible, unknown), seed in 0:2
+    for target in (50, 100, 500, 1000, 5000), status in (feasible, infeasible, unknown), seed in 0:2
         m, p = generate_problem(:airline_crew, target, status, seed)
         @test num_variables(m) == target
-        @test num_variables(m) == length(p.pairing_costs) ==
-              length(p.flights_in_pairing) == length(p.pairing_bases)
-        @test num_constraints(m; count_variable_in_set_constraints=false) ==
-              p.num_flights
+        @test num_variables(m) ==
+            length(p.pairing_costs) ==
+            length(p.flights_in_pairing) ==
+            length(p.pairing_bases)
+        @test num_constraints(m; count_variable_in_set_constraints=false) == p.num_flights
     end
 
     # Schedule and rule conventions.
@@ -106,11 +105,14 @@
         @test all(p.flight_origins .!= p.flight_destinations)
         @test all(p.arrival_times .> p.departure_times)
         # Flight times come from the block-time matrix (distance based).
-        @test all(p.arrival_times[f] - p.departure_times[f] ==
-                  p.block_minutes[p.flight_origins[f], p.flight_destinations[f]]
-                  for f in 1:p.num_flights)
-        @test all(45 <= p.block_minutes[i, j] <= 240
-                  for i in 1:p.num_airports, j in 1:p.num_airports if i != j)
+        @test all(
+            p.arrival_times[f] - p.departure_times[f] ==
+            p.block_minutes[p.flight_origins[f], p.flight_destinations[f]] for f in 1:p.num_flights
+        )
+        @test all(
+            45 <= p.block_minutes[i, j] <= 240 for
+            i in 1:p.num_airports, j in 1:p.num_airports if i != j
+        )
         # Duty segmentation is unambiguous, and a two-leg out-and-back always
         # fits one duty (the schedule builder's fallback relies on it).
         @test r.max_sit < r.min_rest
@@ -157,11 +159,16 @@
         @test !(cert.origin in p.bases)
         r = p.rules
         dep = p.departure_times[cert.flight]
-        predecessors = count(f -> f != cert.flight &&
-                                  p.flight_destinations[f] == cert.origin &&
-                                  (r.min_connect <= dep - p.arrival_times[f] <= r.max_sit ||
-                                   r.min_rest <= dep - p.arrival_times[f] <= r.max_rest),
-                             1:p.num_flights)
+        predecessors = count(
+            f ->
+                f != cert.flight &&
+                p.flight_destinations[f] == cert.origin &&
+                (
+                    r.min_connect <= dep - p.arrival_times[f] <= r.max_sit ||
+                    r.min_rest <= dep - p.arrival_times[f] <= r.max_rest
+                ),
+            1:p.num_flights,
+        )
         @test cert.predecessors == predecessors == 0
     end
 
@@ -189,25 +196,28 @@
         _, p = generate_problem(:airline_crew, 400, feasible, seed)
         for idx in 1:length(p.flights_in_pairing)
             legs = p.flights_in_pairing[idx]
-            duties = 1 + count(p.departure_times[legs[i + 1]] -
-                               p.arrival_times[legs[i]] > p.rules.max_sit
-                               for i in 1:(length(legs) - 1); init=0)
+            duties =
+                1 + count(
+                    p.departure_times[legs[i + 1]] - p.arrival_times[legs[i]] > p.rules.max_sit for
+                    i in 1:(length(legs) - 1);
+                    init=0,
+                )
             block = sum(p.arrival_times[f] - p.departure_times[f] for f in legs)
             duty_time = 0
             start = 1
             for i in 1:length(legs)
                 if i == length(legs) ||
-                   p.departure_times[legs[i + 1]] - p.arrival_times[legs[i]] >
-                   p.rules.max_sit
+                    p.departure_times[legs[i + 1]] - p.arrival_times[legs[i]] > p.rules.max_sit
                     duty_time += p.arrival_times[legs[i]] - p.departure_times[legs[start]]
                     start = i + 1
                 end
             end
             tafb = p.arrival_times[legs[end]] - p.departure_times[legs[1]]
-            credit = max(float(block), p.duty_guarantee * duty_time,
-                         float(p.min_daily_credit * duties))
-            expected = p.pay_rate * credit / 60 + p.per_diem_rate * tafb / 60 +
-                       p.hotel_cost * (duties - 1)
+            credit = max(
+                float(block), p.duty_guarantee * duty_time, float(p.min_daily_credit * duties)
+            )
+            expected =
+                p.pay_rate * credit / 60 + p.per_diem_rate * tafb / 60 + p.hotel_cost * (duties - 1)
             @test p.pairing_costs[idx] ≈ expected
         end
         @test all(p.pairing_costs .> 0)
@@ -219,11 +229,10 @@
     # vector fields would otherwise only compare by identity.
     function deep_isequal(a, b)
         typeof(a) === typeof(b) || return false
-        a isa AbstractArray && return size(a) == size(b) &&
-            all(deep_isequal(a[i], b[i]) for i in eachindex(a))
+        a isa AbstractArray &&
+            return size(a) == size(b) && all(deep_isequal(a[i], b[i]) for i in eachindex(a))
         if isstructtype(typeof(a)) && !isempty(fieldnames(typeof(a)))
-            return all(deep_isequal(getfield(a, f), getfield(b, f))
-                       for f in fieldnames(typeof(a)))
+            return all(deep_isequal(getfield(a, f), getfield(b, f)) for f in fieldnames(typeof(a)))
         end
         return isequal(a, b)
     end
@@ -232,8 +241,7 @@
         _, p1 = generate_problem(:airline_crew, 220, status, 42)
         Random.seed!(12345)
         _, p2 = generate_problem(:airline_crew, 220, status, 42)
-        @test all(deep_isequal(getfield(p1, f), getfield(p2, f))
-                  for f in fieldnames(typeof(p1)))
+        @test all(deep_isequal(getfield(p1, f), getfield(p2, f)) for f in fieldnames(typeof(p1)))
     end
 
     if HAS_HIGHS
@@ -250,8 +258,7 @@
         # ... and on the unrelaxed set-partitioning model, which only the
         # planted exact cover can satisfy integrally.
         for target in (60, 220), status in (feasible, infeasible), seed in 0:2
-            m, _ = generate_problem(:airline_crew, target, status, seed;
-                                    relax_integer=false)
+            m, _ = generate_problem(:airline_crew, target, status, seed; relax_integer=false)
             set_optimizer(m, HiGHS.Optimizer)
             set_silent(m)
             optimize!(m)
@@ -278,8 +285,7 @@
 
         # The planted witness is an optimal-model-feasible integral solution:
         # fixing it reproduces its own cost.
-        m, p = generate_problem(:airline_crew, 200, feasible, 1;
-                                relax_integer=false)
+        m, p = generate_problem(:airline_crew, 200, feasible, 1; relax_integer=false)
         x = all_variables(m)
         for i in p.feasible_witness.pairings
             fix(x[i], 1.0; force=true)
@@ -288,7 +294,6 @@
         set_silent(m)
         optimize!(m)
         @test termination_status(m) == MOI.OPTIMAL
-        @test objective_value(m) ≈
-              sum(p.pairing_costs[i] for i in p.feasible_witness.pairings)
+        @test objective_value(m) ≈ sum(p.pairing_costs[i] for i in p.feasible_witness.pairings)
     end
 end

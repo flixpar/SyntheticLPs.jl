@@ -8,6 +8,7 @@ using Distributions
 Generator for classic *p-median* facility location problems.
 
 # Overview
+
 Models the textbook p-median problem: from a set of candidate facility sites,
 open **exactly `p`** of them and assign every customer to one open facility so
 as to minimize the total demand-weighted travel distance. There are no fixed
@@ -29,22 +30,23 @@ keeps the relaxation tight (as opposed to the loose aggregate cover form, which
 degenerates).
 
 # Fields
-- `n_facilities::Int`: Number of candidate facility sites
-- `n_customers::Int`: Number of customers
-- `p::Int`: Number of facilities to open (exactly)
-- `count_cap::Int`: Maximum number of customers a single facility may serve
-- `facility_locs::Vector{Tuple{Float64,Float64}}`: Facility coordinates
-- `customer_locs::Vector{Tuple{Float64,Float64}}`: Customer coordinates
-- `demands::Vector{Float64}`: Customer demand (assignment weight)
-- `distances::Matrix{Float64}`: Euclidean distance facility→customer (F×C)
+
+  - `n_facilities::Int`: Number of candidate facility sites
+  - `n_customers::Int`: Number of customers
+  - `p::Int`: Number of facilities to open (exactly)
+  - `count_cap::Int`: Maximum number of customers a single facility may serve
+  - `facility_locs::Vector{Tuple{Float64,Float64}}`: Facility coordinates
+  - `customer_locs::Vector{Tuple{Float64,Float64}}`: Customer coordinates
+  - `demands::Vector{Float64}`: Customer demand (assignment weight)
+  - `distances::Matrix{Float64}`: Euclidean distance facility→customer (F×C)
 """
 struct PMedianFacilityLocationProblem <: ProblemGenerator
     n_facilities::Int
     n_customers::Int
     p::Int
     count_cap::Int
-    facility_locs::Vector{Tuple{Float64,Float64}}
-    customer_locs::Vector{Tuple{Float64,Float64}}
+    facility_locs::Vector{Tuple{Float64, Float64}}
+    customer_locs::Vector{Tuple{Float64, Float64}}
     demands::Vector{Float64}
     distances::Matrix{Float64}
 end
@@ -55,11 +57,13 @@ end
 Construct a p-median facility location instance.
 
 # Arguments
-- `target_variables`: Target number of decision variables
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of decision variables
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 
 # Variable count
+
 The model has assignment variables `y[w,c]` (F×C) plus opening variables
 `z[w]` (F), so:
 
@@ -70,20 +74,23 @@ Dimensions `n_facilities` and `n_customers` are sized in the constructor to hit
 `target_variables`. The number of facilities to open is `p ∈ [2, max(2, F/3)]`.
 
 # Feasibility (relaxation-aware)
-- `feasible`/`unknown`: choose `count_cap` generously so that
-  `p * count_cap >= C` with a margin (the `p` open facilities can collectively
-  serve every customer). Assigning each customer to its nearest open facility is
-  then admissible; this point is also feasible for the LP relaxation. `unknown`
-  uses the same generous sizing (biased feasible without forcing).
-- `infeasible`: set `count_cap = floor(C * f / p)` with `f ∈ [0.6, 0.9]`, so
-  `p * count_cap < C`. At most `p` facilities open, each serving at most
-  `count_cap` customers, so at most `p * count_cap < C` customers can be
-  assigned — yet every customer must be assigned exactly once. The aggregate
-  assignment count `sum_{w,c} y[w,c] = C` cannot be covered by the aggregate
-  service capacity `count_cap * sum_w z[w] = count_cap * p < C`, so the
-  relaxation is infeasible.
+
+  - `feasible`/`unknown`: choose `count_cap` generously so that
+    `p * count_cap >= C` with a margin (the `p` open facilities can collectively
+    serve every customer). Assigning each customer to its nearest open facility is
+    then admissible; this point is also feasible for the LP relaxation. `unknown`
+    uses the same generous sizing (biased feasible without forcing).
+  - `infeasible`: set `count_cap = floor(C * f / p)` with `f ∈ [0.6, 0.9]`, so
+    `p * count_cap < C`. At most `p` facilities open, each serving at most
+    `count_cap` customers, so at most `p * count_cap < C` customers can be
+    assigned — yet every customer must be assigned exactly once. The aggregate
+    assignment count `sum_{w,c} y[w,c] = C` cannot be covered by the aggregate
+    service capacity `count_cap * sum_w z[w] = count_cap * p < C`, so the
+    relaxation is infeasible.
 """
-function PMedianFacilityLocationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function PMedianFacilityLocationProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # Scale-tiered ranges
@@ -127,8 +134,13 @@ function PMedianFacilityLocationProblem(target_variables::Int, feasibility_statu
     end
 
     if best_error > 0.1
-        n_facilities_approx = max(min_facilities, min(max_facilities, round(Int, sqrt(target_variables / 4))))
-        n_customers_approx = max(min_customers, min(max_customers, round(Int, (target_variables / n_facilities_approx) - 1)))
+        n_facilities_approx = max(
+            min_facilities, min(max_facilities, round(Int, sqrt(target_variables / 4)))
+        )
+        n_customers_approx = max(
+            min_customers,
+            min(max_customers, round(Int, (target_variables / n_facilities_approx) - 1)),
+        )
         best_n_facilities = n_facilities_approx
         best_n_customers = n_customers_approx
     end
@@ -157,7 +169,7 @@ function PMedianFacilityLocationProblem(target_variables::Int, feasibility_statu
     # Customers clustered into "cities".
     n_clusters = max(2, div(n_customers, 15))
     cluster_centers = [(grid_width * rand(rng), grid_height * rand(rng)) for _ in 1:n_clusters]
-    customer_locs = Tuple{Float64,Float64}[]
+    customer_locs = Tuple{Float64, Float64}[]
     for _ in 1:n_customers
         center = rand(rng, cluster_centers)
         x = clamp(center[1] + randn(rng) * (grid_width / 10), 0.0, grid_width)
@@ -168,15 +180,18 @@ function PMedianFacilityLocationProblem(target_variables::Int, feasibility_statu
     # Log-normal demands.
     log_mean = log(sqrt(min_demand * max_demand))
     log_std = log(max_demand / min_demand) / 4
-    demands = [clamp(exp(rand(rng, Normal(log_mean, log_std))), min_demand, max_demand) for _ in 1:n_customers]
-    demands = round.(demands, digits=2)
+    demands = [
+        clamp(exp(rand(rng, Normal(log_mean, log_std))), min_demand, max_demand) for
+        _ in 1:n_customers
+    ]
+    demands = round.(demands; digits=2)
 
     # Euclidean distances facility→customer.
     distances = zeros(n_facilities, n_customers)
     for w in 1:n_facilities, c in 1:n_customers
         distances[w, c] = sqrt(
             (facility_locs[w][1] - customer_locs[c][1])^2 +
-            (facility_locs[w][2] - customer_locs[c][2])^2
+            (facility_locs[w][2] - customer_locs[c][2])^2,
         )
     end
 
@@ -207,14 +222,7 @@ function PMedianFacilityLocationProblem(target_variables::Int, feasibility_statu
     end
 
     return PMedianFacilityLocationProblem(
-        n_facilities,
-        n_customers,
-        p,
-        count_cap,
-        facility_locs,
-        customer_locs,
-        demands,
-        distances,
+        n_facilities, n_customers, p, count_cap, facility_locs, customer_locs, demands, distances
     )
 end
 
@@ -225,7 +233,8 @@ Build a JuMP model for the p-median facility location problem. Deterministic —
 uses only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::PMedianFacilityLocationProblem)
     model = Model()
@@ -238,8 +247,8 @@ function build_model(prob::PMedianFacilityLocationProblem)
     @variable(model, y[1:F, 1:C], Bin)       # assign customer c to facility w
 
     # Objective: minimize total demand-weighted travel distance.
-    @objective(model, Min,
-        sum(prob.distances[w, c] * prob.demands[c] * y[w, c] for w in 1:F, c in 1:C)
+    @objective(
+        model, Min, sum(prob.distances[w, c] * prob.demands[c] * y[w, c] for w in 1:F, c in 1:C)
     )
 
     # Each customer assigned to exactly one facility.

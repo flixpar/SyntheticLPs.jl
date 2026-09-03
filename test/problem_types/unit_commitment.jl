@@ -27,9 +27,7 @@ const UNIT_COMMITMENT_REF = "unit_commitment/standard"
 
         # Tiny public targets clamp to the smallest useful formulation.
         for target in (-5, 0, 2)
-            tiny_model, tiny_problem = generate_problem(
-                UNIT_COMMITMENT_REF, target, feasible, 7
-            )
+            tiny_model, tiny_problem = generate_problem(UNIT_COMMITMENT_REF, target, feasible, 7)
             @test num_variables(tiny_model) == 48
             @test tiny_problem.n_units == 2
             @test tiny_problem.n_periods == 6
@@ -73,23 +71,22 @@ const UNIT_COMMITMENT_REF = "unit_commitment/standard"
         natural_model, _ = generate_problem(
             UNIT_COMMITMENT_REF, 120, feasible, 3; relax_integer=false
         )
-        relaxed_model, _ = generate_problem(
-            UNIT_COMMITMENT_REF, 120, feasible, 3
-        )
+        relaxed_model, _ = generate_problem(UNIT_COMMITMENT_REF, 120, feasible, 3)
         @test all(is_binary, natural_model[:on])
         @test all(is_binary, natural_model[:startup])
         @test all(is_binary, natural_model[:shutdown])
         @test all(!is_binary(variable) for variable in relaxed_model[:on])
-        @test all(has_lower_bound(variable) && lower_bound(variable) == 0.0 &&
-                  has_upper_bound(variable) && upper_bound(variable) == 1.0
-                  for variable in relaxed_model[:on])
+        @test all(
+            has_lower_bound(variable) &&
+                lower_bound(variable) == 0.0 &&
+                has_upper_bound(variable) &&
+                upper_bound(variable) == 1.0 for variable in relaxed_model[:on]
+        )
     end
 
     @testset "Constructive feasible contract" begin
         for target in (50, 120, 500, 1_200, 3_000), seed in 0:9
-            model, problem = generate_problem(
-                UNIT_COMMITMENT_REF, target, feasible, seed
-            )
+            model, problem = generate_problem(UNIT_COMMITMENT_REF, target, feasible, seed)
             @test problem.resolved_status == feasible
             @test problem.feasible_witness !== nothing
             @test problem.infeasibility_certificate === nothing
@@ -98,12 +95,10 @@ const UNIT_COMMITMENT_REF = "unit_commitment/standard"
             witness = something(problem.feasible_witness)
             @test all(problem.demand .> 0)
             @test all(problem.reserve_requirements .> 0)
-            @test all(isapprox(
-                sum(witness.generation[:, t]),
-                problem.demand[t];
-                atol=1e-7,
-                rtol=1e-10,
-            ) for t in problem.time_periods)
+            @test all(
+                isapprox(sum(witness.generation[:, t]), problem.demand[t]; atol=1e-7, rtol=1e-10)
+                for t in problem.time_periods
+            )
 
             # The stored witness is also attached as a JuMP start, and demand is
             # represented by an equality rather than a permissive lower bound.
@@ -116,8 +111,8 @@ const UNIT_COMMITMENT_REF = "unit_commitment/standard"
                 @test object.set isa UNIT_COMMITMENT_MOI.EqualTo{Float64}
                 @test object.set.value == problem.demand[t]
                 @test all(
-                    normalized_coefficient(demand_balance[t], model[:g][u, t]) == 1.0
-                    for u in problem.units
+                    normalized_coefficient(demand_balance[t], model[:g][u, t]) == 1.0 for
+                    u in problem.units
                 )
             end
         end
@@ -125,9 +120,7 @@ const UNIT_COMMITMENT_REF = "unit_commitment/standard"
 
     @testset "Explicit infeasibility certificate" begin
         for target in (50, 120, 500, 1_200, 3_000), seed in 0:9
-            _, problem = generate_problem(
-                UNIT_COMMITMENT_REF, target, infeasible, seed
-            )
+            _, problem = generate_problem(UNIT_COMMITMENT_REF, target, infeasible, seed)
             @test problem.resolved_status == infeasible
             @test problem.feasible_witness === nothing
             @test problem.infeasibility_certificate !== nothing
@@ -136,8 +129,7 @@ const UNIT_COMMITMENT_REF = "unit_commitment/standard"
             certificate = something(problem.infeasibility_certificate)
             t = certificate.period
             available = sum(
-                problem.max_output[u] * problem.availability_factors[u][t]
-                for u in problem.units
+                problem.max_output[u] * problem.availability_factors[u][t] for u in problem.units
             )
             @test isapprox(certificate.available_capacity, available; atol=1e-9)
             @test isapprox(
@@ -145,11 +137,7 @@ const UNIT_COMMITMENT_REF = "unit_commitment/standard"
                 problem.demand[t] + problem.reserve_requirements[t];
                 atol=1e-9,
             )
-            @test isapprox(
-                certificate.excess,
-                certificate.required_capacity - available;
-                atol=1e-9,
-            )
+            @test isapprox(certificate.excess, certificate.required_capacity - available; atol=1e-9)
             @test certificate.excess > 0
             # The contradiction is reserve-driven rather than requiring demand
             # alone to exceed available generation.
@@ -160,9 +148,7 @@ const UNIT_COMMITMENT_REF = "unit_commitment/standard"
     @testset "Unknown resolves to a recorded mixed profile" begin
         statuses = Set{FeasibilityStatus}()
         for seed in 0:31
-            _, problem = generate_problem(
-                UNIT_COMMITMENT_REF, 500, unknown, seed
-            )
+            _, problem = generate_problem(UNIT_COMMITMENT_REF, 500, unknown, seed)
             push!(statuses, problem.resolved_status)
             if problem.resolved_status == feasible
                 @test SyntheticLPs._unit_commitment_witness_is_valid(problem)
@@ -176,26 +162,29 @@ const UNIT_COMMITMENT_REF = "unit_commitment/standard"
     if HAS_UNIT_COMMITMENT_HIGHS
         @testset "Direct HiGHS contracts (no retry guard)" begin
             for status in (feasible, infeasible), target in (120, 500, 1_200), seed in 0:5
-                model, _ = generate_problem(
-                    UNIT_COMMITMENT_REF, target, status, seed
-                )
+                model, _ = generate_problem(UNIT_COMMITMENT_REF, target, status, seed)
                 set_optimizer(model, HiGHS.Optimizer)
                 set_silent(model)
                 optimize!(model)
-                expected = status == feasible ? UNIT_COMMITMENT_MOI.OPTIMAL :
-                                                 UNIT_COMMITMENT_MOI.INFEASIBLE
+                expected = if status == feasible
+                    UNIT_COMMITMENT_MOI.OPTIMAL
+                else
+                    UNIT_COMMITMENT_MOI.INFEASIBLE
+                end
                 @test termination_status(model) == expected
             end
             for status in (feasible, infeasible), seed in 0:2
                 model, _ = generate_problem(
-                    UNIT_COMMITMENT_REF, 120, status, seed;
-                    relax_integer=false,
+                    UNIT_COMMITMENT_REF, 120, status, seed; relax_integer=false
                 )
                 set_optimizer(model, HiGHS.Optimizer)
                 set_silent(model)
                 optimize!(model)
-                expected = status == feasible ? UNIT_COMMITMENT_MOI.OPTIMAL :
-                                                 UNIT_COMMITMENT_MOI.INFEASIBLE
+                expected = if status == feasible
+                    UNIT_COMMITMENT_MOI.OPTIMAL
+                else
+                    UNIT_COMMITMENT_MOI.INFEASIBLE
+                end
                 @test termination_status(model) == expected
             end
         end
@@ -209,9 +198,12 @@ end
         # unit_commitment/standard feasible-request: previously ~8% came back
         # infeasible (documented heuristic). The optimizer guard rejects those.
         for s in 1:10
-            m, _ = generate_problem("unit_commitment/standard", 120, feasible, s;
-                                    optimizer = HiGHS.Optimizer)
-            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            m, _ = generate_problem(
+                "unit_commitment/standard", 120, feasible, s; optimizer=HiGHS.Optimizer
+            )
+            set_optimizer(m, HiGHS.Optimizer)
+            set_silent(m)
+            optimize!(m)
             @test termination_status(m) == MOI.OPTIMAL
         end
     end

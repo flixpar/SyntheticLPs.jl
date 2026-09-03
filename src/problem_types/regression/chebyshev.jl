@@ -7,6 +7,7 @@ using Random
 Generator for Chebyshev (L∞ / minimax) regression as a linear program.
 
 # Overview
+
 Fits coefficients `beta` minimizing the maximum absolute residual
 `max_i |y_i − X_i · beta|`, subject to box bounds on the coefficients and a
 coefficient side constraint. A single scalar `t` bounds every residual
@@ -15,14 +16,15 @@ coefficient side constraint. A single scalar `t` bounds every residual
 the L1/quantile variants.
 
 # Fields
-- `n_samples::Int`: Number of observations
-- `n_features::Int`: Number of regression coefficients
-- `X::Matrix{Float64}`: Design matrix (n_samples × n_features)
-- `y::Vector{Float64}`: Response vector
-- `beta_lower::Vector{Float64}`: Lower bound on each coefficient
-- `beta_upper::Vector{Float64}`: Upper bound on each coefficient
-- `side_coef::Vector{Float64}`: Coefficients of the side constraint on `beta`
-- `side_rhs::Float64`: Right-hand side of the side constraint
+
+  - `n_samples::Int`: Number of observations
+  - `n_features::Int`: Number of regression coefficients
+  - `X::Matrix{Float64}`: Design matrix (n_samples × n_features)
+  - `y::Vector{Float64}`: Response vector
+  - `beta_lower::Vector{Float64}`: Lower bound on each coefficient
+  - `beta_upper::Vector{Float64}`: Upper bound on each coefficient
+  - `side_coef::Vector{Float64}`: Coefficients of the side constraint on `beta`
+  - `side_rhs::Float64`: Right-hand side of the side constraint
 """
 struct ChebyshevRegressionProblem <: ProblemGenerator
     n_samples::Int
@@ -41,7 +43,9 @@ end
 Construct a Chebyshev regression instance. Variables: `beta` (n_features) plus a
 single bound `t`, for a total of `n_features + 1`.
 """
-function ChebyshevRegressionProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function ChebyshevRegressionProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # Variables = n + 1; the system is heavily overdetermined in the rows.
@@ -50,9 +54,16 @@ function ChebyshevRegressionProblem(target_variables::Int, feasibility_status::F
 
     data = generate_regression_data(rng, n_features, n_samples, feasibility_status)
 
-    return ChebyshevRegressionProblem(n_samples, n_features, data.X, data.y,
-                                      data.beta_lower, data.beta_upper,
-                                      data.side_coef, data.side_rhs)
+    return ChebyshevRegressionProblem(
+        n_samples,
+        n_features,
+        data.X,
+        data.y,
+        data.beta_lower,
+        data.beta_upper,
+        data.side_coef,
+        data.side_rhs,
+    )
 end
 
 """

@@ -10,14 +10,16 @@ Generator for supply chain optimization problems with a global transportation
 carbon budget on top of the standard facility-location/transport formulation.
 
 This problem models realistic supply chain networks with:
-- Geographic clustering of customers and facilities
-- Multiple transportation modes with infrastructure availability
-- K-nearest connectivity guarantees for feasible instances
-- Facility opening costs and capacities
-- Mode-specific capacity constraints
-- A single global carbon-emission budget on all shipments
+
+  - Geographic clustering of customers and facilities
+  - Multiple transportation modes with infrastructure availability
+  - K-nearest connectivity guarantees for feasible instances
+  - Facility opening costs and capacities
+  - Mode-specific capacity constraints
+  - A single global carbon-emission budget on all shipments
 
 # Overview
+
 Models strategic supply-chain network design under a carbon cap. The decisions
 open facilities and ship customer demand from open facilities over available
 transportation modes. The objective minimizes fixed facility cost plus
@@ -34,37 +36,39 @@ cap is reliably *active*: the cost-minimizing solution must shift volume toward
 lower-emission arcs to respect it.
 
 # Fields
+
 All data generated in constructor based on target_variables and feasibility_status:
-- `n_facilities::Int`: Number of potential facility locations
-- `n_customers::Int`: Number of customer locations
-- `transport_modes::Vector{String}`: Selected transport modes
-- `facility_locs::Vector{Tuple{Float64,Float64}}`: Geographic facility locations
-- `customer_locs::Vector{Tuple{Float64,Float64}}`: Geographic customer locations
-- `cluster_centers::Vector{Tuple{Float64,Float64}}`: Cluster centers for customer distribution
-- `cluster_weights::Vector{Float64}`: Weights for cluster importance
-- `fixed_costs::Dict{Int, Float64}`: Fixed cost to open each facility
-- `demands::Dict{Int, Float64}`: Demand at each customer location
-- `capacities::Dict{Int, Float64}`: Capacity of each facility
-- `transport_costs::Dict{Tuple{Int,Int,String}, Float64}`: Transport cost per (facility, customer, mode)
-- `mode_capacities::Dict{String, Float64}`: Total capacity available for each transport mode
-- `carbon_emissions::Dict{Tuple{Int,Int,String}, Float64}`: Carbon emission per unit per (facility, customer, mode)
-- `carbon_limit::Float64`: Global transportation carbon budget
-- `total_demand::Float64`: Total demand across all customers
+
+  - `n_facilities::Int`: Number of potential facility locations
+  - `n_customers::Int`: Number of customer locations
+  - `transport_modes::Vector{String}`: Selected transport modes
+  - `facility_locs::Vector{Tuple{Float64,Float64}}`: Geographic facility locations
+  - `customer_locs::Vector{Tuple{Float64,Float64}}`: Geographic customer locations
+  - `cluster_centers::Vector{Tuple{Float64,Float64}}`: Cluster centers for customer distribution
+  - `cluster_weights::Vector{Float64}`: Weights for cluster importance
+  - `fixed_costs::Dict{Int, Float64}`: Fixed cost to open each facility
+  - `demands::Dict{Int, Float64}`: Demand at each customer location
+  - `capacities::Dict{Int, Float64}`: Capacity of each facility
+  - `transport_costs::Dict{Tuple{Int,Int,String}, Float64}`: Transport cost per (facility, customer, mode)
+  - `mode_capacities::Dict{String, Float64}`: Total capacity available for each transport mode
+  - `carbon_emissions::Dict{Tuple{Int,Int,String}, Float64}`: Carbon emission per unit per (facility, customer, mode)
+  - `carbon_limit::Float64`: Global transportation carbon budget
+  - `total_demand::Float64`: Total demand across all customers
 """
 struct CarbonSupplyChainProblem <: ProblemGenerator
     n_facilities::Int
     n_customers::Int
     transport_modes::Vector{String}
-    facility_locs::Vector{Tuple{Float64,Float64}}
-    customer_locs::Vector{Tuple{Float64,Float64}}
-    cluster_centers::Vector{Tuple{Float64,Float64}}
+    facility_locs::Vector{Tuple{Float64, Float64}}
+    customer_locs::Vector{Tuple{Float64, Float64}}
+    cluster_centers::Vector{Tuple{Float64, Float64}}
     cluster_weights::Vector{Float64}
     fixed_costs::Dict{Int, Float64}
     demands::Dict{Int, Float64}
     capacities::Dict{Int, Float64}
-    transport_costs::Dict{Tuple{Int,Int,String}, Float64}
+    transport_costs::Dict{Tuple{Int, Int, String}, Float64}
     mode_capacities::Dict{String, Float64}
-    carbon_emissions::Dict{Tuple{Int,Int,String}, Float64}
+    carbon_emissions::Dict{Tuple{Int, Int, String}, Float64}
     carbon_limit::Float64
     total_demand::Float64
 end
@@ -77,6 +81,7 @@ geographic clustering and connectivity logic, plus a global transport carbon
 budget.
 
 # Variable count
+
 Same arc set as the standard supply-chain variant:
 `n_facilities` binary `y` variables + one continuous `x` per available
 `(facility, customer, mode)` arc. The arc set is sized via `n_facilities`,
@@ -84,27 +89,32 @@ Same arc set as the standard supply-chain variant:
 total approximates `target_variables`.
 
 # Carbon budget derivation
+
 The carbon budget is anchored to a feasible reference flow (each customer served
 by its lowest-emission available arc). The cap is set just below that reference's
 emissions so the budget is reliably active without precluding feasibility, since
 a feasible (lower-emission) assignment always exists by construction.
 
 # Feasibility logic
-- `feasible`: K-nearest connectivity and capacity smoothing as in the standard
-  variant, plus a carbon budget guaranteed to admit the minimum-emission flow.
-- `infeasible`: carbon budget set strictly below a valid lower bound on the
-  emissions of *any* feasible flow (sum over customers of demand times the
-  cheapest available per-unit emission), guaranteeing a deterministic
-  contradiction with margin.
-- `unknown`: natural instance with the reference-anchored budget; no forced
-  infeasibility.
+
+  - `feasible`: K-nearest connectivity and capacity smoothing as in the standard
+    variant, plus a carbon budget guaranteed to admit the minimum-emission flow.
+  - `infeasible`: carbon budget set strictly below a valid lower bound on the
+    emissions of *any* feasible flow (sum over customers of demand times the
+    cheapest available per-unit emission), guaranteeing a deterministic
+    contradiction with margin.
+  - `unknown`: natural instance with the reference-anchored budget; no forced
+    infeasibility.
 
 # Arguments
-- `target_variables`: Target number of variables (approximately n_facilities × n_customers × n_transport_modes × infrastructure_density, plus n_facilities binaries)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (approximately n_facilities × n_customers × n_transport_modes × infrastructure_density, plus n_facilities binaries)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function CarbonSupplyChainProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # Determine problem dimensions based on target variables.
@@ -159,8 +169,13 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
     arc_target = max(1.0, target_variables - 0.0)  # binaries are a small share
     ratio = 0.5 + rand(rng) * 0.6  # 0.5-1.1
     n_facilities = max(2, round(Int, sqrt(arc_target / (n_transport_modes * eff_density)) * ratio))
-    n_customers = max(3, round(Int,
-        (target_variables - n_facilities) / (n_facilities * n_transport_modes * eff_density)))
+    n_customers = max(
+        3,
+        round(
+            Int,
+            (target_variables - n_facilities) / (n_facilities * n_transport_modes * eff_density),
+        ),
+    )
     n_facilities = min(n_facilities, 60)
     n_customers = min(n_customers, 400)
 
@@ -169,9 +184,16 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
     mode_capacity_factor = rand(rng, Uniform(0.25, 0.65))
 
     # Mode-specific carbon emission rates (per unit per distance).
-    emission_rate(mode) = mode == "truck" ? 0.1 :
-                          mode == "rail" ? 0.03 :
-                          mode == "ship" ? 0.02 : 0.5  # air
+    emission_rate(mode) =
+        if mode == "truck"
+            0.1
+        elseif mode == "rail"
+            0.03
+        elseif mode == "ship"
+            0.02
+        else
+            0.5
+        end  # air
 
     # Transport modes and costs
     all_transport_modes = ["truck", "rail", "ship", "air"]
@@ -179,13 +201,13 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
         "truck" => rand(rng, Gamma(4, 0.25)),
         "rail" => rand(rng, Gamma(3, 0.2)),
         "ship" => rand(rng, Gamma(2, 0.15)),
-        "air" => rand(rng, Gamma(6, 0.5))
+        "air" => rand(rng, Gamma(6, 0.5)),
     )
 
     # Select transport modes. Truck (the high-availability backbone) is always
     # included so the available-arc count is predictable; additional, sparser
     # modes are sampled from the rest.
-    extra_modes = sample(rng, ["rail", "ship", "air"], min(n_transport_modes - 1, 3), replace=false)
+    extra_modes = sample(rng, ["rail", "ship", "air"], min(n_transport_modes - 1, 3); replace=false)
     transport_modes = vcat(["truck"], extra_modes)
 
     # Geographic clusters
@@ -193,7 +215,7 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
     cluster_centers = [(grid_width * rand(rng), grid_height * rand(rng)) for _ in 1:n_clusters]
 
     # Facility locations (more dispersed than customers)
-    facility_locs = Vector{Tuple{Float64,Float64}}()
+    facility_locs = Vector{Tuple{Float64, Float64}}()
     for _ in 1:n_facilities
         if rand(rng) < 0.4
             center = rand(rng, cluster_centers)
@@ -209,7 +231,7 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
     end
 
     # Customer locations (more clustered)
-    customer_locs = Vector{Tuple{Float64,Float64}}()
+    customer_locs = Vector{Tuple{Float64, Float64}}()
     cluster_weights = rand(rng, Dirichlet(ones(n_clusters)))
     for _ in 1:n_customers
         cluster_idx = sample(rng, 1:n_clusters, Weights(cluster_weights))
@@ -222,8 +244,10 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
     end
 
     # Distance helper
-    dist(f, c) = sqrt((facility_locs[f][1] - customer_locs[c][1])^2 +
-                      (facility_locs[f][2] - customer_locs[c][2])^2)
+    dist(f, c) = sqrt(
+        (facility_locs[f][1] - customer_locs[c][1])^2 +
+        (facility_locs[f][2] - customer_locs[c][2])^2,
+    )
 
     # Facility fixed costs (correlated with location and market size)
     fixed_costs = Dict{Int, Float64}()
@@ -231,8 +255,10 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
         distances_to_customers = [dist(f, c) for c in 1:n_customers]
         market_potential = sum(exp.(-distances_to_customers ./ (grid_width * 0.2)))
         location_factor = (facility_locs[f][1] / grid_width + facility_locs[f][2] / grid_height) / 2
-        base_cost = min_fixed_cost + (max_fixed_cost - min_fixed_cost) *
-                   (0.2 + 0.5 * market_potential / n_customers + 0.3 * location_factor)
+        base_cost =
+            min_fixed_cost +
+            (max_fixed_cost - min_fixed_cost) *
+            (0.2 + 0.5 * market_potential / n_customers + 0.3 * location_factor)
         fixed_costs[f] = base_cost * rand(rng, LogNormal(log(1.0), 0.25))
     end
 
@@ -240,8 +266,8 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
     demands = Dict{Int, Float64}()
     for c in 1:n_customers
         distances_to_clusters = [
-            sqrt((customer_locs[c][1] - center[1])^2 + (customer_locs[c][2] - center[2])^2)
-            for center in cluster_centers
+            sqrt((customer_locs[c][1] - center[1])^2 + (customer_locs[c][2] - center[2])^2) for
+            center in cluster_centers
         ]
         _, cluster_idx = findmin(distances_to_clusters)
         cluster_influence = cluster_weights[cluster_idx]
@@ -254,16 +280,17 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
     avg_capacity = (total_demand / n_facilities) * capacity_factor
     capacities = Dict{Int, Float64}()
     for f in 1:n_facilities
-        relative_cost = (fixed_costs[f] - minimum(values(fixed_costs))) /
-                       max(1.0, maximum(values(fixed_costs)) - minimum(values(fixed_costs)))
+        relative_cost =
+            (fixed_costs[f] - minimum(values(fixed_costs))) /
+            max(1.0, maximum(values(fixed_costs)) - minimum(values(fixed_costs)))
         base_capacity = avg_capacity * (0.6 + 0.8 * relative_cost)
         capacities[f] = base_capacity * rand(rng, Gamma(3, 1/3))
     end
 
     # Transport costs, emissions, and infrastructure availability
-    transport_costs = Dict{Tuple{Int,Int,String}, Float64}()
-    carbon_emissions = Dict{Tuple{Int,Int,String}, Float64}()
-    infrastructure = Dict{Tuple{Int,Int,String}, Bool}()
+    transport_costs = Dict{Tuple{Int, Int, String}, Float64}()
+    carbon_emissions = Dict{Tuple{Int, Int, String}, Float64}()
+    infrastructure = Dict{Tuple{Int, Int, String}, Bool}()
     max_demand_val = maximum(values(demands))
 
     for f in 1:n_facilities
@@ -275,20 +302,26 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
                 elseif mode == "rail"
                     min(0.8, 0.3 + 0.5 * (distance / sqrt(grid_width^2 + grid_height^2)))
                 elseif mode == "ship"
-                    any(loc -> abs(loc[2]) < grid_height * 0.1, [facility_locs[f], customer_locs[c]]) ? 0.8 : 0.0
+                    if any(loc -> abs(loc[2]) < grid_height * 0.1, [facility_locs[f], customer_locs[c]])
+                        0.8
+                    else
+                        0.0
+                    end
                 else  # air
                     distance > sqrt(grid_width^2 + grid_height^2) * 0.3 ? 0.7 : 0.2
                 end
 
-                infrastructure[(f,c,mode)] = rand(rng) < prob_available * infrastructure_density
+                infrastructure[(f, c, mode)] = rand(rng) < prob_available * infrastructure_density
 
-                if infrastructure[(f,c,mode)]
+                if infrastructure[(f, c, mode)]
                     base_cost = get(transport_base_costs, mode, 1.0)
                     terrain_factor = rand(rng, LogNormal(log(1.0), 0.15))
                     volume_factor = 1.0 - 0.25 * (demands[c] / max_demand_val)
                     efficiency_factor = rand(rng, Beta(3, 2)) * 0.4 + 0.8
-                    transport_costs[(f,c,mode)] = base_cost * distance * terrain_factor * volume_factor * efficiency_factor
-                    carbon_emissions[(f,c,mode)] = emission_rate(mode) * distance * rand(rng, Uniform(0.9, 1.1))
+                    transport_costs[(f, c, mode)] =
+                        base_cost * distance * terrain_factor * volume_factor * efficiency_factor
+                    carbon_emissions[(f, c, mode)] =
+                        emission_rate(mode) * distance * rand(rng, Uniform(0.9, 1.1))
                 end
             end
         end
@@ -311,8 +344,8 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
     end
 
     # Keep only available routes
-    transport_costs = Dict(k => v for (k,v) in transport_costs if get(infrastructure, k, false))
-    carbon_emissions = Dict(k => v for (k,v) in carbon_emissions if get(infrastructure, k, false))
+    transport_costs = Dict(k => v for (k, v) in transport_costs if get(infrastructure, k, false))
+    carbon_emissions = Dict(k => v for (k, v) in carbon_emissions if get(infrastructure, k, false))
 
     # FEASIBILITY ENFORCEMENT (mirrors the standard variant for connectivity/capacity)
     if feasibility_status == feasible
@@ -331,8 +364,10 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
                     volume_factor = 1.0 - 0.25 * (demands[c] / max_demand_val)
                     efficiency_factor = rand(rng, Beta(3, 2)) * 0.4 + 0.8
                     infrastructure[(f, c, fallback_mode)] = true
-                    transport_costs[(f, c, fallback_mode)] = base_cost * distance * terrain_factor * volume_factor * efficiency_factor
-                    carbon_emissions[(f, c, fallback_mode)] = emission_rate(fallback_mode) * distance * rand(rng, Uniform(0.9, 1.1))
+                    transport_costs[(f, c, fallback_mode)] =
+                        base_cost * distance * terrain_factor * volume_factor * efficiency_factor
+                    carbon_emissions[(f, c, fallback_mode)] =
+                        emission_rate(fallback_mode) * distance * rand(rng, Uniform(0.9, 1.1))
                 end
                 push!(customers_linked_to_facility[f], c)
             end
@@ -342,7 +377,9 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
         approx_share = zeros(Float64, n_facilities)
         for f in 1:n_facilities
             for c in customers_linked_to_facility[f]
-                n_links = length([ff for ff in 1:n_facilities if c in customers_linked_to_facility[ff]])
+                n_links = length([
+                    ff for ff in 1:n_facilities if c in customers_linked_to_facility[ff]
+                ])
                 approx_share[f] += demands[c] / n_links
             end
         end
@@ -387,10 +424,10 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
 
     # --- Carbon budget derivation ---
     # Group available arcs by customer (with per-unit emission and mode).
-    arcs_by_customer = Dict{Int, Vector{Tuple{Int,String,Float64}}}()
+    arcs_by_customer = Dict{Int, Vector{Tuple{Int, String, Float64}}}()
     for k in keys(carbon_emissions)
         f, c, m = k
-        push!(get!(arcs_by_customer, c, Tuple{Int,String,Float64}[]), (f, m, carbon_emissions[k]))
+        push!(get!(arcs_by_customer, c, Tuple{Int, String, Float64}[]), (f, m, carbon_emissions[k]))
     end
 
     # Lower bound on total emissions for ANY feasible flow: each customer's full
@@ -443,7 +480,7 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
         for c in 1:n_customers
             haskey(arcs_by_customer, c) || continue
             d = demands[c]
-            cands = sort(arcs_by_customer[c], by = t -> t[3])
+            cands = sort(arcs_by_customer[c]; by=t -> t[3])
             idx = findfirst(t -> remaining_fac[t[1]] >= d && remaining_mode[t[2]] >= d, cands)
             f, m, e = idx === nothing ? cands[1] : cands[idx]
             remaining_fac[f] = max(0.0, remaining_fac[f] - d)
@@ -468,7 +505,7 @@ function CarbonSupplyChainProblem(target_variables::Int, feasibility_status::Fea
         mode_capacities,
         carbon_emissions,
         carbon_limit,
-        total_demand
+        total_demand,
     )
 end
 
@@ -478,10 +515,12 @@ end
 Build a JuMP model for the carbon-constrained supply chain problem (deterministic).
 
 # Arguments
-- `prob`: CarbonSupplyChainProblem instance
+
+  - `prob`: CarbonSupplyChainProblem instance
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::CarbonSupplyChainProblem)
     model = Model()
@@ -490,15 +529,20 @@ function build_model(prob::CarbonSupplyChainProblem)
     @variable(model, y[1:prob.n_facilities], Bin)
 
     # Available (facility, customer, mode) arcs
-    valid_combinations = [(f,c,m) for f in 1:prob.n_facilities, c in 1:prob.n_customers, m in prob.transport_modes
-                          if haskey(prob.transport_costs, (f,c,m))]
+    valid_combinations = [
+        (f, c, m) for
+        f in 1:prob.n_facilities, c in 1:prob.n_customers, m in prob.transport_modes if
+        haskey(prob.transport_costs, (f, c, m))
+    ]
 
     @variable(model, x[valid_combinations] >= 0)
 
     # Objective: minimize fixed facility cost plus transportation cost
-    @objective(model, Min,
+    @objective(
+        model,
+        Min,
         sum(prob.fixed_costs[f] * y[f] for f in 1:prob.n_facilities) +
-        sum(prob.transport_costs[combo] * x[combo] for combo in valid_combinations)
+            sum(prob.transport_costs[combo] * x[combo] for combo in valid_combinations)
     )
 
     # Customer demand satisfaction
@@ -510,7 +554,9 @@ function build_model(prob::CarbonSupplyChainProblem)
     # Facility capacity (gated by open decision)
     for f in 1:prob.n_facilities
         combos_for_facility = filter(combo -> combo[1] == f, valid_combinations)
-        @constraint(model, sum(x[combo] for combo in combos_for_facility) <= prob.capacities[f] * y[f])
+        @constraint(
+            model, sum(x[combo] for combo in combos_for_facility) <= prob.capacities[f] * y[f]
+        )
     end
 
     # Per-mode transport capacity
@@ -520,8 +566,10 @@ function build_model(prob::CarbonSupplyChainProblem)
     end
 
     # Global transportation carbon budget
-    @constraint(model,
-        sum(prob.carbon_emissions[combo] * x[combo] for combo in valid_combinations) <= prob.carbon_limit
+    @constraint(
+        model,
+        sum(prob.carbon_emissions[combo] * x[combo] for combo in valid_combinations) <=
+            prob.carbon_limit
     )
 
     return model

@@ -56,13 +56,19 @@ struct StochasticOverbookingRevenueProblem <: ProblemGenerator
     market_profile::Symbol
     show_profile::Symbol
     resolved_status::FeasibilityStatus
-    feasible_witness::Union{Nothing,StochasticOverbookingWitness}
-    infeasibility_certificate::Union{Nothing,StochasticOverbookingCertificate}
+    feasible_witness::Union{Nothing, StochasticOverbookingWitness}
+    infeasibility_certificate::Union{Nothing, StochasticOverbookingCertificate}
 end
 
 function _plan_overbooking_dimensions(target_variables::Int)
     target = max(target_variables, 14) # two products and three scenarios
-    scenario_range = target < 150 ? (3:5) : target < 1_200 ? (4:8) : (6:12)
+    scenario_range = if target < 150
+        (3:5)
+    elseif target < 1_200
+        (4:8)
+    else
+        (6:12)
+    end
     preferred = (first(scenario_range) + last(scenario_range)) / 2
     best = (typemax(Int), Inf, 2, first(scenario_range))
     for n_scenarios in scenario_range
@@ -85,13 +91,16 @@ end
 end
 
 function _generate_show_rates(
-    rng::AbstractRNG,
-    products::Vector{RevenueManagementProduct},
-    n_scenarios::Int,
+    rng::AbstractRNG, products::Vector{RevenueManagementProduct}, n_scenarios::Int
 )
     profile_draw = rand(rng)
-    show_profile = profile_draw < 0.4 ? :stable_business :
-                   profile_draw < 0.78 ? :mixed_leisure : :disruption_prone
+    show_profile = if profile_draw < 0.4
+        :stable_business
+    elseif profile_draw < 0.78
+        :mixed_leisure
+    else
+        :disruption_prone
+    end
     scenario_factor = if show_profile == :stable_business
         rand(rng, Uniform(0.96, 1.025), n_scenarios)
     elseif show_profile == :mixed_leisure
@@ -125,26 +134,24 @@ show-ups `served[p,s]`, and denied show-ups `denied[p,s]`, for an exact total of
 `n_products * (1 + 2*n_scenarios)`.
 """
 function StochasticOverbookingRevenueProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
-    resolved_status = feasibility_status == unknown ?
-                      (rand(rng) < 0.70 ? feasible : infeasible) : feasibility_status
+    resolved_status = if feasibility_status == unknown
+        (rand(rng) < 0.70 ? feasible : infeasible)
+    else
+        feasibility_status
+    end
     n_products, n_scenarios = _plan_overbooking_dimensions(target_variables)
     resource_ratio = rand(rng, Uniform(3.0, 5.5))
     n_resources = clamp(round(Int, n_products / resource_ratio), 2, min(n_products, 80))
 
     profile = _sample_revenue_market_profile(rng)
-    n_nodes, resource_names, resource_origin, resource_destination =
-        _generate_revenue_network(n_resources)
+    n_nodes, resource_names, resource_origin, resource_destination = _generate_revenue_network(
+        n_resources
+    )
     products, fare, demand = _generate_revenue_products(
-        rng,
-        n_products,
-        resource_origin,
-        resource_destination,
-        profile,
+        rng, n_products, resource_origin, resource_destination, profile
     )
     product_resources = [copy(product.resources) for product in products]
     resource_products = [Int[] for _ in 1:n_resources]
@@ -193,18 +200,14 @@ function StochasticOverbookingRevenueProblem(
     for r in 1:n_resources
         products_on_leg = resource_products[r]
         forecast_load = sum(
-            scenario_probability[s] * show_rate[j, s] * demand[j]
-            for j in products_on_leg, s in 1:n_scenarios
+            scenario_probability[s] * show_rate[j, s] * demand[j] for
+            j in products_on_leg, s in 1:n_scenarios
         )
         witness_load = maximum(
-            sum(show_rate[j, s] * commitment[j] for j in products_on_leg)
-            for s in 1:n_scenarios
+            sum(show_rate[j, s] * commitment[j] for j in products_on_leg) for s in 1:n_scenarios
         )
         schedule_capacity = rand(rng, Uniform(profile.seat_capacity...))
-        natural_capacity = min(
-            schedule_capacity,
-            forecast_load * rand(rng, Uniform(0.52, 0.78)),
-        )
+        natural_capacity = min(schedule_capacity, forecast_load * rand(rng, Uniform(0.52, 0.78)))
         capacity[r] = max(natural_capacity, 1.07 * witness_load + 0.5)
     end
 
@@ -219,16 +222,14 @@ function StochasticOverbookingRevenueProblem(
         affected_products = resource_products[critical_resource]
         for j in affected_products
             commitment[j] = max(
-                commitment[j],
-                round(demand[j] * rand(rng, Uniform(0.30, 0.58)); digits=3),
+                commitment[j], round(demand[j] * rand(rng, Uniform(0.30, 0.58)); digits=3)
             )
         end
         mandatory_by_scenario = [
             sum(
-                (1.0 - max_denied_fraction[j]) * show_rate[j, s] * commitment[j]
-                for j in affected_products
-            )
-            for s in 1:n_scenarios
+                (1.0 - max_denied_fraction[j]) * show_rate[j, s] * commitment[j] for
+                j in affected_products
+            ) for s in 1:n_scenarios
         ]
         mandatory_service_load, critical_scenario = findmax(mandatory_by_scenario)
         capacity[critical_resource] = mandatory_service_load * rand(rng, Uniform(0.70, 0.88))
@@ -277,8 +278,7 @@ function StochasticOverbookingRevenueProblem(
 end
 
 function _stochastic_overbooking_witness_is_valid(
-    problem::StochasticOverbookingRevenueProblem;
-    atol::Float64=1e-8,
+    problem::StochasticOverbookingRevenueProblem; atol::Float64=1e-8
 )
     problem.resolved_status == feasible || return false
     problem.infeasibility_certificate === nothing || return false
@@ -298,8 +298,9 @@ function _stochastic_overbooking_witness_is_valid(
             denied >= -atol || return false
             abs(served + denied - problem.show_rate[j, s] * witness.bookings[j]) <= atol ||
                 return false
-            denied <= problem.max_denied_fraction[j] * problem.show_rate[j, s] *
-                      witness.bookings[j] + atol || return false
+            denied <=
+            problem.max_denied_fraction[j] * problem.show_rate[j, s] * witness.bookings[j] + atol ||
+                return false
         end
     end
     for s in 1:problem.n_scenarios
@@ -313,8 +314,7 @@ function _stochastic_overbooking_witness_is_valid(
 end
 
 function _stochastic_overbooking_certificate_is_valid(
-    problem::StochasticOverbookingRevenueProblem;
-    atol::Float64=1e-8,
+    problem::StochasticOverbookingRevenueProblem; atol::Float64=1e-8
 )
     problem.resolved_status == infeasible || return false
     problem.feasible_witness === nothing || return false
@@ -325,17 +325,12 @@ function _stochastic_overbooking_certificate_is_valid(
 
     mandatory = sum(
         (1.0 - problem.max_denied_fraction[j]) *
-        problem.show_rate[j, certificate.scenario] * problem.commitment[j]
-        for j in problem.resource_products[certificate.resource]
+        problem.show_rate[j, certificate.scenario] *
+        problem.commitment[j] for j in problem.resource_products[certificate.resource]
     )
-    isapprox(certificate.mandatory_service_load, mandatory; atol=atol, rtol=1e-10) ||
+    isapprox(certificate.mandatory_service_load, mandatory; atol=atol, rtol=1e-10) || return false
+    isapprox(certificate.capacity, problem.capacity[certificate.resource]; atol=atol, rtol=1e-10) ||
         return false
-    isapprox(
-        certificate.capacity,
-        problem.capacity[certificate.resource];
-        atol=atol,
-        rtol=1e-10,
-    ) || return false
     isapprox(
         certificate.excess,
         mandatory - problem.capacity[certificate.resource];
@@ -351,10 +346,7 @@ function build_model(problem::StochasticOverbookingRevenueProblem)
     S = 1:problem.n_scenarios
     R = 1:problem.n_resources
 
-    @variable(
-        model,
-        problem.commitment[j] <= bookings[j in P] <= problem.demand[j],
-    )
+    @variable(model, problem.commitment[j] <= bookings[j in P] <= problem.demand[j],)
     @variable(model, served[P, S] >= 0)
     @variable(model, denied[P, S] >= 0)
 
@@ -373,11 +365,9 @@ function build_model(problem::StochasticOverbookingRevenueProblem)
         model,
         Max,
         sum(
-            problem.scenario_probability[s] * (
-                problem.fare[j] * served[j, s] -
-                problem.denied_service_cost[j] * denied[j, s]
-            )
-            for j in P, s in S
+            problem.scenario_probability[s] *
+            (problem.fare[j] * served[j, s] - problem.denied_service_cost[j] * denied[j, s]) for
+            j in P, s in S
         ),
     )
     @constraint(
@@ -388,8 +378,7 @@ function build_model(problem::StochasticOverbookingRevenueProblem)
     @constraint(
         model,
         product_denial_cap[j in P, s in S],
-        denied[j, s] <=
-            problem.max_denied_fraction[j] * problem.show_rate[j, s] * bookings[j],
+        denied[j, s] <= problem.max_denied_fraction[j] * problem.show_rate[j, s] * bookings[j],
     )
     @constraint(
         model,

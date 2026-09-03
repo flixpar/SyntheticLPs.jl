@@ -10,12 +10,13 @@ nonnegative general-integer variable. The generated pattern matrix includes a
 direct pattern for each piece type plus diverse mixed patterns.
 
 # Fields
-- `stock_length`: Length of one stock roll.
-- `piece_lengths`: Requested piece lengths.
-- `demands`: Minimum production by piece type.
-- `patterns`: Piece-type by pattern matrix.
-- `stock_limit`: Maximum total pattern usage.
-- `planted_usage`: Integer witness used to generate feasible demands.
+
+  - `stock_length`: Length of one stock roll.
+  - `piece_lengths`: Requested piece lengths.
+  - `demands`: Minimum production by piece type.
+  - `patterns`: Piece-type by pattern matrix.
+  - `stock_limit`: Maximum total pattern usage.
+  - `planted_usage`: Integer witness used to generate feasible demands.
 """
 struct IntegerPatternCuttingStockProblem <: ProblemGenerator
     stock_length::Int
@@ -38,10 +39,7 @@ end
 # inserted first so every demand row is coverable; random mixed patterns are
 # followed by deterministic single/pair enumeration as a guaranteed fallback.
 function ics_generate_patterns(
-    rng::AbstractRNG,
-    stock_length::Int,
-    piece_lengths::Vector{Int},
-    n_patterns::Int,
+    rng::AbstractRNG, stock_length::Int, piece_lengths::Vector{Int}, n_patterns::Int
 )
     n_types = length(piece_lengths)
     patterns = Vector{Vector{Int}}()
@@ -118,9 +116,7 @@ when general-integer variables are relaxed. `unknown` places the limit near that
 lower bound without asserting a result.
 """
 function IntegerPatternCuttingStockProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     target_variables >= 1 ||
         throw(ArgumentError("target_variables must be positive (got $target_variables)"))
@@ -146,8 +142,9 @@ function IntegerPatternCuttingStockProblem(
     end
 
     planted_production = patterns * planted_usage
-    demands = [max(1, floor(Int, produced * (0.65 + 0.25 * rand(rng))))
-               for produced in planted_production]
+    demands = [
+        max(1, floor(Int, produced * (0.65 + 0.25 * rand(rng)))) for produced in planted_production
+    ]
     planted_stock = sum(planted_usage)
     volume_lower_bound = sum(piece_lengths .* demands) / stock_length
 
@@ -160,12 +157,7 @@ function IntegerPatternCuttingStockProblem(
     end
 
     return IntegerPatternCuttingStockProblem(
-        stock_length,
-        piece_lengths,
-        demands,
-        patterns,
-        stock_limit,
-        planted_usage,
+        stock_length, piece_lengths, demands, patterns, stock_limit, planted_usage
     )
 end
 
@@ -185,8 +177,9 @@ function build_model(prob::IntegerPatternCuttingStockProblem)
     for piece in 1:n_piece_types
         @constraint(
             model,
-            sum(prob.patterns[piece, pattern] * pattern_usage[pattern]
-                for pattern in 1:n_patterns) >= prob.demands[piece],
+            sum(
+                prob.patterns[piece, pattern] * pattern_usage[pattern] for pattern in 1:n_patterns
+            ) >= prob.demands[piece],
         )
     end
     @constraint(model, sum(pattern_usage) <= prob.stock_limit)
@@ -200,4 +193,3 @@ register_variant(
     IntegerPatternCuttingStockProblem,
     "Integer cutting stock with general-integer pattern counts and a relaxation-safe stock-volume certificate",
 )
-

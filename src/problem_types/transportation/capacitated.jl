@@ -9,6 +9,7 @@ Generator for capacitated transportation problems that optimize shipping goods f
 sources to destinations at minimum cost subject to per-lane capacity limits.
 
 # Overview
+
 Extends the classic transportation problem with an explicit capacity on every
 individual source-destination lane (route). The decisions are shipment amounts on
 each lane. The objective minimizes total shipping cost. Source constraints limit
@@ -18,12 +19,13 @@ its route capacity `route_capacities[i, j]`. A capacity of `Inf` denotes an
 unlimited lane; finite capacities are real upper bounds.
 
 # Fields
-- `n_sources::Int`: Number of supply sources
-- `n_destinations::Int`: Number of demand destinations
-- `supplies::Vector{Int}`: Supply at each source
-- `demands::Vector{Int}`: Demand at each destination
-- `costs::Matrix{Float64}`: Transportation cost from each source to each destination
-- `route_capacities::Matrix{Float64}`: Per-lane shipment capacity (may be `Inf` for unlimited lanes)
+
+  - `n_sources::Int`: Number of supply sources
+  - `n_destinations::Int`: Number of demand destinations
+  - `supplies::Vector{Int}`: Supply at each source
+  - `demands::Vector{Int}`: Demand at each destination
+  - `costs::Matrix{Float64}`: Transportation cost from each source to each destination
+  - `route_capacities::Matrix{Float64}`: Per-lane shipment capacity (may be `Inf` for unlimited lanes)
 """
 struct CapacitatedTransportationProblem <: ProblemGenerator
     n_sources::Int
@@ -44,11 +46,14 @@ is exactly `n_sources * n_destinations`; the dimensions are sized so this lands 
 `target_variables`.
 
 # Arguments
-- `target_variables`: Target number of variables (n_sources × n_destinations)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (n_sources × n_destinations)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function CapacitatedTransportationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function CapacitatedTransportationProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
@@ -104,8 +109,10 @@ function CapacitatedTransportationProblem(target_variables::Int, feasibility_sta
 
     distances = zeros(n_sources, n_destinations)
     for i in 1:n_sources, j in 1:n_destinations
-        distances[i, j] = sqrt((source_positions[i][1] - dest_positions[j][1])^2 +
-                               (source_positions[i][2] - dest_positions[j][2])^2)
+        distances[i, j] = sqrt(
+            (source_positions[i][1] - dest_positions[j][1])^2 +
+            (source_positions[i][2] - dest_positions[j][2])^2,
+        )
     end
 
     # Generate costs based on distances with variation
@@ -130,7 +137,7 @@ function CapacitatedTransportationProblem(target_variables::Int, feasibility_sta
     # Helper function to distribute additions across a vector
     function distribute_additions!(vec::Vector{Int}, amount::Int)
         if amount <= 0
-            return
+            return nothing
         end
         w = rand(rng, length(vec))
         w_sum = sum(w)
@@ -201,7 +208,9 @@ function CapacitatedTransportationProblem(target_variables::Int, feasibility_sta
     end
     # For `unknown`, leave supplies, demands, and capacities exactly as generated.
 
-    return CapacitatedTransportationProblem(n_sources, n_destinations, supplies, demands, costs, route_capacities)
+    return CapacitatedTransportationProblem(
+        n_sources, n_destinations, supplies, demands, costs, route_capacities
+    )
 end
 
 """
@@ -211,7 +220,8 @@ Build a JuMP model for the capacitated transportation problem. Deterministic —
 only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::CapacitatedTransportationProblem)
     model = Model()
@@ -220,8 +230,11 @@ function build_model(prob::CapacitatedTransportationProblem)
     @variable(model, x[1:prob.n_sources, 1:prob.n_destinations] >= 0)
 
     # Objective: minimize total shipping cost.
-    @objective(model, Min, sum(prob.costs[i, j] * x[i, j]
-                               for i in 1:prob.n_sources, j in 1:prob.n_destinations))
+    @objective(
+        model,
+        Min,
+        sum(prob.costs[i, j] * x[i, j] for i in 1:prob.n_sources, j in 1:prob.n_destinations)
+    )
 
     # Supply constraints.
     for i in 1:prob.n_sources

@@ -16,12 +16,13 @@ classes per placement decision also reproduce the continuous-variable-heavy
 shape of collected discrete load-balancing models.
 
 # Fields
-- `n_services`, `n_machines`, `n_classes`: Formulation dimensions.
-- `demand`: Workload demand by traffic class and service.
-- `processing_time`: Machine time per unit workload by service and machine.
-- `machine_capacity`: Maximum load on each machine.
-- `max_replicas`: Maximum placements allowed for each service.
-- `planted_machine`: A primary machine for each service, used as the feasible witness.
+
+  - `n_services`, `n_machines`, `n_classes`: Formulation dimensions.
+  - `demand`: Workload demand by traffic class and service.
+  - `processing_time`: Machine time per unit workload by service and machine.
+  - `machine_capacity`: Maximum load on each machine.
+  - `max_replicas`: Maximum placements allowed for each service.
+  - `planted_machine`: A primary machine for each service, used as the feasible witness.
 """
 struct DiscretePlacementLoadBalancingProblem <: ProblemGenerator
     n_services::Int
@@ -62,9 +63,7 @@ are relaxed. `unknown` distributes capacity near that lower bound without
 asserting feasibility.
 """
 function DiscretePlacementLoadBalancingProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     target_variables >= 1 ||
         throw(ArgumentError("target_variables must be positive (got $target_variables)"))
@@ -80,8 +79,9 @@ function DiscretePlacementLoadBalancingProblem(
     fixed_continuous = n_machines + 1
     n_classes = max(
         1,
-        round(Int, (target_variables - placement_variables - fixed_continuous) /
-                   placement_variables),
+        round(
+            Int, (target_variables - placement_variables - fixed_continuous) / placement_variables
+        ),
     )
 
     demand = [5.0 + 45.0 * rand(rng) for _ in 1:n_classes, _ in 1:n_services]
@@ -91,32 +91,29 @@ function DiscretePlacementLoadBalancingProblem(
     service_scale = [0.7 + 0.6 * rand(rng) for _ in 1:n_services]
     machine_scale = [0.7 + 0.6 * rand(rng) for _ in 1:n_machines]
     processing_time = [
-        service_scale[service] / machine_scale[machine] * (0.85 + 0.30 * rand(rng))
-        for service in 1:n_services, machine in 1:n_machines
+        service_scale[service] / machine_scale[machine] * (0.85 + 0.30 * rand(rng)) for
+        service in 1:n_services, machine in 1:n_machines
     ]
 
     # Use a permutation so the planted placement spreads services across
     # machines instead of creating an artificial single-machine bottleneck.
     machine_order = randperm(rng, n_machines)
-    planted_machine = [machine_order[mod1(service, n_machines)]
-                       for service in 1:n_services]
+    planted_machine = [machine_order[mod1(service, n_machines)] for service in 1:n_services]
     max_replicas = [rand(rng, 2:min(4, n_machines)) for _ in 1:n_services]
 
     planted_load = zeros(Float64, n_machines)
     for service in 1:n_services
         machine = planted_machine[service]
-        planted_load[machine] +=
-            processing_time[service, machine] * sum(demand[:, service])
+        planted_load[machine] += processing_time[service, machine] * sum(demand[:, service])
     end
 
     aggregate_lower_bound = sum(
-        demand[traffic_class, service] * minimum(processing_time[service, :])
-        for traffic_class in 1:n_classes, service in 1:n_services
+        demand[traffic_class, service] * minimum(processing_time[service, :]) for
+        traffic_class in 1:n_classes, service in 1:n_services
     )
 
     machine_capacity = if feasibility_status == feasible
-        [max(1.0, planted_load[machine] * (1.10 + 0.25 * rand(rng)))
-         for machine in 1:n_machines]
+        [max(1.0, planted_load[machine] * (1.10 + 0.25 * rand(rng))) for machine in 1:n_machines]
     else
         capacity_weights = [0.5 + rand(rng) for _ in 1:n_machines]
         capacity_weights ./= sum(capacity_weights)
@@ -164,8 +161,7 @@ function build_model(prob::DiscretePlacementLoadBalancingProblem)
         @constraint(model, sum(placement[service, machine] for machine in 1:M) >= 1)
         @constraint(
             model,
-            sum(placement[service, machine] for machine in 1:M) <=
-                prob.max_replicas[service],
+            sum(placement[service, machine] for machine in 1:M) <= prob.max_replicas[service],
         )
         for traffic_class in 1:K
             @constraint(
@@ -186,12 +182,10 @@ function build_model(prob::DiscretePlacementLoadBalancingProblem)
     for machine in 1:M
         @constraint(
             model,
-            machine_load[machine] ==
-                sum(
-                    prob.processing_time[service, machine] *
-                    workload[traffic_class, service, machine]
-                    for traffic_class in 1:K, service in 1:S
-                ),
+            machine_load[machine] == sum(
+                prob.processing_time[service, machine] * workload[traffic_class, service, machine]
+                for traffic_class in 1:K, service in 1:S
+            ),
         )
         @constraint(model, machine_load[machine] <= makespan)
     end
@@ -201,8 +195,7 @@ function build_model(prob::DiscretePlacementLoadBalancingProblem)
     @objective(
         model,
         Min,
-        makespan + 1.0e-4 * sum(placement[service, machine]
-                                for service in 1:S, machine in 1:M),
+        makespan + 1.0e-4 * sum(placement[service, machine] for service in 1:S, machine in 1:M),
     )
 
     return model
@@ -214,4 +207,3 @@ register_variant(
     DiscretePlacementLoadBalancingProblem,
     "Discrete service placement with binary deployments, continuous workload routing, machine capacities, and makespan minimization",
 )
-

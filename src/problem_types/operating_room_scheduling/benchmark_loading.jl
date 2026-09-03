@@ -37,8 +37,8 @@ struct LeeftinkHansORSchedulingProblem <: ProblemGenerator
     overtime_cost::Vector{Float64}
     max_overtime::Vector{Float64}
     mandatory::BitVector
-    feasible_witness::Union{Nothing,Vector{Int}}
-    infeasibility_excess::Union{Nothing,Float64}
+    feasible_witness::Union{Nothing, Vector{Int}}
+    infeasibility_excess::Union{Nothing, Float64}
     feasibility_status::FeasibilityStatus
 end
 
@@ -59,19 +59,21 @@ function _benchmark_case_list(rng::AbstractRNG, n_or_days::Int, load::Float64)
     # benchmark's proximity-based list selection and reliably meets 2.5%.
     while sum(means) < target_minutes - tolerance_minutes
         residual = target_minutes - sum(means)
-        candidates = Tuple{Int,Any}[]
+        candidates = Tuple{Int, Any}[]
         for _ in 1:32
             k = _orsched_pick(rng, specialty_cum)
             push!(candidates, (k, _orsched_sample_benchmark_type(rng, k)))
         end
-        feasible_candidates = [(k, t) for (k, t) in candidates
-                               if _orsched_type_mean(t) <=
-                                  residual + tolerance_minutes]
-        chosen = isempty(feasible_candidates) ?
-                 candidates[argmin([abs(_orsched_type_mean(t) - residual)
-                                    for (_, t) in candidates])] :
-                 feasible_candidates[argmin([abs(_orsched_type_mean(t) - residual)
-                                             for (_, t) in feasible_candidates])]
+        feasible_candidates = [
+            (k, t) for (k, t) in candidates if _orsched_type_mean(t) <= residual + tolerance_minutes
+        ]
+        chosen = if isempty(feasible_candidates)
+            candidates[argmin([abs(_orsched_type_mean(t) - residual) for (_, t) in candidates])]
+        else
+            feasible_candidates[argmin([
+                abs(_orsched_type_mean(t) - residual) for (_, t) in feasible_candidates
+            ])]
+        end
         k, t = chosen
         push!(codes, _ORSCHED_SPECIALTIES[k].code)
         push!(ids, t.id)
@@ -82,8 +84,9 @@ function _benchmark_case_list(rng::AbstractRNG, n_or_days::Int, load::Float64)
         push!(realized, t.gamma + rand(rng, LogNormal(t.mu, t.sigma)))
         length(means) > 20_000 && error("benchmark case-list generation did not converge")
     end
-    return (codes=codes, ids=ids, mus=mus, sigmas=sigmas, gammas=gammas,
-            means=means, realized=realized)
+    return (
+        codes=codes, ids=ids, mus=mus, sigmas=sigmas, gammas=gammas, means=means, realized=realized
+    )
 end
 
 function _benchmark_lpt_assignment(duration::Vector{Float64}, n_or_days::Int)
@@ -97,14 +100,16 @@ function _benchmark_lpt_assignment(duration::Vector{Float64}, n_or_days::Int)
     return assignment, load
 end
 
-function LeeftinkHansORSchedulingProblem(target_variables::Int,
-                                         feasibility_status::FeasibilityStatus,
-                                         seed::Int)
+function LeeftinkHansORSchedulingProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
     target = max(target_variables, 20)
-    requested_load = feasibility_status == infeasible ?
-                     rand(rng, _ORSCHED_BENCHMARK_LOADS[6:end]) :
-                     _orsched_load_target(rng)
+    requested_load = if feasibility_status == infeasible
+        rand(rng, _ORSCHED_BENCHMARK_LOADS[6:end])
+    else
+        _orsched_load_target(rng)
+    end
 
     best = nothing
     best_gap = Inf
@@ -150,17 +155,34 @@ function LeeftinkHansORSchedulingProblem(target_variables::Int,
         excess = sum(expected) - 480.0 * n_or_days
         @assert excess > 0
     else
-        n_mandatory = clamp(round(Int, rand(rng, Uniform(0.08, 0.18)) * n_surgeries),
-                            0, n_surgeries)
+        n_mandatory = clamp(
+            round(Int, rand(rng, Uniform(0.08, 0.18)) * n_surgeries), 0, n_surgeries
+        )
         n_mandatory > 0 && (mandatory[shuffle(rng, 1:n_surgeries)[1:n_mandatory]] .= true)
     end
 
     scale = n_or_days in _ORSCHED_BENCHMARK_OR_DAYS ? :published_or_days : :scaled_or_days
     return LeeftinkHansORSchedulingProblem(
-        n_surgeries, n_or_days, 480.0, requested_load, achieved_load, scale,
-        cases.codes, cases.ids, cases.mus, cases.sigmas, cases.gammas,
-        expected, cases.realized, cancellation_cost, overtime_cost,
-        max_overtime, mandatory, witness, excess, feasibility_status,
+        n_surgeries,
+        n_or_days,
+        480.0,
+        requested_load,
+        achieved_load,
+        scale,
+        cases.codes,
+        cases.ids,
+        cases.mus,
+        cases.sigmas,
+        cases.gammas,
+        expected,
+        cases.realized,
+        cancellation_cost,
+        overtime_cost,
+        max_overtime,
+        mandatory,
+        witness,
+        excess,
+        feasibility_status,
     )
 end
 
@@ -169,20 +191,25 @@ function build_model(prob::LeeftinkHansORSchedulingProblem)
     N, Q = prob.n_surgeries, prob.n_or_days
     @variable(model, assign[1:N, 1:Q], Bin)
     @variable(model, cancel[1:N], Bin)
-    @variable(model, 0 <= overtime[q=1:Q] <= prob.max_overtime[q])
+    @variable(model, 0 <= overtime[q = 1:Q] <= prob.max_overtime[q])
 
-    @constraint(model, case_assignment[i=1:N],
-                sum(assign[i, q] for q in 1:Q) + cancel[i] == 1)
+    @constraint(model, case_assignment[i = 1:N], sum(assign[i, q] for q in 1:Q) + cancel[i] == 1)
     for i in 1:N
         prob.mandatory[i] && @constraint(model, cancel[i] == 0)
     end
-    @constraint(model, or_day_capacity[q=1:Q],
-                sum(prob.expected_duration[i] * assign[i, q] for i in 1:N) -
-                overtime[q] <= prob.session_length)
+    @constraint(
+        model,
+        or_day_capacity[q = 1:Q],
+        sum(prob.expected_duration[i] * assign[i, q] for i in 1:N) - overtime[q] <=
+            prob.session_length
+    )
 
-    @objective(model, Min,
+    @objective(
+        model,
+        Min,
         sum(prob.cancellation_cost[i] * cancel[i] for i in 1:N) +
-        sum(prob.overtime_cost[q] * overtime[q] for q in 1:Q))
+            sum(prob.overtime_cost[q] * overtime[q] for q in 1:Q)
+    )
     return model
 end
 

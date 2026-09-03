@@ -37,6 +37,7 @@ end
 Generator for product mix optimization problems.
 
 # Overview
+
 Models profit-maximizing production mix decisions. The decisions are continuous
 production quantities for each product. The objective maximizes total product
 profit. Resource-capacity constraints limit aggregate consumption across
@@ -44,6 +45,7 @@ products, and market constraints impose product-level minimum commitments and
 sales ceilings.
 
 # Planted operating plan
+
 Capacities and market floors are *not* sampled independently — that makes the
 two accumulate against each other and drives large instances to certain
 infeasibility. Instead a nominal production plan is sampled first; resource
@@ -57,28 +59,30 @@ point is `x = lower_bounds`, so the instance is feasible **iff**
 `floor_utilization = max_i (sum_j usage[i,j] * lower_bounds[j]) / availabilities[i]`
 is at most 1 (the constructor always keeps `lower_bounds .<= upper_bounds`).
 The three profiles simply place that single scalar:
-- `feasible`: floors stay below the planted plan and capacities above its
-  consumption, so `floor_utilization < 1` with room to spare.
-- `unknown`: floors are raised and capacities tightened toward a target
-  utilization drawn as `1 ± U(0.04, 0.35)`, i.e. a coin flip that lands on
-  either side of feasibility at any problem size.
-- `infeasible`: the same perturbation aims at a target in `[1.15, 1.60]`,
-  backed by a `ResourceOvercommitCertificate`.
+
+  - `feasible`: floors stay below the planted plan and capacities above its
+    consumption, so `floor_utilization < 1` with room to spare.
+  - `unknown`: floors are raised and capacities tightened toward a target
+    utilization drawn as `1 ± U(0.04, 0.35)`, i.e. a coin flip that lands on
+    either side of feasibility at any problem size.
+  - `infeasible`: the same perturbation aims at a target in `[1.15, 1.60]`,
+    backed by a `ResourceOvercommitCertificate`.
 
 # Fields
-- `num_products::Int`: Number of products
-- `num_resources::Int`: Number of resources
-- `profits::Vector{Float64}`: Profit per unit of each product
-- `usage_matrix::Matrix{Float64}`: Resource usage per unit (num_resources × num_products)
-- `availabilities::Vector{Float64}`: Available amount of each resource
-- `lower_bounds::Vector{Float64}`: Minimum production level for each product
-- `upper_bounds::Vector{Float64}`: Maximum production level for each product
-- `nominal_plan::Vector{Float64}`: Planted operating plan the data is built around
-- `floor_utilization::Float64`: Tightest resource's floor-induced utilization
-- `industry::Symbol`: Sampled industry regime
-- `feasible_witness::Union{Nothing,ProductMixPlanWitness}`: set for `feasible`
-- `infeasibility_certificate::Union{Nothing,ResourceOvercommitCertificate}`: set for `infeasible`
-- `feasibility_status::FeasibilityStatus`: Requested profile
+
+  - `num_products::Int`: Number of products
+  - `num_resources::Int`: Number of resources
+  - `profits::Vector{Float64}`: Profit per unit of each product
+  - `usage_matrix::Matrix{Float64}`: Resource usage per unit (num_resources × num_products)
+  - `availabilities::Vector{Float64}`: Available amount of each resource
+  - `lower_bounds::Vector{Float64}`: Minimum production level for each product
+  - `upper_bounds::Vector{Float64}`: Maximum production level for each product
+  - `nominal_plan::Vector{Float64}`: Planted operating plan the data is built around
+  - `floor_utilization::Float64`: Tightest resource's floor-induced utilization
+  - `industry::Symbol`: Sampled industry regime
+  - `feasible_witness::Union{Nothing,ProductMixPlanWitness}`: set for `feasible`
+  - `infeasibility_certificate::Union{Nothing,ResourceOvercommitCertificate}`: set for `infeasible`
+  - `feasibility_status::FeasibilityStatus`: Requested profile
 """
 struct ProductMixProblem <: ProblemGenerator
     num_products::Int
@@ -91,20 +95,18 @@ struct ProductMixProblem <: ProblemGenerator
     nominal_plan::Vector{Float64}
     floor_utilization::Float64
     industry::Symbol
-    feasible_witness::Union{Nothing,ProductMixPlanWitness}
-    infeasibility_certificate::Union{Nothing,ResourceOvercommitCertificate}
+    feasible_witness::Union{Nothing, ProductMixPlanWitness}
+    infeasibility_certificate::Union{Nothing, ResourceOvercommitCertificate}
     feasibility_status::FeasibilityStatus
 end
 
 """
     _product_mix_floor_usage(usage_matrix, lower_bounds) -> Vector{Float64}
 
-Resource consumption implied by the market floors alone (`usage_matrix *
-lower_bounds`). This is the smallest consumption any admissible plan can have,
+Resource consumption implied by the market floors alone (`usage_matrix * lower_bounds`). This is the smallest consumption any admissible plan can have,
 since every usage coefficient is nonnegative.
 """
-function _product_mix_floor_usage(usage_matrix::Matrix{Float64},
-                                  lower_bounds::Vector{Float64})
+function _product_mix_floor_usage(usage_matrix::Matrix{Float64}, lower_bounds::Vector{Float64})
     num_resources, num_products = size(usage_matrix)
     required = zeros(num_resources)
     for j in 1:num_products
@@ -123,12 +125,11 @@ end
 The tightest resource's floor-induced utilization. The instance is feasible
 iff this is `<= 1` (given `lower_bounds .<= upper_bounds`).
 """
-function _product_mix_utilization(usage_matrix::Matrix{Float64},
-                                  lower_bounds::Vector{Float64},
-                                  availabilities::Vector{Float64})
+function _product_mix_utilization(
+    usage_matrix::Matrix{Float64}, lower_bounds::Vector{Float64}, availabilities::Vector{Float64}
+)
     required = _product_mix_floor_usage(usage_matrix, lower_bounds)
-    return maximum(required[i] / max(availabilities[i], eps())
-                   for i in 1:length(availabilities))
+    return maximum(required[i] / max(availabilities[i], eps()) for i in 1:length(availabilities))
 end
 
 """
@@ -137,9 +138,10 @@ end
 Construct a product mix problem instance.
 
 # Arguments
-- `target_variables`: Target number of variables (products)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (products)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
 function ProductMixProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
@@ -163,7 +165,9 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
         # Medium operations
         resource_range = 5:15
         beta_sample = rand(rng, Beta(2, 3))
-        num_resources = resource_range[max(1, min(length(resource_range), round(Int, beta_sample * length(resource_range)) + 1))]
+        num_resources = resource_range[max(
+            1, min(length(resource_range), round(Int, beta_sample * length(resource_range)) + 1)
+        )]
         sparsity = rand(rng, Beta(3, 4))
         profit_min = rand(rng, LogNormal(log(8), 0.5))
         profit_max = rand(rng, LogNormal(log(75), 0.4))
@@ -189,7 +193,9 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
     end
 
     # Randomly select industry type
-    industry_types = [:manufacturing, :food_processing, :electronics, :furniture, :chemical, :automotive]
+    industry_types = [
+        :manufacturing, :food_processing, :electronics, :furniture, :chemical, :automotive
+    ]
     industry_weights = if target_variables <= 250
         [0.25, 0.35, 0.15, 0.20, 0.03, 0.02]
     elseif target_variables <= 1000
@@ -269,8 +275,12 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
     for j in 1:num_products
         if all(usage_matrix[:, j] .== 0)
             resource_idx = rand(rng, 1:num_resources)
-            usage_value = rand(rng, LogNormal(log((resource_usage_min + resource_usage_max) / 2), 0.3))
-            usage_matrix[resource_idx, j] = clamp(usage_value, resource_usage_min, resource_usage_max)
+            usage_value = rand(
+                rng, LogNormal(log((resource_usage_min + resource_usage_max) / 2), 0.3)
+            )
+            usage_matrix[resource_idx, j] = clamp(
+                usage_value, resource_usage_min, resource_usage_max
+            )
         end
     end
 
@@ -278,8 +288,12 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
     for i in 1:num_resources
         if all(usage_matrix[i, :] .== 0)
             product_idx = rand(rng, 1:num_products)
-            usage_value = rand(rng, LogNormal(log((resource_usage_min + resource_usage_max) / 2), 0.3))
-            usage_matrix[i, product_idx] = clamp(usage_value, resource_usage_min, resource_usage_max)
+            usage_value = rand(
+                rng, LogNormal(log((resource_usage_min + resource_usage_max) / 2), 0.3)
+            )
+            usage_matrix[i, product_idx] = clamp(
+                usage_value, resource_usage_min, resource_usage_max
+            )
         end
     end
 
@@ -287,8 +301,11 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
     # A nominal production quantity for every product. Everything downstream
     # (capacities, floors, ceilings) is derived from this plan, so the data is
     # mutually consistent no matter how many products there are.
-    nominal_plan = clamp.(rand(rng, LogNormal(log(volume_center), 0.55), num_products),
-                          0.1 * volume_center, 10.0 * volume_center)
+    nominal_plan = clamp.(
+        rand(rng, LogNormal(log(volume_center), 0.55), num_products),
+        0.1 * volume_center,
+        10.0 * volume_center,
+    )
 
     consumption = usage_matrix * nominal_plan
 
@@ -332,8 +349,9 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
         # Nothing to do: floors <= 0.9 * plan, ceilings >= 1.05 * plan and
         # capacities >= (1 + headroom) * consumption, so the planted plan is a
         # feasible point with strictly positive slack on every capacity row.
-        feasible_witness = ProductMixPlanWitness(copy(nominal_plan), copy(consumption),
-                                                 availabilities .- consumption)
+        feasible_witness = ProductMixPlanWitness(
+            copy(nominal_plan), copy(consumption), availabilities .- consumption
+        )
     else
         # Push the instance toward a target floor utilization. The target is
         # the only thing that decides feasibility, so it stays a genuine coin
@@ -369,22 +387,36 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
 
         if feasibility_status == infeasible
             required = _product_mix_floor_usage(usage_matrix, lower_bounds)
-            critical = argmax([required[i] / max(availabilities[i], eps())
-                               for i in 1:num_resources])
-            products = [j for j in 1:num_products
-                        if lower_bounds[j] > 0.0 && usage_matrix[critical, j] > 0.0]
+            critical = argmax([
+                required[i] / max(availabilities[i], eps()) for i in 1:num_resources
+            ])
+            products = [
+                j for
+                j in 1:num_products if lower_bounds[j] > 0.0 && usage_matrix[critical, j] > 0.0
+            ]
             infeasibility_certificate = ResourceOvercommitCertificate(
-                critical, products, required[critical], availabilities[critical])
+                critical, products, required[critical], availabilities[critical]
+            )
         end
     end
 
     floor_utilization = _product_mix_utilization(usage_matrix, lower_bounds, availabilities)
 
-    return ProductMixProblem(num_products, num_resources, profits, usage_matrix,
-                             availabilities, lower_bounds, upper_bounds,
-                             nominal_plan, floor_utilization, industry_type,
-                             feasible_witness, infeasibility_certificate,
-                             feasibility_status)
+    return ProductMixProblem(
+        num_products,
+        num_resources,
+        profits,
+        usage_matrix,
+        availabilities,
+        lower_bounds,
+        upper_bounds,
+        nominal_plan,
+        floor_utilization,
+        industry_type,
+        feasible_witness,
+        infeasibility_certificate,
+        feasibility_status,
+    )
 end
 
 """
@@ -393,10 +425,12 @@ end
 Build a JuMP model for the product mix problem.
 
 # Arguments
-- `prob`: ProductMixProblem instance
+
+  - `prob`: ProductMixProblem instance
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::ProductMixProblem)
     model = Model()
@@ -409,9 +443,13 @@ function build_model(prob::ProductMixProblem)
 
     # Resource constraints (only the products that actually consume the resource)
     for i in 1:prob.num_resources
-        @constraint(model, sum(prob.usage_matrix[i, j] * x[j]
-                               for j in 1:prob.num_products
-                               if prob.usage_matrix[i, j] > 0) <= prob.availabilities[i])
+        @constraint(
+            model,
+            sum(
+                prob.usage_matrix[i, j] * x[j] for
+                j in 1:prob.num_products if prob.usage_matrix[i, j] > 0
+            ) <= prob.availabilities[i]
+        )
     end
 
     # Market constraints

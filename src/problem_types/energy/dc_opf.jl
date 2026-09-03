@@ -11,6 +11,7 @@ Generator for DC optimal power flow / economic dispatch problems on a
 transmission network.
 
 # Overview
+
 Models least-cost power dispatch over a meshed transmission grid under the linear
 "DC" power-flow approximation. The decisions are the generator outputs `p[g]`,
 the bus voltage angles `θ[b]`, and the line flows `f[l]`. The objective minimizes
@@ -32,19 +33,20 @@ explicit DC-power-flow witness (solving the reduced network Laplacian) and
 sizing the line limits to accommodate it.
 
 # Fields
-- `n_buses::Int`: Number of buses (nodes)
-- `n_lines::Int`: Number of transmission lines (edges)
-- `n_generators::Int`: Number of generators
-- `line_from::Vector{Int}`: "From" bus of each line
-- `line_to::Vector{Int}`: "To" bus of each line
-- `susceptance::Vector{Float64}`: Susceptance of each line
-- `line_limit::Vector{Float64}`: Thermal flow limit of each line
-- `gen_bus::Vector{Int}`: Bus at which each generator is located
-- `gen_cost::Vector{Float64}`: Linear generation cost per unit output
-- `pmin::Vector{Float64}`: Minimum output of each generator
-- `pmax::Vector{Float64}`: Maximum output of each generator
-- `demand::Vector{Float64}`: Load at each bus
-- `ref_bus::Int`: Reference (slack) bus whose angle is fixed to zero
+
+  - `n_buses::Int`: Number of buses (nodes)
+  - `n_lines::Int`: Number of transmission lines (edges)
+  - `n_generators::Int`: Number of generators
+  - `line_from::Vector{Int}`: "From" bus of each line
+  - `line_to::Vector{Int}`: "To" bus of each line
+  - `susceptance::Vector{Float64}`: Susceptance of each line
+  - `line_limit::Vector{Float64}`: Thermal flow limit of each line
+  - `gen_bus::Vector{Int}`: Bus at which each generator is located
+  - `gen_cost::Vector{Float64}`: Linear generation cost per unit output
+  - `pmin::Vector{Float64}`: Minimum output of each generator
+  - `pmax::Vector{Float64}`: Maximum output of each generator
+  - `demand::Vector{Float64}`: Load at each bus
+  - `ref_bus::Int`: Reference (slack) bus whose angle is fixed to zero
 """
 struct DCOptimalPowerFlowProblem <: ProblemGenerator
     n_buses::Int
@@ -71,11 +73,14 @@ Variables: `p[g]` (generation), `θ[b]` (bus angles), and `f[l]` (line flows), f
 a total of `n_generators + n_buses + n_lines`.
 
 # Arguments
-- `target_variables`: Target number of variables
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function DCOptimalPowerFlowProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function DCOptimalPowerFlowProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
@@ -92,7 +97,7 @@ function DCOptimalPowerFlowProblem(target_variables::Int, feasibility_status::Fe
     # --- Network topology: spanning tree (connectivity) + extra meshing edges ---
     line_from = Int[]
     line_to = Int[]
-    edge_set = Set{Tuple{Int,Int}}()
+    edge_set = Set{Tuple{Int, Int}}()
     function add_edge!(a::Int, b::Int)
         a == b && return false
         key = a < b ? (a, b) : (b, a)
@@ -147,8 +152,10 @@ function DCOptimalPowerFlowProblem(target_variables::Int, feasibility_status::Fe
     demand = base_demand .* (total_demand / base_total)
 
     # --- Line limits ---
-    base_limit = [(total_demand / max(1, n_lines)) * rand(rng, Uniform(2.0, 6.0)) +
-                  rand(rng, Uniform(1.0, 5.0)) for _ in 1:n_lines]
+    base_limit = [
+        (total_demand / max(1, n_lines)) * rand(rng, Uniform(2.0, 6.0)) +
+        rand(rng, Uniform(1.0, 5.0)) for _ in 1:n_lines
+    ]
     line_limit = copy(base_limit)
 
     if actual_status == feasible
@@ -195,8 +202,19 @@ function DCOptimalPowerFlowProblem(target_variables::Int, feasibility_status::Fe
     end
 
     return DCOptimalPowerFlowProblem(
-        B, n_lines, n_generators, line_from, line_to, susceptance, line_limit,
-        gen_bus, gen_cost, pmin, pmax, demand, ref_bus,
+        B,
+        n_lines,
+        n_generators,
+        line_from,
+        line_to,
+        susceptance,
+        line_limit,
+        gen_bus,
+        gen_cost,
+        pmin,
+        pmax,
+        demand,
+        ref_bus,
     )
 end
 
@@ -207,7 +225,8 @@ Build a JuMP model for the DC optimal power flow problem. Deterministic — uses
 only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::DCOptimalPowerFlowProblem)
     model = Model()
@@ -229,7 +248,9 @@ function build_model(prob::DCOptimalPowerFlowProblem)
 
     # DC flow definition: f[l] = B_l (θ_from − θ_to).
     for l in 1:L
-        @constraint(model, f[l] == prob.susceptance[l] * (θ[prob.line_from[l]] - θ[prob.line_to[l]]))
+        @constraint(
+            model, f[l] == prob.susceptance[l] * (θ[prob.line_from[l]] - θ[prob.line_to[l]])
+        )
     end
 
     # Nodal power balance: generation − load = net outflow. Expressions are built

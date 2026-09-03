@@ -12,7 +12,7 @@ struct IntegerMultiCommodityFlowProblem <: ProblemGenerator
     n_nodes::Int
     n_arcs::Int
     n_commodities::Int
-    arcs::Vector{Tuple{Int,Int}}
+    arcs::Vector{Tuple{Int, Int}}
     sources::Vector{Int}
     sinks::Vector{Int}
     demands::Vector{Int}
@@ -20,8 +20,7 @@ struct IntegerMultiCommodityFlowProblem <: ProblemGenerator
     costs::Matrix{Float64}
 end
 
-function _integer_mcf_path(arcs::Vector{Tuple{Int,Int}}, n_nodes::Int,
-                           source::Int, sink::Int)
+function _integer_mcf_path(arcs::Vector{Tuple{Int, Int}}, n_nodes::Int, source::Int, sink::Int)
     outgoing = [Int[] for _ in 1:n_nodes]
     for (a, (i, _)) in enumerate(arcs)
         push!(outgoing[i], a)
@@ -66,9 +65,7 @@ the default continuous relaxation. Unknown requests keep natural independently
 sampled capacities.
 """
 function IntegerMultiCommodityFlowProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
 
@@ -96,7 +93,7 @@ function IntegerMultiCommodityFlowProblem(
     for k in 1:n_commodities, a in 1:n_arcs
         # Commodity-specific perturbations avoid duplicate objective rows while
         # retaining a common per-arc distance/cost scale.
-        costs[k, a] = round(0.5 + 10.0 * rand(rng), digits=3)
+        costs[k, a] = round(0.5 + 10.0 * rand(rng); digits=3)
     end
 
     if feasibility_status == feasible
@@ -116,21 +113,20 @@ function IntegerMultiCommodityFlowProblem(
     end
 
     return IntegerMultiCommodityFlowProblem(
-        n_nodes, n_arcs, n_commodities, arcs,
-        sources, sinks, demands, capacities, costs,
+        n_nodes, n_arcs, n_commodities, arcs, sources, sinks, demands, capacities, costs
     )
 end
 
-"""Build the deterministic general-integer multicommodity-flow formulation."""
+"""
+Build the deterministic general-integer multicommodity-flow formulation.
+"""
 function build_model(prob::IntegerMultiCommodityFlowProblem)
     model = Model()
     K = prob.n_commodities
     A = prob.n_arcs
 
     @variable(model, flow[1:K, 1:A] >= 0, Int)
-    @objective(model, Min,
-        sum(prob.costs[k, a] * flow[k, a] for k in 1:K, a in 1:A)
-    )
+    @objective(model, Min, sum(prob.costs[k, a] * flow[k, a] for k in 1:K, a in 1:A))
 
     for a in 1:A
         @constraint(model, sum(flow[k, a] for k in 1:K) <= prob.capacities[a])
@@ -143,11 +139,17 @@ function build_model(prob::IntegerMultiCommodityFlowProblem)
         push!(incoming[j], a)
     end
     for k in 1:K, node in 1:prob.n_nodes
-        rhs = node == prob.sources[k] ? prob.demands[k] :
-              node == prob.sinks[k] ? -prob.demands[k] : 0
-        @constraint(model,
-            sum(flow[k, a] for a in outgoing[node]) -
-            sum(flow[k, a] for a in incoming[node]) == rhs
+        rhs = if node == prob.sources[k]
+            prob.demands[k]
+        elseif node == prob.sinks[k]
+            -prob.demands[k]
+        else
+            0
+        end
+        @constraint(
+            model,
+            sum(flow[k, a] for a in outgoing[node]) - sum(flow[k, a] for a in incoming[node]) ==
+                rhs
         )
     end
 

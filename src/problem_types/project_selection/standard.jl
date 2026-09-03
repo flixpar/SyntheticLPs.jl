@@ -9,6 +9,7 @@ using StatsBase
 Generator for project selection problems that maximize return by selecting a portfolio of projects.
 
 # Overview
+
 Models binary capital-budgeting or project portfolio selection. The decisions
 select or reject projects. The objective maximizes total expected return.
 Constraints limit total cost and risk, enforce prerequisite dependencies, cap
@@ -16,24 +17,25 @@ the number of high-risk projects, and may require a minimum number of selected
 projects.
 
 # Fields
-- `n_projects::Int`: Number of potential projects
-- `projects::Vector{Int}`: List of project IDs
-- `costs::Dict{Int,Float64}`: Cost of each project
-- `returns::Dict{Int,Float64}`: Expected return of each project
-- `risk_scores::Dict{Int,Float64}`: Risk score of each project
-- `dependencies::Vector{Tuple{Int,Int}}`: Project dependencies (p1, p2) means p1 depends on p2
-- `budget::Float64`: Total budget constraint
-- `risk_budget::Float64`: Maximum total risk score allowed
-- `max_high_risk_projects::Int`: Maximum number of high-risk projects
-- `high_risk_threshold::Float64`: Threshold for defining high-risk projects
+
+  - `n_projects::Int`: Number of potential projects
+  - `projects::Vector{Int}`: List of project IDs
+  - `costs::Dict{Int,Float64}`: Cost of each project
+  - `returns::Dict{Int,Float64}`: Expected return of each project
+  - `risk_scores::Dict{Int,Float64}`: Risk score of each project
+  - `dependencies::Vector{Tuple{Int,Int}}`: Project dependencies (p1, p2) means p1 depends on p2
+  - `budget::Float64`: Total budget constraint
+  - `risk_budget::Float64`: Maximum total risk score allowed
+  - `max_high_risk_projects::Int`: Maximum number of high-risk projects
+  - `high_risk_threshold::Float64`: Threshold for defining high-risk projects
 """
 struct ProjectSelectionProblem <: ProblemGenerator
     n_projects::Int
     projects::Vector{Int}
-    costs::Dict{Int,Float64}
-    returns::Dict{Int,Float64}
-    risk_scores::Dict{Int,Float64}
-    dependencies::Vector{Tuple{Int,Int}}
+    costs::Dict{Int, Float64}
+    returns::Dict{Int, Float64}
+    risk_scores::Dict{Int, Float64}
+    dependencies::Vector{Tuple{Int, Int}}
     budget::Float64
     risk_budget::Float64
     max_high_risk_projects::Int
@@ -47,11 +49,14 @@ end
 Construct a project selection problem instance.
 
 # Arguments
-- `target_variables`: Target number of variables (projects)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (projects)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function ProjectSelectionProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function ProjectSelectionProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # For project selection, variables = n_projects
@@ -62,8 +67,8 @@ function ProjectSelectionProblem(target_variables::Int, feasibility_status::Feas
         # Small scale
         cost_mean = log(100_000)
         cost_std = 1.5
-        min_cost = max(5_000, round(rand(rng, LogNormal(cost_mean - cost_std, 0.5)), digits=0))
-        max_cost = min(500_000, round(rand(rng, LogNormal(cost_mean + cost_std, 0.5)), digits=0))
+        min_cost = max(5_000, round(rand(rng, LogNormal(cost_mean - cost_std, 0.5)); digits=0))
+        max_cost = min(500_000, round(rand(rng, LogNormal(cost_mean + cost_std, 0.5)); digits=0))
 
         return_multiplier = rand(rng, Uniform(1.5, 4.0))
         min_return = max(10_000, min_cost * rand(rng, Uniform(0.8, 1.2)))
@@ -76,8 +81,8 @@ function ProjectSelectionProblem(target_variables::Int, feasibility_status::Feas
         # Medium scale
         cost_mean = log(500_000)
         cost_std = 1.8
-        min_cost = max(10_000, round(rand(rng, LogNormal(cost_mean - cost_std, 0.6)), digits=0))
-        max_cost = min(5_000_000, round(rand(rng, LogNormal(cost_mean + cost_std, 0.6)), digits=0))
+        min_cost = max(10_000, round(rand(rng, LogNormal(cost_mean - cost_std, 0.6)); digits=0))
+        max_cost = min(5_000_000, round(rand(rng, LogNormal(cost_mean + cost_std, 0.6)); digits=0))
 
         return_multiplier = rand(rng, Gamma(2, 2)) + 2.0
         min_return = max(50_000, min_cost * rand(rng, Uniform(0.7, 1.3)))
@@ -90,8 +95,8 @@ function ProjectSelectionProblem(target_variables::Int, feasibility_status::Feas
         # Large scale
         cost_mean = log(2_000_000)
         cost_std = 2.0
-        min_cost = max(50_000, round(rand(rng, LogNormal(cost_mean - cost_std, 0.7)), digits=0))
-        max_cost = min(50_000_000, round(rand(rng, LogNormal(cost_mean + cost_std, 0.7)), digits=0))
+        min_cost = max(50_000, round(rand(rng, LogNormal(cost_mean - cost_std, 0.7)); digits=0))
+        max_cost = min(50_000_000, round(rand(rng, LogNormal(cost_mean + cost_std, 0.7)); digits=0))
 
         return_multiplier = rand(rng, Gamma(1.5, 2.5)) + 1.5
         min_return = max(100_000, min_cost * rand(rng, Uniform(0.6, 1.4)))
@@ -131,7 +136,7 @@ function ProjectSelectionProblem(target_variables::Int, feasibility_status::Feas
     project_categories = [
         (0.8, 1.5, 0.3, 0.4),   # Low risk, low return
         (1.2, 2.5, 0.6, 0.4),   # Medium risk, medium return
-        (1.8, 4.0, 0.9, 0.2)    # High risk, high return
+        (1.8, 4.0, 0.9, 0.2),    # High risk, high return
     ]
 
     category_weights = [cat[4] for cat in project_categories]
@@ -145,7 +150,16 @@ function ProjectSelectionProblem(target_variables::Int, feasibility_status::Feas
         cost_range = max_cost - min_cost
         cost_mean_ln = log(min_cost + cost_range * 0.3)
         cost_std_ln = 0.8
-        base_cost = min_cost + (max_cost - min_cost) * min(1.0, max(0.0, rand(rng, LogNormal(cost_mean_ln, cost_std_ln)) / exp(cost_mean_ln + cost_std_ln^2)))
+        base_cost =
+            min_cost +
+            (max_cost - min_cost) * min(
+                1.0,
+                max(
+                    0.0,
+                    rand(rng, LogNormal(cost_mean_ln, cost_std_ln)) /
+                    exp(cost_mean_ln + cost_std_ln^2),
+                ),
+            )
         costs[p] = base_cost
 
         # Generate correlated return
@@ -169,11 +183,11 @@ function ProjectSelectionProblem(target_variables::Int, feasibility_status::Feas
     end
 
     # Generate dependencies
-    dependencies = Tuple{Int,Int}[]
-    sorted_projects = sort(projects, by=p -> costs[p])
+    dependencies = Tuple{Int, Int}[]
+    sorted_projects = sort(projects; by=p -> costs[p])
 
     for i in 1:n_projects
-        for j in 1:(i-1)
+        for j in 1:(i - 1)
             proj_i = sorted_projects[i]
             proj_j = sorted_projects[j]
 
@@ -202,7 +216,7 @@ function ProjectSelectionProblem(target_variables::Int, feasibility_status::Feas
 
     if actual_status == infeasible
         # Require more projects than the budget can support
-        sorted_by_cost = sort(projects, by=p -> costs[p])
+        sorted_by_cost = sort(projects; by=p -> costs[p])
         cumulative = 0.0
         affordable = 0
         for p in sorted_by_cost
@@ -219,8 +233,17 @@ function ProjectSelectionProblem(target_variables::Int, feasibility_status::Feas
     end
 
     return ProjectSelectionProblem(
-        n_projects, projects, costs, returns, risk_scores, dependencies,
-        budget, risk_budget, max_high_risk_projects, high_risk_threshold, min_selected
+        n_projects,
+        projects,
+        costs,
+        returns,
+        risk_scores,
+        dependencies,
+        budget,
+        risk_budget,
+        max_high_risk_projects,
+        high_risk_threshold,
+        min_selected,
     )
 end
 
@@ -230,10 +253,12 @@ end
 Build a JuMP model for the project selection problem.
 
 # Arguments
-- `prob`: ProjectSelectionProblem instance
+
+  - `prob`: ProjectSelectionProblem instance
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::ProjectSelectionProblem)
     model = Model()

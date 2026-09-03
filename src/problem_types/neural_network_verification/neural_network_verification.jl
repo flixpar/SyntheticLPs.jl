@@ -8,4 +8,3 @@ register_category(
 )
 
 include("standard.jl")
-

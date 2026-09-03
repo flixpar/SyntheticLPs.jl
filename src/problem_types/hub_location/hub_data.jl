@@ -30,27 +30,27 @@ using LinearAlgebra: diagind
 Scatter `n` cities over a `span` x `span` region in one of three settlement
 shapes:
 
-* `:clustered`   – a handful of population regions (the AP postal geography);
-* `:corridor`    – cities strung along a linear freight/rail corridor;
-* `:archipelago` – well-separated island groups (airline / backbone settings
-  where inter-group distance dominates).
+  - `:clustered`   – a handful of population regions (the AP postal geography);
+  - `:corridor`    – cities strung along a linear freight/rail corridor;
+  - `:archipelago` – well-separated island groups (airline / backbone settings
+    where inter-group distance dominates).
 
 Returns coordinates in `[0, span]^2`.
 """
-function _hub_city_locations(rng::AbstractRNG, n::Int, shape::Symbol;
-                             span::Float64=100.0)
-    shape in (:clustered, :corridor, :archipelago) ||
-        error("Unknown hub geography shape $shape.")
+function _hub_city_locations(rng::AbstractRNG, n::Int, shape::Symbol; span::Float64=100.0)
+    shape in (:clustered, :corridor, :archipelago) || error("Unknown hub geography shape $shape.")
     if shape == :corridor
         # Cities along a slightly bent corridor with Gaussian lateral scatter.
         m = rand(rng, Uniform(0.15span, 0.35span))
         b = rand(rng, Uniform(0.2span, 0.8span))
         slope = rand(rng, Uniform(-0.6, 0.6))
         jitter = 0.06span
-        return [(clamp(u + rand(rng, Normal(0.0, jitter)), 0.0, span),
-                 clamp(m + slope * (u - b) + rand(rng, Normal(0.0, jitter)),
-                       0.0, span))
-                for u in range(0.0, span; length=n)]
+        return [
+            (
+                clamp(u + rand(rng, Normal(0.0, jitter)), 0.0, span),
+                clamp(m + slope * (u - b) + rand(rng, Normal(0.0, jitter)), 0.0, span),
+            ) for u in range(0.0, span; length=n)
+        ]
     end
 
     if shape == :archipelago
@@ -66,18 +66,20 @@ function _hub_city_locations(rng::AbstractRNG, n::Int, shape::Symbol;
     group_radius = 0.16span
     # Every group keeps one anchor city exactly at its center; this guarantees
     # each group contributes a reachable hub candidate for reach windows.
-    locations = Tuple{Float64,Float64}[]
+    locations = Tuple{Float64, Float64}[]
     for g in 1:n_groups
         push!(locations, centers[g])
     end
     groups = rand(rng, 1:n_groups, n)
     while length(locations) < n
         g = rand(rng, groups)
-        push!(locations,
-              (clamp(centers[g][1] + rand(rng, Normal(0.0, group_radius / 2)),
-                     0.0, span),
-               clamp(centers[g][2] + rand(rng, Normal(0.0, group_radius / 2)),
-                     0.0, span)))
+        push!(
+            locations,
+            (
+                clamp(centers[g][1] + rand(rng, Normal(0.0, group_radius / 2)), 0.0, span),
+                clamp(centers[g][2] + rand(rng, Normal(0.0, group_radius / 2)), 0.0, span),
+            ),
+        )
     end
     return locations
 end
@@ -92,14 +94,14 @@ returned - the returned centers therefore only *approximately* honour
 `min_sep`. Callers that need a guaranteed separation (the disjoint-region
 infeasibility certificates) use [`_hub_ring_centers`](@ref) instead.
 """
-function _hub_separated_centers(rng::AbstractRNG, q::Int, min_sep::Float64;
-                                span::Float64=100.0, tries::Int=800)
-    centers = Tuple{Float64,Float64}[]
+function _hub_separated_centers(
+    rng::AbstractRNG, q::Int, min_sep::Float64; span::Float64=100.0, tries::Int=800
+)
+    centers = Tuple{Float64, Float64}[]
     sep = min_sep
     while length(centers) < q
         proposed = (span * rand(rng), span * rand(rng))
-        if all(hypot(proposed[1] - c[1], proposed[2] - c[2]) >= sep
-               for c in centers)
+        if all(hypot(proposed[1] - c[1], proposed[2] - c[2]) >= sep for c in centers)
             push!(centers, proposed)
             continue
         end
@@ -122,12 +124,12 @@ the multicommodity-flow variants rely on: with metric costs and a uniform
 inter-hub discount, routing through additional hubs is never cheaper than the
 direct inter-hub leg, so optimal flow paths visit at most two hubs.
 """
-function _hub_distance_matrix(locations::Vector{Tuple{Float64,Float64}})
+function _hub_distance_matrix(locations::Vector{Tuple{Float64, Float64}})
     n = length(locations)
     d = zeros(n, n)
     for i in 1:n, j in (i + 1):n
-        d[i, j] = d[j, i] = hypot(locations[i][1] - locations[j][1],
-                                  locations[i][2] - locations[j][2])
+        d[i, j] =
+            d[j, i] = hypot(locations[i][1] - locations[j][1], locations[i][2] - locations[j][2])
     end
     return d
 end
@@ -141,8 +143,7 @@ obey the triangle inequality (as in the published CAB cost matrix). Used only
 by the 4-index path-flow variants, whose fixed i-k-m-j paths need no metric
 assumption.
 """
-function _hub_detour_cost_matrix(rng::AbstractRNG, dist::Matrix{Float64},
-                                 lo::Float64, hi::Float64)
+function _hub_detour_cost_matrix(rng::AbstractRNG, dist::Matrix{Float64}, lo::Float64, hi::Float64)
     n = size(dist, 1)
     c = zeros(n, n)
     for i in 1:n, j in (i + 1):n
@@ -158,8 +159,7 @@ end
 City masses: lognormal (the AP and CAB flow totals span two-plus orders of
 magnitude between major sorting centers and small offices).
 """
-_hub_populations(rng::AbstractRNG, n::Int) =
-    exp.(rand(rng, Normal(log(60.0), 1.1), n))
+_hub_populations(rng::AbstractRNG, n::Int) = exp.(rand(rng, Normal(log(60.0), 1.1), n))
 
 """
     _hub_gravity_flows(rng, n, populations, dist, decay, noise;
@@ -175,19 +175,23 @@ independent lognormal jitter. With `symmetric=true` the matrix is symmetrized
 directions are independent (AP postal volumes are 63% asymmetric). The diagonal
 is zero: same-node flow never enters the routing models.
 """
-function _hub_gravity_flows(rng::AbstractRNG, n::Int,
-                            populations::Vector{Float64},
-                            dist::Matrix{Float64}, decay::Float64,
-                            noise::Float64; symmetric::Bool=false,
-                            scale::Float64=1.0)
+function _hub_gravity_flows(
+    rng::AbstractRNG,
+    n::Int,
+    populations::Vector{Float64},
+    dist::Matrix{Float64},
+    decay::Float64,
+    noise::Float64;
+    symmetric::Bool=false,
+    scale::Float64=1.0,
+)
     origins = populations .* exp.(rand(rng, Normal(0.0, 0.45), n))
     destinations = populations .* exp.(rand(rng, Normal(0.0, 0.45), n))
     floor_dist = 0.05 * maximum(dist)
     w = zeros(n, n)
     for i in 1:n, j in 1:n
         i == j && continue
-        base = origins[i] * destinations[j] /
-               max(dist[i, j], floor_dist)^decay
+        base = origins[i] * destinations[j] / max(dist[i, j], floor_dist)^decay
         w[i, j] = base * exp(rand(rng, Normal(0.0, noise)))
     end
     if symmetric
@@ -220,9 +224,12 @@ is gone: a node farther than `reach` from every candidate gets an empty list,
 which makes its allocation/supply rows unsatisfiable. Callers that need a
 feasible instance must size `reach` above the covering radius of `candidates`.
 """
-function _hub_reach_admissible(dist::Matrix{Float64}, reach::Float64;
-                               candidates::AbstractVector{Int}=Int[],
-                               include_self::Bool=true)
+function _hub_reach_admissible(
+    dist::Matrix{Float64},
+    reach::Float64;
+    candidates::AbstractVector{Int}=Int[],
+    include_self::Bool=true,
+)
     n = size(dist, 1)
     cand = isempty(candidates) ? collect(1:n) : collect(candidates)
     admissible = [Int[] for _ in 1:n]

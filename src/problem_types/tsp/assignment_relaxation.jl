@@ -8,16 +8,17 @@ Generator for a **strengthened degree LP relaxation** of the symmetric
 travelling-salesman problem, delivered as a standalone LP test instance.
 
 # Overview
+
 This variant is an LP: the arc variables are continuous fractions
 `x[i,j] ∈ [0, 1]` (integrality is never declared), so the model is an LP even
 with `relax_integer = false`. The formulation keeps:
 
-- **Degree constraints**: exactly one incoming and one outgoing arc at every
-  node (a fractional cycle cover; the bipartite assignment relaxation of the
-  tour);
-- **Pairwise two-cycle cuts** `x[i,j] + x[j,i] ≤ 1` on every unordered pair,
-  which rule out the integer two-cycles admitted by the plain directed
-  assignment relaxation.
+  - **Degree constraints**: exactly one incoming and one outgoing arc at every
+    node (a fractional cycle cover; the bipartite assignment relaxation of the
+    tour);
+  - **Pairwise two-cycle cuts** `x[i,j] + x[j,i] ≤ 1` on every unordered pair,
+    which rule out the integer two-cycles admitted by the plain directed
+    assignment relaxation.
 
 Exponential subtour-elimination (DFJ) cuts are deliberately *not* included —
 they cannot be enumerated polynomially — so the polytope is genuinely weaker
@@ -27,18 +28,19 @@ LP lower bound used by TSP solvers, dense and cheap, as an LP-solver test
 instance. Never present a solution of this model as a tour.
 
 # Fields
-- `n_stops::Int`: Total node count `n` (node 1 = home base, nodes `2..n` = stops)
-- `locations::Vector{Tuple{Float64,Float64}}`: Node coordinates (index 1 = home base)
-- `dist::Matrix{Float64}`: Symmetric road-distance matrix; `dist[i,j] = dist[j,i]`,
-  `dist[i,i] = 0`
-- `arc_ok::Matrix{Bool}`: Allowed-arc mask; `arc_ok[i,j]` is true iff the model
-  creates a variable for arc `(i,j)` (always false on the diagonal)
-- `blocked_set::Vector{Int}`: The Hall-deficit set `S` (empty unless infeasible)
-- `gate_set::Vector{Int}`: The gate set `T` with `|T| = |S| - 1` (empty unless infeasible)
+
+  - `n_stops::Int`: Total node count `n` (node 1 = home base, nodes `2..n` = stops)
+  - `locations::Vector{Tuple{Float64,Float64}}`: Node coordinates (index 1 = home base)
+  - `dist::Matrix{Float64}`: Symmetric road-distance matrix; `dist[i,j] = dist[j,i]`,
+    `dist[i,i] = 0`
+  - `arc_ok::Matrix{Bool}`: Allowed-arc mask; `arc_ok[i,j]` is true iff the model
+    creates a variable for arc `(i,j)` (always false on the diagonal)
+  - `blocked_set::Vector{Int}`: The Hall-deficit set `S` (empty unless infeasible)
+  - `gate_set::Vector{Int}`: The gate set `T` with `|T| = |S| - 1` (empty unless infeasible)
 """
 struct TSPAssignmentRelaxationProblem <: ProblemGenerator
     n_stops::Int
-    locations::Vector{Tuple{Float64,Float64}}
+    locations::Vector{Tuple{Float64, Float64}}
     dist::Matrix{Float64}
     arc_ok::Matrix{Bool}
     blocked_set::Vector{Int}
@@ -51,6 +53,7 @@ end
 Construct the strengthened degree LP relaxation of a symmetric TSP.
 
 # Variable-count formula
+
 On a complete directed graph over `n` nodes with no self-loops there are
 `n*(n-1)` arcs, and this LP creates exactly one continuous `x` per arc:
 
@@ -62,20 +65,24 @@ So `n = max(5, round(Int, (1 + sqrt(1 + 4*target_variables)) / 2))`. For
 against the *delivered* count.
 
 # Arguments
-- `target_variables`: Target number of decision variables (arc fractions `x`)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of decision variables (arc fractions `x`)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 
 # Feasibility
-- `feasible`: complete arc support — `x[i,j] = 1/(n-1)` on all arcs satisfies
-  every degree row and every pairwise subtour row (each row reads
-  `2/(n-1) ≤ 1` for `n ≥ 3`), so the LP is feasible and bounded.
-- `infeasible`: Hall-deficit arc block (a set `S` of `k` stops keeps only the
-  in-arcs from `k-1` gates `T`), which contradicts the degree rows alone —
-  `k = Σ_{j∈S} indeg(j) ≤ Σ_{i∈T} outdeg(i) = k-1` — so the LP is infeasible.
-- `unknown`: a natural instance, identical to the feasible branch.
+
+  - `feasible`: complete arc support — `x[i,j] = 1/(n-1)` on all arcs satisfies
+    every degree row and every pairwise subtour row (each row reads
+    `2/(n-1) ≤ 1` for `n ≥ 3`), so the LP is feasible and bounded.
+  - `infeasible`: Hall-deficit arc block (a set `S` of `k` stops keeps only the
+    in-arcs from `k-1` gates `T`), which contradicts the degree rows alone —
+    `k = Σ_{j∈S} indeg(j) ≤ Σ_{i∈T} outdeg(i) = k-1` — so the LP is infeasible.
+  - `unknown`: a natural instance, identical to the feasible branch.
 """
-function TSPAssignmentRelaxationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function TSPAssignmentRelaxationProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
@@ -85,8 +92,9 @@ function TSPAssignmentRelaxationProblem(target_variables::Int, feasibility_statu
     # Block size k is drawn unconditionally (RNG alignment across statuses);
     # the infeasible branch sizes n against the delivered count
     # n^2 - n - k*(n - k) variables.
-    n, k = _tsp_plan_dimensions(rng, n0, target_variables, feasibility_status,
-                                (m, kk) -> m^2 - m - kk * (m - kk))
+    n, k = _tsp_plan_dimensions(
+        rng, n0, target_variables, feasibility_status, (m, kk) -> m^2 - m - kk * (m - kk)
+    )
 
     # --- Geography and symmetric road distances (shared with tsp/standard) ---
     locations = _tsp_stops(rng, n)
@@ -109,11 +117,13 @@ has a variable only where `arc_ok[i, j]` is true (the complete graph minus any
 Hall block).
 
 Decision variables (one per allowed arc):
-- `x[i,j] ∈ [0, 1]`: fraction of arc `(i,j)` selected — continuous by design,
-  so the delivered model is an LP even with `relax_integer = false`
+
+  - `x[i,j] ∈ [0, 1]`: fraction of arc `(i,j)` selected — continuous by design,
+    so the delivered model is an LP even with `relax_integer = false`
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::TSPAssignmentRelaxationProblem)
     model = Model()
@@ -127,8 +137,7 @@ function build_model(prob::TSPAssignmentRelaxationProblem)
     @variable(model, 0 <= x[i in nodes, j in nodes; ok(i, j)] <= 1)
 
     # --- Objective: minimize total travel distance of the fractional cover ---
-    @objective(model, Min,
-        sum(prob.dist[i, j] * x[i, j] for i in nodes, j in nodes if ok(i, j)))
+    @objective(model, Min, sum(prob.dist[i, j] * x[i, j] for i in nodes, j in nodes if ok(i, j)))
 
     # --- Degree constraints: exactly one in-arc and one out-arc per node ---
     for j in nodes
@@ -137,7 +146,7 @@ function build_model(prob::TSPAssignmentRelaxationProblem)
     end
 
     # --- Pairwise subtour elimination: no two-node subtour on any pair ---
-    for i in nodes, j in i+1:n
+    for i in nodes, j in (i + 1):n
         (ok(i, j) && ok(j, i)) || continue
         @constraint(model, x[i, j] + x[j, i] <= 1)
     end

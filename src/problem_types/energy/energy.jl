@@ -7,7 +7,10 @@
 # creating a file in this folder and including it below.
 
 # Category-level description (it now groups several formulations).
-register_category(:energy, "Power-systems optimization: economic dispatch, ramping, reserves, storage, transmission, and DC optimal power flow")
+register_category(
+    :energy,
+    "Power-systems optimization: economic dispatch, ramping, reserves, storage, transmission, and DC optimal power flow",
+)
 
 include("standard.jl")
 include("ramping.jl")

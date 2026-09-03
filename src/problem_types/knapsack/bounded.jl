@@ -7,6 +7,7 @@ using Random
 Generator for bounded knapsack problems with per-item multiplicity limits.
 
 # Overview
+
 A single-budget knapsack in which each item is available in several identical
 copies. For item `i` the decision `x[i]` is the integer number of copies taken,
 bounded above by a per-item multiplicity `u_i` (the stock available of that
@@ -22,14 +23,15 @@ The capacity is set to a fraction of the maximum total weight `sum_i w_i * u_i`,
 so the budget genuinely binds and not all copies can be taken.
 
 # Fields
-- `n_items::Int`: Number of distinct items (= number of decision variables)
-- `capacity::Int`: Single weight/capacity budget
-- `values::Vector{Int}`: Value of one copy of each item
-- `weights::Vector{Int}`: Weight of one copy of each item
-- `upper_bounds::Vector{Int}`: Multiplicity bound `u_i` (max copies) per item
-- `min_value::Float64`: Minimum total-value requirement; `0.0` when unused.
-  When positive it is set strictly above the LP-relaxation optimum, making the
-  relaxed model provably infeasible.
+
+  - `n_items::Int`: Number of distinct items (= number of decision variables)
+  - `capacity::Int`: Single weight/capacity budget
+  - `values::Vector{Int}`: Value of one copy of each item
+  - `weights::Vector{Int}`: Weight of one copy of each item
+  - `upper_bounds::Vector{Int}`: Multiplicity bound `u_i` (max copies) per item
+  - `min_value::Float64`: Minimum total-value requirement; `0.0` when unused.
+    When positive it is set strictly above the LP-relaxation optimum, making the
+    relaxed model provably infeasible.
 """
 struct BoundedKnapsackProblem <: ProblemGenerator
     n_items::Int
@@ -52,22 +54,26 @@ Variable-count formula (decision variables created by `build_model`):
 There is exactly one decision variable per item, so `n_items = target_variables`.
 
 # Arguments
-- `target_variables`: Target number of decision variables (= number of items)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of decision variables (= number of items)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 
 # Feasibility
-- `feasible` / `unknown`: only the capacity constraint is present. `x = 0` is always
-  feasible and the optimum is non-trivial (capacity is a fraction of the maximum
-  achievable weight), so the relaxation has a finite optimum.
-- `infeasible`: a value floor `sum_i v_i x_i >= min_value` is added with
-  `min_value` set strictly above the exact LP-relaxation optimum. That optimum is
-  computed here by the classic greedy for the *bounded fractional* knapsack (sort
-  by value/weight ratio descending; for each item take `min(u_i, remaining/w_i)`
-  copies). Because the relaxation's best total value is `< min_value`, the relaxed
-  model is infeasible regardless of integrality.
+
+  - `feasible` / `unknown`: only the capacity constraint is present. `x = 0` is always
+    feasible and the optimum is non-trivial (capacity is a fraction of the maximum
+    achievable weight), so the relaxation has a finite optimum.
+  - `infeasible`: a value floor `sum_i v_i x_i >= min_value` is added with
+    `min_value` set strictly above the exact LP-relaxation optimum. That optimum is
+    computed here by the classic greedy for the *bounded fractional* knapsack (sort
+    by value/weight ratio descending; for each item take `min(u_i, remaining/w_i)`
+    copies). Because the relaxation's best total value is `< min_value`, the relaxed
+    model is infeasible regardless of integrality.
 """
-function BoundedKnapsackProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function BoundedKnapsackProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # One decision variable per item.
@@ -123,7 +129,7 @@ function BoundedKnapsackProblem(target_variables::Int, feasibility_status::Feasi
     if actual_status == infeasible
         # Exact LP-relaxation optimum via greedy for the bounded fractional knapsack.
         ratios = [values[i] / max(weights[i], 1) for i in 1:n_items]
-        order = sortperm(ratios, rev = true)
+        order = sortperm(ratios; rev=true)
         remaining = Float64(capacity)
         lp_opt = 0.0
         for i in order
@@ -149,11 +155,13 @@ Build a JuMP model for the bounded knapsack problem. Deterministic — uses only
 struct fields.
 
 Decision variables:
-- `x[i]`: integer number of copies of item `i` taken, `0 <= x[i] <= u_i`
-  (relaxed to continuous on `[0, u_i]` by the framework).
+
+  - `x[i]`: integer number of copies of item `i` taken, `0 <= x[i] <= u_i`
+    (relaxed to continuous on `[0, u_i]` by the framework).
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::BoundedKnapsackProblem)
     model = Model()

@@ -20,6 +20,16 @@ instances. The goal is problems realistic enough to test and develop LP solvers.
 
 ## Commands
 
+### Formatting and quality checks
+
+```bash
+python3 -m pip install -r requirements-dev.txt
+make setup   # instantiate the dedicated Julia tooling environment
+make format  # apply JuliaFormatter and Ruff
+make lint    # verify formatting and run Aqua/Ruff checks
+make check   # lint and run the complete Julia test suite
+```
+
 ### Testing
 
 HiGHS is a test-only dependency in `[extras]`. Both commands work:

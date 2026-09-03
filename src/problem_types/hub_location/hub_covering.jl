@@ -2,13 +2,17 @@ using JuMP
 using Random
 using Distributions
 
-"""All-candidate opening witness for a feasible hub set-covering instance."""
+"""
+All-candidate opening witness for a feasible hub set-covering instance.
+"""
 struct HubCoveringWitness
     open_hubs::Vector{Int}
     threshold::Float64
 end
 
-"""An OD pair whose cheapest two-hub path exceeds the service threshold."""
+"""
+An OD pair whose cheapest two-hub path exceeds the service threshold.
+"""
 struct HubCoveringCertificate
     origin::Int
     destination::Int
@@ -29,22 +33,22 @@ struct HubSetCoveringProblem <: ProblemGenerator
     chi::Float64
     alpha::Float64
     delta::Float64
-    locations::Vector{Tuple{Float64,Float64}}
+    locations::Vector{Tuple{Float64, Float64}}
     dist::Matrix{Float64}
     fixed_cost::Vector{Float64}
     service_threshold::Float64
-    covering_sets::Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}
-    feasible_witness::Union{Nothing,HubCoveringWitness}
-    infeasibility_certificate::Union{Nothing,HubCoveringCertificate}
+    covering_sets::Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}
+    feasible_witness::Union{Nothing, HubCoveringWitness}
+    infeasibility_certificate::Union{Nothing, HubCoveringCertificate}
     feasibility_status::FeasibilityStatus
 end
 
 _hub_covering_variable_count(prob::HubSetCoveringProblem) =
     prob.n_nodes + sum(length, values(prob.covering_sets); init=0)
 
-function _build_hub_covering(n::Int, target_variables::Int,
-                             feasibility_status::FeasibilityStatus,
-                             rng::AbstractRNG)
+function _build_hub_covering(
+    n::Int, target_variables::Int, feasibility_status::FeasibilityStatus, rng::AbstractRNG
+)
     profile = rand(rng, (:passenger, :freight, :express))
     shape = rand(rng, (:clustered, :corridor, :archipelago))
     locations = _hub_city_locations(rng, n, shape)
@@ -66,8 +70,7 @@ function _build_hub_covering(n::Int, target_variables::Int,
     min_route = fill(Inf, n, n)
     route_costs = Float64[]
     sizehint!(route_costs, n^3 * (n - 1))
-    route_cost(i, j, k, m) =
-        chi * dist[i, k] + alpha * dist[k, m] + delta * dist[m, j]
+    route_cost(i, j, k, m) = chi * dist[i, k] + alpha * dist[k, m] + delta * dist[m, j]
     for i in 1:n, j in 1:n
         i == j && continue
         for k in 1:n, m in 1:n
@@ -94,18 +97,17 @@ function _build_hub_covering(n::Int, target_variables::Int,
         threshold = rank == 0 ? prevfloat(first(route_costs)) : route_costs[rank]
     end
 
-    covering_sets = Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}()
+    covering_sets = Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}()
     for i in 1:n, j in 1:n
         i == j && continue
-        paths = Tuple{Int,Int}[]
+        paths = Tuple{Int, Int}[]
         for k in 1:n, m in 1:n
             route_cost(i, j, k, m) <= threshold && push!(paths, (k, m))
         end
         covering_sets[(i, j)] = paths
     end
 
-    witness = feasibility_status == feasible ?
-              HubCoveringWitness(collect(1:n), threshold) : nothing
+    witness = feasibility_status == feasible ? HubCoveringWitness(collect(1:n), threshold) : nothing
     certificate = nothing
     if feasibility_status == infeasible
         uncovered = nothing
@@ -120,13 +122,25 @@ function _build_hub_covering(n::Int, target_variables::Int,
         certificate = HubCoveringCertificate(i, j, min_route[i, j], threshold)
     end
     return HubSetCoveringProblem(
-        n, profile, chi, alpha, delta, locations, dist, fixed_cost, threshold,
-        covering_sets, witness, certificate, feasibility_status,
+        n,
+        profile,
+        chi,
+        alpha,
+        delta,
+        locations,
+        dist,
+        fixed_cost,
+        threshold,
+        covering_sets,
+        witness,
+        certificate,
+        feasibility_status,
     )
 end
 
-function HubSetCoveringProblem(target_variables::Int,
-                               feasibility_status::FeasibilityStatus, seed::Int)
+function HubSetCoveringProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     target = max(target_variables, 1)
     hint = clamp(round(Int, 1.25 * target^0.25), 4, 45)
     best = nothing
@@ -152,7 +166,7 @@ end
 function build_model(prob::HubSetCoveringProblem)
     model = Model()
     n = prob.n_nodes
-    routes = NTuple{4,Int}[]
+    routes = NTuple{4, Int}[]
     for ((i, j), paths) in prob.covering_sets, (k, m) in paths
         push!(routes, (i, j, k, m))
     end

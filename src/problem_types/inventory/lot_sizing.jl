@@ -9,6 +9,7 @@ using Statistics
 Generator for capacitated lot-sizing inventory problems (a mixed-integer program).
 
 # Overview
+
 Models single-item production planning where production must occur in fixed batch
 ("lot") sizes and incurs a fixed setup cost whenever production happens in a
 period. The decisions are: the production quantity per period, the integer number
@@ -21,14 +22,15 @@ multiple of the period lot size, a big-M setup linking constraint forbids
 production without a setup, and a per-period production capacity limits output.
 
 # Fields
-- `n_periods::Int`: Number of time periods
-- `prod_capacity::Int`: Production capacity per period
-- `initial_inventory::Int`: Starting inventory level
-- `demands::Vector{Int}`: Demand for each period
-- `production_costs::Vector{Float64}`: Per-unit production cost per period
-- `holding_costs::Vector{Float64}`: Holding cost per unit of ending inventory per period
-- `setup_costs::Vector{Float64}`: Fixed setup cost incurred when producing in a period
-- `lot_sizes::Vector{Int}`: Fixed batch (lot) size for each period
+
+  - `n_periods::Int`: Number of time periods
+  - `prod_capacity::Int`: Production capacity per period
+  - `initial_inventory::Int`: Starting inventory level
+  - `demands::Vector{Int}`: Demand for each period
+  - `production_costs::Vector{Float64}`: Per-unit production cost per period
+  - `holding_costs::Vector{Float64}`: Holding cost per unit of ending inventory per period
+  - `setup_costs::Vector{Float64}`: Fixed setup cost incurred when producing in a period
+  - `lot_sizes::Vector{Int}`: Fixed batch (lot) size for each period
 """
 struct LotSizingInventoryProblem <: ProblemGenerator
     n_periods::Int
@@ -53,11 +55,14 @@ integer lot count `n_lots[t]`. The total variable count is therefore
 `round((target_variables - 1) / 4)` to hit the target.
 
 # Arguments
-- `target_variables`: Target number of variables (≈ 4 × n_periods + 1)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (≈ 4 × n_periods + 1)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function LotSizingInventoryProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function LotSizingInventoryProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # Variable count = x[1:n] + I[0:n] + y[1:n] (Bin) + n_lots[1:n] (Int)
@@ -66,8 +71,13 @@ function LotSizingInventoryProblem(target_variables::Int, feasibility_status::Fe
     n_periods = max(2, min(2000, round(Int, (target_variables - 1) / 4)))
 
     # Determine business scale by target size
-    scale = target_variables <= 250 ? :small :
-            target_variables <= 1000 ? :medium : :large
+    scale = if target_variables <= 250
+        :small
+    elseif target_variables <= 1000
+        :medium
+    else
+        :large
+    end
 
     # Scale-specific ranges
     if scale == :small
@@ -105,7 +115,9 @@ function LotSizingInventoryProblem(target_variables::Int, feasibility_status::Fe
     # Generate base demands with seasonality
     demand_mean = (demand_min + demand_max) / 2
     demand_std = (demand_max - demand_min) / 4
-    demands = round.(Int, clamp.(rand(rng, Normal(demand_mean, demand_std), n_periods), demand_min, demand_max))
+    demands = round.(
+        Int, clamp.(rand(rng, Normal(demand_mean, demand_std), n_periods), demand_min, demand_max)
+    )
 
     # Add seasonality
     if rand(rng) < 0.6 && n_periods >= 12
@@ -116,13 +128,17 @@ function LotSizingInventoryProblem(target_variables::Int, feasibility_status::Fe
     # Production and holding costs
     prod_cost_mean = (prod_cost_min + prod_cost_max) / 2
     prod_cost_std = (prod_cost_max - prod_cost_min) / 4
-    production_costs = clamp.(rand(rng, Normal(prod_cost_mean, prod_cost_std), n_periods),
-                              prod_cost_min, prod_cost_max)
+    production_costs = clamp.(
+        rand(rng, Normal(prod_cost_mean, prod_cost_std), n_periods), prod_cost_min, prod_cost_max
+    )
 
     holding_cost_mean = (holding_cost_min + holding_cost_max) / 2
     holding_cost_std = (holding_cost_max - holding_cost_min) / 4
-    holding_costs = clamp.(rand(rng, Normal(holding_cost_mean, holding_cost_std), n_periods),
-                           holding_cost_min, holding_cost_max)
+    holding_costs = clamp.(
+        rand(rng, Normal(holding_cost_mean, holding_cost_std), n_periods),
+        holding_cost_min,
+        holding_cost_max,
+    )
 
     # Keep demands positive
     demands = max.(demands, 1)
@@ -171,8 +187,14 @@ function LotSizingInventoryProblem(target_variables::Int, feasibility_status::Fe
     # For unknown, leave capacity as the sampled value (natural instance).
 
     return LotSizingInventoryProblem(
-        n_periods, prod_capacity, initial_inventory,
-        demands, production_costs, holding_costs, setup_costs, lot_sizes,
+        n_periods,
+        prod_capacity,
+        initial_inventory,
+        demands,
+        production_costs,
+        holding_costs,
+        setup_costs,
+        lot_sizes,
     )
 end
 
@@ -183,7 +205,8 @@ Build a JuMP model for the capacitated lot-sizing inventory problem. Determinist
 uses only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::LotSizingInventoryProblem)
     model = Model()
@@ -197,9 +220,15 @@ function build_model(prob::LotSizingInventoryProblem)
     @variable(model, n_lots[1:n] >= 0, Int)   # number of lots produced per period
 
     # Objective: production + holding + setup costs
-    @objective(model, Min,
-        sum(prob.production_costs[t] * x[t] + prob.holding_costs[t] * I[t] +
-            prob.setup_costs[t] * y[t] for t in 1:n))
+    @objective(
+        model,
+        Min,
+        sum(
+            prob.production_costs[t] * x[t] +
+            prob.holding_costs[t] * I[t] +
+            prob.setup_costs[t] * y[t] for t in 1:n
+        )
+    )
 
     # Initial inventory
     @constraint(model, I[0] == prob.initial_inventory)
@@ -207,7 +236,7 @@ function build_model(prob::LotSizingInventoryProblem)
     M = prob.prod_capacity * 2  # Big-M for setup linking
     for t in 1:n
         # Inventory balance (no backlog: I[t] >= 0 enforced by variable bound)
-        @constraint(model, I[t-1] + x[t] - prob.demands[t] == I[t])
+        @constraint(model, I[t - 1] + x[t] - prob.demands[t] == I[t])
         # Production only allowed if setup occurs
         @constraint(model, x[t] <= M * y[t])
         # Production must be an integer number of lots

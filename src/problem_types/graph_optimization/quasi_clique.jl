@@ -9,18 +9,14 @@ edge-activation variables. A planted clique supplies the feasible witness.
 """
 struct QuasiCliqueProblem <: ProblemGenerator
     n_vertices::Int
-    candidate_edges::Vector{Tuple{Int,Int}}
+    candidate_edges::Vector{Tuple{Int, Int}}
     edge_present::Vector{Bool}
     vertex_weights::Vector{Float64}
     selected_vertices::Int
     required_edges::Int
 end
 
-function QuasiCliqueProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
-)
+function QuasiCliqueProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     target_variables >= 10 || throw(ArgumentError("quasi clique needs at least 10 variables"))
     rng = MersenneTwister(seed)
     n = max(4, round(Int, 0.6 * target_variables))
@@ -35,13 +31,13 @@ function QuasiCliqueProblem(
     end
     k = min(k, n)
     planted_vertices = sort!(randperm(rng, n)[1:k])
-    planted_edges = Tuple{Int,Int}[]
+    planted_edges = Tuple{Int, Int}[]
     for a in 1:(k - 1), b in (a + 1):k
         push!(planted_edges, (planted_vertices[a], planted_vertices[b]))
     end
     planted_set = Set(planted_edges)
     remaining = _graph_sample_edges(
-        rng, n, n_edge_variables - length(planted_edges); forbidden=planted_set,
+        rng, n, n_edge_variables - length(planted_edges); forbidden=planted_set
     )
     candidate_edges = sort!(vcat(planted_edges, remaining))
 
@@ -60,20 +56,14 @@ function QuasiCliqueProblem(
         present
     end
     weights = _graph_weights(rng, n; low=1, high=50)
-    return QuasiCliqueProblem(
-        n, candidate_edges, edge_present, weights, k, required_edges,
-    )
+    return QuasiCliqueProblem(n, candidate_edges, edge_present, weights, k, required_edges)
 end
 
 function build_model(prob::QuasiCliqueProblem)
     model = Model()
     @variable(model, x[1:prob.n_vertices], Bin)
     @variable(model, y[1:length(prob.candidate_edges)], Bin)
-    @objective(
-        model,
-        Max,
-        sum(prob.vertex_weights[v] * x[v] for v in 1:prob.n_vertices) + sum(y),
-    )
+    @objective(model, Max, sum(prob.vertex_weights[v] * x[v] for v in 1:prob.n_vertices) + sum(y),)
     @constraint(model, sum(x) == prob.selected_vertices)
     for (e, (u, v)) in enumerate(prob.candidate_edges)
         @constraint(model, y[e] <= x[u])

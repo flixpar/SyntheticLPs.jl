@@ -48,20 +48,21 @@ airline-passenger convention), so each *unordered* pair is one commodity. With
 LP relaxation of the p-hub median problem.
 
 # Fields
-- `n_nodes::Int`: number of cities (nodes and hub candidates)
-- `p::Int`: number of hubs to open (exactly)
-- `chi::Float64`: collection cost multiplier (1.0 on the CAB grid)
-- `alpha::Float64`: inter-hub discount factor, sampled in `[0.2, 0.8]` (CAB grid)
-- `delta::Float64`: distribution cost multiplier (1.0 on the CAB grid)
-- `locations::Vector{Tuple{Float64,Float64}}`: city coordinates
-- `dist::Matrix{Float64}`: Euclidean distances (define the reach windows)
-- `cost::Matrix{Float64}`: symmetric CAB-style network costs (detour-perturbed)
-- `flow::Matrix{Float64}`: symmetric origin-destination volumes, zero diagonal
-- `reach::Float64`: allocation reach window
-- `admissible::Vector{Vector{Int}}`: `A_i`, hub candidates within reach of `i`
-- `feasible_witness::Union{Nothing,HubAssignmentWitness}`: planted solution
-- `infeasibility_certificate::Union{Nothing,DisjointRegionCertificate}`
-- `feasibility_status::FeasibilityStatus`
+
+  - `n_nodes::Int`: number of cities (nodes and hub candidates)
+  - `p::Int`: number of hubs to open (exactly)
+  - `chi::Float64`: collection cost multiplier (1.0 on the CAB grid)
+  - `alpha::Float64`: inter-hub discount factor, sampled in `[0.2, 0.8]` (CAB grid)
+  - `delta::Float64`: distribution cost multiplier (1.0 on the CAB grid)
+  - `locations::Vector{Tuple{Float64,Float64}}`: city coordinates
+  - `dist::Matrix{Float64}`: Euclidean distances (define the reach windows)
+  - `cost::Matrix{Float64}`: symmetric CAB-style network costs (detour-perturbed)
+  - `flow::Matrix{Float64}`: symmetric origin-destination volumes, zero diagonal
+  - `reach::Float64`: allocation reach window
+  - `admissible::Vector{Vector{Int}}`: `A_i`, hub candidates within reach of `i`
+  - `feasible_witness::Union{Nothing,HubAssignmentWitness}`: planted solution
+  - `infeasibility_certificate::Union{Nothing,DisjointRegionCertificate}`
+  - `feasibility_status::FeasibilityStatus`
 """
 struct PHubMedianProblem <: ProblemGenerator
     n_nodes::Int
@@ -69,21 +70,23 @@ struct PHubMedianProblem <: ProblemGenerator
     chi::Float64
     alpha::Float64
     delta::Float64
-    locations::Vector{Tuple{Float64,Float64}}
+    locations::Vector{Tuple{Float64, Float64}}
     dist::Matrix{Float64}
     cost::Matrix{Float64}
     flow::Matrix{Float64}
     reach::Float64
     admissible::Vector{Vector{Int}}
-    feasible_witness::Union{Nothing,HubAssignmentWitness}
-    infeasibility_certificate::Union{Nothing,DisjointRegionCertificate}
+    feasible_witness::Union{Nothing, HubAssignmentWitness}
+    infeasibility_certificate::Union{Nothing, DisjointRegionCertificate}
     feasibility_status::FeasibilityStatus
 end
 
 _number_of_variables(admissible::Vector{Vector{Int}}) =
-    sum(length(admissible[i]) * length(admissible[j])
-        for i in 1:length(admissible) for j in (i + 1):length(admissible);
-        init=0) +
+    sum(
+        length(admissible[i]) * length(admissible[j]) for i in 1:length(admissible) for
+        j in (i + 1):length(admissible);
+        init=0,
+    ) +
     sum(length(a) for a in admissible; init=0) +
     length(union(admissible...))
 
@@ -99,8 +102,7 @@ subsets when `binomial(n, p)` is small; farthest-first traversal otherwise
 function _hub_cover_hubs(dist::Matrix{Float64}, p::Int, r::Int)
     n = size(dist, 1)
     r = clamp(r, 1, p)
-    radius_of(hubs::Vector{Int}) =
-        maximum(sort([dist[i, h] for h in hubs])[r] for i in 1:n)
+    radius_of(hubs::Vector{Int}) = maximum(sort([dist[i, h] for h in hubs])[r] for i in 1:n)
 
     binom = 1.0
     for t in 0:(p - 1)
@@ -158,7 +160,7 @@ closes an adjacent chord by at most 33 * 0.08).
 """
 function _hub_ring_centers(rng::AbstractRNG, q::Int)
     angle0 = rand(rng, Uniform(0.0, 2.0 * pi))
-    centers = Tuple{Float64,Float64}[]
+    centers = Tuple{Float64, Float64}[]
     for l in 1:q
         theta = angle0 + 2.0 * pi * (l - 1) / q + rand(rng, Uniform(-0.04, 0.04))
         push!(centers, (50.0 + 33.0 * cos(theta), 50.0 + 33.0 * sin(theta)))
@@ -170,8 +172,7 @@ end
 Build a complete PHubMedianProblem for a node-count hint. All randomness lives
 here and in the helpers it calls; `build_model` is deterministic.
 """
-function _build_p_hub_median(n_nodes::Int, feasibility_status::FeasibilityStatus,
-                             rng::AbstractRNG)
+function _build_p_hub_median(n_nodes::Int, feasibility_status::FeasibilityStatus, rng::AbstractRNG)
     n = n_nodes
     p = clamp(round(Int, n / 4) + rand(rng, 0:1), 2, min(8, n - 1))
 
@@ -182,16 +183,25 @@ function _build_p_hub_median(n_nodes::Int, feasibility_status::FeasibilityStatus
         q = p + 1
         centers = _hub_ring_centers(rng, q)
         node_group = vcat(collect(1:q), rand(rng, 1:q, max(0, n - q)))
-        min_sep = minimum(hypot(centers[a][1] - centers[b][1],
-                                centers[a][2] - centers[b][2])
-                          for a in 1:q for b in (a + 1):q)
+        min_sep = minimum(
+            hypot(centers[a][1] - centers[b][1], centers[a][2] - centers[b][2]) for a in 1:q for
+            b in (a + 1):q
+        )
         spread = 0.15 * min_sep
-        locations = [g <= q ? centers[g] :
-                     (clamp(centers[node_group[g]][1] + rand(rng, Uniform(-spread, spread)),
-                            0.0, 100.0),
-                      clamp(centers[node_group[g]][2] + rand(rng, Uniform(-spread, spread)),
-                            0.0, 100.0))
-                     for g in 1:n]
+        locations = [
+            if g <= q
+                centers[g]
+            else
+                (
+                    clamp(
+                        centers[node_group[g]][1] + rand(rng, Uniform(-spread, spread)), 0.0, 100.0
+                    ),
+                    clamp(
+                        centers[node_group[g]][2] + rand(rng, Uniform(-spread, spread)), 0.0, 100.0
+                    ),
+                )
+            end for g in 1:n
+        ]
         dist = _hub_distance_matrix(locations)
         groups = [Int[] for _ in 1:q]
         for g in 1:n
@@ -207,9 +217,11 @@ function _build_p_hub_median(n_nodes::Int, feasibility_status::FeasibilityStatus
         dist = _hub_distance_matrix(locations)
         hubs, cover = _hub_cover_hubs(dist, p, 1)
         assignment = _hub_nearest_assignment(dist, hubs)
-        reach = feasibility_status == feasible ?
-                cover * rand(rng, Uniform(1.01, 1.08)) :
-                cover * rand(rng, Uniform(0.8, 1.25))
+        reach = if feasibility_status == feasible
+            cover * rand(rng, Uniform(1.01, 1.08))
+        else
+            cover * rand(rng, Uniform(0.8, 1.25))
+        end
         certificate = nothing
     end
 
@@ -217,15 +229,36 @@ function _build_p_hub_median(n_nodes::Int, feasibility_status::FeasibilityStatus
     populations = _hub_populations(rng, n)
     decay = rand(rng, Uniform(0.4, 1.0))
     noise = rand(rng, Uniform(0.6, 1.1))
-    flow = _hub_gravity_flows(rng, n, populations, dist, decay, noise;
-                              symmetric=true, scale=rand(rng, Uniform(20.0, 90.0)))
+    flow = _hub_gravity_flows(
+        rng,
+        n,
+        populations,
+        dist,
+        decay,
+        noise;
+        symmetric=true,
+        scale=rand(rng, Uniform(20.0, 90.0)),
+    )
     admissible = _hub_reach_admissible(dist, reach)
 
-    witness = feasibility_status == feasible ?
-              HubAssignmentWitness(hubs, assignment, reach) : nothing
-    return PHubMedianProblem(n, p, 1.0, rand(rng, Uniform(0.2, 0.8)), 1.0,
-                             locations, dist, cost, flow, reach, admissible,
-                             witness, certificate, feasibility_status)
+    witness =
+        feasibility_status == feasible ? HubAssignmentWitness(hubs, assignment, reach) : nothing
+    return PHubMedianProblem(
+        n,
+        p,
+        1.0,
+        rand(rng, Uniform(0.2, 0.8)),
+        1.0,
+        locations,
+        dist,
+        cost,
+        flow,
+        reach,
+        admissible,
+        witness,
+        certificate,
+        feasibility_status,
+    )
 end
 
 """
@@ -245,18 +278,18 @@ An iterative re-sizing loop adjusts the node-count hint so this lands close to
 the target (within a few percent for most requests).
 
 # Feasibility (relaxation-aware)
-- `feasible`: hubs are placed to minimise the covering radius and the reach
-  window is set just above it, so the planted assignment is admissible for the
-  MIP and its LP relaxation (`feasible_witness`).
-- `infeasible`: `p + 1` island groups with pairwise disjoint admissible sets
-  (`DisjointRegionCertificate`); the exact-`p` row conflicts with the
-  disaggregated linking rows already in the relaxation.
-- `unknown`: the reach window is sampled around the covering radius (from 0.8x
-  to 1.25x), leaving whether `p` hubs can serve every node genuinely
-  undecided.
+
+  - `feasible`: hubs are placed to minimise the covering radius and the reach
+    window is set just above it, so the planted assignment is admissible for the
+    MIP and its LP relaxation (`feasible_witness`).
+  - `infeasible`: `p + 1` island groups with pairwise disjoint admissible sets
+    (`DisjointRegionCertificate`); the exact-`p` row conflicts with the
+    disaggregated linking rows already in the relaxation.
+  - `unknown`: the reach window is sampled around the covering radius (from 0.8x
+    to 1.25x), leaving whether `p` hubs can serve every node genuinely
+    undecided.
 """
-function PHubMedianProblem(target_variables::Int,
-                           feasibility_status::FeasibilityStatus, seed::Int)
+function PHubMedianProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     target = max(target_variables, 1)
     hint = clamp(round(Int, 2.0 * target^0.25), 3, 70)
     best = nothing
@@ -289,33 +322,36 @@ end
 Build the four-index path-flow model. Deterministic - uses only struct fields.
 
 # Model
+
 Variables:
-- `x[(i,j,k,m)] >= 0`: volume of pair `(i,j)` (unordered, `i < j`) routed
-  `i -> k -> m -> j` with `k in A_i`, `m in A_j`
-- `z[(i,k)] in {0,1}`: node `i` allocated to hub `k` (`k in A_i`)
-- `y[k] in {0,1}`: candidate `k` opened as a hub (`k` reachable by someone)
+
+  - `x[(i,j,k,m)] >= 0`: volume of pair `(i,j)` (unordered, `i < j`) routed
+    `i -> k -> m -> j` with `k in A_i`, `m in A_j`
+  - `z[(i,k)] in {0,1}`: node `i` allocated to hub `k` (`k in A_i`)
+  - `y[k] in {0,1}`: candidate `k` opened as a hub (`k` reachable by someone)
 
 Objective: `sum (chi*c_ik + alpha*c_km + delta*c_mj) * x_ikmj`
 (`c_kk = 0`, so a single-hub path `i -> k -> k -> j` pays no transfer leg).
 
 Constraints:
-- demand: `sum_{k,m} x_ikmj == w_ij` for each unordered pair
-- allocation equalities on both disaggregated sides:
-  `sum_m x_ikmj == w_ij * z_ik` and `sum_k x_ikmj == w_ij * z_jm`
-- opening: `z_ik <= y_k`
-- hub self-allocation: `z_kk == y_k`
-- exact p: `sum_k y_k == p`
+
+  - demand: `sum_{k,m} x_ikmj == w_ij` for each unordered pair
+  - allocation equalities on both disaggregated sides:
+    `sum_m x_ikmj == w_ij * z_ik` and `sum_k x_ikmj == w_ij * z_jm`
+  - opening: `z_ik <= y_k`
+  - hub self-allocation: `z_kk == y_k`
+  - exact p: `sum_k y_k == p`
 """
 function build_model(prob::PHubMedianProblem)
     model = Model()
     n = prob.n_nodes
     A = prob.admissible
 
-    paths = NTuple{4,Int}[]
+    paths = NTuple{4, Int}[]
     for i in 1:n, j in (i + 1):n, k in A[i], m in A[j]
         push!(paths, (i, j, k, m))
     end
-    allocations = NTuple{2,Int}[]
+    allocations = NTuple{2, Int}[]
     for i in 1:n, k in A[i]
         push!(allocations, (i, k))
     end
@@ -325,18 +361,18 @@ function build_model(prob::PHubMedianProblem)
     @variable(model, z[allocations], Bin)
     @variable(model, y[hub_candidates], Bin)
 
-    by_pair = Dict{NTuple{2,Int},Vector{NTuple{4,Int}}}()
-    by_first_hub = Dict{NTuple{3,Int},Vector{NTuple{4,Int}}}()
-    by_last_hub = Dict{NTuple{3,Int},Vector{NTuple{4,Int}}}()
+    by_pair = Dict{NTuple{2, Int}, Vector{NTuple{4, Int}}}()
+    by_first_hub = Dict{NTuple{3, Int}, Vector{NTuple{4, Int}}}()
+    by_last_hub = Dict{NTuple{3, Int}, Vector{NTuple{4, Int}}}()
     for path in paths
         i, j, k, m = path
-        push!(get!(by_pair, (i, j), NTuple{4,Int}[]), path)
-        push!(get!(by_first_hub, (i, j, k), NTuple{4,Int}[]), path)
-        push!(get!(by_last_hub, (i, j, m), NTuple{4,Int}[]), path)
+        push!(get!(by_pair, (i, j), NTuple{4, Int}[]), path)
+        push!(get!(by_first_hub, (i, j, k), NTuple{4, Int}[]), path)
+        push!(get!(by_last_hub, (i, j, m), NTuple{4, Int}[]), path)
     end
-    empty_set = NTuple{4,Int}[]
+    empty_set = NTuple{4, Int}[]
 
-    path_cost(path::NTuple{4,Int}) =
+    path_cost(path::NTuple{4, Int}) =
         prob.chi * prob.cost[path[1], path[3]] +
         prob.alpha * prob.cost[path[3], path[4]] +
         prob.delta * prob.cost[path[4], path[2]]
@@ -347,14 +383,16 @@ function build_model(prob::PHubMedianProblem)
         w = prob.flow[i, j]
         @constraint(model, sum(x[path] for path in get(by_pair, (i, j), empty_set)) == w)
         for k in A[i]
-            @constraint(model,
-                sum(x[path] for path in get(by_first_hub, (i, j, k), empty_set)) ==
-                w * z[(i, k)])
+            @constraint(
+                model,
+                sum(x[path] for path in get(by_first_hub, (i, j, k), empty_set)) == w * z[(i, k)]
+            )
         end
         for m in A[j]
-            @constraint(model,
-                sum(x[path] for path in get(by_last_hub, (i, j, m), empty_set)) ==
-                w * z[(j, m)])
+            @constraint(
+                model,
+                sum(x[path] for path in get(by_last_hub, (i, j, m), empty_set)) == w * z[(j, m)]
+            )
         end
     end
 
@@ -379,6 +417,6 @@ register_variant(
     :hub_location,
     :p_hub_median,
     PHubMedianProblem,
-    "Uncapacitated single-allocation p-hub median with reach windows (tight four-index path-flow formulation, CAB airline conventions)",
+    "Uncapacitated single-allocation p-hub median with reach windows (tight four-index path-flow formulation, CAB airline conventions)";
     default=true,
 )
