@@ -4,6 +4,166 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-09-04 (multi-period process-planning generators)
+
+**Previous Commit**: `4eaa541`
+
+**Commits**: (pending)
+
+**Datetime**: 2026-09-04 13:40 UTC
+
+**Summary**: Added a `process_planning` category with five research-grounded
+multi-period generators: `refinery`, the refinery production-planning LP over a
+crude slate, an assay-driven distillation and conversion flowsheet, intermediate
+tankage and specification-constrained blending; `mode_switching`, the same
+flowsheet with operating modes, exact startups, and minimum runs left to the
+solver (a MILP); `hydrogen_network`, a clean-fuels LP coupling hydroprocessing to
+hydrogen, sulfur recovery, and carbon; `campaign`, a state-task-network
+petrochemical scheduling MILP; and `capacity_expansion`, the long-range chemical
+process-network investment MILP. The corpus grows from 45 to 46 categories.
+
+**Details**:
+
+- Added `src/problem_types/process_planning/common.jl`, the shared flowsheet.
+  Five crude archetypes (condensate through extra heavy) carry API gravity,
+  whole-crude sulfur and volumetric cut yields taken from published assays
+  (Hibernia, Bakken, WTI); the assay is lumped onto the instance's cut slate and
+  perturbed per crude. Distillation cuts are segregated *per crude* so every
+  stream has a fixed quality vector, which is what keeps the blend rows linear
+  rather than bilinear (the pooling problem). Eleven unit templates
+  (hydrotreating, isomerization, reforming, catalytic cracking, hydrocracking,
+  delayed coking, alkylation) carry per-mode volumetric yield slates calibrated
+  to reported commercial ranges, and eight finished-grade templates carry
+  published quality windows on nine properties (density, sulfur, RON, MON, RVP,
+  aromatics, cetane, cold flow, viscosity index).
+- Sizing: the per-period variable block is exactly affine in the crude count for
+  a fixed configuration, so the generator draws one configuration per complexity
+  level (topping, hydroskimming, cracking, full conversion), pins the affine
+  coefficients with two probes, solves for the crude count at each candidate
+  horizon in closed form, and keeps the triple closest to the target. Requests
+  land within about 20% from 50 to 20,000 variables (usually within 5%), and
+  refinery complexity, grade count and parallel trains scale with the target.
+- Feasibility: a complete operation is simulated forward through the flowsheet
+  with residual allocation, so every balance row holds exactly; capacities,
+  tanks, availability, contracts and blend windows are then placed around it and
+  the operation is stored as a witness that `refinery_plan_satisfies` re-checks
+  row by row. Requested-infeasible instances carry one of two solver-independent
+  certificates: contracted volume above a conversion bound (a yield-potential
+  argument computed backwards through the flowsheet DAG, taking each feed's best
+  mode, so it refutes every mode assignment and the LP relaxation), or a grade
+  specification tightened past every component that may enter it. Unknown-status
+  instances size assets from engineering rules and state each quality window at
+  the edge of what the configuration supports, without ever making a grade
+  unmakeable on its own; HiGHS finds both outcomes at every scale.
+- Added `capacity_expansion`, following the multiperiod MILP of Sahinidis &
+  Grossmann: layered chemical network, capacity recursion with fixed-charge
+  expansions, chemical balances at fixed conversion ratios, feedstock
+  availability, contracted demand and a discounted NPV objective. Its two
+  certificates bound a single chemical by the largest capacity its makers could
+  ever be expanded to, or the whole network by the value of the raw material the
+  market can supply.
+- Added `hydrogen_network` on the shared refinery core. Hydrotreater and
+  hydrocracker feed variables consume hydrogen, reformer throughput produces
+  by-product hydrogen, and SMR production, merchant imports, inventory, and
+  venting close the balance. Sulfur recovery is derived from feed/output sulfur
+  mass and carbon emissions from SMR and unit throughput; period and cumulative
+  caps therefore cannot be bypassed. A full extended feasible witness is checked
+  arithmetically.
+- Consolidated the complementary `campaign` generator: seven named chemical
+  chains, fixed-ratio state-task balances, co-products, shared grade trains,
+  binary activity and exact startup variables, horizon-safe minimum campaigns,
+  planned turnarounds, tiered raw-material purchases, annual seasonality, and a
+  cumulative bottleneck certificate that refutes the LP relaxation. Its
+  dimension search now reaches its documented 20,000-variable ceiling.
+- Added correlated energy-market paths across crude, blendstock, and product
+  prices; calendar-correct annual seasonality for weekly, fortnightly, and
+  monthly refinery periods; contiguous unit turnaround derates; Chevron
+  `RVP^1.25` blending; and ethanol renewable-volume floors and blend walls.
+- Calibrated unknown-status data along a low-discrepancy seed sequence that
+  coherently moves supply, demand, specification slack, and environmental
+  headroom from stressed to accommodating conditions. Per-variant HiGHS audits
+  over two scales and eight seeds observe both feasible and infeasible outcomes;
+  hydrogen-plant design capacity is computed on the same tonne-H2/kbbl basis as
+  hydroprocessing consumption rather than from an unrelated scalar.
+- Numerical care: sulfur is carried in weight ppm (the unit its specifications
+  use), each quality row is divided by its largest coefficient (the right-hand
+  side is zero, so the specification is unchanged), and implied-but-valid bounds
+  are stated on crude runs, unit feeds and blend flows. Before these, HiGHS's
+  dual simplex failed with `OTHER_ERROR` on some large infeasible instances that
+  its interior-point solver classified correctly; afterwards the constraint
+  matrix spans about four orders of magnitude instead of eight and the failures
+  are gone.
+- Bulk cuts and refinery by-products can be sold against limited merchant
+  volumes, while upgraded blend components remain integrated with the refinery
+  rather than receiving an automatic outlet. An otherwise dead-end stream still
+  receives a disposal market so no generated network node lacks a sink.
+- Calibrated the price deck against realised margins rather than by eye: crude is
+  priced off a 38-API, 0.4 wt% sulfur marker with the usual differentials
+  (about \$0.35/bbl per API degree, \$3.5/bbl per wt% sulfur), which puts an
+  extra-heavy sour crude some \$20 below a condensate instead of \$45 below it.
+  With finished grades at \$45-105/bbl, solved instances now show the kind of
+  double-digit dollars-per-barrel upgrading margin a conversion refinery running
+  discounted heavy crude actually earns.
+- Added `test/problem_types/process_planning.jl` (registry shape, exact
+  variable-count formulas per variant, sizing accuracy and monotonicity,
+  flowsheet DAG and data invariants, witness and certificate arithmetic,
+  hydrogen/sulfur/carbon coupling, campaign material and minimum-run arithmetic,
+  binary-block structure, reproducibility, edge sizes, and HiGHS feasibility
+  contracts including the unrelaxed integer models), `docs/process_planning.md`,
+  and the explainer metadata entry; rebuilt `docs/explainer.html`.
+
+**Review fixes** (same work, applied after a correctness pass):
+
+- `_PP_CUT_LUMP` mapped `kerosene` to itself. On the three-cut slate
+  (`light_naphtha`, `distillate`, `resid`), which carries no kerosene, the
+  resolution walk therefore never terminated on a present cut and the
+  `idx === nothing` fallback dumped the entire kerosene yield into the *last*
+  cut, residue — for a condensate that turned a 0.5% residue cut into 25% of the
+  barrel and gave kerosene volume residue quality (0.985 SG, 2.6x whole-crude
+  sulfur, zero cetane). Kerosene now lumps into distillate, its heavier
+  neighbour, as the surrounding documentation already described.
+- `capacity_expansion` clamped a planted expansion by the unrounded `covering`
+  size while publishing `max_expansion` rounded to four digits, so the stored
+  witness could exceed the bound the model states by up to 5e-5 — above HiGHS's
+  primal feasibility tolerance. Both window ends are now rounded where they are
+  drawn, so the plan is clamped by exactly the published bounds.
+- `_pp_impossible_specification!` could tighten a maximum specification below the
+  grade's existing minimum (ULSD and gasoline density), leaving an empty
+  published window: a second, unrecorded reason for the infeasibility. The
+  opposing bound is now withdrawn. `_pp_settle_specifications!` could close a
+  narrow window the same way when its slack range straddles zero (ULSD density on
+  unknown-status instances, which the docstring explicitly excludes); the window
+  is now reopened around the quality the recipe reaches.
+- The turndown-forced volume that sizes spot outlets took the largest single
+  unit's contribution rather than the sum over the units making that stream, so a
+  configuration with parallel trains could publish a merchant outlet too small
+  for the volume its own minimum rates push out.
+- Rebased onto `main` after the code-quality tooling landed and applied
+  JuliaFormatter to the eight new `process_planning` sources, so the branch
+  satisfies the `make lint` gate the merged PR #52 added.
+- Refinery complexity is now set by the scale of the request (`_pp_level_floor`:
+  topping below 200 variables, hydroskimming from 200, cracking from 900) rather
+  than left to the size score in `_pp_dimensions`. A topping refinery has the
+  smallest per-period block, so it could land exactly on any target and win on
+  the score's first element before the shape term preferring the more complete
+  refinery was consulted: roughly half of all `refinery` instances came back as a
+  bare crude-cut-and-blend LP at every size, including 44% at 2,000 variables,
+  contradicting both the variant docstring and `docs/process_planning.md`. Under
+  the floor every request of 200 variables or more carries at least three
+  conversion units and every request of 900 or more carries a cracking unit. The
+  floor combines with the callers' existing `minimum_level`, so `mode_switching`
+  and `hydrogen_network` keep their hydroskimming minimum at small sizes.
+
+  Cost, measured over 1,000 seeds per target across all three callers: the worst
+  relative size error rises to 16% just above the 200 threshold and is under 5%
+  from 400 variables up, against the 20% the category tests contract for. At
+  400-800 variables the extra network is paid for out of the horizon (mean
+  periods 8.3 to 4.3 at 400, 15.6 to 6.7 at 800, minimum still 3-4) while units,
+  grades and crudes all rise; above 900 both the horizon and the network grow.
+  The category test count falls because the blend-quality loop runs over fewer
+  (grade, period) pairs, not because any instance is skipped: every grade is
+  still blended in every period.
+
 ## 2026-09-04 (PR #52 review fixes)
 
 **Previous Commit**: `07943c3`
