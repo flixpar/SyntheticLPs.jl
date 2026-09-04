@@ -7,6 +7,7 @@ using Random
 Generator for quantile regression as a linear program.
 
 # Overview
+
 Fits coefficients `beta` minimizing the asymmetric "pinball" loss
 `Σ_i ρ_τ(y_i − X_i · beta)`, where `ρ_τ(r) = τ·max(r, 0) + (1−τ)·max(−r, 0)`,
 subject to box bounds on the coefficients and a coefficient side constraint. The
@@ -16,15 +17,16 @@ parts (`u_i − v_i = y_i − X_i · beta`). The constraint matrix is **dense**.
 quantile estimation.
 
 # Fields
-- `n_samples::Int`: Number of observations
-- `n_features::Int`: Number of regression coefficients
-- `tau::Float64`: Target quantile level in (0, 1)
-- `X::Matrix{Float64}`: Design matrix (n_samples × n_features)
-- `y::Vector{Float64}`: Response vector
-- `beta_lower::Vector{Float64}`: Lower bound on each coefficient
-- `beta_upper::Vector{Float64}`: Upper bound on each coefficient
-- `side_coef::Vector{Float64}`: Coefficients of the side constraint on `beta`
-- `side_rhs::Float64`: Right-hand side of the side constraint
+
+  - `n_samples::Int`: Number of observations
+  - `n_features::Int`: Number of regression coefficients
+  - `tau::Float64`: Target quantile level in (0, 1)
+  - `X::Matrix{Float64}`: Design matrix (n_samples × n_features)
+  - `y::Vector{Float64}`: Response vector
+  - `beta_lower::Vector{Float64}`: Lower bound on each coefficient
+  - `beta_upper::Vector{Float64}`: Upper bound on each coefficient
+  - `side_coef::Vector{Float64}`: Coefficients of the side constraint on `beta`
+  - `side_rhs::Float64`: Right-hand side of the side constraint
 """
 struct QuantileRegressionProblem <: ProblemGenerator
     n_samples::Int
@@ -45,7 +47,9 @@ Construct a quantile regression instance. Variables: `beta` (n_features) plus
 positive/negative residual parts `u`, `v` per sample, for a total of
 `n_features + 2 * n_samples`.
 """
-function QuantileRegressionProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function QuantileRegressionProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # Variables = n + 2m, with an overdetermined system (m > n).
@@ -57,9 +61,17 @@ function QuantileRegressionProblem(target_variables::Int, feasibility_status::Fe
 
     data = generate_regression_data(rng, n_features, n_samples, feasibility_status)
 
-    return QuantileRegressionProblem(n_samples, n_features, tau, data.X, data.y,
-                                     data.beta_lower, data.beta_upper,
-                                     data.side_coef, data.side_rhs)
+    return QuantileRegressionProblem(
+        n_samples,
+        n_features,
+        tau,
+        data.X,
+        data.y,
+        data.beta_lower,
+        data.beta_upper,
+        data.side_coef,
+        data.side_rhs,
+    )
 end
 
 """

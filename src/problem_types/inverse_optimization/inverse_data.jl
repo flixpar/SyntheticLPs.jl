@@ -36,13 +36,16 @@ Validate a `target_variables` request for an `inverse_optimization` variant:
 at least 2 variables and at most [`INVERSE_MAX_VARIABLES`](@ref).
 """
 function _check_inverse_target(target_variables::Int)
-    target_variables >= 2 || throw(ArgumentError(
-        "target_variables must be >= 2 (got $target_variables)."))
-    target_variables <= INVERSE_MAX_VARIABLES || throw(ArgumentError(
-        "inverse_optimization variants are capped at $INVERSE_MAX_VARIABLES " *
-        "variables: each inverse model expands its forward LP by a constant " *
-        "factor in both variables and rows (got request for " *
-        "$target_variables)."))
+    target_variables >= 2 ||
+        throw(ArgumentError("target_variables must be >= 2 (got $target_variables)."))
+    target_variables <= INVERSE_MAX_VARIABLES || throw(
+        ArgumentError(
+            "inverse_optimization variants are capped at $INVERSE_MAX_VARIABLES " *
+            "variables: each inverse model expands its forward LP by a constant " *
+            "factor in both variables and rows (got request for " *
+            "$target_variables).",
+        ),
+    )
 end
 
 """
@@ -149,20 +152,29 @@ so the instance is not guaranteed feasible) and an unplanted mechanism whose
 prior is sampled independently of any dual structure — the observation may or
 may not be explainable, with no guarantee either way.
 """
-function _sample_cost_inference_data(rng::AbstractRNG, n::Int, m::Int,
-                                     status::FeasibilityStatus)
+function _sample_cost_inference_data(rng::AbstractRNG, n::Int, m::Int, status::FeasibilityStatus)
     A = _sample_technology_matrix(rng, m, n)
 
     # --- Observed plan ----------------------------------------------------
-    support_prob = status == infeasible ? 1.0 :
-                   status == feasible ? rand(rng, Uniform(0.70, 0.95)) :
-                                       rand(rng, Uniform(0.50, 0.95))
+    support_prob = if status == infeasible
+        1.0
+    elseif status == feasible
+        rand(rng, Uniform(0.70, 0.95))
+    else
+        rand(rng, Uniform(0.50, 0.95))
+    end
     volume_center = rand(rng, LogNormal(log(rand(rng, Uniform(6.0, 60.0))), 0.3))
-    reference_point = [rand(rng) < support_prob ?
-                       round(rand(rng, LogNormal(log(volume_center), 0.5)); digits=2) :
-                       0.0 for _ in 1:n]
+    reference_point = [
+        if rand(rng) < support_prob
+            round(rand(rng, LogNormal(log(volume_center), 0.5)); digits=2)
+        else
+            0.0
+        end for _ in 1:n
+    ]
     if all(iszero, reference_point)
-        reference_point[rand(rng, 1:n)] = round(rand(rng, LogNormal(log(volume_center), 0.5)); digits=2)
+        reference_point[rand(rng, 1:n)] = round(
+            rand(rng, LogNormal(log(volume_center), 0.5)); digits=2
+        )
     end
     # Unit normalization: a plan is measured in whatever units make its average
     # committed quantity a two-digit number. This keeps the strong-duality row's
@@ -196,8 +208,9 @@ function _sample_cost_inference_data(rng::AbstractRNG, n::Int, m::Int,
         # is numerically easy for an LP solver to certify at scale.
         slacks = consumption .* rand(rng, Uniform(0.25, 0.60), m)
         forward_rhs = consumption .- slacks
-        prior_cost = round.(rand(rng, LogNormal(log(rand(rng, Uniform(1.0, 15.0))), 0.45), n);
-                            sigdigits=4)
+        prior_cost = round.(
+            rand(rng, LogNormal(log(rand(rng, Uniform(1.0, 15.0))), 0.45), n); sigdigits=4
+        )
         kappa = rand(rng, Uniform(0.20, 0.45))
         certificate = StrictInteriorCertificate(copy(slacks))
     else
@@ -206,8 +219,8 @@ function _sample_cost_inference_data(rng::AbstractRNG, n::Int, m::Int,
             # Duals first: y* > 0 on a set of active rows covering every
             # column, so c* = A'y* is strictly positive and every column is
             # complementary by construction.
-            active_prob = status == feasible ? rand(rng, Uniform(0.25, 0.60)) :
-                                              rand(rng, Uniform(0.40, 0.80))
+            active_prob =
+                status == feasible ? rand(rng, Uniform(0.25, 0.60)) : rand(rng, Uniform(0.40, 0.80))
             active = [i for i in 1:m if rand(rng) < active_prob]
             isempty(active) && push!(active, rand(rng, 1:m))
             covered = _columns_reached(A, active, n)
@@ -236,15 +249,20 @@ function _sample_cost_inference_data(rng::AbstractRNG, n::Int, m::Int,
                 noise_sigma = rand(rng, Uniform(0.12, 0.32))
                 kappa = rand(rng, Uniform(0.35, 0.90))
             end
-            eta = rand(rng, truncated(Normal(0.0, noise_sigma),
-                                      -2.5 * noise_sigma, 2.5 * noise_sigma), n)
+            eta = rand(
+                rng, truncated(Normal(0.0, noise_sigma), -2.5 * noise_sigma, 2.5 * noise_sigma), n
+            )
             prior_cost = round.(true_cost .* exp.(eta); sigdigits=4)
 
             headroom = rand(rng, Uniform(0.08, 0.45), m)
             active_set = Set(active)
-            forward_rhs = [i in active_set ? consumption[i] :
-                           round(consumption[i] * (1.0 - headroom[i]); digits=2)
-                           for i in 1:m]
+            forward_rhs = [
+                if i in active_set
+                    consumption[i]
+                else
+                    round(consumption[i] * (1.0 - headroom[i]); digits=2)
+                end for i in 1:m
+            ]
             if status == feasible
                 witness = InverseCostWitness(true_cost, true_duals)
             end
@@ -257,11 +275,16 @@ function _sample_cost_inference_data(rng::AbstractRNG, n::Int, m::Int,
             sort!(unique!(active))
             active_set = Set(active)
             headroom = rand(rng, Uniform(0.08, 0.45), m)
-            forward_rhs = [i in active_set ? consumption[i] :
-                           round(consumption[i] * (1.0 - headroom[i]); digits=2)
-                           for i in 1:m]
-            prior_cost = round.(rand(rng, LogNormal(log(rand(rng, Uniform(1.0, 12.0))), 0.5), n);
-                                sigdigits=4)
+            forward_rhs = [
+                if i in active_set
+                    consumption[i]
+                else
+                    round(consumption[i] * (1.0 - headroom[i]); digits=2)
+                end for i in 1:m
+            ]
+            prior_cost = round.(
+                rand(rng, LogNormal(log(rand(rng, Uniform(1.0, 12.0))), 0.5), n); sigdigits=4
+            )
             kappa = rand(rng, Uniform(0.40, 0.90))
         end
     end
@@ -276,17 +299,19 @@ function _sample_cost_inference_data(rng::AbstractRNG, n::Int, m::Int,
     deviation_weights = 1.0 ./ (precision .* max.(prior_cost, 1e-8))
     deviation_weights .*= n / sum(deviation_weights)
 
-    return (forward_matrix = A,
-            forward_rhs = forward_rhs,
-            reference_point = reference_point,
-            prior_cost = prior_cost,
-            cost_lower = cost_lower,
-            cost_upper = cost_upper,
-            deviation_weights = deviation_weights,
-            feasible_witness = witness,
-            infeasibility_certificate = certificate,
-            true_cost = true_cost,
-            true_duals = true_duals)
+    return (
+        forward_matrix=A,
+        forward_rhs=forward_rhs,
+        reference_point=reference_point,
+        prior_cost=prior_cost,
+        cost_lower=cost_lower,
+        cost_upper=cost_upper,
+        deviation_weights=deviation_weights,
+        feasible_witness=witness,
+        infeasibility_certificate=certificate,
+        true_cost=true_cost,
+        true_duals=true_duals,
+    )
 end
 
 """

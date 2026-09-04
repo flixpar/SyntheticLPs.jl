@@ -7,6 +7,7 @@ using Random
 Generator for production planning problems.
 
 # Overview
+
 Models a dense production-planning LP. The decisions are continuous production
 quantities for products. The objective maximizes total profit. Resource
 constraints limit total consumption of each shared resource, and infeasible
@@ -14,11 +15,12 @@ instances add minimum production commitments that exceed a targeted resource
 capacity.
 
 # Fields
-- `n_products::Int`: Number of products
-- `n_resources::Int`: Number of resources
-- `profits::Vector{Int}`: Profit per unit of each product
-- `usage::Matrix{Float64}`: Resource usage per unit of each product
-- `resources::Vector{Float64}`: Available resources
+
+  - `n_products::Int`: Number of products
+  - `n_resources::Int`: Number of resources
+  - `profits::Vector{Int}`: Profit per unit of each product
+  - `usage::Matrix{Float64}`: Resource usage per unit of each product
+  - `resources::Vector{Float64}`: Available resources
 """
 struct ProductionPlanningProblem <: ProblemGenerator
     n_products::Int
@@ -34,7 +36,9 @@ end
 
 Construct a production planning problem instance.
 """
-function ProductionPlanningProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function ProductionPlanningProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # Direct mapping: variables = products
@@ -57,7 +61,7 @@ function ProductionPlanningProblem(target_variables::Int, feasibility_status::Fe
     usage = rand(rng, min_usage:max_usage, n_products, n_resources)
 
     # Calculate resource availability
-    resources = sum(usage, dims=1)[:] * resource_factor
+    resources = sum(usage; dims=1)[:] * resource_factor
 
     # Handle feasibility
     min_production = zeros(n_products)
@@ -69,7 +73,9 @@ function ProductionPlanningProblem(target_variables::Int, feasibility_status::Fe
 
     if actual_status == infeasible
         # Calculate max possible production per product
-        max_possible = [minimum(resources[j] / usage[i, j] for j in 1:n_resources) for i in 1:n_products]
+        max_possible = [
+            minimum(resources[j] / usage[i, j] for j in 1:n_resources) for i in 1:n_products
+        ]
 
         # Set minimum production for a subset of products
         n_constrained = max(2, rand(rng, max(1, n_products ÷ 4):max(2, n_products ÷ 2)))
@@ -79,13 +85,17 @@ function ProductionPlanningProblem(target_variables::Int, feasibility_status::Fe
         end
 
         # Reduce the most stressed resource to create infeasibility
-        required = [sum(usage[i, j] * min_production[i] for i in 1:n_products) for j in 1:n_resources]
+        required = [
+            sum(usage[i, j] * min_production[i] for i in 1:n_products) for j in 1:n_resources
+        ]
         ratios = [required[j] / max(resources[j], eps()) for j in 1:n_resources]
         critical_j = argmax(ratios)
         resources[critical_j] = required[critical_j] * (0.7 + 0.2 * rand(rng))
     end
 
-    return ProductionPlanningProblem(n_products, n_resources, profits, usage, resources, min_production)
+    return ProductionPlanningProblem(
+        n_products, n_resources, profits, usage, resources, min_production
+    )
 end
 
 """
@@ -100,7 +110,9 @@ function build_model(prob::ProductionPlanningProblem)
     @objective(model, Max, sum(prob.profits[i] * x[i] for i in 1:prob.n_products))
 
     for j in 1:prob.n_resources
-        @constraint(model, sum(prob.usage[i, j] * x[i] for i in 1:prob.n_products) <= prob.resources[j])
+        @constraint(
+            model, sum(prob.usage[i, j] * x[i] for i in 1:prob.n_products) <= prob.resources[j]
+        )
     end
 
     for i in 1:prob.n_products

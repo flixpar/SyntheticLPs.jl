@@ -7,6 +7,7 @@ using Random
 Generator for network flow problems that optimize flow from source to sink.
 
 # Overview
+
 Models single-commodity directed network flow from node 1 to the final node. The
 decisions are nonnegative arc flows. Arc constraints enforce capacities and
 intermediate-node constraints conserve flow. Depending on the selected objective,
@@ -14,24 +15,25 @@ the model either maximizes source outflow or minimizes routing cost for a fixed
 target flow.
 
 # Fields
-- `n_nodes::Int`: Number of nodes in the network
-- `source_node::Int`: Source node
-- `sink_node::Int`: Sink node
-- `arcs::Vector{Tuple{Int,Int}}`: List of arcs in the network
-- `capacities::Dict{Tuple{Int,Int},Float64}`: Capacity of each arc
-- `costs::Dict{Tuple{Int,Int},Float64}`: Cost per unit of flow on each arc
-- `flow_objective::Symbol`: Objective type (:max_flow or :min_cost)
-- `target_flow::Union{Float64,Nothing}`: Target flow for min_cost objective
+
+  - `n_nodes::Int`: Number of nodes in the network
+  - `source_node::Int`: Source node
+  - `sink_node::Int`: Sink node
+  - `arcs::Vector{Tuple{Int,Int}}`: List of arcs in the network
+  - `capacities::Dict{Tuple{Int,Int},Float64}`: Capacity of each arc
+  - `costs::Dict{Tuple{Int,Int},Float64}`: Cost per unit of flow on each arc
+  - `flow_objective::Symbol`: Objective type (:max_flow or :min_cost)
+  - `target_flow::Union{Float64,Nothing}`: Target flow for min_cost objective
 """
 struct NetworkFlowProblem <: ProblemGenerator
     n_nodes::Int
     source_node::Int
     sink_node::Int
-    arcs::Vector{Tuple{Int,Int}}
-    capacities::Dict{Tuple{Int,Int},Float64}
-    costs::Dict{Tuple{Int,Int},Float64}
+    arcs::Vector{Tuple{Int, Int}}
+    capacities::Dict{Tuple{Int, Int}, Float64}
+    costs::Dict{Tuple{Int, Int}, Float64}
     flow_objective::Symbol
-    target_flow::Union{Float64,Nothing}
+    target_flow::Union{Float64, Nothing}
 end
 
 """
@@ -40,9 +42,10 @@ end
 Construct a network flow problem instance.
 
 # Arguments
-- `target_variables`: Target number of variables (arcs)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (arcs)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
 function NetworkFlowProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
@@ -67,8 +70,7 @@ function NetworkFlowProblem(target_variables::Int, feasibility_status::Feasibili
     # then generate exactly `target_variables` arcs below. (The previous loop left
     # n_nodes at a tiny default whenever no node count in range met a density
     # threshold, producing far fewer arcs than requested.)
-    n_nodes = max(min_nodes,
-                  min(max_nodes, ceil(Int, (1 + sqrt(1 + 4 * target_variables)) / 2)))
+    n_nodes = max(min_nodes, min(max_nodes, ceil(Int, (1 + sqrt(1 + 4 * target_variables)) / 2)))
 
     source_node = 1
     sink_node = n_nodes
@@ -79,21 +81,26 @@ function NetworkFlowProblem(target_variables::Int, feasibility_status::Feasibili
     # Generate capacities and costs
     min_capacity, max_capacity = capacity_range
     min_cost, max_cost = cost_range
-    capacities = Dict{Tuple{Int,Int}, Float64}()
-    costs = Dict{Tuple{Int,Int}, Float64}()
+    capacities = Dict{Tuple{Int, Int}, Float64}()
+    costs = Dict{Tuple{Int, Int}, Float64}()
 
     for arc in arcs
-        capacities[arc] = round(rand(rng) * (max_capacity - min_capacity) + min_capacity, digits=2)
-        costs[arc] = round(rand(rng) * (max_cost - min_cost) + min_cost, digits=2)
+        capacities[arc] = round(rand(rng) * (max_capacity - min_capacity) + min_capacity; digits=2)
+        costs[arc] = round(rand(rng) * (max_cost - min_cost) + min_cost; digits=2)
     end
 
     # Determine objective type
-    flow_objective = target_variables <= 100 ? (rand(rng) < 0.7 ? :max_flow : :min_cost) : (rand(rng) < 0.4 ? :max_flow : :min_cost)
+    flow_objective = if target_variables <= 100
+        (rand(rng) < 0.7 ? :max_flow : :min_cost)
+    else
+        (rand(rng) < 0.4 ? :max_flow : :min_cost)
+    end
 
     # Calculate max flow using bottleneck capacity on source-to-sink path
     # Simple approximation: sum of capacities of arcs leaving source
     source_out_arcs = [(i, j) for (i, j) in arcs if i == source_node]
-    max_flow_estimate = isempty(source_out_arcs) ? 0.0 : sum(capacities[arc] for arc in source_out_arcs)
+    max_flow_estimate =
+        isempty(source_out_arcs) ? 0.0 : sum(capacities[arc] for arc in source_out_arcs)
 
     # Handle feasibility
     actual_status = feasibility_status
@@ -119,7 +126,9 @@ function NetworkFlowProblem(target_variables::Int, feasibility_status::Feasibili
         target_flow = max_flow_estimate * (1.2 + 0.5 * rand(rng))
     end
 
-    return NetworkFlowProblem(n_nodes, source_node, sink_node, arcs, capacities, costs, flow_objective, target_flow)
+    return NetworkFlowProblem(
+        n_nodes, source_node, sink_node, arcs, capacities, costs, flow_objective, target_flow
+    )
 end
 
 """
@@ -127,11 +136,13 @@ end
 
 Generate a connected network with the specified number of nodes and arcs.
 """
-function generate_connected_network(rng::AbstractRNG, n_nodes::Int, n_arcs::Int, source::Int, sink::Int)
-    arcs = Set{Tuple{Int,Int}}()
+function generate_connected_network(
+    rng::AbstractRNG, n_nodes::Int, n_arcs::Int, source::Int, sink::Int
+)
+    arcs = Set{Tuple{Int, Int}}()
 
     # Create path from source to sink
-    for i in source:(sink-1)
+    for i in source:(sink - 1)
         push!(arcs, (i, i+1))
     end
 

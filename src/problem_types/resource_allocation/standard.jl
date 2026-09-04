@@ -8,18 +8,20 @@ using Statistics
 Generator for resource allocation problems.
 
 # Overview
+
 Models continuous allocation of limited resources across competing activities.
 The decisions are activity levels. The objective maximizes total profit.
 Resource constraints limit aggregate activity consumption of each resource, and
 optional minimum-level constraints represent required commitments.
 
 # Fields
-- `n_activities::Int`: Number of activities
-- `n_resources::Int`: Number of resource types
-- `profits::Vector{Float64}`: Profit per unit of activity
-- `usage::Matrix{Float64}`: Resource usage per unit of activity (n_activities × n_resources)
-- `resources::Vector{Float64}`: Available amount of each resource
-- `min_levels::Vector{Float64}`: Minimum level for each activity
+
+  - `n_activities::Int`: Number of activities
+  - `n_resources::Int`: Number of resource types
+  - `profits::Vector{Float64}`: Profit per unit of activity
+  - `usage::Matrix{Float64}`: Resource usage per unit of activity (n_activities × n_resources)
+  - `resources::Vector{Float64}`: Available amount of each resource
+  - `min_levels::Vector{Float64}`: Minimum level for each activity
 """
 struct ResourceAllocationProblem <: ProblemGenerator
     n_activities::Int
@@ -36,11 +38,14 @@ end
 Construct a resource allocation problem instance.
 
 # Arguments
-- `target_variables`: Target number of variables (activities)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (activities)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function ResourceAllocationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function ResourceAllocationProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # For resource allocation, variables = n_activities
@@ -57,8 +62,13 @@ function ResourceAllocationProblem(target_variables::Int, feasibility_status::Fe
     min_level_prob = rand(rng, 0.2:0.1:0.5)
 
     # Override for infeasible case
-    solution_status = feasibility_status == feasible ? :feasible :
-                     feasibility_status == infeasible ? :infeasible : :all
+    solution_status = if feasibility_status == feasible
+        :feasible
+    elseif feasibility_status == infeasible
+        :infeasible
+    else
+        :all
+    end
     if solution_status == :infeasible
         add_min_constraints = true
     end
@@ -83,7 +93,9 @@ function ResourceAllocationProblem(target_variables::Int, feasibility_status::Fe
     end
 
     # Helper functions
-    function compute_demand_plan(profits_vec::Vector{Float64}, usage_mat::Array{Float64,2}, quality::Vector{Float64})
+    function compute_demand_plan(
+        profits_vec::Vector{Float64}, usage_mat::Array{Float64, 2}, quality::Vector{Float64}
+    )
         demand = zeros(n_activities)
         for i in 1:n_activities
             avg_u = mean(view(usage_mat, i, :)) + 1e-9
@@ -94,7 +106,9 @@ function ResourceAllocationProblem(target_variables::Int, feasibility_status::Fe
         return demand .* s
     end
 
-    function compute_single_activity_caps(usage_mat::Array{Float64,2}, resource_caps::Vector{Float64})
+    function compute_single_activity_caps(
+        usage_mat::Array{Float64, 2}, resource_caps::Vector{Float64}
+    )
         caps = zeros(n_activities)
         for i in 1:n_activities
             local_caps = Float64[]
@@ -113,7 +127,7 @@ function ResourceAllocationProblem(target_variables::Int, feasibility_status::Fe
 
     if solution_status == :all
         # Original stochastic construction
-        expected_usage = sum(usage, dims=1) / n_activities
+        expected_usage = sum(usage; dims=1) / n_activities
         resources = vec(expected_usage) .* rand(rng, n_resources) .* n_activities ./ 2
         resources = max.(resources, min_resource)
         resources = min.(resources, max_resource)
@@ -129,7 +143,7 @@ function ResourceAllocationProblem(target_variables::Int, feasibility_status::Fe
     else
         # Constructive generation with plan-driven floors
         demand_x = compute_demand_plan(profits, usage, quality_factors)
-        cons = vec(sum(usage .* demand_x, dims=1))
+        cons = vec(sum(usage .* demand_x; dims=1))
 
         for j in 1:n_resources
             if solution_status == :feasible
@@ -142,9 +156,10 @@ function ResourceAllocationProblem(target_variables::Int, feasibility_status::Fe
             resources[j] = min(resources[j], max_resource)
         end
 
-        cons_post = vec(sum(usage .* demand_x, dims=1))
+        cons_post = vec(sum(usage .* demand_x; dims=1))
         scale_to_fit = minimum([resources[j] / max(cons_post[j], 1e-12) for j in 1:n_resources])
-        fill_fraction = solution_status == :feasible ? (0.75 + 0.2 * rand(rng)) : (0.7 + 0.2 * rand(rng))
+        fill_fraction =
+            solution_status == :feasible ? (0.75 + 0.2 * rand(rng)) : (0.7 + 0.2 * rand(rng))
         baseline_x = demand_x .* max(scale_to_fit * fill_fraction, 0.0)
 
         if add_min_constraints
@@ -188,13 +203,27 @@ function ResourceAllocationProblem(target_variables::Int, feasibility_status::Fe
                 end
             end
 
-            k_viol = n_resources == 1 ? 1 : (rand(rng) < 0.5 ? 1 : (rand(rng) < 0.6 ? min(2, n_resources) : min(3, n_resources)))
-            min_cons = [sum(usage[i, j] * min_levels[i] for i in 1:n_activities) for j in 1:n_resources]
+            k_viol = if n_resources == 1
+                1
+            else
+                (
+                    if rand(rng) < 0.5
+                        1
+                    else
+                        (rand(rng) < 0.6 ? min(2, n_resources) : min(3, n_resources))
+                    end
+                )
+            end
+            min_cons = [
+                sum(usage[i, j] * min_levels[i] for i in 1:n_activities) for j in 1:n_resources
+            ]
             ratios = [min_cons[j] / max(resources[j], eps()) for j in 1:n_resources]
             order_r = sortperm(ratios; rev=true)
             violated_resources = order_r[1:k_viol]
             deltas = [0.05 + 0.20 * rand(rng) for _ in 1:k_viol]
-            targets = [resources[r] * (1.0 + deltas[idx]) for (idx, r) in enumerate(violated_resources)]
+            targets = [
+                resources[r] * (1.0 + deltas[idx]) for (idx, r) in enumerate(violated_resources)
+            ]
 
             S = findall(i -> min_levels[i] > 0, 1:n_activities)
             if length(S) < 3
@@ -217,7 +246,10 @@ function ResourceAllocationProblem(target_variables::Int, feasibility_status::Fe
                 end
             end
 
-            residual = [targets[idx] - sum(usage[i, r] * min_levels[i] for i in 1:n_activities) for (idx, r) in enumerate(violated_resources)]
+            residual = [
+                targets[idx] - sum(usage[i, r] * min_levels[i] for i in 1:n_activities) for
+                (idx, r) in enumerate(violated_resources)
+            ]
             iter_guard = 0
             while any(residual .> 1e-9) && iter_guard < 3 * n_activities
                 best_i = 0
@@ -289,7 +321,9 @@ function ResourceAllocationProblem(target_variables::Int, feasibility_status::Fe
         end
     end
 
-    return ResourceAllocationProblem(n_activities, n_resources, profits, usage, resources, min_levels)
+    return ResourceAllocationProblem(
+        n_activities, n_resources, profits, usage, resources, min_levels
+    )
 end
 
 """
@@ -298,10 +332,12 @@ end
 Build a JuMP model for the resource allocation problem.
 
 # Arguments
-- `prob`: ResourceAllocationProblem instance
+
+  - `prob`: ResourceAllocationProblem instance
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::ResourceAllocationProblem)
     model = Model()
@@ -311,7 +347,9 @@ function build_model(prob::ResourceAllocationProblem)
 
     # Resource constraints
     for j in 1:prob.n_resources
-        @constraint(model, sum(prob.usage[i,j] * x[i] for i in 1:prob.n_activities) <= prob.resources[j])
+        @constraint(
+            model, sum(prob.usage[i, j] * x[i] for i in 1:prob.n_activities) <= prob.resources[j]
+        )
     end
 
     # Minimum level constraints

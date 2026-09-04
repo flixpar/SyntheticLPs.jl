@@ -49,16 +49,12 @@ struct WorkforceShiftCoveringProblem <: ProblemGenerator
     column_skills::Vector{Int}
     staffing_costs::Vector{Float64}
     demand::Matrix{Float64}
-    feasible_staffing::Union{Nothing,Vector{Float64}}
-    infeasible_skill::Union{Nothing,Int}
-    infeasibility_capacity_bound::Union{Nothing,Float64}
+    feasible_staffing::Union{Nothing, Vector{Float64}}
+    infeasible_skill::Union{Nothing, Int}
+    infeasibility_capacity_bound::Union{Nothing, Float64}
 end
 
-const _WORKFORCE_PROFILES = (
-    :contact_center,
-    :retail,
-    :continuous_operations,
-)
+const _WORKFORCE_PROFILES = (:contact_center, :retail, :continuous_operations)
 
 function _workforce_profile_spec(profile::Symbol)
     if profile == :contact_center
@@ -100,12 +96,7 @@ function _workforce_skill_count(profile::Symbol, target::Int)
     return target < 700 ? 3 : 4
 end
 
-function _workforce_mark_window!(
-    availability::BitVector,
-    start::Int,
-    width::Int;
-    wrap::Bool=false,
-)
+function _workforce_mark_window!(availability::BitVector, start::Int, width::Int; wrap::Bool=false)
     n_periods = length(availability)
     for offset in 0:(width - 1)
         period = start + offset
@@ -131,25 +122,31 @@ function _workforce_patterns(rng::AbstractRNG, profile::Symbol, spec)
     seen = Set{Tuple}()
 
     for span in spec.shift_spans
-        candidate_starts = profile == :continuous_operations ?
-                           collect(1:n_periods) :
-                           collect(1:(n_periods - span + 1))
+        candidate_starts = if profile == :continuous_operations
+            collect(1:n_periods)
+        else
+            collect(1:(n_periods - span + 1))
+        end
         for start in candidate_starts
             break_period = 0
             paid_hours = span * spec.period_minutes / 60
             if paid_hours >= 6
                 center = max(1, span ÷ 2)
                 break_offset = clamp(center + rand(rng, -1:1), 1, span - 2)
-                break_period = profile == :continuous_operations ?
-                               mod1(start + break_offset, n_periods) :
-                               start + break_offset
+                break_period = if profile == :continuous_operations
+                    mod1(start + break_offset, n_periods)
+                else
+                    start + break_offset
+                end
             end
 
             active = falses(n_periods)
             for offset in 0:(span - 1)
-                period = profile == :continuous_operations ?
-                         mod1(start + offset, n_periods) :
-                         start + offset
+                period = if profile == :continuous_operations
+                    mod1(start + offset, n_periods)
+                else
+                    start + offset
+                end
                 period == break_period || (active[period] = true)
             end
             signature = Tuple(findall(active))
@@ -175,11 +172,7 @@ function _workforce_patterns(rng::AbstractRNG, profile::Symbol, spec)
 end
 
 function _workforce_pool_availability(
-    rng::AbstractRNG,
-    profile::Symbol,
-    pool_type::Symbol,
-    n_periods::Int,
-    pool_index::Int,
+    rng::AbstractRNG, profile::Symbol, pool_type::Symbol, n_periods::Int, pool_index::Int
 )
     availability = falses(n_periods)
     if pool_type in (:core, :remote, :full_time, :seasonal, :rotating, :contractor)
@@ -208,24 +201,17 @@ function _workforce_pool_availability(
 end
 
 function _workforce_pool_data(
-    rng::AbstractRNG,
-    profile::Symbol,
-    spec,
-    n_skills::Int,
-    pool_index::Int,
+    rng::AbstractRNG, profile::Symbol, spec, n_skills::Int, pool_index::Int
 )
     type_index = mod1(pool_index, length(spec.pool_types))
     pool_type = spec.pool_types[type_index]
     pool_name = Symbol("$(pool_type)_$(pool_index)")
-    availability = _workforce_pool_availability(
-        rng, profile, pool_type, spec.n_periods, pool_index,
-    )
+    availability = _workforce_pool_availability(rng, profile, pool_type, spec.n_periods, pool_index)
 
     qualified = falses(n_skills)
     primary = mod1(pool_index, n_skills)
     qualified[primary] = true
-    cross_training = pool_type in (:core, :remote, :full_time, :rotating, :contractor) ?
-                     0.58 : 0.28
+    cross_training = pool_type in (:core, :remote, :full_time, :rotating, :contractor) ? 0.58 : 0.28
     for skill in 1:n_skills
         if skill != primary && rand(rng) < cross_training
             qualified[skill] = true
@@ -236,14 +222,18 @@ function _workforce_pool_data(
     pool_index == 1 && (qualified .= true)
 
     productivity = zeros(Float64, n_skills)
-    type_factor = pool_type in (:remote, :seasonal, :contractor) ? 0.92 :
-                  pool_type in (:core, :full_time, :rotating) ? 1.05 : 0.98
+    type_factor = if pool_type in (:remote, :seasonal, :contractor)
+        0.92
+    elseif pool_type in (:core, :full_time, :rotating)
+        1.05
+    else
+        0.98
+    end
     for skill in 1:n_skills
         if qualified[skill]
             primary_factor = skill == primary ? 1.06 : 0.90
             productivity[skill] = round(
-                clamp(type_factor * primary_factor * (0.94 + 0.12 * rand(rng)),
-                      0.72, 1.20),
+                clamp(type_factor * primary_factor * (0.94 + 0.12 * rand(rng)), 0.72, 1.20);
                 digits=3,
             )
         end
@@ -253,36 +243,31 @@ function _workforce_pool_data(
     wage = low + (high - low) * rand(rng)
     pool_type in (:remote, :seasonal) && (wage *= 0.94)
     pool_type == :contractor && (wage *= 1.22)
-    wage = round(wage, digits=2)
+    wage = round(wage; digits=2)
     return pool_name, pool_type, qualified, productivity, availability, wage
 end
 
-function _workforce_pattern_eligibility(
-    availability::BitVector,
-    pattern_coverage::BitMatrix,
-)
+function _workforce_pattern_eligibility(availability::BitVector, pattern_coverage::BitMatrix)
     n_patterns = size(pattern_coverage, 2)
     eligible = falses(n_patterns)
     for pattern in 1:n_patterns
         eligible[pattern] = all(
-            !pattern_coverage[period, pattern] || availability[period]
-            for period in axes(pattern_coverage, 1)
+            !pattern_coverage[period, pattern] || availability[period] for
+            period in axes(pattern_coverage, 1)
         )
     end
     return eligible
 end
 
 function _workforce_candidate_columns(
-    qualifications::Vector{BitVector},
-    eligibility::Vector{BitVector},
+    qualifications::Vector{BitVector}, eligibility::Vector{BitVector}
 )
-    candidates = NTuple{3,Int}[]
+    candidates = NTuple{3, Int}[]
     for pool in eachindex(qualifications)
         for pattern in eachindex(eligibility[pool])
             eligibility[pool][pattern] || continue
             for skill in eachindex(qualifications[pool])
-                qualifications[pool][skill] &&
-                    push!(candidates, (pool, pattern, skill))
+                qualifications[pool][skill] && push!(candidates, (pool, pattern, skill))
             end
         end
     end
@@ -291,14 +276,14 @@ end
 
 function _workforce_select_columns(
     rng::AbstractRNG,
-    candidates::Vector{NTuple{3,Int}},
+    candidates::Vector{NTuple{3, Int}},
     pattern_coverage::BitMatrix,
     n_pools::Int,
     n_skills::Int,
     requested::Int,
 )
-    selected = NTuple{3,Int}[]
-    selected_set = Set{NTuple{3,Int}}()
+    selected = NTuple{3, Int}[]
+    selected_set = Set{NTuple{3, Int}}()
     n_periods = size(pattern_coverage, 1)
 
     # First choose a compact cover for every skill-period. This guarantees
@@ -307,14 +292,12 @@ function _workforce_select_columns(
         uncovered = trues(n_periods)
         while any(uncovered)
             best_score = -1
-            ties = NTuple{3,Int}[]
+            ties = NTuple{3, Int}[]
             for column in candidates
                 column[3] == skill || continue
                 column in selected_set && continue
                 score = count(
-                    period -> uncovered[period] &&
-                              pattern_coverage[period, column[2]],
-                    1:n_periods,
+                    period -> uncovered[period] && pattern_coverage[period, column[2]], 1:n_periods
                 )
                 if score > best_score
                     empty!(ties)
@@ -324,14 +307,12 @@ function _workforce_select_columns(
                     push!(ties, column)
                 end
             end
-            best_score > 0 ||
-                error("Generated workforce columns do not cover skill $skill")
+            best_score > 0 || error("Generated workforce columns do not cover skill $skill")
             chosen = rand(rng, ties)
             push!(selected, chosen)
             push!(selected_set, chosen)
             for period in 1:n_periods
-                pattern_coverage[period, chosen[2]] &&
-                    (uncovered[period] = false)
+                pattern_coverage[period, chosen[2]] && (uncovered[period] = false)
             end
         end
     end
@@ -340,8 +321,9 @@ function _workforce_select_columns(
     # column from each pool when the target permits it.
     for pool in 1:n_pools
         any(column -> column[1] == pool, selected) && continue
-        options = [column for column in candidates
-                   if column[1] == pool && !(column in selected_set)]
+        options = [
+            column for column in candidates if column[1] == pool && !(column in selected_set)
+        ]
         isempty(options) && continue
         chosen = rand(rng, options)
         push!(selected, chosen)
@@ -359,11 +341,7 @@ function _workforce_select_columns(
     return selected
 end
 
-function _workforce_undesirable_fraction(
-    profile::Symbol,
-    pattern::Int,
-    pattern_coverage::BitMatrix,
-)
+function _workforce_undesirable_fraction(profile::Symbol, pattern::Int, pattern_coverage::BitMatrix)
     periods = findall(pattern_coverage[:, pattern])
     isempty(periods) && return 0.0
     n_periods = size(pattern_coverage, 1)
@@ -378,28 +356,18 @@ function _workforce_undesirable_fraction(
 end
 
 function _workforce_demand(
-    rng::AbstractRNG,
-    profile::Symbol,
-    n_periods::Int,
-    n_skills::Int,
-    target::Int,
+    rng::AbstractRNG, profile::Symbol, n_periods::Int, n_skills::Int, target::Int
 )
     demand = zeros(Float64, n_periods, n_skills)
     workforce_scale = max(5.0, 1.8 * sqrt(max(target, 1)))
     for period in 1:n_periods
         x = (period - 0.5) / n_periods
         if profile == :contact_center
-            shape = 0.42 +
-                    0.85 * exp(-((x - 0.28) / 0.17)^2) +
-                    1.05 * exp(-((x - 0.72) / 0.15)^2)
+            shape = 0.42 + 0.85 * exp(-((x - 0.28) / 0.17)^2) + 1.05 * exp(-((x - 0.72) / 0.15)^2)
         elseif profile == :retail
-            shape = 0.52 +
-                    0.35 * exp(-((x - 0.25) / 0.19)^2) +
-                    1.10 * exp(-((x - 0.76) / 0.18)^2)
+            shape = 0.52 + 0.35 * exp(-((x - 0.25) / 0.19)^2) + 1.10 * exp(-((x - 0.76) / 0.18)^2)
         else
-            shape = 0.82 +
-                    0.13 * sin(2π * x - 0.4) +
-                    0.12 * exp(-((x - 0.55) / 0.20)^2)
+            shape = 0.82 + 0.13 * sin(2π * x - 0.4) + 0.12 * exp(-((x - 0.55) / 0.20)^2)
         end
         for skill in 1:n_skills
             skill_share = if profile == :contact_center
@@ -419,9 +387,7 @@ function _workforce_demand(
             end
             noise = 0.92 + 0.16 * rand(rng)
             demand[period, skill] = round(
-                max(0.35, workforce_scale * shape * skill_share *
-                          skill_shape * noise),
-                digits=3,
+                max(0.35, workforce_scale * shape * skill_share * skill_shape * noise); digits=3
             )
         end
     end
@@ -448,19 +414,16 @@ function _workforce_construction_staffing(
     for skill in 1:n_skills
         while true
             relative_gaps = [
-                max(0.0, demand[period, skill] - covered[period, skill]) /
-                demand[period, skill]
-                for period in 1:n_periods
+                max(0.0, demand[period, skill] - covered[period, skill]) / demand[period, skill] for
+                period in 1:n_periods
             ]
             period = argmax(relative_gaps)
             relative_gaps[period] <= 1e-9 && break
             options = [
-                column for column in 1:n_columns
-                if column_skills[column] == skill &&
-                   pattern_coverage[period, column_patterns[column]]
+                column for column in 1:n_columns if
+                column_skills[column] == skill && pattern_coverage[period, column_patterns[column]]
             ]
-            isempty(options) &&
-                error("No selected workforce column covers ($period, $skill)")
+            isempty(options) && error("No selected workforce column covers ($period, $skill)")
             best = options[1]
             best_score = -Inf
             for column in options
@@ -468,8 +431,8 @@ function _workforce_construction_staffing(
                 pattern = column_patterns[column]
                 effective = productivity[pool, skill]
                 useful = sum(
-                    max(0.0, demand[t, skill] - covered[t, skill])
-                    for t in 1:n_periods if pattern_coverage[t, pattern]
+                    max(0.0, demand[t, skill] - covered[t, skill]) for
+                    t in 1:n_periods if pattern_coverage[t, pattern]
                 )
                 score = effective * useful / max(costs[column], 1e-9)
                 if score > best_score
@@ -480,9 +443,7 @@ function _workforce_construction_staffing(
             pool = column_pools[best]
             pattern = column_patterns[best]
             effective = productivity[pool, skill]
-            addition = 1.015 *
-                       (demand[period, skill] - covered[period, skill]) /
-                       effective
+            addition = 1.015 * (demand[period, skill] - covered[period, skill]) / effective
             reference[best] += addition
             for t in 1:n_periods
                 if pattern_coverage[t, pattern]
@@ -512,8 +473,7 @@ function _workforce_skill_capacity_bound(
                 max_paid_periods = max(max_paid_periods, paid_periods)
             end
         end
-        bound += pool_capacities[pool] * productivity[pool, skill] *
-                 max_paid_periods
+        bound += pool_capacities[pool] * productivity[pool, skill] * max_paid_periods
     end
     return bound
 end
@@ -528,9 +488,7 @@ targets may be raised to the minimum number of columns needed to cover every
 skill-period).
 """
 function WorkforceShiftCoveringProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
     target = max(target_variables, 1)
@@ -539,8 +497,9 @@ function WorkforceShiftCoveringProblem(
     n_skills = _workforce_skill_count(profile, target)
     skill_names = spec.skill_names[1:n_skills]
 
-    pattern_starts, pattern_spans, pattern_breaks, pattern_wraps,
-        pattern_coverage = _workforce_patterns(rng, profile, spec)
+    pattern_starts, pattern_spans, pattern_breaks, pattern_wraps, pattern_coverage = _workforce_patterns(
+        rng, profile, spec
+    )
     n_patterns = size(pattern_coverage, 2)
 
     pool_names = Symbol[]
@@ -551,15 +510,14 @@ function WorkforceShiftCoveringProblem(
     eligibilities = BitVector[]
     hourly_wages = Float64[]
 
-    candidates = NTuple{3,Int}[]
+    candidates = NTuple{3, Int}[]
     min_pools = max(4, n_skills + 1)
     while length(pool_names) < min_pools || length(candidates) < target
         pool_index = length(pool_names) + 1
-        name, pool_type, qualified, productivity, availability, wage =
-            _workforce_pool_data(rng, profile, spec, n_skills, pool_index)
-        eligibility = _workforce_pattern_eligibility(
-            availability, pattern_coverage,
+        name, pool_type, qualified, productivity, availability, wage = _workforce_pool_data(
+            rng, profile, spec, n_skills, pool_index
         )
+        eligibility = _workforce_pattern_eligibility(availability, pattern_coverage)
         push!(pool_names, name)
         push!(pool_types, pool_type)
         push!(qualifications, qualified)
@@ -567,14 +525,12 @@ function WorkforceShiftCoveringProblem(
         push!(availabilities, availability)
         push!(eligibilities, eligibility)
         push!(hourly_wages, wage)
-        candidates = _workforce_candidate_columns(
-            qualifications, eligibilities,
-        )
+        candidates = _workforce_candidate_columns(qualifications, eligibilities)
     end
 
     n_pools = length(pool_names)
     selected = _workforce_select_columns(
-        rng, candidates, pattern_coverage, n_pools, n_skills, target,
+        rng, candidates, pattern_coverage, n_pools, n_skills, target
     )
     column_pools = [column[1] for column in selected]
     column_patterns = [column[2] for column in selected]
@@ -598,24 +554,28 @@ function WorkforceShiftCoveringProblem(
         skill = column_skills[column]
         paid_periods = count(pattern_coverage[:, pattern])
         paid_hours = paid_periods * spec.period_minutes / 60
-        undesirable = _workforce_undesirable_fraction(
-            profile, pattern, pattern_coverage,
-        )
+        undesirable = _workforce_undesirable_fraction(profile, pattern, pattern_coverage)
         skill_premium = 1.0 + 0.035 * (skill - 1)
         quote_variation = 0.98 + 0.04 * rand(rng)
         staffing_costs[column] = round(
-            hourly_wages[pool] * paid_hours * (1.0 + 0.30 * undesirable) *
-            skill_premium * quote_variation,
+            hourly_wages[pool] *
+            paid_hours *
+            (1.0 + 0.30 * undesirable) *
+            skill_premium *
+            quote_variation;
             digits=2,
         )
     end
 
-    demand = _workforce_demand(
-        rng, profile, spec.n_periods, n_skills, target,
-    )
+    demand = _workforce_demand(rng, profile, spec.n_periods, n_skills, target)
     construction_staffing = _workforce_construction_staffing(
-        demand, column_pools, column_patterns, column_skills,
-        pattern_coverage, pool_productivity, staffing_costs,
+        demand,
+        column_pools,
+        column_patterns,
+        column_skills,
+        pattern_coverage,
+        pool_productivity,
+        staffing_costs,
     )
     construction_usage = zeros(Float64, n_pools)
     for column in eachindex(construction_staffing)
@@ -626,13 +586,11 @@ function WorkforceShiftCoveringProblem(
     for pool in 1:n_pools
         reserve = max(0.35, construction_usage[pool] * (0.05 + 0.08 * rand(rng)))
         pool_capacities[pool] = round(
-            max(construction_usage[pool] + reserve, 0.75 + 1.75 * rand(rng)),
-            digits=3,
+            max(construction_usage[pool] + reserve, 0.75 + 1.75 * rand(rng)); digits=3
         )
     end
 
-    feasible_staffing = feasibility_status == feasible ?
-                        construction_staffing : nothing
+    feasible_staffing = feasibility_status == feasible ? construction_staffing : nothing
     infeasible_skill = nothing
     infeasibility_capacity_bound = nothing
 
@@ -641,17 +599,14 @@ function WorkforceShiftCoveringProblem(
         # feasibility claim.
         for pool in 1:n_pools
             pool_capacities[pool] = round(
-                pool_capacities[pool] * (0.72 + 0.48 * rand(rng)),
-                digits=3,
+                pool_capacities[pool] * (0.72 + 0.48 * rand(rng)); digits=3
             )
         end
         for period in 1:spec.n_periods
             load_shock = 0.88 + 0.27 * rand(rng)
             for skill in 1:n_skills
                 demand[period, skill] = round(
-                    demand[period, skill] * load_shock *
-                    (0.95 + 0.10 * rand(rng)),
-                    digits=3,
+                    demand[period, skill] * load_shock * (0.95 + 0.10 * rand(rng)); digits=3
                 )
             end
         end
@@ -662,26 +617,29 @@ function WorkforceShiftCoveringProblem(
         # skill's whole demand curve just above the smallest such bound ratio.
         bounds = [
             _workforce_skill_capacity_bound(
-                skill, column_pools, column_patterns, column_skills,
-                pattern_coverage, pool_productivity, pool_capacities,
-            )
-            for skill in 1:n_skills
+                skill,
+                column_pools,
+                column_patterns,
+                column_skills,
+                pattern_coverage,
+                pool_productivity,
+                pool_capacities,
+            ) for skill in 1:n_skills
         ]
-        ratios = [bounds[skill] / sum(demand[:, skill])
-                  for skill in 1:n_skills]
+        ratios = [bounds[skill] / sum(demand[:, skill]) for skill in 1:n_skills]
         certificate_skill = argmin(ratios)
         infeasible_skill = certificate_skill
         infeasibility_capacity_bound = bounds[certificate_skill]
-        required_total = bounds[certificate_skill] +
-                         max(0.5, 0.03 * bounds[certificate_skill])
+        required_total = bounds[certificate_skill] + max(0.5, 0.03 * bounds[certificate_skill])
         scale = required_total / sum(demand[:, certificate_skill])
-        demand[:, certificate_skill] .=
-            round.(demand[:, certificate_skill] .* scale, digits=3)
+        demand[:, certificate_skill] .= round.(demand[:, certificate_skill] .* scale; digits=3)
         # Rounding down could erase a very small strict margin.
         shortfall = required_total - sum(demand[:, certificate_skill])
-        shortfall >= 0 &&
-            (demand[argmax(demand[:, certificate_skill]), certificate_skill] +=
-             round(shortfall + 0.001, digits=3))
+        shortfall >= 0 && (
+            demand[argmax(demand[:, certificate_skill]), certificate_skill] += round(
+                shortfall + 0.001; digits=3
+            )
+        )
     end
 
     return WorkforceShiftCoveringProblem(
@@ -730,27 +688,24 @@ function build_model(prob::WorkforceShiftCoveringProblem)
     @objective(
         model,
         Min,
-        sum(prob.staffing_costs[column] * assigned_workers[column]
-            for column in 1:n_columns),
+        sum(prob.staffing_costs[column] * assigned_workers[column] for column in 1:n_columns),
     )
 
     @constraint(
         model,
-        pool_capacity[pool=1:n_pools],
-        sum(assigned_workers[column] for column in 1:n_columns
-            if prob.column_pools[column] == pool) <=
-        prob.pool_capacities[pool],
-    )
-
-    @constraint(
-        model,
-        skill_coverage[period=1:prob.n_periods, skill=1:n_skills],
+        pool_capacity[pool = 1:n_pools],
         sum(
-            prob.pool_productivity[prob.column_pools[column], skill] *
-            assigned_workers[column]
-            for column in 1:n_columns
-            if prob.column_skills[column] == skill &&
-               prob.pattern_coverage[period, prob.column_patterns[column]]
+            assigned_workers[column] for column in 1:n_columns if prob.column_pools[column] == pool
+        ) <= prob.pool_capacities[pool],
+    )
+
+    @constraint(
+        model,
+        skill_coverage[period = 1:prob.n_periods, skill = 1:n_skills],
+        sum(
+            prob.pool_productivity[prob.column_pools[column], skill] * assigned_workers[column] for
+            column in 1:n_columns if prob.column_skills[column] == skill &&
+                prob.pattern_coverage[period, prob.column_patterns[column]]
         ) >= prob.demand[period, skill],
     )
     return model

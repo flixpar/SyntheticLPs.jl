@@ -26,13 +26,14 @@ Thresholds used by [`check_quality`](@ref) to decide whether a solved LP
 instance is a good test/training instance.
 
 # Keyword arguments
-- `solve_timeout::Float64 = 30.0`: per-instance solve time limit (seconds).
-- `min_constraints::Int = 5`: reject instances with fewer constraints.
-- `min_iterations::Int = 3`: reject instances solved in `≤` this many simplex
-  iterations (trivially solved / solved in phase 1 only).
-- `max_iteration_ratio::Float64 = 100.0`: reject instances whose simplex
-  iteration count exceeds `max_iteration_ratio × constraints` (likely
-  degenerate / numerically nasty).
+
+  - `solve_timeout::Float64 = 30.0`: per-instance solve time limit (seconds).
+  - `min_constraints::Int = 5`: reject instances with fewer constraints.
+  - `min_iterations::Int = 3`: reject instances solved in `≤` this many simplex
+    iterations (trivially solved / solved in phase 1 only).
+  - `max_iteration_ratio::Float64 = 100.0`: reject instances whose simplex
+    iteration count exceeds `max_iteration_ratio × constraints` (likely
+    degenerate / numerically nasty).
 """
 Base.@kwdef struct QualityCriteria
     solve_timeout::Float64 = 30.0
@@ -47,13 +48,14 @@ end
 Outcome of a [`check_quality`](@ref) call.
 
 # Fields
-- `passed::Bool`: whether the instance qualifies.
-- `reason::String`: `"passed"`, or the rejection reason (e.g. `"timeout"`,
-  `"degenerate"`, `"too_few_iterations"`).
-- `iterations::Int`: simplex iterations reported by the solver (`-1` if
-  unavailable or the instance was rejected before solving).
-- `solve_time::Float64`: wall-clock solve time in seconds (`0.0` if not solved).
-- `termination_status`: the MOI termination status (`nothing` if not solved).
+
+  - `passed::Bool`: whether the instance qualifies.
+  - `reason::String`: `"passed"`, or the rejection reason (e.g. `"timeout"`,
+    `"degenerate"`, `"too_few_iterations"`).
+  - `iterations::Int`: simplex iterations reported by the solver (`-1` if
+    unavailable or the instance was rejected before solving).
+  - `solve_time::Float64`: wall-clock solve time in seconds (`0.0` if not solved).
+  - `termination_status`: the MOI termination status (`nothing` if not solved).
 """
 struct QualityResult
     passed::Bool
@@ -75,22 +77,26 @@ pairs applied to the model after the optimizer is attached (e.g.
 `("solver" => "simplex",)` for HiGHS).
 
 Instances are rejected when they are:
-- Too small (fewer than `criteria.min_constraints` constraints) — checked
-  *before* solving.
-- Infeasible, but only when `feasible_only` is `true`.
-- Unbounded.
-- Timed out or hit numerical / solver errors.
-- Nearly optimal (`ALMOST_OPTIMAL` — indicates poor numerical conditioning).
-- Trivially solved (simplex iterations `≤ criteria.min_iterations`).
-- Degenerate (simplex iterations `> criteria.max_iteration_ratio × constraints`).
+
+  - Too small (fewer than `criteria.min_constraints` constraints) — checked
+    *before* solving.
+  - Infeasible, but only when `feasible_only` is `true`.
+  - Unbounded.
+  - Timed out or hit numerical / solver errors.
+  - Nearly optimal (`ALMOST_OPTIMAL` — indicates poor numerical conditioning).
+  - Trivially solved (simplex iterations `≤ criteria.min_iterations`).
+  - Degenerate (simplex iterations `> criteria.max_iteration_ratio × constraints`).
 
 Returns a [`QualityResult`](@ref).
 """
-function check_quality(model::Model, optimizer;
-                       criteria::QualityCriteria = QualityCriteria(),
-                       feasible_only::Bool = false,
-                       optimizer_attributes = ())
-    n_cons = num_constraints(model; count_variable_in_set_constraints = false)
+function check_quality(
+    model::Model,
+    optimizer;
+    criteria::QualityCriteria=QualityCriteria(),
+    feasible_only::Bool=false,
+    optimizer_attributes=(),
+)
+    n_cons = num_constraints(model; count_variable_in_set_constraints=false)
 
     # Pre-solve: reject problems with too few constraints.
     if n_cons < criteria.min_constraints
@@ -180,19 +186,20 @@ end
 Metadata describing a single instance produced by [`generate_dataset`](@ref).
 
 # Fields
-- `index::Int`: 1-based position of the instance within the dataset.
-- `problem_type::Symbol`: the category that produced it (e.g. `:transportation`).
-- `variant::Symbol`: the variant within that category (e.g. `:standard`).
-- `target_variables::Int`: requested variable count.
-- `num_variables::Int`: actual variable count of the built model.
-- `num_constraints::Int`: actual constraint count (excludes variable bounds).
-- `seed::Int`: per-instance seed (reproduces this exact instance).
-- `feasibility_status::FeasibilityStatus`: requested feasibility status.
-- `dualized::Bool`: whether this returned instance is a dual reformulation.
-- `filename::Union{String,Nothing}`: file the instance was written to, or
-  `nothing` if `output_dir` was not set.
-- `iterations::Int`: simplex iterations if quality-filtered, else `-1`.
-- `solve_time::Float64`: solve time in seconds if quality-filtered, else `NaN`.
+
+  - `index::Int`: 1-based position of the instance within the dataset.
+  - `problem_type::Symbol`: the category that produced it (e.g. `:transportation`).
+  - `variant::Symbol`: the variant within that category (e.g. `:standard`).
+  - `target_variables::Int`: requested variable count.
+  - `num_variables::Int`: actual variable count of the built model.
+  - `num_constraints::Int`: actual constraint count (excludes variable bounds).
+  - `seed::Int`: per-instance seed (reproduces this exact instance).
+  - `feasibility_status::FeasibilityStatus`: requested feasibility status.
+  - `dualized::Bool`: whether this returned instance is a dual reformulation.
+  - `filename::Union{String,Nothing}`: file the instance was written to, or
+    `nothing` if `output_dir` was not set.
+  - `iterations::Int`: simplex iterations if quality-filtered, else `-1`.
+  - `solve_time::Float64`: solve time in seconds if quality-filtered, else `NaN`.
 """
 struct GeneratedInstance
     index::Int
@@ -204,7 +211,7 @@ struct GeneratedInstance
     seed::Int
     feasibility_status::FeasibilityStatus
     dualized::Bool
-    filename::Union{String,Nothing}
+    filename::Union{String, Nothing}
     iterations::Int
     solve_time::Float64
 end
@@ -217,9 +224,10 @@ vector of `ProblemVariant`s.
 
 `nothing` or an empty collection selects every registered variant. Each selector
 may be:
-- a category `Symbol` (e.g. `:transportation`) or bare string (`"transportation"`),
-  which expands to *all* variants of that category, sorted;
-- a `"category/variant"` string or a `ProblemVariant`, naming one specific variant.
+
+  - a category `Symbol` (e.g. `:transportation`) or bare string (`"transportation"`),
+    which expands to *all* variants of that category, sorted;
+  - a `"category/variant"` string or a `ProblemVariant`, naming one specific variant.
 
 Throws if any requested category or variant is not registered.
 """
@@ -247,20 +255,22 @@ function _expand_selector(sel::ProblemVariant)
     return [sel]
 end
 function _expand_selector(sel::AbstractString)
-    return occursin('/', sel) ? _expand_selector(ProblemVariant(sel)) :
-                                _expand_selector(Symbol(strip(sel)))
+    return if occursin('/', sel)
+        _expand_selector(ProblemVariant(sel))
+    else
+        _expand_selector(Symbol(strip(sel)))
+    end
 end
 function _expand_selector(sel::Symbol)
-    haskey(LP_REGISTRY, sel) ||
-        error("Unknown problem category: $sel. " *
-              "Available: $(join(sort(list_categories()), ", "))")
+    haskey(LP_REGISTRY, sel) || error(
+        "Unknown problem category: $sel. " * "Available: $(join(sort(list_categories()), ", "))"
+    )
     return [ProblemVariant(sel, v) for v in list_variants(sel)]
 end
 
 # Distinct categories (sorted) covered by a set of variants — used to group
 # `match_size_by_type` quotas at the category level.
-_selected_categories(variants::Vector{ProblemVariant}) =
-    sort(unique(v.category for v in variants))
+_selected_categories(variants::Vector{ProblemVariant}) = sort(unique(v.category for v in variants))
 
 struct _SizeDistributionSpec
     source::Any
@@ -281,8 +291,8 @@ end
 Base.@kwdef struct _SizeMatchSummary
     selected_count::Int = 0
     candidate_count::Int = 0
-    mean_abs_log_error::Union{Float64,Nothing} = nothing
-    max_abs_log_error::Union{Float64,Nothing} = nothing
+    mean_abs_log_error::Union{Float64, Nothing} = nothing
+    max_abs_log_error::Union{Float64, Nothing} = nothing
     tolerance::Float64 = 0.0
     tolerance_met::Bool = true
 end
@@ -290,11 +300,12 @@ end
 mutable struct _GenerationStats
     attempts::Int
     failed::Int
-    filter_counts::Dict{String,Int}
+    filter_counts::Dict{String, Int}
 end
 
-function _resolve_size_distribution(size_distribution, mean::Real, std::Real,
-                                    min_val::Int, max_val::Int)
+function _resolve_size_distribution(
+    size_distribution, mean::Real, std::Real, min_val::Int, max_val::Int
+)
     if min_val > max_val
         error("var_min must be <= var_max.")
     end
@@ -320,7 +331,7 @@ function _resolve_size_distribution(size_distribution, mean::Real, std::Real,
         # unbounded-below distributions), so sampled sizes are always valid
         # problem sizes rather than rounding toward 0.
         if !isfinite(lower_bound) || lower_bound < 2
-            dist = truncated(size_distribution; lower = 2)
+            dist = truncated(size_distribution; lower=2)
             desc = "truncated($(string(size_distribution)); lower=2)"
             return _SizeDistributionSpec(dist, desc)
         end
@@ -348,8 +359,7 @@ end
 function _checked_size_quantile(spec::_SizeDistributionSpec, p::Real)
     q = _size_quantile(spec, p)
     if !isfinite(q) || q <= 0
-        error("size_distribution must produce finite positive size quantiles; " *
-              "got $q at p=$p.")
+        error("size_distribution must produce finite positive size quantiles; " * "got $q at p=$p.")
     end
     return q
 end
@@ -370,50 +380,53 @@ function _sample_num_variables(rng::AbstractRNG, spec::_SizeDistributionSpec)
     return max(1, round(Int, value))
 end
 
-function _candidate_target_variables(rng::AbstractRNG,
-                                     spec::_SizeDistributionSpec,
-                                     quota::Int,
-                                     draw_index::Int)
+function _candidate_target_variables(
+    rng::AbstractRNG, spec::_SizeDistributionSpec, quota::Int, draw_index::Int
+)
     position = mod(draw_index, quota) + 1
     jittered_p = (position - 0.5 + rand(rng) - 0.5) / quota
     q = _checked_size_quantile(spec, jittered_p)
     return max(1, round(Int, q))
 end
 
-function _size_match_summary(selected::Vector{_DatasetCandidate},
-                             target_quantiles::Vector{Float64},
-                             candidate_count::Int,
-                             tolerance::Float64)
+function _size_match_summary(
+    selected::Vector{_DatasetCandidate},
+    target_quantiles::Vector{Float64},
+    candidate_count::Int,
+    tolerance::Float64,
+)
     if isempty(selected)
-        return _SizeMatchSummary(candidate_count = candidate_count,
-                                 tolerance = tolerance)
+        return _SizeMatchSummary(; candidate_count=candidate_count, tolerance=tolerance)
     end
-    sorted_selected = sort(selected, by = c -> c.num_variables)
-    errors = [abs(log(sorted_selected[i].num_variables / target_quantiles[i]))
-              for i in eachindex(sorted_selected)]
+    sorted_selected = sort(selected; by=c -> c.num_variables)
+    errors = [
+        abs(log(sorted_selected[i].num_variables / target_quantiles[i])) for
+        i in eachindex(sorted_selected)
+    ]
     mean_error = sum(errors) / length(errors)
     max_error = maximum(errors)
-    return _SizeMatchSummary(
-        selected_count = length(selected),
-        candidate_count = candidate_count,
-        mean_abs_log_error = mean_error,
-        max_abs_log_error = max_error,
-        tolerance = tolerance,
-        tolerance_met = mean_error <= tolerance,
+    return _SizeMatchSummary(;
+        selected_count=length(selected),
+        candidate_count=candidate_count,
+        mean_abs_log_error=mean_error,
+        max_abs_log_error=max_error,
+        tolerance=tolerance,
+        tolerance_met=mean_error <= tolerance,
     )
 end
 
-function _select_size_matched_candidates(candidates::Vector{_DatasetCandidate},
-                                         quota::Int,
-                                         spec::_SizeDistributionSpec,
-                                         tolerance::Float64)
+function _select_size_matched_candidates(
+    candidates::Vector{_DatasetCandidate},
+    quota::Int,
+    spec::_SizeDistributionSpec,
+    tolerance::Float64,
+)
     quota == 0 && return _DatasetCandidate[],
-                         _SizeMatchSummary(candidate_count = length(candidates),
-                                           tolerance = tolerance)
-    length(candidates) < quota && error("Cannot select $quota candidates from " *
-                                        "$(length(candidates)) candidates.")
+    _SizeMatchSummary(; candidate_count=length(candidates), tolerance=tolerance)
+    length(candidates) < quota &&
+        error("Cannot select $quota candidates from " * "$(length(candidates)) candidates.")
 
-    sorted_candidates = sort(candidates, by = c -> c.num_variables)
+    sorted_candidates = sort(candidates; by=c -> c.num_variables)
     target_quantiles = _target_quantiles(spec, quota)
     n = quota
     m = length(sorted_candidates)
@@ -453,8 +466,7 @@ function _select_size_matched_candidates(candidates::Vector{_DatasetCandidate},
     reverse!(selected_indices)
 
     selected = [sorted_candidates[idx] for idx in selected_indices]
-    summary = _size_match_summary(selected, target_quantiles, length(candidates),
-                                  tolerance)
+    summary = _size_match_summary(selected, target_quantiles, length(candidates), tolerance)
     return selected, summary
 end
 
@@ -463,21 +475,23 @@ function _increment_filter_count!(stats::_GenerationStats, reason::String)
     return nothing
 end
 
-function _attempt_candidate(rng::AbstractRNG,
-                            ref::ProblemVariant,
-                            target_vars::Int,
-                            feasibility::FeasibilityStatus,
-                            relax_integer::Bool,
-                            bounds_to_constraints::Bool,
-                            dualize::Bool,
-                            dualize_probability::Float64,
-                            quality_filter::Bool,
-                            optimizer,
-                            quality_criteria::QualityCriteria,
-                            optimizer_attributes,
-                            feasible_only::Bool,
-                            stats::_GenerationStats,
-                            verbose::Bool)
+function _attempt_candidate(
+    rng::AbstractRNG,
+    ref::ProblemVariant,
+    target_vars::Int,
+    feasibility::FeasibilityStatus,
+    relax_integer::Bool,
+    bounds_to_constraints::Bool,
+    dualize::Bool,
+    dualize_probability::Float64,
+    quality_filter::Bool,
+    optimizer,
+    quality_criteria::QualityCriteria,
+    optimizer_attributes,
+    feasible_only::Bool,
+    stats::_GenerationStats,
+    verbose::Bool,
+)
     problem_seed = rand(rng, 1:typemax(Int32))
     dualized = _should_dualize(rng, dualize, dualize_probability)
     try
@@ -495,28 +509,38 @@ function _attempt_candidate(rng::AbstractRNG,
         # new seed, but the surrounding pool loop simply draws another candidate, so
         # nothing is lost.
         verify_optimizer = quality_filter ? nothing : optimizer
-        model, _, resolved_seed = _generate_problem_verified(ref, target_vars, feasibility,
-                                    problem_seed; relax_integer = relax_integer,
-                                    bounds_to_constraints = bounds_to_constraints,
-                                    dualize = dualized,
-                                    optimizer = verify_optimizer,
-                                    max_feasibility_retries = 10,
-                                    feasibility_timeout = quality_criteria.solve_timeout)
+        model, _, resolved_seed = _generate_problem_verified(
+            ref,
+            target_vars,
+            feasibility,
+            problem_seed;
+            relax_integer=relax_integer,
+            bounds_to_constraints=bounds_to_constraints,
+            dualize=dualized,
+            optimizer=verify_optimizer,
+            max_feasibility_retries=10,
+            feasibility_timeout=quality_criteria.solve_timeout,
+        )
 
         iterations = -1
         stime = NaN
         if quality_filter
-            result = check_quality(model, optimizer;
-                                   criteria = quality_criteria,
-                                   feasible_only = feasible_only,
-                                   optimizer_attributes = optimizer_attributes)
+            result = check_quality(
+                model,
+                optimizer;
+                criteria=quality_criteria,
+                feasible_only=feasible_only,
+                optimizer_attributes=optimizer_attributes,
+            )
             if !result.passed
                 _increment_filter_count!(stats, result.reason)
                 if verbose
-                    println("[attempt $(stats.attempts)] filtered $ref " *
-                            "($target_vars vars): $(result.reason) " *
-                            "($(result.iterations) iters, " *
-                            "$(round(result.solve_time, digits = 2))s)")
+                    println(
+                        "[attempt $(stats.attempts)] filtered $ref " *
+                        "($target_vars vars): $(result.reason) " *
+                        "($(result.iterations) iters, " *
+                        "$(round(result.solve_time, digits = 2))s)",
+                    )
                 end
                 return nothing
             end
@@ -528,7 +552,7 @@ function _attempt_candidate(rng::AbstractRNG,
             ref,
             target_vars,
             num_variables(model),
-            num_constraints(model; count_variable_in_set_constraints = false),
+            num_constraints(model; count_variable_in_set_constraints=false),
             resolved_seed,
             dualized,
             iterations,
@@ -540,97 +564,119 @@ function _attempt_candidate(rng::AbstractRNG,
         e isa InterruptException && rethrow()
         stats.failed += 1
         if verbose
-            println("[attempt $(stats.attempts)] failed $ref " *
-                    "($target_vars vars): $e")
+            println("[attempt $(stats.attempts)] failed $ref " * "($target_vars vars): $e")
         else
-            @warn "Failed to generate $ref with $target_vars vars" exception = (e, catch_backtrace())
+            @warn "Failed to generate $ref with $target_vars vars" exception = (
+                e, catch_backtrace()
+            )
         end
         return nothing
     end
 end
 
-function _fill_candidate_pool!(candidates::Vector{_DatasetCandidate},
-                               rng::AbstractRNG,
-                               group_variants::Vector{ProblemVariant},
-                               quota::Int,
-                               desired_count::Int,
-                               target_index_start::Int,
-                               attempt_limit::Int,
-                               size_spec::_SizeDistributionSpec,
-                               feasibility::FeasibilityStatus,
-                               relax_integer::Bool,
-                               bounds_to_constraints::Bool,
-                               dualize::Bool,
-                               dualize_probability::Float64,
-                               quality_filter::Bool,
-                               optimizer,
-                               quality_criteria::QualityCriteria,
-                               optimizer_attributes,
-                               feasible_only::Bool,
-                               stats::_GenerationStats,
-                               verbose::Bool)
+function _fill_candidate_pool!(
+    candidates::Vector{_DatasetCandidate},
+    rng::AbstractRNG,
+    group_variants::Vector{ProblemVariant},
+    quota::Int,
+    desired_count::Int,
+    target_index_start::Int,
+    attempt_limit::Int,
+    size_spec::_SizeDistributionSpec,
+    feasibility::FeasibilityStatus,
+    relax_integer::Bool,
+    bounds_to_constraints::Bool,
+    dualize::Bool,
+    dualize_probability::Float64,
+    quality_filter::Bool,
+    optimizer,
+    quality_criteria::QualityCriteria,
+    optimizer_attributes,
+    feasible_only::Bool,
+    stats::_GenerationStats,
+    verbose::Bool,
+)
     local_attempts = 0
     while length(candidates) < desired_count && local_attempts < attempt_limit
         local_attempts += 1
         stats.attempts += 1
         ref = length(group_variants) == 1 ? group_variants[1] : rand(rng, group_variants)
-        target_vars = _candidate_target_variables(rng, size_spec, quota,
-                                                  target_index_start + local_attempts - 1)
-        candidate = _attempt_candidate(rng, ref, target_vars, feasibility,
-                                       relax_integer, bounds_to_constraints,
-                                       dualize, dualize_probability,
-                                       quality_filter, optimizer,
-                                       quality_criteria, optimizer_attributes,
-                                       feasible_only, stats, verbose)
+        target_vars = _candidate_target_variables(
+            rng, size_spec, quota, target_index_start + local_attempts - 1
+        )
+        candidate = _attempt_candidate(
+            rng,
+            ref,
+            target_vars,
+            feasibility,
+            relax_integer,
+            bounds_to_constraints,
+            dualize,
+            dualize_probability,
+            quality_filter,
+            optimizer,
+            quality_criteria,
+            optimizer_attributes,
+            feasible_only,
+            stats,
+            verbose,
+        )
         candidate === nothing || push!(candidates, candidate)
     end
     return local_attempts
 end
 
-function _insufficient_candidates_error(group_label::AbstractString,
-                                        quota::Int,
-                                        candidates::Vector{_DatasetCandidate},
-                                        stats::_GenerationStats,
-                                        group_attempts::Int)
-    total_filtered = sum(values(stats.filter_counts); init = 0)
-    error("Could not generate enough valid candidates for $group_label: " *
-          "needed $quota, accepted $(length(candidates)) after $group_attempts " *
-          "group attempts ($(stats.failed) generation errors, " *
-          "$total_filtered filtered).")
+function _insufficient_candidates_error(
+    group_label::AbstractString,
+    quota::Int,
+    candidates::Vector{_DatasetCandidate},
+    stats::_GenerationStats,
+    group_attempts::Int,
+)
+    total_filtered = sum(values(stats.filter_counts); init=0)
+    error(
+        "Could not generate enough valid candidates for $group_label: " *
+        "needed $quota, accepted $(length(candidates)) after $group_attempts " *
+        "group attempts ($(stats.failed) generation errors, " *
+        "$total_filtered filtered).",
+    )
 end
 
-function _strict_size_match_error(group_label::AbstractString,
-                                  summary::_SizeMatchSummary)
-    error("Size matching for $group_label missed the requested tolerance: " *
-          "mean_abs_log_error=$(summary.mean_abs_log_error), " *
-          "tolerance=$(summary.tolerance).")
+function _strict_size_match_error(group_label::AbstractString, summary::_SizeMatchSummary)
+    error(
+        "Size matching for $group_label missed the requested tolerance: " *
+        "mean_abs_log_error=$(summary.mean_abs_log_error), " *
+        "tolerance=$(summary.tolerance).",
+    )
 end
 
-function _generate_matched_group(rng::AbstractRNG,
-                                 group_label::AbstractString,
-                                 group_variants::Vector{ProblemVariant},
-                                 quota::Int,
-                                 size_spec::_SizeDistributionSpec,
-                                 feasibility::FeasibilityStatus,
-                                 relax_integer::Bool,
-                                 bounds_to_constraints::Bool,
-                                 dualize::Bool,
-                                 dualize_probability::Float64,
-                                 quality_filter::Bool,
-                                 optimizer,
-                                 quality_criteria::QualityCriteria,
-                                 optimizer_attributes,
-                                 feasible_only::Bool,
-                                 candidate_multiplier::Int,
-                                 max_candidate_multiplier::Int,
-                                 max_retries::Int,
-                                 size_match_tolerance::Float64,
-                                 strict_size_match::Bool,
-                                 stats::_GenerationStats,
-                                 verbose::Bool)
+function _generate_matched_group(
+    rng::AbstractRNG,
+    group_label::AbstractString,
+    group_variants::Vector{ProblemVariant},
+    quota::Int,
+    size_spec::_SizeDistributionSpec,
+    feasibility::FeasibilityStatus,
+    relax_integer::Bool,
+    bounds_to_constraints::Bool,
+    dualize::Bool,
+    dualize_probability::Float64,
+    quality_filter::Bool,
+    optimizer,
+    quality_criteria::QualityCriteria,
+    optimizer_attributes,
+    feasible_only::Bool,
+    candidate_multiplier::Int,
+    max_candidate_multiplier::Int,
+    max_retries::Int,
+    size_match_tolerance::Float64,
+    strict_size_match::Bool,
+    stats::_GenerationStats,
+    verbose::Bool,
+)
     candidates = _DatasetCandidate[]
     selected = _DatasetCandidate[]
-    summary = _SizeMatchSummary(tolerance = size_match_tolerance)
+    summary = _SizeMatchSummary(; tolerance=size_match_tolerance)
 
     attempt_limit = max(quota, quota * max_candidate_multiplier * max_retries)
     group_attempts = 0
@@ -639,28 +685,48 @@ function _generate_matched_group(rng::AbstractRNG,
         remaining_attempts = attempt_limit - group_attempts
         if remaining_attempts > 0 && length(candidates) < desired_count
             group_attempts += _fill_candidate_pool!(
-                candidates, rng, group_variants, quota, desired_count,
-                group_attempts, remaining_attempts, size_spec, feasibility,
-                relax_integer, bounds_to_constraints, dualize, dualize_probability,
-                quality_filter, optimizer,
-                quality_criteria, optimizer_attributes, feasible_only, stats, verbose)
+                candidates,
+                rng,
+                group_variants,
+                quota,
+                desired_count,
+                group_attempts,
+                remaining_attempts,
+                size_spec,
+                feasibility,
+                relax_integer,
+                bounds_to_constraints,
+                dualize,
+                dualize_probability,
+                quality_filter,
+                optimizer,
+                quality_criteria,
+                optimizer_attributes,
+                feasible_only,
+                stats,
+                verbose,
+            )
         end
 
         if length(candidates) < quota
-            _insufficient_candidates_error(group_label, quota, candidates, stats,
-                                           group_attempts)
+            _insufficient_candidates_error(group_label, quota, candidates, stats, group_attempts)
         end
 
-        selected, summary = _select_size_matched_candidates(candidates, quota,
-                                                           size_spec,
-                                                           size_match_tolerance)
+        selected, summary = _select_size_matched_candidates(
+            candidates, quota, size_spec, size_match_tolerance
+        )
         if verbose
-            println("Matched $group_label with $(length(candidates)) candidates: " *
-                    "mean_abs_log_error=$(summary.mean_abs_log_error), " *
-                    "tolerance_met=$(summary.tolerance_met)")
+            println(
+                "Matched $group_label with $(length(candidates)) candidates: " *
+                "mean_abs_log_error=$(summary.mean_abs_log_error), " *
+                "tolerance_met=$(summary.tolerance_met)",
+            )
         end
-        (summary.tolerance_met || multiplier == max_candidate_multiplier ||
-         group_attempts >= attempt_limit) && break
+        (
+            summary.tolerance_met ||
+            multiplier == max_candidate_multiplier ||
+            group_attempts >= attempt_limit
+        ) && break
     end
 
     if strict_size_match && !summary.tolerance_met
@@ -670,23 +736,25 @@ function _generate_matched_group(rng::AbstractRNG,
     return selected, summary
 end
 
-function _generate_unmatched_candidates(rng::AbstractRNG,
-                                        types::Vector{ProblemVariant},
-                                        num_problems::Int,
-                                        size_spec::_SizeDistributionSpec,
-                                        feasibility::FeasibilityStatus,
-                                        relax_integer::Bool,
-                                        bounds_to_constraints::Bool,
-                                        dualize::Bool,
-                                        dualize_probability::Float64,
-                                        quality_filter::Bool,
-                                        optimizer,
-                                        quality_criteria::QualityCriteria,
-                                        optimizer_attributes,
-                                        feasible_only::Bool,
-                                        max_retries::Int,
-                                        stats::_GenerationStats,
-                                        verbose::Bool)
+function _generate_unmatched_candidates(
+    rng::AbstractRNG,
+    types::Vector{ProblemVariant},
+    num_problems::Int,
+    size_spec::_SizeDistributionSpec,
+    feasibility::FeasibilityStatus,
+    relax_integer::Bool,
+    bounds_to_constraints::Bool,
+    dualize::Bool,
+    dualize_probability::Float64,
+    quality_filter::Bool,
+    optimizer,
+    quality_criteria::QualityCriteria,
+    optimizer_attributes,
+    feasible_only::Bool,
+    max_retries::Int,
+    stats::_GenerationStats,
+    verbose::Bool,
+)
     candidates = _DatasetCandidate[]
     attempt_limit = max(num_problems, num_problems * max_retries)
     local_attempts = 0
@@ -695,26 +763,38 @@ function _generate_unmatched_candidates(rng::AbstractRNG,
         stats.attempts += 1
         ref = rand(rng, types)
         target_vars = _sample_num_variables(rng, size_spec)
-        candidate = _attempt_candidate(rng, ref, target_vars, feasibility,
-                                       relax_integer, bounds_to_constraints,
-                                       dualize, dualize_probability,
-                                       quality_filter, optimizer,
-                                       quality_criteria, optimizer_attributes,
-                                       feasible_only, stats, verbose)
+        candidate = _attempt_candidate(
+            rng,
+            ref,
+            target_vars,
+            feasibility,
+            relax_integer,
+            bounds_to_constraints,
+            dualize,
+            dualize_probability,
+            quality_filter,
+            optimizer,
+            quality_criteria,
+            optimizer_attributes,
+            feasible_only,
+            stats,
+            verbose,
+        )
         candidate === nothing || push!(candidates, candidate)
     end
 
     if length(candidates) < num_problems
-        _insufficient_candidates_error("dataset", num_problems, candidates, stats,
-                                       attempt_limit)
+        _insufficient_candidates_error("dataset", num_problems, candidates, stats, attempt_limit)
     end
     return candidates
 end
 
 function _type_quotas(rng::AbstractRNG, categories::Vector{Symbol}, num_problems::Int)
     if num_problems < length(categories)
-        error("match_size_by_type=true requires num_problems >= number of " *
-              "selected problem categories ($(length(categories))).")
+        error(
+            "match_size_by_type=true requires num_problems >= number of " *
+            "selected problem categories ($(length(categories))).",
+        )
     end
     base_count = div(num_problems, length(categories))
     remainder = rem(num_problems, length(categories))
@@ -727,7 +807,7 @@ function _type_quotas(rng::AbstractRNG, categories::Vector{Symbol}, num_problems
 end
 
 function _summary_dict(summary::_SizeMatchSummary)
-    return Dict{String,Any}(
+    return Dict{String, Any}(
         "selected_count" => summary.selected_count,
         "candidate_count" => summary.candidate_count,
         "mean_abs_log_error" => summary.mean_abs_log_error,
@@ -737,73 +817,85 @@ function _summary_dict(summary::_SizeMatchSummary)
     )
 end
 
-function _materialize_instances(candidates::Vector{_DatasetCandidate},
-                                output_dir,
-                                file_extension::AbstractString,
-                                feasibility::FeasibilityStatus,
-                                relax_integer::Bool,
-                                bounds_to_constraints::Bool,
-                                verbose::Bool)
+function _materialize_instances(
+    candidates::Vector{_DatasetCandidate},
+    output_dir,
+    file_extension::AbstractString,
+    feasibility::FeasibilityStatus,
+    relax_integer::Bool,
+    bounds_to_constraints::Bool,
+    verbose::Bool,
+)
     instances = GeneratedInstance[]
     for (idx, candidate) in enumerate(candidates)
         ref = candidate.ref
         filename = nothing
         if output_dir !== nothing
-            model, _ = generate_problem(ref,
-                                        candidate.target_variables,
-                                        feasibility,
-                                        candidate.seed;
-                                        relax_integer = relax_integer,
-                                        bounds_to_constraints = bounds_to_constraints,
-                                        dualize = candidate.dualized)
+            model, _ = generate_problem(
+                ref,
+                candidate.target_variables,
+                feasibility,
+                candidate.seed;
+                relax_integer=relax_integer,
+                bounds_to_constraints=bounds_to_constraints,
+                dualize=candidate.dualized,
+            )
             actual_vars = num_variables(model)
-            actual_cons = num_constraints(model; count_variable_in_set_constraints = false)
+            actual_cons = num_constraints(model; count_variable_in_set_constraints=false)
             if actual_vars != candidate.num_variables || actual_cons != candidate.num_constraints
-                error("Regenerated $ref with seed " *
-                      "$(candidate.seed) changed size from " *
-                      "$(candidate.num_variables)/$(candidate.num_constraints) " *
-                      "to $actual_vars/$actual_cons.")
+                error(
+                    "Regenerated $ref with seed " *
+                    "$(candidate.seed) changed size from " *
+                    "$(candidate.num_variables)/$(candidate.num_constraints) " *
+                    "to $actual_vars/$actual_cons.",
+                )
             end
-            filename = _instance_filename(ref.category,
-                                          ref.variant,
-                                          candidate.num_variables,
-                                          idx,
-                                          file_extension)
+            filename = _instance_filename(
+                ref.category, ref.variant, candidate.num_variables, idx, file_extension
+            )
             write_to_file(model, joinpath(output_dir, filename))
         end
 
-        push!(instances, GeneratedInstance(
-            idx,
-            ref.category,
-            ref.variant,
-            candidate.target_variables,
-            candidate.num_variables,
-            candidate.num_constraints,
-            candidate.seed,
-            feasibility,
-            candidate.dualized,
-            filename,
-            candidate.iterations,
-            candidate.solve_time,
-        ))
+        push!(
+            instances,
+            GeneratedInstance(
+                idx,
+                ref.category,
+                ref.variant,
+                candidate.target_variables,
+                candidate.num_variables,
+                candidate.num_constraints,
+                candidate.seed,
+                feasibility,
+                candidate.dualized,
+                filename,
+                candidate.iterations,
+                candidate.solve_time,
+            ),
+        )
 
         if verbose
-            msg = "[$idx/$(length(candidates))] " *
-                  "$(filename === nothing ? string(ref) : filename) " *
-                  "(target=$(candidate.target_variables), " *
-                  "actual=$(candidate.num_variables), " *
-                  "cons=$(candidate.num_constraints), " *
-                  "dual=$(candidate.dualized)"
-            msg *= candidate.iterations >= 0 ? ", $(candidate.iterations) iters, " *
-                                              "$(round(candidate.solve_time, digits = 2))s)" : ")"
+            msg =
+                "[$idx/$(length(candidates))] " *
+                "$(filename === nothing ? string(ref) : filename) " *
+                "(target=$(candidate.target_variables), " *
+                "actual=$(candidate.num_variables), " *
+                "cons=$(candidate.num_constraints), " *
+                "dual=$(candidate.dualized)"
+            msg *= if candidate.iterations >= 0
+                ", $(candidate.iterations) iters, " * "$(round(candidate.solve_time, digits = 2))s)"
+            else
+                ")"
+            end
             println(msg)
         end
     end
     return instances
 end
 
-function _instance_filename(category::Symbol, variant::Symbol, num_vars::Int, idx::Int,
-                            file_extension::AbstractString)
+function _instance_filename(
+    category::Symbol, variant::Symbol, num_vars::Int, idx::Int, file_extension::AbstractString
+)
     return "$(category)_$(variant)_v$(num_vars)_$(lpad(idx, 5, '0')).$(file_extension)"
 end
 
@@ -821,94 +913,97 @@ written to disk; a `manifest.json` summarizing the run is written too unless
 Returns metadata for every kept instance as a `Vector{GeneratedInstance}`.
 
 # Sampling keyword arguments
-- `num_problems::Int = 100`: number of instances to produce.
-- `var_mean::Real = 500.0`, `var_std::Real = 200.0`: mean/std of a truncated
-  normal over the target variable count when `size_distribution` is not set.
-- `var_min::Int = 50`, `var_max::Int = 2000`: truncation bounds used with the
-  legacy `var_*` arguments.
-- `size_distribution = nothing`: optional `Distributions.UnivariateDistribution`
-  over target sizes, e.g. `Uniform(50, 2000)` or
-  `truncated(Normal(500, 200), 50, 2000)`. Distributions without a finite lower
-  support are automatically truncated at `lower = 2`.
-- `problem_types = nothing`: collection of type symbols to sample from
-  (`nothing`/empty = all registered types).
-- `feasible_only::Bool = false`: request guaranteed-feasible instances.
-- `relax_integer::Bool = true`: relax integrality of generated models.
-- `bounds_to_constraints::Bool = false`: reformulate variable bounds (other than
-  plain `x ≥ 0` nonnegativity) as explicit affine constraints. Applied after
-  integrality relaxation. Note: converted bounds become genuine constraint rows,
-  so they raise the `num_constraints` recorded for each instance and feed into
-  size matching and the quality filter's constraint-based thresholds.
-- `dualize::Bool = false`: replace each continuous model by its dual after the
-  preceding transforms. This forces dualization for every instance.
-- `dualize_probability::Real = 0.0`: independently dualize each instance with
-  this probability when `dualize=false`. The default keeps dualization off. The
-  sampled choice is reproducible from `seed`, and recorded and matched sizes
-  describe the model actually returned.
-- `seed::Int = 0`: master seed (`0` = non-deterministic).
-- `match_size_distribution::Bool = true`: post-select candidates so actual
-  variable counts match target distribution quantiles.
-- `match_size_by_type::Bool = false`: when matching, match the target size
-  distribution independently within each selected problem type.
-- `candidate_multiplier::Int = 2`: minimum accepted candidates per final
-  instance before matching.
-- `max_candidate_multiplier::Int = 12`: accepted-candidate cap for iterative
-  matching.
-- `size_match_tolerance::Float64 = 0.05`: acceptable mean absolute log-ratio
-  error between selected actual sizes and target quantiles.
-- `strict_size_match::Bool = false`: throw if the tolerance is missed after
-  reaching the candidate cap.
+
+  - `num_problems::Int = 100`: number of instances to produce.
+  - `var_mean::Real = 500.0`, `var_std::Real = 200.0`: mean/std of a truncated
+    normal over the target variable count when `size_distribution` is not set.
+  - `var_min::Int = 50`, `var_max::Int = 2000`: truncation bounds used with the
+    legacy `var_*` arguments.
+  - `size_distribution = nothing`: optional `Distributions.UnivariateDistribution`
+    over target sizes, e.g. `Uniform(50, 2000)` or
+    `truncated(Normal(500, 200), 50, 2000)`. Distributions without a finite lower
+    support are automatically truncated at `lower = 2`.
+  - `problem_types = nothing`: collection of type symbols to sample from
+    (`nothing`/empty = all registered types).
+  - `feasible_only::Bool = false`: request guaranteed-feasible instances.
+  - `relax_integer::Bool = true`: relax integrality of generated models.
+  - `bounds_to_constraints::Bool = false`: reformulate variable bounds (other than
+    plain `x ≥ 0` nonnegativity) as explicit affine constraints. Applied after
+    integrality relaxation. Note: converted bounds become genuine constraint rows,
+    so they raise the `num_constraints` recorded for each instance and feed into
+    size matching and the quality filter's constraint-based thresholds.
+  - `dualize::Bool = false`: replace each continuous model by its dual after the
+    preceding transforms. This forces dualization for every instance.
+  - `dualize_probability::Real = 0.0`: independently dualize each instance with
+    this probability when `dualize=false`. The default keeps dualization off. The
+    sampled choice is reproducible from `seed`, and recorded and matched sizes
+    describe the model actually returned.
+  - `seed::Int = 0`: master seed (`0` = non-deterministic).
+  - `match_size_distribution::Bool = true`: post-select candidates so actual
+    variable counts match target distribution quantiles.
+  - `match_size_by_type::Bool = false`: when matching, match the target size
+    distribution independently within each selected problem type.
+  - `candidate_multiplier::Int = 2`: minimum accepted candidates per final
+    instance before matching.
+  - `max_candidate_multiplier::Int = 12`: accepted-candidate cap for iterative
+    matching.
+  - `size_match_tolerance::Float64 = 0.05`: acceptable mean absolute log-ratio
+    error between selected actual sizes and target quantiles.
+  - `strict_size_match::Bool = false`: throw if the tolerance is missed after
+    reaching the candidate cap.
 
 # Output keyword arguments
-- `output_dir = nothing`: directory to write instances into (created if
-  needed). `nothing` disables file output (metadata is still returned).
-- `file_extension::AbstractString = "mps"`: output file format / extension,
-  passed through to `JuMP.write_to_file` (e.g. `"mps"`, `"lp"`).
-- `write_manifest::Bool = true`: write a `manifest.json` alongside instances.
+
+  - `output_dir = nothing`: directory to write instances into (created if
+    needed). `nothing` disables file output (metadata is still returned).
+  - `file_extension::AbstractString = "mps"`: output file format / extension,
+    passed through to `JuMP.write_to_file` (e.g. `"mps"`, `"lp"`).
+  - `write_manifest::Bool = true`: write a `manifest.json` alongside instances.
 
 # Quality-filter keyword arguments
-- `optimizer = nothing`: solver used for quality filtering (e.g.
-  `HiGHS.Optimizer`). Required when `quality_filter=true`.
-- `quality_filter::Bool = false`: solve and filter each instance.
-- `quality_criteria::QualityCriteria = QualityCriteria()`: filter thresholds.
-- `optimizer_attributes = ()`: `name => value` pairs applied to each solve.
-- `max_retries::Int = 10`: raw attempt budget multiplier used to overcome
-  generator failures and quality-filter rejections.
+
+  - `optimizer = nothing`: solver used for quality filtering (e.g.
+    `HiGHS.Optimizer`). Required when `quality_filter=true`.
+  - `quality_filter::Bool = false`: solve and filter each instance.
+  - `quality_criteria::QualityCriteria = QualityCriteria()`: filter thresholds.
+  - `optimizer_attributes = ()`: `name => value` pairs applied to each solve.
+  - `max_retries::Int = 10`: raw attempt budget multiplier used to overcome
+    generator failures and quality-filter rejections.
 
 # Misc
-- `verbose::Bool = false`: print per-instance progress.
+
+  - `verbose::Bool = false`: print per-instance progress.
 """
 function generate_dataset(;
-        num_problems::Int = 100,
-        var_mean::Real = 500.0,
-        var_std::Real = 200.0,
-        var_min::Int = 50,
-        var_max::Int = 2000,
-        size_distribution = nothing,
-        problem_types = nothing,
-        feasible_only::Bool = false,
-        relax_integer::Bool = true,
-        bounds_to_constraints::Bool = false,
-        dualize::Bool = false,
-        dualize_probability::Real = 0.0,
-        seed::Int = 0,
-        match_size_distribution::Bool = true,
-        match_size_by_type::Bool = false,
-        candidate_multiplier::Int = 2,
-        max_candidate_multiplier::Int = 12,
-        size_match_tolerance::Float64 = 0.05,
-        strict_size_match::Bool = false,
-        output_dir = nothing,
-        file_extension::AbstractString = "mps",
-        write_manifest::Bool = true,
-        optimizer = nothing,
-        quality_filter::Bool = false,
-        quality_criteria::QualityCriteria = QualityCriteria(),
-        optimizer_attributes = (),
-        max_retries::Int = 10,
-        verbose::Bool = false,
-    )
-
+    num_problems::Int=100,
+    var_mean::Real=500.0,
+    var_std::Real=200.0,
+    var_min::Int=50,
+    var_max::Int=2000,
+    size_distribution=nothing,
+    problem_types=nothing,
+    feasible_only::Bool=false,
+    relax_integer::Bool=true,
+    bounds_to_constraints::Bool=false,
+    dualize::Bool=false,
+    dualize_probability::Real=0.0,
+    seed::Int=0,
+    match_size_distribution::Bool=true,
+    match_size_by_type::Bool=false,
+    candidate_multiplier::Int=2,
+    max_candidate_multiplier::Int=12,
+    size_match_tolerance::Float64=0.05,
+    strict_size_match::Bool=false,
+    output_dir=nothing,
+    file_extension::AbstractString="mps",
+    write_manifest::Bool=true,
+    optimizer=nothing,
+    quality_filter::Bool=false,
+    quality_criteria::QualityCriteria=QualityCriteria(),
+    optimizer_attributes=(),
+    max_retries::Int=10,
+    verbose::Bool=false,
+)
     if quality_filter && optimizer === nothing
         error("quality_filter=true requires an `optimizer` (e.g. HiGHS.Optimizer).")
     end
@@ -918,15 +1013,15 @@ function generate_dataset(;
         error("max_candidate_multiplier must be >= candidate_multiplier.")
     max_retries < 1 && error("max_retries must be >= 1.")
     size_match_tolerance < 0 && error("size_match_tolerance must be >= 0.")
-    match_size_by_type && !match_size_distribution &&
+    match_size_by_type &&
+        !match_size_distribution &&
         error("match_size_by_type=true requires match_size_distribution=true.")
     validated_dualize_probability = _validate_dualize_probability(dualize_probability)
 
     types = resolve_problem_types(problem_types)
     feasibility = feasible_only ? feasible : unknown
     rng = seed == 0 ? MersenneTwister() : MersenneTwister(seed)
-    size_spec = _resolve_size_distribution(size_distribution, var_mean, var_std,
-                                           var_min, var_max)
+    size_spec = _resolve_size_distribution(size_distribution, var_mean, var_std, var_min, var_max)
 
     if output_dir !== nothing
         mkpath(output_dir)
@@ -936,8 +1031,10 @@ function generate_dataset(;
         println("Generating $num_problems LP instances")
         println("  Output: $(output_dir === nothing ? "(in-memory only)" : output_dir)")
         println("  Size distribution: $(size_spec.description)")
-        println("  Size matching: $(match_size_distribution ? "enabled" : "disabled")" *
-                (match_size_by_type ? " (per type)" : ""))
+        println(
+            "  Size matching: $(match_size_distribution ? "enabled" : "disabled")" *
+            (match_size_by_type ? " (per type)" : ""),
+        )
         println("  Feasibility: $(feasible_only ? "feasible only" : "unknown")")
         bounds_to_constraints && println("  Bounds → constraints: enabled")
         if dualize
@@ -947,18 +1044,20 @@ function generate_dataset(;
         end
         println("  Problem types: $(length(types))")
         if quality_filter
-            println("  Quality filter: enabled (timeout=$(quality_criteria.solve_timeout)s, " *
-                    "min_iters=$(quality_criteria.min_iterations), " *
-                    "max_iter_ratio=$(quality_criteria.max_iteration_ratio), " *
-                    "min_cons=$(quality_criteria.min_constraints), " *
-                    "max_retries=$(max_retries)×n)")
+            println(
+                "  Quality filter: enabled (timeout=$(quality_criteria.solve_timeout)s, " *
+                "min_iters=$(quality_criteria.min_iterations), " *
+                "max_iter_ratio=$(quality_criteria.max_iteration_ratio), " *
+                "min_cons=$(quality_criteria.min_constraints), " *
+                "max_retries=$(max_retries)×n)",
+            )
         end
         println()
     end
 
-    stats = _GenerationStats(0, 0, Dict{String,Int}())
+    stats = _GenerationStats(0, 0, Dict{String, Int}())
     selected_candidates = _DatasetCandidate[]
-    group_reports = Vector{Dict{String,Any}}()
+    group_reports = Vector{Dict{String, Any}}()
     per_type_quotas = nothing
 
     if num_problems == 0
@@ -971,8 +1070,7 @@ function generate_dataset(;
         per_type_quotas = Dict(string(k) => v for (k, v) in quotas)
         for category in categories
             quota = quotas[category]
-            group_variants = sort([v for v in types if v.category == category];
-                                  by = v -> v.variant)
+            group_variants = sort([v for v in types if v.category == category]; by=v -> v.variant)
             selected, summary = _generate_matched_group(
                 rng,
                 string(category),
@@ -1056,11 +1154,17 @@ function generate_dataset(;
     end
 
     shuffle!(rng, selected_candidates)
-    instances = _materialize_instances(selected_candidates, output_dir,
-                                       file_extension, feasibility,
-                                       relax_integer, bounds_to_constraints, verbose)
+    instances = _materialize_instances(
+        selected_candidates,
+        output_dir,
+        file_extension,
+        feasibility,
+        relax_integer,
+        bounds_to_constraints,
+        verbose,
+    )
 
-    size_match_report = Dict{String,Any}(
+    size_match_report = Dict{String, Any}(
         "enabled" => match_size_distribution,
         "by_type" => match_size_by_type,
         "distribution" => size_spec.description,
@@ -1073,37 +1177,49 @@ function generate_dataset(;
     )
 
     if write_manifest && output_dir !== nothing
-        _write_manifest(output_dir, instances, types; seed = seed,
-                        var_mean = var_mean, var_std = var_std,
-                        var_min = var_min, var_max = var_max,
-                        feasible_only = feasible_only,
-                        bounds_to_constraints = bounds_to_constraints,
-                        dualize = dualize,
-                        dualize_probability = validated_dualize_probability,
-                        quality_filter = quality_filter,
-                        quality_criteria = quality_criteria,
-                        attempts = stats.attempts, failed = stats.failed,
-                        filter_counts = stats.filter_counts,
-                        size_match = size_match_report)
+        _write_manifest(
+            output_dir,
+            instances,
+            types;
+            seed=seed,
+            var_mean=var_mean,
+            var_std=var_std,
+            var_min=var_min,
+            var_max=var_max,
+            feasible_only=feasible_only,
+            bounds_to_constraints=bounds_to_constraints,
+            dualize=dualize,
+            dualize_probability=validated_dualize_probability,
+            quality_filter=quality_filter,
+            quality_criteria=quality_criteria,
+            attempts=stats.attempts,
+            failed=stats.failed,
+            filter_counts=stats.filter_counts,
+            size_match=size_match_report,
+        )
     end
 
     if verbose
         println()
-        total_filtered = sum(values(stats.filter_counts); init = 0)
-        println("Done: $(length(instances))/$num_problems instances " *
-                "($(stats.attempts) attempts, $total_filtered filtered, " *
-                "$(stats.failed) errors)")
+        total_filtered = sum(values(stats.filter_counts); init=0)
+        println(
+            "Done: $(length(instances))/$num_problems instances " *
+            "($(stats.attempts) attempts, $total_filtered filtered, " *
+            "$(stats.failed) errors)",
+        )
         if !isempty(stats.filter_counts)
             println("Filtered by reason:")
-            for (reason, count) in sort(collect(stats.filter_counts), by = x -> -x[2])
+            for (reason, count) in sort(collect(stats.filter_counts); by=x -> -x[2])
                 println("  $reason: $count")
             end
         end
         for report in group_reports
             if haskey(report, "mean_abs_log_error")
-                println("Size fit $(report["group"]): " *
-                        "mean_abs_log_error=$(report["mean_abs_log_error"]), " *
-                        "tolerance_met=$(report["tolerance_met"])")
+                println(
+                    "Size fit $(report["group"]): " *
+                    "mean_abs_log_error=$(report["mean_abs_log_error"]), " *
+                    "tolerance_met=$(report["tolerance_met"])",
+                )
             end
         end
     end
@@ -1112,25 +1228,27 @@ function generate_dataset(;
 end
 
 function _write_manifest(output_dir, instances, types; kwargs...)
-    cfg = Dict{String,Any}(string(k) => _jsonable(v) for (k, v) in kwargs)
+    cfg = Dict{String, Any}(string(k) => _jsonable(v) for (k, v) in kwargs)
     cfg["problem_types"] = string.(types)
-    manifest = Dict{String,Any}(
+    manifest = Dict{String, Any}(
         "config" => cfg,
         "num_instances" => length(instances),
-        "instances" => [Dict(
-            "index" => inst.index,
-            "problem_type" => string(inst.problem_type),
-            "variant" => string(inst.variant),
-            "target_variables" => inst.target_variables,
-            "num_variables" => inst.num_variables,
-            "num_constraints" => inst.num_constraints,
-            "seed" => inst.seed,
-            "feasibility_status" => string(inst.feasibility_status),
-            "dualized" => inst.dualized,
-            "filename" => inst.filename,
-            "iterations" => inst.iterations < 0 ? nothing : inst.iterations,
-            "solve_time" => isnan(inst.solve_time) ? nothing : inst.solve_time,
-        ) for inst in instances],
+        "instances" => [
+            Dict(
+                "index" => inst.index,
+                "problem_type" => string(inst.problem_type),
+                "variant" => string(inst.variant),
+                "target_variables" => inst.target_variables,
+                "num_variables" => inst.num_variables,
+                "num_constraints" => inst.num_constraints,
+                "seed" => inst.seed,
+                "feasibility_status" => string(inst.feasibility_status),
+                "dualized" => inst.dualized,
+                "filename" => inst.filename,
+                "iterations" => inst.iterations < 0 ? nothing : inst.iterations,
+                "solve_time" => isnan(inst.solve_time) ? nothing : inst.solve_time,
+            ) for inst in instances
+        ],
     )
     open(joinpath(output_dir, "manifest.json"), "w") do io
         JSON.print(io, manifest, 2)

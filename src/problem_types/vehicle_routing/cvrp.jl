@@ -9,6 +9,7 @@ Generator for the Capacitated Vehicle Routing Problem (CVRP), formulated as a
 mixed-integer program with a meaningful continuous (LP) relaxation.
 
 # Overview
+
 A homogeneous fleet of `K` vehicles, each of capacity `Q`, is based at a single
 depot and must serve `N` customers, each with a positive demand `d_c`. The
 network is a complete directed graph over `{depot} ∪ customers` (no self-loops).
@@ -18,20 +19,21 @@ The formulation uses **single-commodity flow** (Gavish–Graves) subtour
 elimination, which is what makes the LP relaxation a genuine routing relaxation
 rather than a collection of fractional inter-customer cycles:
 
-- Binary arc variables `x[i,j] ∈ {0,1}` select which arcs are traversed.
-- Continuous load variables `f[i,j] ≥ 0` carry the (single-commodity) vehicle
-  load along each arc. Load is sourced at the depot and consumed at customers.
+  - Binary arc variables `x[i,j] ∈ {0,1}` select which arcs are traversed.
+  - Continuous load variables `f[i,j] ≥ 0` carry the (single-commodity) vehicle
+    load along each arc. Load is sourced at the depot and consumed at customers.
 
 Key structural couplings:
-- **Degree constraints** force every customer to have exactly one incoming and
-  one outgoing arc, and the depot to have exactly `K` outgoing and `K` incoming
-  arcs (i.e. `K` routes leave and return).
-- **Flow (load) conservation**: at each customer the inbound load minus outbound
-  load equals that customer's demand; at the depot the net outflow of load equals
-  total demand. This *anchors* all load to the depot.
-- **Capacity coupling** `f[i,j] ≤ Q · x[i,j]` simultaneously (a) forbids load on
-  unused arcs and (b) limits the load on any depot-leaving arc to `Q`, which is
-  the per-route capacity bound.
+
+  - **Degree constraints** force every customer to have exactly one incoming and
+    one outgoing arc, and the depot to have exactly `K` outgoing and `K` incoming
+    arcs (i.e. `K` routes leave and return).
+  - **Flow (load) conservation**: at each customer the inbound load minus outbound
+    load equals that customer's demand; at the depot the net outflow of load equals
+    total demand. This *anchors* all load to the depot.
+  - **Capacity coupling** `f[i,j] ≤ Q · x[i,j]` simultaneously (a) forbids load on
+    unused arcs and (b) limits the load on any depot-leaving arc to `Q`, which is
+    the per-route capacity bound.
 
 Because load must originate at the depot and flow only along used arcs, the
 continuous relaxation cannot manufacture free inter-customer cycles: the depot
@@ -45,21 +47,22 @@ This is a MIP whose continuous relaxation is a meaningful routing relaxation
 test instance, but a fractional `x` is not a directly implementable set of tours.
 
 # Fields
-- `n_customers::Int`: Number of customers `N`
-- `n_vehicles::Int`: Fleet size `K`
-- `vehicle_capacity::Float64`: Per-vehicle capacity `Q`
-- `depot_location::Tuple{Float64,Float64}`: Depot coordinates
-- `customer_locations::Vector{Tuple{Float64,Float64}}`: Customer coordinates
-- `demands::Vector{Float64}`: Demand at each customer (length `N`, all `> 0`)
-- `dist::Matrix{Float64}`: Arc cost matrix over nodes `1..N+1` (node 1 = depot,
-  nodes `2..N+1` = customers); `dist[i,i] = 0`
+
+  - `n_customers::Int`: Number of customers `N`
+  - `n_vehicles::Int`: Fleet size `K`
+  - `vehicle_capacity::Float64`: Per-vehicle capacity `Q`
+  - `depot_location::Tuple{Float64,Float64}`: Depot coordinates
+  - `customer_locations::Vector{Tuple{Float64,Float64}}`: Customer coordinates
+  - `demands::Vector{Float64}`: Demand at each customer (length `N`, all `> 0`)
+  - `dist::Matrix{Float64}`: Arc cost matrix over nodes `1..N+1` (node 1 = depot,
+    nodes `2..N+1` = customers); `dist[i,i] = 0`
 """
 struct CVRPProblem <: ProblemGenerator
     n_customers::Int
     n_vehicles::Int
     vehicle_capacity::Float64
-    depot_location::Tuple{Float64,Float64}
-    customer_locations::Vector{Tuple{Float64,Float64}}
+    depot_location::Tuple{Float64, Float64}
+    customer_locations::Vector{Tuple{Float64, Float64}}
     demands::Vector{Float64}
     dist::Matrix{Float64}
 end
@@ -87,6 +90,7 @@ end
 Construct a Capacitated Vehicle Routing Problem instance.
 
 # Variable-count formula
+
 On a complete directed graph over `N+1` nodes (depot + `N` customers) with no
 self-loops there are `(N+1)*N` arcs. The model creates one binary `x` and one
 continuous `f` per arc:
@@ -98,21 +102,23 @@ So `N ≈ round(sqrt(target_variables / 2))` (clamped to `N ≥ 3`). For
 (544 vars).
 
 # Arguments
-- `target_variables`: Target number of decision variables across both arc blocks
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of decision variables across both arc blocks
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 
 # Feasibility
-- `feasible`: `K*Q ≥ total_demand` with margin (≈ 1.15×), `K ≤ N`, every single
-  demand `≤ Q`, and the demands are certified to pack into `≤ K` routes of capacity
-  `Q` (Q is raised until a first-fit-decreasing packing fits). A concrete integer
-  routing therefore exists, so both the MIP and its LP relaxation are feasible.
-- `infeasible`: keep the structure but inflate demands so aggregate fleet
-  capacity is strictly insufficient: `total_demand = K*Q * (1.1..1.3)`. Since the
-  depot net-outflow `Σ_j f[depot,j]` must equal `total_demand` yet is bounded by
-  `Q * Σ_j x[depot,j] = Q*K` in the relaxation, `total_demand > Q*K` is infeasible
-  even relaxed.
-- `unknown`: a natural instance, biased toward feasible but not forced.
+
+  - `feasible`: `K*Q ≥ total_demand` with margin (≈ 1.15×), `K ≤ N`, every single
+    demand `≤ Q`, and the demands are certified to pack into `≤ K` routes of capacity
+    `Q` (Q is raised until a first-fit-decreasing packing fits). A concrete integer
+    routing therefore exists, so both the MIP and its LP relaxation are feasible.
+  - `infeasible`: keep the structure but inflate demands so aggregate fleet
+    capacity is strictly insufficient: `total_demand = K*Q * (1.1..1.3)`. Since the
+    depot net-outflow `Σ_j f[depot,j]` must equal `total_demand` yet is bounded by
+    `Q * Σ_j x[depot,j] = Q*K` in the relaxation, `total_demand > Q*K` is infeasible
+    even relaxed.
+  - `unknown`: a natural instance, biased toward feasible but not forced.
 """
 function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
@@ -146,7 +152,7 @@ function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatu
     # --- Customers clustered into a few neighborhoods ---
     cluster_centers = [(grid_size * rand(rng), grid_size * rand(rng)) for _ in 1:n_clusters]
     cluster_spread = grid_size / (2.5 * n_clusters)
-    customer_locations = Tuple{Float64,Float64}[]
+    customer_locations = Tuple{Float64, Float64}[]
     for _ in 1:N
         center = rand(rng, cluster_centers)
         x = clamp(center[1] + randn(rng) * cluster_spread, 0.0, grid_size)
@@ -158,7 +164,7 @@ function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatu
     log_mean = log(sqrt(demand_lo * demand_hi))
     log_std = log(demand_hi / demand_lo) / 4
     demands = [clamp(exp(rand(rng, Normal(log_mean, log_std))), demand_lo, demand_hi) for _ in 1:N]
-    demands = round.(demands, digits=2)
+    demands = round.(demands; digits=2)
 
     total_demand = sum(demands)
     avg_demand = total_demand / N
@@ -169,7 +175,7 @@ function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatu
     vehicle_capacity = avg_demand * serve_count
     # Every single customer must fit in a vehicle (for feasible/unknown).
     vehicle_capacity = max(vehicle_capacity, max_demand * 1.1)
-    vehicle_capacity = round(vehicle_capacity, digits=2)
+    vehicle_capacity = round(vehicle_capacity; digits=2)
 
     # --- Fleet size: enough vehicles to cover demand, clamped to N ---
     slack = 1.15 + 0.15 * rand(rng)               # 1.15 .. 1.30
@@ -188,7 +194,7 @@ function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatu
             b = all_locs[j]
             d = sqrt((a[1] - b[1])^2 + (a[2] - b[2])^2)
             # small asymmetric per-arc variation for realism
-            dist[i, j] = round(d * cost_per_km * (0.95 + 0.1 * rand(rng)), digits=2)
+            dist[i, j] = round(d * cost_per_km * (0.95 + 0.1 * rand(rng)); digits=2)
         end
     end
 
@@ -197,11 +203,11 @@ function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatu
         # Guarantee K*Q >= total_demand with margin, K <= N, max demand <= Q.
         # K is already <= N and sized from demand; widen Q if the margin is thin.
         if n_vehicles * vehicle_capacity < total_demand * 1.15
-            vehicle_capacity = round(total_demand * 1.15 / n_vehicles, digits=2)
+            vehicle_capacity = round(total_demand * 1.15 / n_vehicles; digits=2)
         end
         # Re-assert per-customer fit (Q may have grown, never shrink below it).
         if vehicle_capacity < max_demand * 1.1
-            vehicle_capacity = round(max_demand * 1.1, digits=2)
+            vehicle_capacity = round(max_demand * 1.1; digits=2)
         end
         # Aggregate capacity (K*Q >= total_demand) is necessary but NOT sufficient
         # for the *integer* CVRP: the demands must also partition into K routes of
@@ -211,7 +217,7 @@ function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatu
         # relaxation, so its feasibility is preserved too. Terminates because Q
         # grows monotonically and Q >= total_demand needs a single bin.
         while _ffd_bin_count(demands, vehicle_capacity) > n_vehicles
-            vehicle_capacity = round(vehicle_capacity * 1.1, digits=2)
+            vehicle_capacity = round(vehicle_capacity * 1.1; digits=2)
         end
 
     elseif feasibility_status == infeasible
@@ -223,19 +229,13 @@ function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatu
         overload = 1.1 + 0.2 * rand(rng)          # 1.10 .. 1.30
         target_total = n_vehicles * vehicle_capacity * overload
         scale = target_total / total_demand
-        demands = round.(demands .* scale, digits=2)
+        demands = round.(demands .* scale; digits=2)
         total_demand = sum(demands)
     end
     # unknown: leave as sampled (biased feasible via the slack-based K sizing).
 
     return CVRPProblem(
-        N,
-        n_vehicles,
-        vehicle_capacity,
-        depot_location,
-        customer_locations,
-        demands,
-        dist,
+        N, n_vehicles, vehicle_capacity, depot_location, customer_locations, demands, dist
     )
 end
 
@@ -248,11 +248,13 @@ formulation. Deterministic — uses only data from the struct fields.
 Node indexing: node `1` is the depot; nodes `2..N+1` are customers.
 
 Decision variables (over all directed arcs `(i,j)`, `i ≠ j`):
-- `x[i,j] ∈ {0,1}`: arc `(i,j)` is traversed
-- `f[i,j] ≥ 0`: single-commodity load carried on arc `(i,j)`
+
+  - `x[i,j] ∈ {0,1}`: arc `(i,j)` is traversed
+  - `f[i,j] ≥ 0`: single-commodity load carried on arc `(i,j)`
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::CVRPProblem)
     model = Model()
@@ -275,8 +277,7 @@ function build_model(prob::CVRPProblem)
     @variable(model, f[i in nodes, j in nodes; i != j] >= 0)
 
     # --- Objective: minimize total travel cost ---
-    @objective(model, Min,
-        sum(prob.dist[i, j] * x[i, j] for i in nodes, j in nodes if i != j))
+    @objective(model, Min, sum(prob.dist[i, j] * x[i, j] for i in nodes, j in nodes if i != j))
 
     # --- Degree constraints for customers: exactly one in-arc and one out-arc ---
     for j in customers
@@ -291,14 +292,16 @@ function build_model(prob::CVRPProblem)
     # --- Flow (load) conservation ---
     # At each customer: inbound load - outbound load = demand.
     for j in customers
-        @constraint(model,
-            sum(f[i, j] for i in nodes if i != j) -
-            sum(f[j, k] for k in nodes if k != j) == dem(j))
+        @constraint(
+            model,
+            sum(f[i, j] for i in nodes if i != j) - sum(f[j, k] for k in nodes if k != j) == dem(j)
+        )
     end
     # At the depot: net outflow of load = total demand.
-    @constraint(model,
-        sum(f[depot, j] for j in customers) -
-        sum(f[i, depot] for i in customers) == total_demand)
+    @constraint(
+        model,
+        sum(f[depot, j] for j in customers) - sum(f[i, depot] for i in customers) == total_demand
+    )
 
     # --- Capacity coupling: load only on used arcs, and bounded by Q ---
     for i in nodes, j in nodes

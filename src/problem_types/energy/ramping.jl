@@ -9,6 +9,7 @@ using Distributions
 Generator for economic dispatch problems with inter-temporal ramping constraints.
 
 # Overview
+
 Models multi-period economic dispatch where each generation source produces power
 in every time period to meet demand at minimum cost. The distinguishing feature is
 that consecutive periods are linked by per-generator ramp-up and ramp-down limits:
@@ -18,30 +19,31 @@ than its technology-dependent ramp rate. Ramp fractions are technology-correlate
 generation floor is also imposed in every period.
 
 # Fields
-- `n_sources::Int`: Number of power generation sources
-- `n_periods::Int`: Number of time periods
-- `sources::Vector{String}`: Names of energy sources
-- `time_periods::Vector{Int}`: Time period indices
-- `generation_costs::Dict{String,Float64}`: Cost per MWh for each source
-- `capacities::Dict{String,Float64}`: Maximum capacity (MW) for each source
-- `demands::Vector{Float64}`: Demand (MW) in each period
-- `renewable_set::Vector{String}`: Subset of sources that count as renewable
-- `renewable_fraction::Float64`: Minimum fraction of generation from renewables each period
-- `ramp_up_limits::Dict{String,Float64}`: Maximum increase in output per period (MW) per source
-- `ramp_down_limits::Dict{String,Float64}`: Maximum decrease in output per period (MW) per source
+
+  - `n_sources::Int`: Number of power generation sources
+  - `n_periods::Int`: Number of time periods
+  - `sources::Vector{String}`: Names of energy sources
+  - `time_periods::Vector{Int}`: Time period indices
+  - `generation_costs::Dict{String,Float64}`: Cost per MWh for each source
+  - `capacities::Dict{String,Float64}`: Maximum capacity (MW) for each source
+  - `demands::Vector{Float64}`: Demand (MW) in each period
+  - `renewable_set::Vector{String}`: Subset of sources that count as renewable
+  - `renewable_fraction::Float64`: Minimum fraction of generation from renewables each period
+  - `ramp_up_limits::Dict{String,Float64}`: Maximum increase in output per period (MW) per source
+  - `ramp_down_limits::Dict{String,Float64}`: Maximum decrease in output per period (MW) per source
 """
 struct RampingEnergyProblem <: ProblemGenerator
     n_sources::Int
     n_periods::Int
     sources::Vector{String}
     time_periods::Vector{Int}
-    generation_costs::Dict{String,Float64}
-    capacities::Dict{String,Float64}
+    generation_costs::Dict{String, Float64}
+    capacities::Dict{String, Float64}
     demands::Vector{Float64}
     renewable_set::Vector{String}
     renewable_fraction::Float64
-    ramp_up_limits::Dict{String,Float64}
-    ramp_down_limits::Dict{String,Float64}
+    ramp_up_limits::Dict{String, Float64}
+    ramp_down_limits::Dict{String, Float64}
 end
 
 """
@@ -54,11 +56,14 @@ variable count is exactly `n_sources * n_periods`. The constructor sizes these t
 dimensions so that their product lands near `target_variables`.
 
 # Arguments
-- `target_variables`: Target number of variables (n_sources × n_periods)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (n_sources × n_periods)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function RampingEnergyProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function RampingEnergyProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
@@ -133,32 +138,41 @@ function RampingEnergyProblem(target_variables::Int, feasibility_status::Feasibi
     renewable_indices = findall(s -> s[2], source_types)
     conventional_indices = findall(s -> !s[2], source_types)
 
-    name_counter = Dict{String,Int}()
+    name_counter = Dict{String, Int}()
     function build_fleet(indices, n)
-        fleet = Tuple{String,String,Bool,Float64,Float64,Float64}[]
+        fleet = Tuple{String, String, Bool, Float64, Float64, Float64}[]
         (isempty(indices) || n <= 0) && return fleet
         order = shuffle(rng, indices)
         for k in 1:n
             base = source_types[order[((k - 1) % length(order)) + 1]]
             name_counter[base[1]] = get(name_counter, base[1], 0) + 1
-            uname = name_counter[base[1]] == 1 ? base[1] :
-                    string(base[1], "_", name_counter[base[1]])
-            push!(fleet, (uname, base[1], base[2],
-                clamp(base[3] * rand(rng, Uniform(0.97, 1.03)), 0.5, 1.0),
-                base[4] * rand(rng, Uniform(0.9, 1.1)),
-                base[5] * rand(rng, Uniform(0.9, 1.1))))
+            uname =
+                name_counter[base[1]] == 1 ? base[1] : string(base[1], "_", name_counter[base[1]])
+            push!(
+                fleet,
+                (
+                    uname,
+                    base[1],
+                    base[2],
+                    clamp(base[3] * rand(rng, Uniform(0.97, 1.03)), 0.5, 1.0),
+                    base[4] * rand(rng, Uniform(0.9, 1.1)),
+                    base[5] * rand(rng, Uniform(0.9, 1.1)),
+                ),
+            )
         end
         return fleet
     end
-    selected_sources = vcat(build_fleet(renewable_indices, n_renewables),
-                            build_fleet(conventional_indices, n_conventional))
+    selected_sources = vcat(
+        build_fleet(renewable_indices, n_renewables),
+        build_fleet(conventional_indices, n_conventional),
+    )
 
     n_sources = length(selected_sources)
     sources = [s[1] for s in selected_sources]
     time_periods = collect(1:n_periods)
 
     # --- Generation costs ---
-    generation_costs = Dict{String,Float64}()
+    generation_costs = Dict{String, Float64}()
     for (name, _technology, is_renewable, _, _, cost_factor) in selected_sources
         base_cost = base_generation_cost * cost_factor
         if is_renewable
@@ -169,7 +183,7 @@ function RampingEnergyProblem(target_variables::Int, feasibility_status::Feasibi
     end
 
     # --- Capacities ---
-    capacities = Dict{String,Float64}()
+    capacities = Dict{String, Float64}()
     total_required_capacity = peak_demand * capacity_margin
     capacity_shares = Float64[]
     for (_name, technology, _, _, _, _) in selected_sources
@@ -189,14 +203,39 @@ function RampingEnergyProblem(target_variables::Int, feasibility_status::Feasibi
     total_share = sum(capacity_shares)
     for (i, (name, _technology, _, availability, capacity_factor, _)) in enumerate(selected_sources)
         normalized_share = capacity_shares[i] / total_share
-        effective_capacity = total_required_capacity * normalized_share / (availability * capacity_factor)
+        effective_capacity =
+            total_required_capacity * normalized_share / (availability * capacity_factor)
         capacities[name] = max(10.0, effective_capacity)
     end
 
     # --- Demand profile (daily load pattern + noise) ---
     demands = Float64[]
-    hour_factors = [0.6, 0.55, 0.5, 0.5, 0.55, 0.7, 0.85, 1.0, 0.95, 0.9,
-                    0.85, 0.9, 0.95, 1.0, 0.9, 0.85, 0.9, 0.95, 1.0, 0.95, 0.9, 0.8, 0.7, 0.65]
+    hour_factors = [
+        0.6,
+        0.55,
+        0.5,
+        0.5,
+        0.55,
+        0.7,
+        0.85,
+        1.0,
+        0.95,
+        0.9,
+        0.85,
+        0.9,
+        0.95,
+        1.0,
+        0.9,
+        0.85,
+        0.9,
+        0.95,
+        1.0,
+        0.95,
+        0.9,
+        0.8,
+        0.7,
+        0.65,
+    ]
     base_demand = peak_demand * (1 - demand_variation)
     for p in 1:n_periods
         hour_idx = 1 + (p - 1) % 24
@@ -210,8 +249,8 @@ function RampingEnergyProblem(target_variables::Int, feasibility_status::Feasibi
     renewable_fraction = renewable_fraction_target
 
     # --- Technology-differentiated ramp limits (fractions of capacity per period) ---
-    ramp_up_limits = Dict{String,Float64}()
-    ramp_down_limits = Dict{String,Float64}()
+    ramp_up_limits = Dict{String, Float64}()
+    ramp_down_limits = Dict{String, Float64}()
     for (name, technology, is_renewable, _, _, _) in selected_sources
         cap = capacities[name]
         if is_renewable
@@ -258,7 +297,7 @@ function RampingEnergyProblem(target_variables::Int, feasibility_status::Feasibi
         # 2. Ensure aggregate ramp capacity can track demand swings between periods.
         max_demand_swing = 0.0
         for t in 2:n_periods
-            max_demand_swing = max(max_demand_swing, abs(demands[t] - demands[t-1]))
+            max_demand_swing = max(max_demand_swing, abs(demands[t] - demands[t - 1]))
         end
         total_ramp_up = sum(values(ramp_up_limits))
         total_ramp_down = sum(values(ramp_down_limits))
@@ -271,7 +310,8 @@ function RampingEnergyProblem(target_variables::Int, feasibility_status::Feasibi
                 ramp_down_limits[s] = min(capacities[s], ramp_down_limits[s] * boost)
             end
             # If still short, give every source full-capacity ramp freedom.
-            if min(sum(values(ramp_up_limits)), sum(values(ramp_down_limits))) < max_demand_swing * 1.5
+            if min(sum(values(ramp_up_limits)), sum(values(ramp_down_limits))) <
+                max_demand_swing * 1.5
                 for s in sources
                     ramp_up_limits[s] = capacities[s]
                     ramp_down_limits[s] = capacities[s]
@@ -282,7 +322,8 @@ function RampingEnergyProblem(target_variables::Int, feasibility_status::Feasibi
         # 3. Make the renewable floor satisfiable: renewable capacity must be able to
         #    supply at least renewable_fraction of total generation. Cap the floor at
         #    a value the available renewable capacity can plausibly meet.
-        renewable_capacity = isempty(renewable_set) ? 0.0 : sum(capacities[s] for s in renewable_set)
+        renewable_capacity =
+            isempty(renewable_set) ? 0.0 : sum(capacities[s] for s in renewable_set)
         if renewable_capacity <= 0.0
             renewable_fraction = 0.0
         else
@@ -305,9 +346,17 @@ function RampingEnergyProblem(target_variables::Int, feasibility_status::Feasibi
     end
 
     return RampingEnergyProblem(
-        n_sources, n_periods, sources, time_periods, generation_costs,
-        capacities, demands, renewable_set, renewable_fraction,
-        ramp_up_limits, ramp_down_limits,
+        n_sources,
+        n_periods,
+        sources,
+        time_periods,
+        generation_costs,
+        capacities,
+        demands,
+        renewable_set,
+        renewable_fraction,
+        ramp_up_limits,
+        ramp_down_limits,
     )
 end
 
@@ -318,7 +367,8 @@ Build a JuMP model for the ramping economic dispatch problem. Deterministic — 
 only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::RampingEnergyProblem)
     model = Model()
@@ -328,8 +378,11 @@ function build_model(prob::RampingEnergyProblem)
     @variable(model, 0 <= x[s in prob.sources, t in prob.time_periods] <= prob.capacities[s])
 
     # Objective: minimize total generation cost.
-    @objective(model, Min,
-        sum(prob.generation_costs[s] * x[s, t] for s in prob.sources, t in prob.time_periods))
+    @objective(
+        model,
+        Min,
+        sum(prob.generation_costs[s] * x[s, t] for s in prob.sources, t in prob.time_periods)
+    )
 
     # Meet demand in every period.
     for t in prob.time_periods
@@ -338,16 +391,18 @@ function build_model(prob::RampingEnergyProblem)
 
     # Inter-temporal ramp limits linking consecutive periods.
     for s in prob.sources, t in prob.time_periods[2:end]
-        @constraint(model, x[s, t] - x[s, t-1] <= prob.ramp_up_limits[s])
-        @constraint(model, x[s, t-1] - x[s, t] <= prob.ramp_down_limits[s])
+        @constraint(model, x[s, t] - x[s, t - 1] <= prob.ramp_up_limits[s])
+        @constraint(model, x[s, t - 1] - x[s, t] <= prob.ramp_down_limits[s])
     end
 
     # Renewable generation floor in every period.
     if !isempty(prob.renewable_set) && prob.renewable_fraction > 0.0
         for t in prob.time_periods
-            @constraint(model,
+            @constraint(
+                model,
                 sum(x[s, t] for s in prob.renewable_set) >=
-                prob.renewable_fraction * sum(x[s, t] for s in prob.sources))
+                    prob.renewable_fraction * sum(x[s, t] for s in prob.sources)
+            )
         end
     end
 

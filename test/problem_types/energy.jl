@@ -8,10 +8,11 @@
     @test_nowarn generate_problem("energy/optimal_transmission_switching", 3, unknown, 1)
     _, ots = generate_problem("energy/optimal_transmission_switching", 500, unknown, 1)
     @test ots.n_lines >= ots.n_buses - 1
-    @test length(unique(ots.line_from[k] < ots.line_to[k] ?
-                        (ots.line_from[k], ots.line_to[k]) :
-                        (ots.line_to[k], ots.line_from[k])
-                        for k in 1:ots.n_lines)) == ots.n_lines
+    @test length(unique(if ots.line_from[k] < ots.line_to[k]
+        (ots.line_from[k], ots.line_to[k])
+    else
+        (ots.line_to[k], ots.line_from[k])
+    end for k in 1:ots.n_lines)) == ots.n_lines
     # energy now stores an emissions intensity target (the previous per-period
     # emissions row was an algebraic tautology).
     _, eprob = generate_problem("energy/standard", 120, unknown, 1)
@@ -26,7 +27,7 @@
         peak_demand = maximum(prob.demands)
         clean_sources = [s for s in prob.sources if iszero(prob.emission_limits[s])]
         @test sum(prob.capacities[s] for s in clean_sources) + 1e-8 >=
-              prob.renewable_fraction * peak_demand
+            prob.renewable_fraction * peak_demand
 
         remaining_demand = peak_demand
         minimum_emissions = 0.0
@@ -37,8 +38,7 @@
             remaining_demand <= 0 && break
         end
         @test remaining_demand <= 1e-8
-        @test minimum_emissions / peak_demand <=
-              prob.emission_intensity_target + 1e-12
+        @test minimum_emissions / peak_demand <= prob.emission_intensity_target + 1e-12
     end
 end
 
@@ -48,9 +48,12 @@ end
         # because the infeasibility logic targeted a reserve constraint that is not
         # in the model.
         for s in 1:8
-            m, _ = generate_problem("energy/standard", 300, infeasible, s;
-                                    optimizer = HiGHS.Optimizer)
-            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            m, _ = generate_problem(
+                "energy/standard", 300, infeasible, s; optimizer=HiGHS.Optimizer
+            )
+            set_optimizer(m, HiGHS.Optimizer)
+            set_silent(m)
+            optimize!(m)
             @test termination_status(m) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
         end
 
@@ -58,7 +61,9 @@ end
         # initial generation call does not use the optimizer-backed retry guard.
         for s in 1:10
             m, _ = generate_problem("energy/standard", 300, feasible, s)
-            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            set_optimizer(m, HiGHS.Optimizer)
+            set_silent(m)
+            optimize!(m)
             @test termination_status(m) == MOI.OPTIMAL
         end
     end

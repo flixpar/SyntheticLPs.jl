@@ -6,24 +6,19 @@ using SyntheticLPs
 @testset "Feed blending / standard" begin
     @testset "typed data and exact sizing" begin
         for target in (1, 3, 50, 250, 251, 1_000, 1_001), seed in 0:3
-            model, problem = generate_problem(
-                "feed_blending/standard", target, unknown, seed
-            )
+            model, problem = generate_problem("feed_blending/standard", target, unknown, seed)
             @test num_variables(model) == max(3, target)
             @test problem.num_ingredients == max(3, target)
             @test problem.requested_status == unknown
             @test problem.feasible_witness === nothing
             @test problem.infeasibility_certificate === nothing
-            @test size(problem.nutrient_content) ==
-                  (problem.num_nutrients, problem.num_ingredients)
+            @test size(problem.nutrient_content) == (problem.num_nutrients, problem.num_ingredients)
             @test length(problem.ingredient_types) == problem.num_ingredients
             @test length(problem.nutrient_types) == problem.num_nutrients
             @test all(>(0.0), problem.costs)
             @test all(>=(0.0), problem.nutrient_content)
-            @test all(sum(problem.nutrient_content[j, :]) > 0.0
-                      for j in 1:problem.num_nutrients)
-            @test all(sum(problem.nutrient_content[:, i]) > 0.0
-                      for i in 1:problem.num_ingredients)
+            @test all(sum(problem.nutrient_content[j, :]) > 0.0 for j in 1:problem.num_nutrients)
+            @test all(sum(problem.nutrient_content[:, i]) > 0.0 for i in 1:problem.num_ingredients)
             @test Set(problem.nutrient_types) == Set((
                 SyntheticLPs.feed_major_nutrient,
                 SyntheticLPs.feed_mineral,
@@ -38,16 +33,14 @@ using SyntheticLPs
                     SyntheticLPs.feed_specialty_additive,
                 ))
             end
-            @test problem.ratio_constraints isa
-                  Vector{SyntheticLPs.FeedRatioConstraint}
+            @test problem.ratio_constraints isa Vector{SyntheticLPs.FeedRatioConstraint}
             @test all(
                 1 <= constraint.nutrient <= problem.num_nutrients &&
-                isfinite(constraint.target) && constraint.target >= 0.0 &&
-                constraint.sense in (
-                    SyntheticLPs.feed_ratio_minimum,
-                    SyntheticLPs.feed_ratio_maximum,
-                )
-                for constraint in problem.ratio_constraints
+                    isfinite(constraint.target) &&
+                    constraint.target >= 0.0 &&
+                    constraint.sense in
+                    (SyntheticLPs.feed_ratio_minimum, SyntheticLPs.feed_ratio_maximum) for
+                constraint in problem.ratio_constraints
             )
         end
     end
@@ -63,12 +56,8 @@ using SyntheticLPs
         @test actual_first == expected_first
         @test actual_second == expected_second
 
-        _, first = generate_problem(
-            "feed_blending/standard", 80, infeasible, 1_234
-        )
-        _, second = generate_problem(
-            "feed_blending/standard", 80, infeasible, 1_234
-        )
+        _, first = generate_problem("feed_blending/standard", 80, infeasible, 1_234)
+        _, second = generate_problem("feed_blending/standard", 80, infeasible, 1_234)
         @test first.batch_size == second.batch_size
         @test first.ingredient_types == second.ingredient_types
         @test first.costs == second.costs
@@ -78,15 +67,12 @@ using SyntheticLPs
         @test first.max_limits == second.max_limits
         @test first.availabilities == second.availabilities
         @test first.ratio_constraints == second.ratio_constraints
-        @test first.infeasibility_certificate ==
-              second.infeasibility_certificate
+        @test first.infeasibility_certificate == second.infeasibility_certificate
     end
 
     @testset "feasible recipe witness" begin
         for target in (3, 25, 120, 500, 1_200), seed in 0:12
-            _, problem = generate_problem(
-                "feed_blending/standard", target, feasible, seed
-            )
+            _, problem = generate_problem("feed_blending/standard", target, feasible, seed)
             @test problem.requested_status == feasible
             @test problem.feasible_witness !== nothing
             @test problem.infeasibility_certificate === nothing
@@ -97,8 +83,8 @@ using SyntheticLPs
             @test all(>=(0.0), recipe)
             @test all(
                 !isfinite(problem.availabilities[i]) ||
-                recipe[i] <= problem.availabilities[i] + 1e-8 * problem.batch_size
-                for i in 1:problem.num_ingredients
+                    recipe[i] <= problem.availabilities[i] + 1e-8 * problem.batch_size for
+                i in 1:problem.num_ingredients
             )
         end
     end
@@ -108,9 +94,7 @@ using SyntheticLPs
         maximum_below_minimum_case = nothing
 
         for target in (25, 120, 500), seed in 0:79
-            model, problem = generate_problem(
-                "feed_blending/standard", target, infeasible, seed
-            )
+            model, problem = generate_problem("feed_blending/standard", target, infeasible, seed)
             certificate = problem.infeasibility_certificate
             @test problem.requested_status == infeasible
             @test problem.feasible_witness === nothing
@@ -118,12 +102,10 @@ using SyntheticLPs
             @test SyntheticLPs.feed_infeasibility_certificate_holds(problem)
             push!(observed_kinds, certificate.kind)
 
-            if certificate.kind ==
-               SyntheticLPs.feed_maximum_ratio_below_achievable_minimum
+            if certificate.kind == SyntheticLPs.feed_maximum_ratio_below_achievable_minimum
                 ratio = problem.ratio_constraints[certificate.ratio_constraint]
                 @test ratio.sense == SyntheticLPs.feed_ratio_maximum
-                @test ratio.target == certificate.required_bound <
-                      certificate.achievable_bound
+                @test ratio.target == certificate.required_bound < certificate.achievable_bound
 
                 # Regression for the old string parser: the phrase "below
                 # achievable minimum" must create a <= row, not a >= row.
@@ -146,9 +128,7 @@ using SyntheticLPs
 
     @testset "ratio formulation directions" begin
         for seed in 0:40
-            model, problem = generate_problem(
-                "feed_blending/standard", 80, feasible, seed
-            )
+            model, problem = generate_problem("feed_blending/standard", 80, feasible, seed)
             for (index, ratio) in enumerate(problem.ratio_constraints)
                 if ratio.sense == SyntheticLPs.feed_ratio_minimum
                     object = constraint_object(model[:ratio_min][index])
@@ -163,8 +143,7 @@ using SyntheticLPs
                 end
                 for ingredient in 1:problem.num_ingredients
                     @test normalized_coefficient(row, model[:x][ingredient]) ≈
-                          problem.nutrient_content[ratio.nutrient, ingredient] -
-                          ratio.target
+                        problem.nutrient_content[ratio.nutrient, ingredient] - ratio.target
                 end
             end
         end
@@ -184,9 +163,7 @@ end
 if FEED_BLENDING_TEST_HAS_HIGHS
     @testset "Feed blending / standard solver status" begin
         for target in (25, 120, 500), status in (feasible, infeasible), seed in 0:9
-            model, _ = generate_problem(
-                "feed_blending/standard", target, status, seed
-            )
+            model, _ = generate_problem("feed_blending/standard", target, status, seed)
             set_optimizer(model, HiGHS.Optimizer)
             set_silent(model)
             optimize!(model)

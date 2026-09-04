@@ -60,11 +60,13 @@ JuMP's `relax_integrality` first.
 function dualize_model(model::Model)
     discrete_variables = [x for x in all_variables(model) if is_binary(x) || is_integer(x)]
     if !isempty(discrete_variables)
-        throw(ArgumentError(
-            "Cannot dualize a model with integer or binary variables. " *
-            "Call `relax_integrality(model)` first, or generate the model with " *
-            "`relax_integer=true`.",
-        ))
+        throw(
+            ArgumentError(
+                "Cannot dualize a model with integer or binary variables. " *
+                "Call `relax_integrality(model)` first, or generate the model with " *
+                "`relax_integer=true`.",
+            ),
+        )
     end
 
     # Dualization does not accept ranged affine rows directly. Split each
@@ -72,8 +74,7 @@ function dualize_model(model::Model)
     # the caller's primal remains untouched.
     dualization_input = _split_affine_intervals(model)
     dual = Dualization.dualize(
-        dualization_input;
-        dual_names = Dualization.DualNames("dual_var_", "dual_con_"),
+        dualization_input; dual_names=Dualization.DualNames("dual_var_", "dual_con_")
     )
     dual.ext[:SyntheticLPs_dual_reformulation] = true
     return dual
@@ -112,13 +113,11 @@ dual_reformulation(model::Model) = dualize_model(model)
 Return whether `model` was produced by [`dualize_model`](@ref), including when
 dualization was selected probabilistically by [`generate_random_problem`](@ref).
 """
-is_dual_reformulation(model::Model) =
-    get(model.ext, :SyntheticLPs_dual_reformulation, false)::Bool
+is_dual_reformulation(model::Model) = get(model.ext, :SyntheticLPs_dual_reformulation, false)::Bool
 
 function _validate_dualize_probability(probability::Real)
-    0 <= probability <= 1 || throw(ArgumentError(
-        "dualize_probability must be between 0 and 1 (got $probability).",
-    ))
+    0 <= probability <= 1 ||
+        throw(ArgumentError("dualize_probability must be between 0 and 1 (got $probability)."))
     return Float64(probability)
 end
 

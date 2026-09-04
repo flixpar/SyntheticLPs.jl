@@ -14,17 +14,11 @@ struct SetCoverProblem <: ProblemGenerator
     maximum_selected::Int
 end
 
-function SetCoverProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
-)
+function SetCoverProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
     n_columns, n_elements = _set_system_size(target_variables, 0.35)
     max_size = max(2, min(n_elements, round(Int, sqrt(n_elements)) + 2))
-    columns, n_planted = _set_columns_with_partition(
-        rng, n_elements, n_columns; max_size=max_size,
-    )
+    columns, n_planted = _set_columns_with_partition(rng, n_elements, n_columns; max_size=max_size)
 
     if feasibility_status == infeasible
         # Give each of k private rows exactly one distinct covering column.
@@ -71,6 +65,6 @@ register_variant(
     :set_system,
     :set_cover,
     SetCoverProblem,
-    "Minimum-cost binary set cover with planted covers and varied column sizes",
+    "Minimum-cost binary set cover with planted covers and varied column sizes";
     default=true,
 )

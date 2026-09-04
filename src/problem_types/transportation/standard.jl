@@ -7,17 +7,19 @@ using Random
 Generator for transportation problems that optimize shipping goods from sources to destinations at minimum cost.
 
 # Overview
+
 Models the classic transportation planning problem. The decisions are shipment
 amounts on every source-destination lane. The objective minimizes total shipping
 cost. Source constraints limit outbound shipments by available supply, and
 destination constraints require inbound shipments to meet demand.
 
 # Fields
-- `n_sources::Int`: Number of supply sources
-- `n_destinations::Int`: Number of demand destinations
-- `supplies::Vector{Int}`: Supply at each source
-- `demands::Vector{Int}`: Demand at each destination
-- `costs::Matrix{Int}`: Transportation cost from each source to each destination
+
+  - `n_sources::Int`: Number of supply sources
+  - `n_destinations::Int`: Number of demand destinations
+  - `supplies::Vector{Int}`: Supply at each source
+  - `demands::Vector{Int}`: Demand at each destination
+  - `costs::Matrix{Int}`: Transportation cost from each source to each destination
 """
 struct TransportationProblem <: ProblemGenerator
     n_sources::Int
@@ -33,11 +35,14 @@ end
 Construct a transportation problem instance.
 
 # Arguments
-- `target_variables`: Target number of variables (n_sources × n_destinations)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (n_sources × n_destinations)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function TransportationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function TransportationProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # Calculate dimensions to achieve target number of variables
@@ -92,7 +97,7 @@ function TransportationProblem(target_variables::Int, feasibility_status::Feasib
     # Helper function to distribute additions across a vector
     function distribute_additions!(vec::Vector{Int}, amount::Int)
         if amount <= 0
-            return
+            return nothing
         end
         w = rand(rng, length(vec))
         w_sum = sum(w)
@@ -135,10 +140,12 @@ end
 Build a JuMP model for the transportation problem.
 
 # Arguments
-- `prob`: TransportationProblem instance
+
+  - `prob`: TransportationProblem instance
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::TransportationProblem)
     model = Model()
@@ -147,7 +154,11 @@ function build_model(prob::TransportationProblem)
     @variable(model, x[1:prob.n_sources, 1:prob.n_destinations] >= 0)
 
     # Objective
-    @objective(model, Min, sum(prob.costs[i, j] * x[i, j] for i in 1:prob.n_sources, j in 1:prob.n_destinations))
+    @objective(
+        model,
+        Min,
+        sum(prob.costs[i, j] * x[i, j] for i in 1:prob.n_sources, j in 1:prob.n_destinations)
+    )
 
     # Constraints
     for i in 1:prob.n_sources

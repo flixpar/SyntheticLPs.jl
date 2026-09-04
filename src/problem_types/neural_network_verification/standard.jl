@@ -41,27 +41,28 @@ over the input box is `attainable_upper`.
 
 Two facts make the certificate relaxation-proof:
 
-* Every substituted line is a valid facet of the *triangle* relaxation of its
-  ReLU, and the big-M rows of `build_model` project exactly onto that triangle
-  once the binary is relaxed to `[0, 1]`. Hence `attainable_upper` bounds the
-  LP relaxation optimum, not merely the integer optimum, and the infeasible
-  instances are infeasible as LPs as well as MILPs.
-* `attainable_upper <= interval_upper - mirrored_gap < declared_upper`, so the
-  threshold placed inside `(attainable_upper, declared_upper)` is consistent
-  with every individual variable bound and with plain interval propagation over
-  the rows. Refuting it requires the coupling between neurons, i.e. actual LP
-  work rather than presolve.
+  - Every substituted line is a valid facet of the *triangle* relaxation of its
+    ReLU, and the big-M rows of `build_model` project exactly onto that triangle
+    once the binary is relaxed to `[0, 1]`. Hence `attainable_upper` bounds the
+    LP relaxation optimum, not merely the integer optimum, and the infeasible
+    instances are infeasible as LPs as well as MILPs.
+  - `attainable_upper <= interval_upper - mirrored_gap < declared_upper`, so the
+    threshold placed inside `(attainable_upper, declared_upper)` is consistent
+    with every individual variable bound and with plain interval propagation over
+    the rows. Refuting it requires the coupling between neurons, i.e. actual LP
+    work rather than presolve.
 
 # Fields
-- `attainable_upper`: sound upper bound on the attainable network output.
-- `interval_upper`: the interval-propagation (IBP) output bound.
-- `declared_upper`: the output variable's declared upper bound in the model.
-- `input_coefficients`, `input_constant`: the collapsed affine function.
-- `relaxation_slopes`, `relaxation_intercepts`: the per-neuron substituted line.
-- `mirrored_pair`: indices `(u, v)` of the planted opposing neuron pair in the
-  last hidden layer (`w_v == -w_u`, `b_v == -b_u`, both output weights positive).
-- `mirrored_gap`: `min(c_u * U_u, c_v * U_v)`, the amount by which the pair
-  alone makes interval propagation provably loose.
+
+  - `attainable_upper`: sound upper bound on the attainable network output.
+  - `interval_upper`: the interval-propagation (IBP) output bound.
+  - `declared_upper`: the output variable's declared upper bound in the model.
+  - `input_coefficients`, `input_constant`: the collapsed affine function.
+  - `relaxation_slopes`, `relaxation_intercepts`: the per-neuron substituted line.
+  - `mirrored_pair`: indices `(u, v)` of the planted opposing neuron pair in the
+    last hidden layer (`w_v == -w_u`, `b_v == -b_u`, both output weights positive).
+  - `mirrored_gap`: `min(c_u * U_u, c_v * U_v)`, the amount by which the pair
+    alone makes interval propagation provably loose.
 """
 struct ReluOutputBoundCertificate
     attainable_upper::Float64
@@ -71,7 +72,7 @@ struct ReluOutputBoundCertificate
     input_constant::Float64
     relaxation_slopes::Vector{Vector{Float64}}
     relaxation_intercepts::Vector{Vector{Float64}}
-    mirrored_pair::Tuple{Int,Int}
+    mirrored_pair::Tuple{Int, Int}
     mirrored_gap::Float64
 end
 
@@ -95,38 +96,39 @@ interval propagation supports.
 
 The property threshold is never compared against a declared bound:
 
-* `feasible`: a planted input is propagated through the network and the
-  threshold is set strictly below the resulting output, so `feasible_witness`
-  is an exactly verifiable solution of the MILP *and* of its relaxation.
-* `infeasible`: a backward linear relaxation of the ReLUs yields
-  `attainable_upper`, a sound upper bound on what the network can actually
-  output over the box, and the threshold is placed strictly *between*
-  `attainable_upper` and the (looser) interval bound declared on the output
-  variable. Every variable bound taken in isolation, and plain interval
-  propagation over the rows, remain consistent with the property; only
-  reasoning across the ReLU layers refutes it. A planted opposing neuron pair
-  in the last hidden layer guarantees that this gap is nonempty.
-* `unknown`: the threshold is interpolated around the planted output without
-  asserting either result.
+  - `feasible`: a planted input is propagated through the network and the
+    threshold is set strictly below the resulting output, so `feasible_witness`
+    is an exactly verifiable solution of the MILP *and* of its relaxation.
+  - `infeasible`: a backward linear relaxation of the ReLUs yields
+    `attainable_upper`, a sound upper bound on what the network can actually
+    output over the box, and the threshold is placed strictly *between*
+    `attainable_upper` and the (looser) interval bound declared on the output
+    variable. Every variable bound taken in isolation, and plain interval
+    propagation over the rows, remain consistent with the property; only
+    reasoning across the ReLU layers refutes it. A planted opposing neuron pair
+    in the last hidden layer guarantees that this gap is nonempty.
+  - `unknown`: the threshold is interpolated around the planted output without
+    asserting either result.
 
 # Fields
-- `input_dim`: Number of input variables.
-- `hidden_sizes`: Width of each hidden ReLU layer.
-- `input_lower`, `input_upper`: Input-box bounds.
-- `weights`, `biases`: Hidden-layer affine maps.
-- `pre_lower`, `pre_upper`: Propagated preactivation bounds (the big-M constants).
-- `activation_lower`, `activation_upper`: Propagated ReLU-output bounds.
-- `phases`: ReLU phase classification (`-1`, `0`, or `1`).
-- `mirrored_pair`: planted opposing neuron pair in the last hidden layer.
-- `output_weights`, `output_bias`: Scalar affine output layer.
-- `output_lower`, `output_upper`: Declared scalar output bounds.
-- `interval_output_upper`: Raw interval-propagation output bound.
-- `attainable_upper`: Sound upper bound on the attainable network output.
-- `property_threshold`: Right-hand side of the verification property
-  `output >= property_threshold`.
-- `feasible_witness`: planted solution (`feasible` requests only).
-- `infeasibility_certificate`: bound-propagation certificate (`infeasible` only).
-- `feasibility_status`: the requested status.
+
+  - `input_dim`: Number of input variables.
+  - `hidden_sizes`: Width of each hidden ReLU layer.
+  - `input_lower`, `input_upper`: Input-box bounds.
+  - `weights`, `biases`: Hidden-layer affine maps.
+  - `pre_lower`, `pre_upper`: Propagated preactivation bounds (the big-M constants).
+  - `activation_lower`, `activation_upper`: Propagated ReLU-output bounds.
+  - `phases`: ReLU phase classification (`-1`, `0`, or `1`).
+  - `mirrored_pair`: planted opposing neuron pair in the last hidden layer.
+  - `output_weights`, `output_bias`: Scalar affine output layer.
+  - `output_lower`, `output_upper`: Declared scalar output bounds.
+  - `interval_output_upper`: Raw interval-propagation output bound.
+  - `attainable_upper`: Sound upper bound on the attainable network output.
+  - `property_threshold`: Right-hand side of the verification property
+    `output >= property_threshold`.
+  - `feasible_witness`: planted solution (`feasible` requests only).
+  - `infeasibility_certificate`: bound-propagation certificate (`infeasible` only).
+  - `feasibility_status`: the requested status.
 """
 struct NeuralNetworkVerificationProblem <: ProblemGenerator
     input_dim::Int
@@ -140,7 +142,7 @@ struct NeuralNetworkVerificationProblem <: ProblemGenerator
     activation_lower::Vector{Vector{Float64}}
     activation_upper::Vector{Vector{Float64}}
     phases::Vector{Vector{Int8}}
-    mirrored_pair::Tuple{Int,Int}
+    mirrored_pair::Tuple{Int, Int}
     output_weights::Vector{Float64}
     output_bias::Float64
     output_lower::Float64
@@ -148,8 +150,8 @@ struct NeuralNetworkVerificationProblem <: ProblemGenerator
     interval_output_upper::Float64
     attainable_upper::Float64
     property_threshold::Float64
-    feasible_witness::Union{Nothing,ReluNetworkWitness}
-    infeasibility_certificate::Union{Nothing,ReluOutputBoundCertificate}
+    feasible_witness::Union{Nothing, ReluNetworkWitness}
+    infeasibility_certificate::Union{Nothing, ReluOutputBoundCertificate}
     feasibility_status::FeasibilityStatus
 end
 
@@ -217,9 +219,7 @@ end
 Exact forward propagation of a concrete input through the ReLU network.
 """
 function nnv_forward(
-    weights::Vector{Matrix{Float64}},
-    biases::Vector{Vector{Float64}},
-    input::AbstractVector{<:Real},
+    weights::Vector{Matrix{Float64}}, biases::Vector{Vector{Float64}}, input::AbstractVector{<:Real}
 )
     n_layers = length(weights)
     preactivations = Vector{Vector{Float64}}(undef, n_layers)
@@ -300,15 +300,14 @@ function nnv_backward_bound(
 
     bound = constant
     for i in eachindex(lambda)
-        bound += lambda[i] >= 0.0 ? lambda[i] * input_upper[i] :
-                 lambda[i] * input_lower[i]
+        bound += lambda[i] >= 0.0 ? lambda[i] * input_upper[i] : lambda[i] * input_lower[i]
     end
     return (
-        bound = bound,
-        input_coefficients = collect(lambda),
-        input_constant = constant,
-        slopes = slopes,
-        intercepts = intercepts,
+        bound=bound,
+        input_coefficients=collect(lambda),
+        input_constant=constant,
+        slopes=slopes,
+        intercepts=intercepts,
     )
 end
 
@@ -326,9 +325,7 @@ particular, an `infeasible` instance is refutable only by propagating through
 the ReLU layers, never by comparing the property against a declared bound.
 """
 function NeuralNetworkVerificationProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     target_variables >= 1 ||
         throw(ArgumentError("target_variables must be positive (got $target_variables)"))
@@ -355,8 +352,13 @@ function NeuralNetworkVerificationProblem(
     # pair, hence the minimum width; tiny requests are rounded up to it.
     best_hidden = max(best_hidden, NNV_MIN_LAYER_WIDTH)
 
-    requested_layers = target_variables < 80 ? 1 :
-                       target_variables < 300 ? 2 : 3
+    requested_layers = if target_variables < 80
+        1
+    elseif target_variables < 300
+        2
+    else
+        3
+    end
     n_layers = min(requested_layers, max(1, best_hidden ÷ NNV_MIN_LAYER_WIDTH))
     hidden_sizes = nnv_hidden_sizes(best_hidden, n_layers)
     phases = nnv_phase_pattern(hidden_sizes)
@@ -400,10 +402,7 @@ function NeuralNetworkVerificationProblem(
         # rule is odd-symmetric on unstable neurons, so the mirrored row also
         # receives the negated bias and satisfies `z_v == -z_u` exactly.
         raw_lower, raw_upper = nnv_affine_bounds(
-            layer_weights,
-            zeros(width),
-            previous_lower,
-            previous_upper,
+            layer_weights, zeros(width), previous_lower, previous_upper
         )
         layer_bias = zeros(width)
         for neuron in 1:width
@@ -420,10 +419,7 @@ function NeuralNetworkVerificationProblem(
         end
 
         layer_pre_lower, layer_pre_upper = nnv_affine_bounds(
-            layer_weights,
-            layer_bias,
-            previous_lower,
-            previous_upper,
+            layer_weights, layer_bias, previous_lower, previous_upper
         )
         layer_activation_lower = max.(0.0, layer_pre_lower)
         layer_activation_upper = max.(0.0, layer_pre_upper)
@@ -445,36 +441,44 @@ function NeuralNetworkVerificationProblem(
     # Both halves of the opposing pair must be read with a positive weight for
     # the interval bound to double-count them.
     for index in mirrored_pair
-        output_weights[index] =
-            max(abs(output_weights[index]), 0.25 * inv(sqrt(previous_width)))
+        output_weights[index] = max(abs(output_weights[index]), 0.25 * inv(sqrt(previous_width)))
     end
 
     output_lower_vec, output_upper_vec = nnv_affine_bounds(
-        reshape(output_weights, 1, :),
-        [output_bias],
-        previous_lower,
-        previous_upper,
+        reshape(output_weights, 1, :), [output_bias], previous_lower, previous_upper
     )
     output_lower = output_lower_vec[1]
     interval_output_upper = output_upper_vec[1]
 
     # The pair alone makes interval propagation loose by this much.
-    mirrored_gap = minimum(
-        output_weights[index] * pre_upper[end][index] for index in mirrored_pair
-    )
+    mirrored_gap = minimum(output_weights[index] * pre_upper[end][index] for index in mirrored_pair)
 
     # Sound upper bound on what the network can actually output, and therefore
     # also on the optimum of the LP relaxation of the big-M encoding.
     relaxation_zero = nnv_backward_bound(
-        weights, biases, pre_lower, pre_upper, output_weights, output_bias,
-        input_lower, input_upper; lower_mode = :zero,
+        weights,
+        biases,
+        pre_lower,
+        pre_upper,
+        output_weights,
+        output_bias,
+        input_lower,
+        input_upper;
+        lower_mode=:zero,
     )
     relaxation_adaptive = nnv_backward_bound(
-        weights, biases, pre_lower, pre_upper, output_weights, output_bias,
-        input_lower, input_upper; lower_mode = :adaptive,
+        weights,
+        biases,
+        pre_lower,
+        pre_upper,
+        output_weights,
+        output_bias,
+        input_lower,
+        input_upper;
+        lower_mode=:adaptive,
     )
-    relaxation = relaxation_adaptive.bound < relaxation_zero.bound ?
-                 relaxation_adaptive : relaxation_zero
+    relaxation =
+        relaxation_adaptive.bound < relaxation_zero.bound ? relaxation_adaptive : relaxation_zero
     attainable_upper = relaxation.bound
 
     # Deterministic search for a high-output point of the input box: the box
@@ -482,17 +486,14 @@ function NeuralNetworkVerificationProblem(
     # sampled mix of vertices and interior points.
     candidates = Vector{Vector{Float64}}()
     push!(candidates, 0.5 .* (input_lower .+ input_upper))
-    for coefficients in
-        (relaxation_zero.input_coefficients, relaxation_adaptive.input_coefficients)
-        push!(candidates, [
-            coefficients[i] >= 0.0 ? input_upper[i] : input_lower[i]
-            for i in 1:input_dim
-        ])
+    for coefficients in (relaxation_zero.input_coefficients, relaxation_adaptive.input_coefficients)
+        push!(
+            candidates,
+            [coefficients[i] >= 0.0 ? input_upper[i] : input_lower[i] for i in 1:input_dim],
+        )
     end
     for _ in 1:8
-        push!(candidates, [
-            rand(rng) < 0.5 ? input_lower[i] : input_upper[i] for i in 1:input_dim
-        ])
+        push!(candidates, [rand(rng) < 0.5 ? input_lower[i] : input_upper[i] for i in 1:input_dim])
     end
     for _ in 1:8
         push!(candidates, input_lower .+ rand(rng, input_dim) .* (input_upper .- input_lower))
@@ -541,13 +542,12 @@ function NeuralNetworkVerificationProblem(
 
     witness = if feasibility_status == feasible
         relu_binaries = [
-            Int8[witness_pre[layer][neuron] > 0.0 ? Int8(1) : Int8(0)
-                 for neuron in findall(==(Int8(0)), phases[layer])]
-            for layer in eachindex(hidden_sizes)
+            Int8[
+                witness_pre[layer][neuron] > 0.0 ? Int8(1) : Int8(0) for
+                neuron in findall(==(Int8(0)), phases[layer])
+            ] for layer in eachindex(hidden_sizes)
         ]
-        ReluNetworkWitness(
-            witness_input, witness_pre, witness_act, relu_binaries, witness_output,
-        )
+        ReluNetworkWitness(witness_input, witness_pre, witness_act, relu_binaries, witness_output)
     else
         nothing
     end
@@ -653,18 +653,15 @@ function build_model(prob::NeuralNetworkVerificationProblem)
                 model,
                 preactivation[layer][neuron] ==
                     sum(
-                        prob.weights[layer][neuron, j] * previous_activation[j]
-                        for j in 1:previous_width
-                    ) + prob.biases[layer][neuron],
+                    prob.weights[layer][neuron, j] * previous_activation[j] for
+                    j in 1:previous_width
+                ) + prob.biases[layer][neuron],
             )
         end
 
         unstable_neurons = findall(==(Int8(0)), prob.phases[layer])
         phase_binary[layer] = @variable(
-            model,
-            [k = 1:length(unstable_neurons)],
-            Bin,
-            base_name = "relu_phase_$layer",
+            model, [k = 1:length(unstable_neurons)], Bin, base_name = "relu_phase_$layer",
         )
 
         unstable_index = 0
@@ -700,9 +697,9 @@ function build_model(prob::NeuralNetworkVerificationProblem)
     )
     @constraint(
         model,
-        output == sum(
-            prob.output_weights[j] * previous_activation[j]
-            for j in eachindex(prob.output_weights)
+        output ==
+            sum(
+            prob.output_weights[j] * previous_activation[j] for j in eachindex(prob.output_weights)
         ) + prob.output_bias,
     )
 
@@ -719,5 +716,5 @@ register_variant(
     :relu_big_m,
     NeuralNetworkVerificationProblem,
     "Bound-aware ReLU verification with stable-phase elimination and propagated big-M coefficients";
-    default = true,
+    default=true,
 )

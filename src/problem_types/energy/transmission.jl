@@ -9,6 +9,7 @@ using Distributions
 Generator for multi-zone energy dispatch problems with inter-zone transmission.
 
 # Overview
+
 Models economic dispatch across several transmission zones connected by capacitated
 lines. Each generation source lives in a specific zone, and power can be transmitted
 between zones subject to line capacity limits and transmission losses. The decisions
@@ -17,6 +18,7 @@ period. The objective minimizes total generation cost. Each zone must meet its l
 demand from a combination of in-zone generation and net imports.
 
 # Line / loss model convention
+
 For every ordered pair of distinct zones `(i, j)` and period `t` there is a single
 non-negative directed flow variable `flow[i, j, t]` representing power dispatched FROM
 zone `i` TOWARD zone `j`. To avoid double-counting losses, the loss factor is applied
@@ -26,17 +28,18 @@ exactly ONCE, on the DELIVERED power at the receiving zone: zone `i` sends `flow
 `flow[i, j, t]`. Diagonal (self) flows are fixed to zero.
 
 # Fields
-- `n_sources::Int`: Number of power generation sources
-- `n_periods::Int`: Number of time periods
-- `n_zones::Int`: Number of transmission zones
-- `sources::Vector{String}`: Names of energy sources
-- `time_periods::Vector{Int}`: Time period indices
-- `generation_costs::Dict{String,Float64}`: Cost per MWh for each source
-- `capacities::Dict{String,Float64}`: Maximum capacity (MW) for each source
-- `zone_sources::Dict{String,Int}`: Zone index that each source belongs to
-- `zone_demands::Matrix{Float64}`: Demand (MW) per zone (rows) per period (cols)
-- `transmission_capacity::Matrix{Float64}`: Sent-power capacity (MW) between zones
-- `transmission_loss::Float64`: Fractional loss applied once on delivered power
+
+  - `n_sources::Int`: Number of power generation sources
+  - `n_periods::Int`: Number of time periods
+  - `n_zones::Int`: Number of transmission zones
+  - `sources::Vector{String}`: Names of energy sources
+  - `time_periods::Vector{Int}`: Time period indices
+  - `generation_costs::Dict{String,Float64}`: Cost per MWh for each source
+  - `capacities::Dict{String,Float64}`: Maximum capacity (MW) for each source
+  - `zone_sources::Dict{String,Int}`: Zone index that each source belongs to
+  - `zone_demands::Matrix{Float64}`: Demand (MW) per zone (rows) per period (cols)
+  - `transmission_capacity::Matrix{Float64}`: Sent-power capacity (MW) between zones
+  - `transmission_loss::Float64`: Fractional loss applied once on delivered power
 """
 struct TransmissionEnergyProblem <: ProblemGenerator
     n_sources::Int
@@ -44,9 +47,9 @@ struct TransmissionEnergyProblem <: ProblemGenerator
     n_zones::Int
     sources::Vector{String}
     time_periods::Vector{Int}
-    generation_costs::Dict{String,Float64}
-    capacities::Dict{String,Float64}
-    zone_sources::Dict{String,Int}
+    generation_costs::Dict{String, Float64}
+    capacities::Dict{String, Float64}
+    zone_sources::Dict{String, Int}
     zone_demands::Matrix{Float64}
     transmission_capacity::Matrix{Float64}
     transmission_loss::Float64
@@ -58,6 +61,7 @@ end
 Construct a multi-zone transmission energy dispatch problem instance.
 
 # Variable count
+
 `build_model` creates `x[sources, periods]` (n_sources * n_periods) plus
 `flow[zones, zones, periods]` (n_zones^2 * n_periods, including fixed diagonal flows).
 Total decision variables = n_periods * (n_sources + n_zones^2). Dimensions are sized
@@ -65,11 +69,14 @@ so this product lands near `target_variables`; the flow set (dominated by
 n_zones^2 * n_periods) is explicitly accounted for so it is not ignored.
 
 # Arguments
-- `target_variables`: Target number of variables
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function TransmissionEnergyProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function TransmissionEnergyProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
@@ -103,13 +110,13 @@ function TransmissionEnergyProblem(target_variables::Int, feasibility_status::Fe
         ("wind", true, 0.4),
         ("solar", true, 0.3),
     ]
-    selected = source_catalog[sample(rng, 1:length(source_catalog), n_sources, replace=false)]
+    selected = source_catalog[sample(rng, 1:length(source_catalog), n_sources; replace=false)]
     sources = [s[1] for s in selected]
     time_periods = collect(1:n_periods)
 
     # --- Generation costs ---
     base_generation_cost = rand(rng, LogNormal(log(50.0), 0.3))
-    generation_costs = Dict{String,Float64}()
+    generation_costs = Dict{String, Float64}()
     for (name, _, cost_factor) in selected
         variation = rand(rng, Normal(1.0, 0.12))
         generation_costs[name] = max(5.0, base_generation_cost * cost_factor * variation)
@@ -119,8 +126,32 @@ function TransmissionEnergyProblem(target_variables::Int, feasibility_status::Fe
     peak_demand = rand(rng, Uniform(50.0, 500.0))
     demand_variation = rand(rng, Beta(2, 3))
     base_demand = peak_demand * (1 - demand_variation)
-    hour_factors = [0.6, 0.55, 0.5, 0.5, 0.55, 0.7, 0.85, 1.0, 0.95, 0.9,
-                    0.85, 0.9, 0.95, 1.0, 0.9, 0.85, 0.9, 0.95, 1.0, 0.95, 0.9, 0.8, 0.7, 0.65]
+    hour_factors = [
+        0.6,
+        0.55,
+        0.5,
+        0.5,
+        0.55,
+        0.7,
+        0.85,
+        1.0,
+        0.95,
+        0.9,
+        0.85,
+        0.9,
+        0.95,
+        1.0,
+        0.9,
+        0.85,
+        0.9,
+        0.95,
+        1.0,
+        0.95,
+        0.9,
+        0.8,
+        0.7,
+        0.65,
+    ]
     demands = Float64[]
     for p in 1:n_periods
         hour_idx = 1 + (p - 1) % 24
@@ -131,7 +162,7 @@ function TransmissionEnergyProblem(target_variables::Int, feasibility_status::Fe
 
     # --- Assign sources to zones (round-robin so every zone with index <= n_sources
     #     gets at least one source; extras wrap around) ---
-    zone_sources = Dict{String,Int}()
+    zone_sources = Dict{String, Int}()
     for (i, source) in enumerate(sources)
         zone_sources[source] = ((i - 1) % n_zones) + 1
     end
@@ -147,10 +178,10 @@ function TransmissionEnergyProblem(target_variables::Int, feasibility_status::Fe
     # Size capacities so that, system-wide, generation can comfortably cover peak
     # total demand plus a margin. Distribute capacity across sources by random shares.
     capacity_margin = rand(rng, Uniform(1.25, 1.6))
-    max_total_demand = maximum(sum(zone_demands, dims=1))
+    max_total_demand = maximum(sum(zone_demands; dims=1))
     total_required_capacity = max_total_demand * capacity_margin
     shares = rand(rng, Dirichlet(ones(n_sources)))
-    capacities = Dict{String,Float64}()
+    capacities = Dict{String, Float64}()
     for (i, name) in enumerate(sources)
         capacities[name] = max(10.0, total_required_capacity * shares[i])
     end
@@ -218,9 +249,17 @@ function TransmissionEnergyProblem(target_variables::Int, feasibility_status::Fe
     end
 
     return TransmissionEnergyProblem(
-        n_sources, n_periods, n_zones, sources, time_periods,
-        generation_costs, capacities, zone_sources,
-        zone_demands, transmission_capacity, transmission_loss,
+        n_sources,
+        n_periods,
+        n_zones,
+        sources,
+        time_periods,
+        generation_costs,
+        capacities,
+        zone_sources,
+        zone_demands,
+        transmission_capacity,
+        transmission_loss,
     )
 end
 
@@ -231,7 +270,8 @@ Build a JuMP model for the multi-zone transmission energy dispatch problem.
 Deterministic — uses only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::TransmissionEnergyProblem)
     model = Model()
@@ -244,18 +284,23 @@ function build_model(prob::TransmissionEnergyProblem)
     @variable(model, flow[i in 1:prob.n_zones, j in 1:prob.n_zones, t in prob.time_periods] >= 0)
 
     # Objective: minimize total generation cost.
-    @objective(model, Min,
-        sum(prob.generation_costs[s] * x[s, t] for s in prob.sources, t in prob.time_periods))
+    @objective(
+        model,
+        Min,
+        sum(prob.generation_costs[s] * x[s, t] for s in prob.sources, t in prob.time_periods)
+    )
 
     # Zonal power balance per period:
     #   in-zone generation + delivered inflow - sent outflow >= zone demand.
     # Loss is applied ONCE, on the delivered inflow at the receiving zone.
     for t in prob.time_periods
         for z in 1:prob.n_zones
-            zone_gen = sum(x[s, t] for s in prob.sources if prob.zone_sources[s] == z; init = 0.0)
-            inflow = sum((1 - prob.transmission_loss) * flow[i, z, t]
-                         for i in 1:prob.n_zones if i != z; init = 0.0)
-            outflow = sum(flow[z, j, t] for j in 1:prob.n_zones if j != z; init = 0.0)
+            zone_gen = sum(x[s, t] for s in prob.sources if prob.zone_sources[s] == z; init=0.0)
+            inflow = sum(
+                (1 - prob.transmission_loss) * flow[i, z, t] for i in 1:prob.n_zones if i != z;
+                init=0.0,
+            )
+            outflow = sum(flow[z, j, t] for j in 1:prob.n_zones if j != z; init=0.0)
             @constraint(model, zone_gen + inflow - outflow >= prob.zone_demands[z, t])
         end
     end

@@ -8,6 +8,7 @@ Generator for generalized (lossy) network-flow problems with per-arc gain
 multipliers.
 
 # Overview
+
 Models single-commodity flow on a connected directed network in which each arc
 `(i, j)` has a multiplicative *gain* `g[i,j] ∈ (0, 1]`. Flow *sent* on an arc is
 `f[i,j]`, but only `g[i,j] * f[i,j]` *arrives* at the head node — capturing
@@ -26,26 +27,27 @@ Generalized conservation at each intermediate node `v` (not source, not sink):
     sum over in-arcs (u,v) of g[u,v] * f[u,v]  ==  sum over out-arcs (v,w) of f[v,w]
 
 # Fields
-- `n_nodes::Int`: Number of nodes (node 1 = source, node `n_nodes` = sink)
-- `source_node::Int`: Source node index (always 1)
-- `sink_node::Int`: Sink node index (always `n_nodes`)
-- `arcs::Vector{Tuple{Int,Int}}`: Directed arcs
-- `backbone::Vector{Tuple{Int,Int}}`: The source→…→sink backbone path arcs
-- `capacities::Dict{Tuple{Int,Int},Float64}`: Per-arc flow (sent) capacity
-- `costs::Dict{Tuple{Int,Int},Float64}`: Per-unit-sent routing cost
-- `gains::Dict{Tuple{Int,Int},Float64}`: Per-arc gain multiplier in (0, 1]
-- `source_supply::Float64`: Cap on total flow sent out of the source
-- `demand::Float64`: Required delivered (post-gain) amount at the sink
+
+  - `n_nodes::Int`: Number of nodes (node 1 = source, node `n_nodes` = sink)
+  - `source_node::Int`: Source node index (always 1)
+  - `sink_node::Int`: Sink node index (always `n_nodes`)
+  - `arcs::Vector{Tuple{Int,Int}}`: Directed arcs
+  - `backbone::Vector{Tuple{Int,Int}}`: The source→…→sink backbone path arcs
+  - `capacities::Dict{Tuple{Int,Int},Float64}`: Per-arc flow (sent) capacity
+  - `costs::Dict{Tuple{Int,Int},Float64}`: Per-unit-sent routing cost
+  - `gains::Dict{Tuple{Int,Int},Float64}`: Per-arc gain multiplier in (0, 1]
+  - `source_supply::Float64`: Cap on total flow sent out of the source
+  - `demand::Float64`: Required delivered (post-gain) amount at the sink
 """
 struct GeneralizedFlowProblem <: ProblemGenerator
     n_nodes::Int
     source_node::Int
     sink_node::Int
-    arcs::Vector{Tuple{Int,Int}}
-    backbone::Vector{Tuple{Int,Int}}
-    capacities::Dict{Tuple{Int,Int},Float64}
-    costs::Dict{Tuple{Int,Int},Float64}
-    gains::Dict{Tuple{Int,Int},Float64}
+    arcs::Vector{Tuple{Int, Int}}
+    backbone::Vector{Tuple{Int, Int}}
+    capacities::Dict{Tuple{Int, Int}, Float64}
+    costs::Dict{Tuple{Int, Int}, Float64}
+    gains::Dict{Tuple{Int, Int}, Float64}
     source_supply::Float64
     demand::Float64
 end
@@ -60,8 +62,8 @@ backbone arcs. Named distinctly so it does not clash with `standard.jl`'s
 `generate_connected_network`.
 """
 function _generalized_flow_topology(rng::AbstractRNG, n_nodes::Int, n_arcs::Int)
-    arcs = Set{Tuple{Int,Int}}()
-    backbone = Tuple{Int,Int}[]
+    arcs = Set{Tuple{Int, Int}}()
+    backbone = Tuple{Int, Int}[]
 
     # Backbone path 1 -> 2 -> ... -> n_nodes (guarantees source->sink connectivity)
     for i in 1:(n_nodes - 1)
@@ -109,25 +111,29 @@ The constructor sizes `n_nodes` and the arc density so `length(arcs)` lands near
 arc count IS the variable count.
 
 # Feasibility
-- `feasible`: the backbone path 1→…→n is guaranteed to deliver `demand`. Let
-  `P = prod(g over backbone)`. Sending `s = demand / P` at the source arrives as
-  `demand` at the sink. Every backbone arc capacity is set `>= s * slack` and
-  `source_supply >= s * slack`, so the backbone alone is an admissible delivery —
-  finite optimum in the LP relaxation.
-- `infeasible`: the post-gain inflow capacity into the sink is capped strictly
-  below `demand`: `sum over sink in-arcs of g[u,sink] * cap[u,sink] = demand * α`
-  with `α ∈ [0.7, 0.9] < 1`. Since delivered ≤ that aggregate bound regardless of
-  the rest of the network, `delivered >= demand` is unsatisfiable. This pigeonhole
-  bound holds in the LP relaxation (no integrality used).
-- `unknown`: a natural instance biased toward feasible (backbone sized to deliver
-  a modest `demand`, no infeasibility forcing).
+
+  - `feasible`: the backbone path 1→…→n is guaranteed to deliver `demand`. Let
+    `P = prod(g over backbone)`. Sending `s = demand / P` at the source arrives as
+    `demand` at the sink. Every backbone arc capacity is set `>= s * slack` and
+    `source_supply >= s * slack`, so the backbone alone is an admissible delivery —
+    finite optimum in the LP relaxation.
+  - `infeasible`: the post-gain inflow capacity into the sink is capped strictly
+    below `demand`: `sum over sink in-arcs of g[u,sink] * cap[u,sink] = demand * α`
+    with `α ∈ [0.7, 0.9] < 1`. Since delivered ≤ that aggregate bound regardless of
+    the rest of the network, `delivered >= demand` is unsatisfiable. This pigeonhole
+    bound holds in the LP relaxation (no integrality used).
+  - `unknown`: a natural instance biased toward feasible (backbone sized to deliver
+    a modest `demand`, no infeasibility forcing).
 
 # Arguments
-- `target_variables`: Target number of decision variables (= number of arcs)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of decision variables (= number of arcs)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function GeneralizedFlowProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function GeneralizedFlowProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # --- Scale-tiered parameter ranges ---
@@ -168,23 +174,23 @@ function GeneralizedFlowProblem(target_variables::Int, feasibility_status::Feasi
     arcs, backbone = _generalized_flow_topology(rng, n_nodes, target_variables)
 
     # --- Gains in (0.85, 1.0]: lossy arcs, never amplifying (no unbounded cycles) ---
-    gains = Dict{Tuple{Int,Int},Float64}()
+    gains = Dict{Tuple{Int, Int}, Float64}()
     for arc in arcs
-        gains[arc] = round(0.85 + 0.15 * rand(rng), digits=4)
+        gains[arc] = round(0.85 + 0.15 * rand(rng); digits=4)
     end
 
     # --- Costs ---
     cmin, cmax = cost_range
-    costs = Dict{Tuple{Int,Int},Float64}()
+    costs = Dict{Tuple{Int, Int}, Float64}()
     for arc in arcs
-        costs[arc] = round(cmin + (cmax - cmin) * rand(rng), digits=3)
+        costs[arc] = round(cmin + (cmax - cmin) * rand(rng); digits=3)
     end
 
     # --- Baseline capacities (sampled; refined below per feasibility intent) ---
     capmin, capmax = cap_range
-    capacities = Dict{Tuple{Int,Int},Float64}()
+    capacities = Dict{Tuple{Int, Int}, Float64}()
     for arc in arcs
-        capacities[arc] = round(capmin + (capmax - capmin) * rand(rng), digits=2)
+        capacities[arc] = round(capmin + (capmax - capmin) * rand(rng); digits=2)
     end
 
     # Product of gains along the backbone (always > 0, <= 1).
@@ -202,7 +208,7 @@ function GeneralizedFlowProblem(target_variables::Int, feasibility_status::Feasi
 
     if status == feasible
         # Pick a modest demand, then guarantee the backbone can deliver it.
-        demand = round(nominal_deliverable * (0.4 + 0.4 * rand(rng)), digits=2)
+        demand = round(nominal_deliverable * (0.4 + 0.4 * rand(rng)); digits=2)
         demand = max(demand, capmin)  # keep it meaningfully positive
 
         # Sent amount on the backbone to deliver `demand`: s = demand / P.
@@ -210,16 +216,16 @@ function GeneralizedFlowProblem(target_variables::Int, feasibility_status::Feasi
         send_amount = demand / backbone_gain_product * slack
         for a in backbone
             if capacities[a] < send_amount
-                capacities[a] = round(send_amount, digits=2)
+                capacities[a] = round(send_amount; digits=2)
             end
         end
-        source_supply = round(send_amount * 1.5, digits=2)
+        source_supply = round(send_amount * 1.5; digits=2)
 
     elseif status == infeasible
         # Cap the post-gain inflow into the sink strictly below demand.
         # Choose demand first (any positive scale), then set sink in-arc caps so
         # sum(g * cap) = demand * alpha with alpha < 1.
-        demand = round(max(nominal_deliverable, capmin) * (0.5 + 0.5 * rand(rng)), digits=2)
+        demand = round(max(nominal_deliverable, capmin) * (0.5 + 0.5 * rand(rng)); digits=2)
         alpha = 0.7 + 0.2 * rand(rng)  # 0.7 .. 0.9
         target_inflow_cap = demand * alpha
 
@@ -235,28 +241,34 @@ function GeneralizedFlowProblem(target_variables::Int, feasibility_status::Feasi
         for (k, arc) in enumerate(sink_in_arcs)
             share = (weights[k] / wsum) * target_inflow_cap
             # cap chosen so g * cap == share  =>  cap = share / g
-            capacities[arc] = round(share / gains[arc], digits=4)
+            capacities[arc] = round(share / gains[arc]; digits=4)
         end
         # Source supply is generous; the binding constraint is the sink inflow cap.
-        source_supply = round(demand / backbone_gain_product * 2.0, digits=2)
+        source_supply = round(demand / backbone_gain_product * 2.0; digits=2)
 
     else  # unknown: natural instance, biased feasible (backbone sized to deliver).
-        demand = round(nominal_deliverable * (0.3 + 0.3 * rand(rng)), digits=2)
+        demand = round(nominal_deliverable * (0.3 + 0.3 * rand(rng)); digits=2)
         demand = max(demand, capmin)
         send_amount = demand / backbone_gain_product * 1.1
         for a in backbone
             if capacities[a] < send_amount
-                capacities[a] = round(send_amount, digits=2)
+                capacities[a] = round(send_amount; digits=2)
             end
         end
-        source_supply = round(send_amount * 1.4, digits=2)
+        source_supply = round(send_amount * 1.4; digits=2)
     end
 
     return GeneralizedFlowProblem(
-        n_nodes, source_node, sink_node,
-        arcs, backbone,
-        capacities, costs, gains,
-        source_supply, demand,
+        n_nodes,
+        source_node,
+        sink_node,
+        arcs,
+        backbone,
+        capacities,
+        costs,
+        gains,
+        source_supply,
+        demand,
     )
 end
 
@@ -267,11 +279,13 @@ Build the JuMP model for the generalized (lossy) network-flow problem.
 Deterministic — uses only data from the struct fields.
 
 Decision variables:
-- `f[arc] >= 0`: flow *sent* on each arc (post-gain arrival at the head is
-  `g[arc] * f[arc]`).
+
+  - `f[arc] >= 0`: flow *sent* on each arc (post-gain arrival at the head is
+    `g[arc] * f[arc]`).
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::GeneralizedFlowProblem)
     model = Model()

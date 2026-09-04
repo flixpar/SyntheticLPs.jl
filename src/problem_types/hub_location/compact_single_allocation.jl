@@ -2,13 +2,17 @@ using JuMP
 using Random
 using Distributions
 
-"""Integral hub set and node assignment planted for the compact formulation."""
+"""
+Integral hub set and node assignment planted for the compact formulation.
+"""
 struct CompactHubWitness
     hubs::Vector{Int}
     assignment::Vector{Int}
 end
 
-"""LP-level certificate that an exact hub count exceeds the candidate count."""
+"""
+LP-level certificate that an exact hub count exceeds the candidate count.
+"""
 struct HubCountCertificate
     requested_hubs::Int
     candidates::Int
@@ -29,28 +33,27 @@ struct CompactSingleAllocationHubProblem <: ProblemGenerator
     chi::Float64
     alpha::Float64
     delta::Float64
-    locations::Vector{Tuple{Float64,Float64}}
+    locations::Vector{Tuple{Float64, Float64}}
     dist::Matrix{Float64}
     flow::Matrix{Float64}
     outvolume::Vector{Float64}
     involume::Vector{Float64}
-    feasible_witness::Union{Nothing,CompactHubWitness}
-    infeasibility_certificate::Union{Nothing,HubCountCertificate}
+    feasible_witness::Union{Nothing, CompactHubWitness}
+    infeasibility_certificate::Union{Nothing, HubCountCertificate}
     feasibility_status::FeasibilityStatus
 end
 
 function _hub_nearest_cube_dimension(target_variables::Int)
     target = max(target_variables, 1)
     candidates = collect(3:max(4, ceil(Int, cbrt(target)) + 2))
-    admissible = [n for n in candidates
-                  if abs(n^3 - target) <= 0.25 * target || n^3 <= 50]
+    admissible = [n for n in candidates if abs(n^3 - target) <= 0.25 * target || n^3 <= 50]
     pool = isempty(admissible) ? candidates : admissible
     return pool[argmin([abs(n^3 - target) for n in pool])]
 end
 
-function CompactSingleAllocationHubProblem(target_variables::Int,
-                                           feasibility_status::FeasibilityStatus,
-                                           seed::Int)
+function CompactSingleAllocationHubProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
     n = _hub_nearest_cube_dimension(target_variables)
     profile = rand(rng, (:passenger, :freight, :telecom))
@@ -81,8 +84,9 @@ function CompactSingleAllocationHubProblem(target_variables::Int,
         decay = rand(rng, Uniform(0.5, 1.0))
         noise = rand(rng, Uniform(0.6, 1.0))
     end
-    flow = _hub_gravity_flows(rng, n, populations, dist, decay, noise;
-                              symmetric=symmetric, scale=scale)
+    flow = _hub_gravity_flows(
+        rng, n, populations, dist, decay, noise; symmetric=symmetric, scale=scale
+    )
     outvolume = vec(sum(flow; dims=2))
     involume = vec(sum(flow; dims=1))
 
@@ -100,8 +104,20 @@ function CompactSingleAllocationHubProblem(target_variables::Int,
     end
 
     return CompactSingleAllocationHubProblem(
-        n, p, profile, chi, alpha, delta, locations, dist, flow, outvolume,
-        involume, witness, certificate, feasibility_status,
+        n,
+        p,
+        profile,
+        chi,
+        alpha,
+        delta,
+        locations,
+        dist,
+        flow,
+        outvolume,
+        involume,
+        witness,
+        certificate,
+        feasibility_status,
     )
 end
 
@@ -109,28 +125,37 @@ function build_model(prob::CompactSingleAllocationHubProblem)
     model = Model()
     n = prob.n_nodes
     @variable(model, z[1:n, 1:n], Bin)
-    @variable(model, q[i=1:n, k=1:n, m=1:n; k != m] >= 0)
+    @variable(model, q[i = 1:n, k = 1:n, m = 1:n; k != m] >= 0)
 
-    @constraint(model, single_allocation[i=1:n], sum(z[i, k] for k in 1:n) == 1)
-    @constraint(model, allocation_open[i=1:n, k=1:n], z[i, k] <= z[k, k])
+    @constraint(model, single_allocation[i = 1:n], sum(z[i, k] for k in 1:n) == 1)
+    @constraint(model, allocation_open[i = 1:n, k = 1:n], z[i, k] <= z[k, k])
     @constraint(model, hub_count, sum(z[k, k] for k in 1:n) == prob.p)
-    @constraint(model, flow_balance[i=1:n, k=1:n],
-        sum(q[i, k, m] for m in 1:n if m != k) -
-        sum(q[i, m, k] for m in 1:n if m != k) ==
-        prob.outvolume[i] * z[i, k] -
-        sum(prob.flow[i, j] * z[j, k] for j in 1:n))
-    @constraint(model, flow_tail_open[i=1:n, k=1:n, m=1:n; k != m],
-                q[i, k, m] <= prob.outvolume[i] * z[k, k])
-    @constraint(model, flow_head_open[i=1:n, k=1:n, m=1:n; k != m],
-                q[i, k, m] <= prob.outvolume[i] * z[m, m])
+    @constraint(
+        model,
+        flow_balance[i = 1:n, k = 1:n],
+        sum(q[i, k, m] for m in 1:n if m != k) - sum(q[i, m, k] for m in 1:n if m != k) ==
+            prob.outvolume[i] * z[i, k] - sum(prob.flow[i, j] * z[j, k] for j in 1:n)
+    )
+    @constraint(
+        model,
+        flow_tail_open[i = 1:n, k = 1:n, m = 1:n; k != m],
+        q[i, k, m] <= prob.outvolume[i] * z[k, k]
+    )
+    @constraint(
+        model,
+        flow_head_open[i = 1:n, k = 1:n, m = 1:n; k != m],
+        q[i, k, m] <= prob.outvolume[i] * z[m, m]
+    )
 
-    @objective(model, Min,
-        sum(prob.chi * prob.dist[i, k] * prob.outvolume[i] * z[i, k]
-            for i in 1:n, k in 1:n) +
-        sum(prob.delta * prob.dist[k, j] * prob.involume[j] * z[j, k]
-            for j in 1:n, k in 1:n) +
-        sum(prob.alpha * prob.dist[k, m] * q[i, k, m]
-            for i in 1:n, k in 1:n, m in 1:n if k != m))
+    @objective(
+        model,
+        Min,
+        sum(prob.chi * prob.dist[i, k] * prob.outvolume[i] * z[i, k] for i in 1:n, k in 1:n) +
+            sum(prob.delta * prob.dist[k, j] * prob.involume[j] * z[j, k] for j in 1:n, k in 1:n) +
+            sum(
+                prob.alpha * prob.dist[k, m] * q[i, k, m] for i in 1:n, k in 1:n, m in 1:n if k != m
+            )
+    )
     return model
 end
 

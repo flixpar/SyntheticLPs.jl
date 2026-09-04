@@ -1,7 +1,7 @@
 @testset "Crop planning quality contracts" begin
     ref = ProblemVariant(:crop_planning, :standard)
 
-    validate_witness = function(p)
+    validate_witness = function (p)
         x = something(p.feasible_witness)
         atol = 1e-7 * max(1.0, p.total_land)
         @test length(x) == p.n_crops
@@ -13,8 +13,7 @@
         @test all(x .+ atol .>= p.min_area_per_crop)
         for requirement in p.diversity_requirements
             @test sum(x[requirement.crop_indices]) + atol >= requirement.minimum_area
-            @test all(p.crop_types[i] == requirement.crop_type
-                      for i in requirement.crop_indices)
+            @test all(p.crop_types[i] == requirement.crop_type for i in requirement.crop_indices)
         end
     end
 
@@ -25,8 +24,7 @@
         @test p.infeasibility_certificate === nothing
         @test length(p.crop_names) == p.n_crops
         @test length(p.management_systems) == p.n_crops
-        @test all(s in (:rainfed, :irrigated, :low_input, :intensive)
-                  for s in p.management_systems)
+        @test all(s in (:rainfed, :irrigated, :low_input, :intensive) for s in p.management_systems)
         @test all(p.market_demand_tonnes .> 0.0)
         @test !any(startswith(name, "Crop_") for name in p.crop_names)
         validate_witness(p)
@@ -37,13 +35,11 @@
         @test certificate isa SyntheticLPs.CropResourceCertificate
         @test certificate.forced_usage > certificate.capacity >= 0.0
         if certificate.resource == :water
-            @test certificate.forced_usage ≈
-                  sum(q.water_requirements .* q.min_area_per_crop)
+            @test certificate.forced_usage ≈ sum(q.water_requirements .* q.min_area_per_crop)
             @test certificate.capacity == q.water_capacity
         else
             @test certificate.resource == :labor
-            @test certificate.forced_usage ≈
-                  sum(q.labor_requirements .* q.min_area_per_crop)
+            @test certificate.forced_usage ≈ sum(q.labor_requirements .* q.min_area_per_crop)
             @test certificate.capacity == q.labor_capacity
         end
     end
@@ -56,8 +52,7 @@
     # Construction is field-deterministic and isolated from the global RNG.
     _, p1 = generate_problem(ref, 180, feasible, 12345)
     _, p2 = generate_problem(ref, 180, feasible, 12345)
-    @test all(isequal(getfield(p1, f), getfield(p2, f))
-              for f in fieldnames(typeof(p1)))
+    @test all(isequal(getfield(p1, f), getfield(p2, f)) for f in fieldnames(typeof(p1)))
     Random.seed!(8172)
     expected = rand()
     Random.seed!(8172)
@@ -76,8 +71,7 @@
 
     if HAS_HIGHS
         # Includes the former target=300, seed=4 feasible regression.
-        for target in (30, 300, 1_200), seed in 0:5,
-            status in (feasible, infeasible)
+        for target in (30, 300, 1_200), seed in 0:5, status in (feasible, infeasible)
             model, _ = generate_problem(ref, target, status, seed)
             set_optimizer(model, HiGHS.Optimizer)
             set_silent(model)
@@ -94,9 +88,12 @@ end
         # feasible (the "fallow-land" hole). With the optimizer guard every seed
         # must now solve INFEASIBLE.
         for s in 1:8
-            m, _ = generate_problem("crop_planning/standard", 120, infeasible, s;
-                                    optimizer = HiGHS.Optimizer)
-            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
+            m, _ = generate_problem(
+                "crop_planning/standard", 120, infeasible, s; optimizer=HiGHS.Optimizer
+            )
+            set_optimizer(m, HiGHS.Optimizer)
+            set_silent(m)
+            optimize!(m)
             @test termination_status(m) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
         end
     end

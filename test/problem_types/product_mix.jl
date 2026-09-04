@@ -11,15 +11,13 @@
     @test occursin("product", lowercase(info[:description]))
 
     # Sizing: variables are exactly the products, i.e. the clamped target.
-    for target in (50, 200, 1000, 5000), status in (feasible, infeasible, unknown),
-        seed in 0:2
+    for target in (50, 200, 1000, 5000), status in (feasible, infeasible, unknown), seed in 0:2
         m, p = generate_problem(:product_mix, target, status, seed)
         @test num_variables(m) == p.num_products
         @test p.num_products == max(2, min(10000, target))
         @test abs(num_variables(m) - target) <= 0.25 * target || num_variables(m) <= 50
         @test num_constraints(m; count_variable_in_set_constraints=false) ==
-              p.num_resources + count(>(0.0), p.lower_bounds) +
-              count(isfinite, p.upper_bounds)
+            p.num_resources + count(>(0.0), p.lower_bounds) + count(isfinite, p.upper_bounds)
     end
 
     # Structural data contracts shared by all three profiles.
@@ -34,16 +32,17 @@
         @test all(>(0.0), p.availabilities)
         @test all(p.lower_bounds .>= 0.0)
         # Never a trivial bound clash: every ceiling stays above its floor.
-        @test all(p.lower_bounds[j] <= p.upper_bounds[j]
-                  for j in 1:p.num_products)
-        @test p.industry in (:manufacturing, :food_processing, :electronics,
-                             :furniture, :chemical, :automotive)
+        @test all(p.lower_bounds[j] <= p.upper_bounds[j] for j in 1:p.num_products)
+        @test p.industry in
+            (:manufacturing, :food_processing, :electronics, :furniture, :chemical, :automotive)
         @test p.feasibility_status == status
         # The stored utilization scalar recomputes exactly from the data.
-        required = [sum(p.usage_matrix[i, j] * p.lower_bounds[j]
-                        for j in 1:p.num_products) for i in 1:p.num_resources]
+        required = [
+            sum(p.usage_matrix[i, j] * p.lower_bounds[j] for j in 1:p.num_products) for
+            i in 1:p.num_resources
+        ]
         @test p.floor_utilization ≈
-              maximum(required[i] / p.availabilities[i] for i in 1:p.num_resources)
+            maximum(required[i] / p.availabilities[i] for i in 1:p.num_resources)
     end
 
     # Planted-plan witness: the nominal plan is an actual feasible point of the
@@ -68,9 +67,9 @@
         @test p.floor_utilization < 1.0
 
         atol = 1e-6 * maximum(p.availabilities)
-        report = primal_feasibility_report(m, Dict(m[:x][j] => w.plan[j]
-                                                   for j in 1:p.num_products);
-                                           atol=atol)
+        report = primal_feasibility_report(
+            m, Dict(m[:x][j] => w.plan[j] for j in 1:p.num_products); atol=atol
+        )
         @test isempty(report)
     end
 
@@ -88,17 +87,22 @@
         @test all(p.usage_matrix[cert.resource, j] > 0.0 for j in cert.products)
         # Every product left out contributes nothing to that resource row.
         listed = Set(cert.products)
-        @test all(p.usage_matrix[cert.resource, j] * p.lower_bounds[j] == 0.0
-                  for j in 1:p.num_products if !(j in listed))
-        recomputed = sum(p.usage_matrix[cert.resource, j] * p.lower_bounds[j]
-                         for j in cert.products)
+        @test all(
+            p.usage_matrix[cert.resource, j] * p.lower_bounds[j] == 0.0 for
+            j in 1:p.num_products if !(j in listed)
+        )
+        recomputed = sum(
+            p.usage_matrix[cert.resource, j] * p.lower_bounds[j] for j in cert.products
+        )
         @test cert.required_usage ≈ recomputed
         @test cert.availability == p.availabilities[cert.resource]
         @test cert.required_usage > cert.availability
         # The refutation is a genuine resource over-commitment, not a bound
         # clash: every floor still leaves room under its own ceiling.
-        @test all(p.lower_bounds[j] < p.upper_bounds[j]
-                  for j in 1:p.num_products if p.lower_bounds[j] > 0.0)
+        @test all(
+            p.lower_bounds[j] < p.upper_bounds[j] for
+            j in 1:p.num_products if p.lower_bounds[j] > 0.0
+        )
         @test p.floor_utilization > 1.0
         @test 1.15 <= p.floor_utilization <= 1.60 + 1e-9
     end
@@ -122,9 +126,18 @@
         _, p1 = generate_problem(:product_mix, 220, status, 42)
         Random.seed!(12345)
         _, p2 = generate_problem(:product_mix, 220, status, 42)
-        for f in (:num_products, :num_resources, :profits, :usage_matrix,
-                  :availabilities, :lower_bounds, :upper_bounds, :nominal_plan,
-                  :floor_utilization, :industry)
+        for f in (
+            :num_products,
+            :num_resources,
+            :profits,
+            :usage_matrix,
+            :availabilities,
+            :lower_bounds,
+            :upper_bounds,
+            :nominal_plan,
+            :floor_utilization,
+            :industry,
+        )
             @test isequal(getfield(p1, f), getfield(p2, f))
         end
         if p1.feasible_witness !== nothing
@@ -141,8 +154,7 @@
 
     if HAS_HIGHS
         # End-to-end feasibility contract across scales and seeds.
-        for target in (50, 200, 1000, 5000), status in (feasible, infeasible),
-            seed in 0:3
+        for target in (50, 200, 1000, 5000), status in (feasible, infeasible), seed in 0:3
             m, _ = generate_problem(:product_mix, target, status, seed)
             set_optimizer(m, HiGHS.Optimizer)
             set_silent(m)
@@ -162,8 +174,7 @@
                 optimize!(m)
                 ts = termination_status(m)
                 push!(outcomes, ts)
-                @test ts == (p.floor_utilization <= 1.0 ? MOI.OPTIMAL :
-                             MOI.INFEASIBLE)
+                @test ts == (p.floor_utilization <= 1.0 ? MOI.OPTIMAL : MOI.INFEASIBLE)
             end
             @test MOI.OPTIMAL in outcomes
             @test MOI.INFEASIBLE in outcomes

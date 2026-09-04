@@ -7,6 +7,7 @@ using Random
 Generator for workload-balanced (min-makespan) task assignment problems.
 
 # Overview
+
 Assigns each task to exactly one eligible worker so as to minimize the *makespan*
 — the maximum total workload carried by any single worker — subject to per-worker
 capacity limits. This is the classic minimax / load-balancing flavour of the
@@ -34,11 +35,12 @@ Formulation:
 In the LP relaxation `x[w,j] in [0,1]`.
 
 # Fields
-- `n_workers::Int`: Number of workers
-- `n_tasks::Int`: Number of tasks
-- `loads::Vector{Float64}`: Processing load of each task (length `n_tasks`)
-- `capacities::Vector{Float64}`: Workload capacity of each worker (length `n_workers`)
-- `eligible::Matrix{Bool}`: Eligibility mask (`n_workers` × `n_tasks`); `true` if worker may do task
+
+  - `n_workers::Int`: Number of workers
+  - `n_tasks::Int`: Number of tasks
+  - `loads::Vector{Float64}`: Processing load of each task (length `n_tasks`)
+  - `capacities::Vector{Float64}`: Workload capacity of each worker (length `n_workers`)
+  - `eligible::Matrix{Bool}`: Eligibility mask (`n_workers` × `n_tasks`); `true` if worker may do task
 """
 struct WorkloadBalanceAssignmentProblem <: ProblemGenerator
     n_workers::Int
@@ -63,23 +65,27 @@ near `target_variables`. Tasks comfortably outnumber workers (T > W) so that
 balancing is non-trivial.
 
 # Arguments
-- `target_variables`: Target number of decision variables (`n_workers*n_tasks + 1`)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of decision variables (`n_workers*n_tasks + 1`)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 
 # Feasibility
-- `feasible`: eligibility is generous, every task fits on every worker
-  (`max load <= min cap`), and total capacity comfortably exceeds total load. A
-  greedy LPT assignment is constructed; capacities are raised if needed so a
-  concrete integer assignment exists, which makes the LP relaxation feasible.
-- `infeasible`: capacities are scaled so `sum_w cap_w < total_load`. Summing the
-  capacity constraints gives `sum_w sum_j load_j x[w,j] <= sum_w cap_w < total_load`,
-  while the assignment constraints force the left side to equal `total_load`. The
-  contradiction survives the LP relaxation (it is independent of integrality,
-  eligibility, and the makespan variable).
-- `unknown`: natural capacities, biased toward feasibility but not forced.
+
+  - `feasible`: eligibility is generous, every task fits on every worker
+    (`max load <= min cap`), and total capacity comfortably exceeds total load. A
+    greedy LPT assignment is constructed; capacities are raised if needed so a
+    concrete integer assignment exists, which makes the LP relaxation feasible.
+  - `infeasible`: capacities are scaled so `sum_w cap_w < total_load`. Summing the
+    capacity constraints gives `sum_w sum_j load_j x[w,j] <= sum_w cap_w < total_load`,
+    while the assignment constraints force the left side to equal `total_load`. The
+    contradiction survives the LP relaxation (it is independent of integrality,
+    eligibility, and the makespan variable).
+  - `unknown`: natural capacities, biased toward feasibility but not forced.
 """
-function WorkloadBalanceAssignmentProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function WorkloadBalanceAssignmentProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # --- Dimension sizing: total = W*T + 1, with T > W ---
@@ -108,7 +114,7 @@ function WorkloadBalanceAssignmentProblem(target_variables::Int, feasibility_sta
         if rand(rng) < 0.15
             base *= 1.3 + 0.7 * rand(rng)
         end
-        loads[j] = round(base, digits=2)
+        loads[j] = round(base; digits=2)
     end
     total_load = sum(loads)
     max_load = maximum(loads)
@@ -202,9 +208,9 @@ function WorkloadBalanceAssignmentProblem(target_variables::Int, feasibility_sta
     # Round capacities for tidy data without breaking the feasibility math:
     # round feasible/unknown caps UP, infeasible caps DOWN (preserves shortfall).
     if feasibility_status == infeasible
-        capacities = floor.(capacities, digits=2)
+        capacities = floor.(capacities; digits=2)
     else
-        capacities = ceil.(capacities, digits=2)
+        capacities = ceil.(capacities; digits=2)
     end
 
     return WorkloadBalanceAssignmentProblem(n_workers, n_tasks, loads, capacities, eligible)
@@ -217,11 +223,13 @@ Build a JuMP model for the workload-balanced assignment problem. Deterministic �
 uses only the struct fields.
 
 Decision variables:
-- `x[w, j]`: binary, worker `w` performs task `j`
-- `L`: continuous makespan (maximum worker workload)
+
+  - `x[w, j]`: binary, worker `w` performs task `j`
+  - `L`: continuous makespan (maximum worker workload)
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::WorkloadBalanceAssignmentProblem)
     model = Model()

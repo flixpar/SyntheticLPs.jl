@@ -7,6 +7,7 @@ using Random
 Generator for transshipment transportation problems with intermediate hub nodes.
 
 # Overview
+
 Extends the classic transportation problem with a set of intermediate
 transshipment (hub) nodes. Goods can flow from sources directly to destinations,
 or be routed through hubs (source -> hub, then hub -> destination). The objective
@@ -17,16 +18,17 @@ from sources equals outbound to destinations). Per-arc capacities limit the flow
 that can pass through hub legs.
 
 # Fields
-- `n_sources::Int`: Number of supply sources
-- `n_destinations::Int`: Number of demand destinations
-- `n_hubs::Int`: Number of intermediate transshipment (hub) nodes
-- `supplies::Vector{Int}`: Supply available at each source
-- `demands::Vector{Int}`: Demand required at each destination
-- `cost_direct::Matrix{Float64}`: Cost per unit on each source -> destination arc (n_sources × n_destinations)
-- `cost_to_hub::Matrix{Float64}`: Cost per unit on each source -> hub arc (n_sources × n_hubs)
-- `cost_from_hub::Matrix{Float64}`: Cost per unit on each hub -> destination arc (n_hubs × n_destinations)
-- `cap_to_hub::Matrix{Float64}`: Capacity on each source -> hub arc (n_sources × n_hubs)
-- `cap_from_hub::Matrix{Float64}`: Capacity on each hub -> destination arc (n_hubs × n_destinations)
+
+  - `n_sources::Int`: Number of supply sources
+  - `n_destinations::Int`: Number of demand destinations
+  - `n_hubs::Int`: Number of intermediate transshipment (hub) nodes
+  - `supplies::Vector{Int}`: Supply available at each source
+  - `demands::Vector{Int}`: Demand required at each destination
+  - `cost_direct::Matrix{Float64}`: Cost per unit on each source -> destination arc (n_sources × n_destinations)
+  - `cost_to_hub::Matrix{Float64}`: Cost per unit on each source -> hub arc (n_sources × n_hubs)
+  - `cost_from_hub::Matrix{Float64}`: Cost per unit on each hub -> destination arc (n_hubs × n_destinations)
+  - `cap_to_hub::Matrix{Float64}`: Capacity on each source -> hub arc (n_sources × n_hubs)
+  - `cap_from_hub::Matrix{Float64}`: Capacity on each hub -> destination arc (n_hubs × n_destinations)
 """
 struct TransshipmentProblem <: ProblemGenerator
     n_sources::Int
@@ -56,11 +58,14 @@ The constructor sizes `n_sources`, `n_destinations`, and `n_hubs` together so th
 full total lands near `target_variables` (not just the direct block).
 
 # Arguments
-- `target_variables`: Target number of decision variables across all three flow arc sets
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of decision variables across all three flow arc sets
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function TransshipmentProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function TransshipmentProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
@@ -117,7 +122,7 @@ function TransshipmentProblem(target_variables::Int, feasibility_status::Feasibi
 
     # Helper to distribute an integer addition across a vector (keeps reproducibility).
     function distribute_additions!(vec::Vector{Int}, amount::Int)
-        amount <= 0 && return
+        amount <= 0 && return nothing
         w = rand(rng, length(vec))
         base = floor.(Int, (w ./ sum(w)) .* amount)
         remainder = amount - sum(base)
@@ -173,10 +178,16 @@ function TransshipmentProblem(target_variables::Int, feasibility_status::Feasibi
     end
 
     return TransshipmentProblem(
-        n_sources, n_destinations, n_hubs,
-        supplies, demands,
-        cost_direct, cost_to_hub, cost_from_hub,
-        cap_to_hub, cap_from_hub,
+        n_sources,
+        n_destinations,
+        n_hubs,
+        supplies,
+        demands,
+        cost_direct,
+        cost_to_hub,
+        cost_from_hub,
+        cap_to_hub,
+        cap_from_hub,
     )
 end
 
@@ -187,12 +198,14 @@ Build a JuMP model for the transshipment problem. Deterministic — uses only da
 from the struct fields.
 
 Decision variables:
-- `x_direct[i, j]`: flow shipped directly from source `i` to destination `j`
-- `x_to_hub[i, t]`: flow shipped from source `i` to hub `t`
-- `x_from_hub[t, j]`: flow shipped from hub `t` to destination `j`
+
+  - `x_direct[i, j]`: flow shipped directly from source `i` to destination `j`
+  - `x_to_hub[i, t]`: flow shipped from source `i` to hub `t`
+  - `x_from_hub[t, j]`: flow shipped from hub `t` to destination `j`
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::TransshipmentProblem)
     model = Model()
@@ -207,31 +220,34 @@ function build_model(prob::TransshipmentProblem)
     @variable(model, x_from_hub[1:H, 1:D] >= 0)
 
     # Objective: minimize total shipping cost over all arc sets
-    @objective(model, Min,
+    @objective(
+        model,
+        Min,
         sum(prob.cost_direct[i, j] * x_direct[i, j] for i in 1:S, j in 1:D) +
-        sum(prob.cost_to_hub[i, t] * x_to_hub[i, t] for i in 1:S, t in 1:H) +
-        sum(prob.cost_from_hub[t, j] * x_from_hub[t, j] for t in 1:H, j in 1:D)
+            sum(prob.cost_to_hub[i, t] * x_to_hub[i, t] for i in 1:S, t in 1:H) +
+            sum(prob.cost_from_hub[t, j] * x_from_hub[t, j] for t in 1:H, j in 1:D)
     )
 
     # Supply constraints: direct + to-hub flow out of each source <= supply
     for i in 1:S
-        @constraint(model,
-            sum(x_direct[i, j] for j in 1:D) +
-            sum(x_to_hub[i, t] for t in 1:H) <= prob.supplies[i])
+        @constraint(
+            model,
+            sum(x_direct[i, j] for j in 1:D) + sum(x_to_hub[i, t] for t in 1:H) <= prob.supplies[i]
+        )
     end
 
     # Demand constraints: direct + from-hub flow into each destination >= demand
     for j in 1:D
-        @constraint(model,
-            sum(x_direct[i, j] for i in 1:S) +
-            sum(x_from_hub[t, j] for t in 1:H) >= prob.demands[j])
+        @constraint(
+            model,
+            sum(x_direct[i, j] for i in 1:S) + sum(x_from_hub[t, j] for t in 1:H) >=
+                prob.demands[j]
+        )
     end
 
     # Hub flow conservation: inbound from sources == outbound to destinations
     for t in 1:H
-        @constraint(model,
-            sum(x_to_hub[i, t] for i in 1:S) ==
-            sum(x_from_hub[t, j] for j in 1:D))
+        @constraint(model, sum(x_to_hub[i, t] for i in 1:S) == sum(x_from_hub[t, j] for j in 1:D))
     end
 
     # Hub-leg capacity constraints

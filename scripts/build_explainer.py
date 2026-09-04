@@ -7,6 +7,7 @@ the result works fully offline. Run from the repository root:
 
     python3 scripts/build_explainer.py
 """
+
 import glob
 import html
 import os
@@ -27,58 +28,231 @@ def load_mathjax():
         urllib.request.urlretrieve(MATHJAX_URL, MATHJAX)
     return open(MATHJAX).read()
 
+
 # --- Curated metadata: family grouping + headline tags ------------------------
 # family key -> (label, short blurb)
 FAMILIES = {
-    "network": ("Network & Routing", "Flows, multicommodity routing, and capacity sharing over graphs."),
-    "facility": ("Facility & Supply Chain", "Where to open capacity and how to serve demand from it."),
+    "network": (
+        "Network & Routing",
+        "Flows, multicommodity routing, and capacity sharing over graphs.",
+    ),
+    "facility": (
+        "Facility & Supply Chain",
+        "Where to open capacity and how to serve demand from it.",
+    ),
     "blending": ("Blending & Diet", "Mix ingredients to hit composition targets at least cost."),
     "production": ("Production & Planning", "Allocate shared capacity across products and time."),
-    "scheduling": ("Assignment & Scheduling", "Match discrete entities to tasks, shifts, or patterns."),
+    "scheduling": (
+        "Assignment & Scheduling",
+        "Match discrete entities to tasks, shifts, or patterns.",
+    ),
     "selection": ("Selection & Finance", "Pick a subset / weighting under budget and risk limits."),
-    "inference": ("Inference & Calibration", "Recover optimization parameters from observed decisions and outcomes."),
+    "inference": (
+        "Inference & Calibration",
+        "Recover optimization parameters from observed decisions and outcomes.",
+    ),
     "land": ("Land & Agriculture", "Allocate parcels and acreage under physical limits."),
     "healthcare": ("Healthcare", "Plan clinical resources and treatment under safety constraints."),
 }
 
 # file stem -> dict(family, sense, vclass, tagline)
 META = {
-    "tsp":                   dict(family="network",   sense="Min",     vclass="Mixed",      tag="Tour routing, alternative relaxations, and operational variants"),
-    "transportation":        dict(family="network",   sense="Min",     vclass="Continuous", tag="Min-cost shipping over supply/demand lanes"),
-    "network_flow":          dict(family="network",   sense="Min/Max", vclass="Continuous", tag="Single-commodity max-flow or min-cost flow"),
-    "multi_commodity_flow":  dict(family="network",   sense="Min",     vclass="Continuous", tag="Several commodities sharing arc capacities"),
-    "load_balancing":        dict(family="network",   sense="Min-max", vclass="Continuous", tag="Minimize the most-utilized link"),
-    "telecom_network_design":dict(family="network",   sense="Min",     vclass="Mixed",      tag="Install links + route traffic under a budget"),
-    "hub_location":          dict(family="network",   sense="Min",     vclass="Mixed",      tag="Open hubs, consolidate OD traffic, and design hub-and-spoke backbones"),
-    "facility_location":     dict(family="facility",  sense="Min",     vclass="Mixed",      tag="Open capacitated facilities, then serve demand"),
-    "supply_chain":          dict(family="facility",  sense="Min",     vclass="Mixed",      tag="Open facilities + multi-mode shipping"),
-    "blending":              dict(family="blending",  sense="Min",     vclass="Continuous", tag="Hit quality bands at minimum ingredient cost"),
-    "feed_blending":         dict(family="blending",  sense="Min",     vclass="Continuous", tag="Feed formulation with nutrient floors/caps"),
-    "diet_problem":          dict(family="blending",  sense="Min",     vclass="Continuous", tag="Classic min-cost diet with nutrient bounds"),
-    "production_planning":   dict(family="production",sense="Max",     vclass="Continuous", tag="Profit-max under shared resource capacities"),
-    "product_mix":           dict(family="production",sense="Max",     vclass="Continuous", tag="Profit-max with market lower/upper bounds"),
-    "resource_allocation":   dict(family="production",sense="Max",     vclass="Continuous", tag="Allocate scarce resources among activities"),
-    "inventory":             dict(family="production",sense="Min",     vclass="Continuous", tag="Single-item lot sizing over a horizon"),
-    "energy":                dict(family="production",sense="Min",     vclass="Continuous", tag="Dispatch generators over time to meet demand"),
-    "unit_commitment":       dict(family="production",sense="Min",     vclass="Mixed",      tag="Commit and dispatch generators across time"),
-    "assignment":            dict(family="scheduling",sense="Min",     vclass="Binary",     tag="Worker-task matching with compatibility"),
-    "bin_packing":           dict(family="scheduling",sense="Min",     vclass="Binary",     tag="Pack items into identical or heterogeneous fleets"),
-    "operating_room_scheduling":dict(family="scheduling",sense="Min",  vclass="Mixed",      tag="Assign and sequence surgeries under clinical capacity"),
-    "scheduling":            dict(family="scheduling",sense="Min",     vclass="Binary",     tag="Workforce shift scheduling with coverage"),
-    "workforce_shift_scheduling":dict(family="scheduling",sense="Min", vclass="Continuous", tag="Multi-skill shift-pattern staffing coverage"),
-    "airline_crew":          dict(family="scheduling",sense="Min",     vclass="Binary",     tag="Set-partitioning crew pairing"),
-    "cutting_stock":         dict(family="scheduling",sense="Min",     vclass="Integer",    tag="One-dimensional pattern cutting"),
-    "knapsack":              dict(family="selection", sense="Max",     vclass="Continuous", tag="Fractional knapsack under a capacity"),
-    "project_selection":     dict(family="selection", sense="Max",     vclass="Binary",     tag="Pick projects under budget/risk/dependency"),
-    "portfolio":             dict(family="selection", sense="Max",     vclass="Continuous", tag="CVaR portfolio with policy constraints"),
-    "revenue_management":    dict(family="selection", sense="Max",     vclass="Continuous", tag="Network capacity allocation and stochastic overbooking"),
-    "inverse_optimization":  dict(family="inference", sense="Min",     vclass="Continuous", tag="Infer costs from exact, noisy, routed, and market observations"),
-    "radiotherapy":           dict(family="healthcare",sense="Min",     vclass="Mixed",      tag="IMRT fluence maps, DVH tails, robust setup scenarios, and beam selection"),
-    "land_use":              dict(family="land",      sense="Max",     vclass="Binary",     tag="Assign parcels to zoning types"),
-    "crop_planning":         dict(family="land",      sense="Max",     vclass="Continuous", tag="Allocate acreage across crops"),
+    "tsp": dict(
+        family="network",
+        sense="Min",
+        vclass="Mixed",
+        tag="Tour routing, alternative relaxations, and operational variants",
+    ),
+    "transportation": dict(
+        family="network",
+        sense="Min",
+        vclass="Continuous",
+        tag="Min-cost shipping over supply/demand lanes",
+    ),
+    "network_flow": dict(
+        family="network",
+        sense="Min/Max",
+        vclass="Continuous",
+        tag="Single-commodity max-flow or min-cost flow",
+    ),
+    "multi_commodity_flow": dict(
+        family="network",
+        sense="Min",
+        vclass="Continuous",
+        tag="Several commodities sharing arc capacities",
+    ),
+    "load_balancing": dict(
+        family="network",
+        sense="Min-max",
+        vclass="Continuous",
+        tag="Minimize the most-utilized link",
+    ),
+    "telecom_network_design": dict(
+        family="network",
+        sense="Min",
+        vclass="Mixed",
+        tag="Install links + route traffic under a budget",
+    ),
+    "hub_location": dict(
+        family="network",
+        sense="Min",
+        vclass="Mixed",
+        tag="Open hubs, consolidate OD traffic, and design hub-and-spoke backbones",
+    ),
+    "facility_location": dict(
+        family="facility",
+        sense="Min",
+        vclass="Mixed",
+        tag="Open capacitated facilities, then serve demand",
+    ),
+    "supply_chain": dict(
+        family="facility", sense="Min", vclass="Mixed", tag="Open facilities + multi-mode shipping"
+    ),
+    "blending": dict(
+        family="blending",
+        sense="Min",
+        vclass="Continuous",
+        tag="Hit quality bands at minimum ingredient cost",
+    ),
+    "feed_blending": dict(
+        family="blending",
+        sense="Min",
+        vclass="Continuous",
+        tag="Feed formulation with nutrient floors/caps",
+    ),
+    "diet_problem": dict(
+        family="blending",
+        sense="Min",
+        vclass="Continuous",
+        tag="Classic min-cost diet with nutrient bounds",
+    ),
+    "production_planning": dict(
+        family="production",
+        sense="Max",
+        vclass="Continuous",
+        tag="Profit-max under shared resource capacities",
+    ),
+    "product_mix": dict(
+        family="production",
+        sense="Max",
+        vclass="Continuous",
+        tag="Profit-max with market lower/upper bounds",
+    ),
+    "resource_allocation": dict(
+        family="production",
+        sense="Max",
+        vclass="Continuous",
+        tag="Allocate scarce resources among activities",
+    ),
+    "inventory": dict(
+        family="production",
+        sense="Min",
+        vclass="Continuous",
+        tag="Single-item lot sizing over a horizon",
+    ),
+    "energy": dict(
+        family="production",
+        sense="Min",
+        vclass="Continuous",
+        tag="Dispatch generators over time to meet demand",
+    ),
+    "unit_commitment": dict(
+        family="production",
+        sense="Min",
+        vclass="Mixed",
+        tag="Commit and dispatch generators across time",
+    ),
+    "assignment": dict(
+        family="scheduling",
+        sense="Min",
+        vclass="Binary",
+        tag="Worker-task matching with compatibility",
+    ),
+    "bin_packing": dict(
+        family="scheduling",
+        sense="Min",
+        vclass="Binary",
+        tag="Pack items into identical or heterogeneous fleets",
+    ),
+    "operating_room_scheduling": dict(
+        family="scheduling",
+        sense="Min",
+        vclass="Mixed",
+        tag="Assign and sequence surgeries under clinical capacity",
+    ),
+    "scheduling": dict(
+        family="scheduling",
+        sense="Min",
+        vclass="Binary",
+        tag="Workforce shift scheduling with coverage",
+    ),
+    "workforce_shift_scheduling": dict(
+        family="scheduling",
+        sense="Min",
+        vclass="Continuous",
+        tag="Multi-skill shift-pattern staffing coverage",
+    ),
+    "airline_crew": dict(
+        family="scheduling", sense="Min", vclass="Binary", tag="Set-partitioning crew pairing"
+    ),
+    "cutting_stock": dict(
+        family="scheduling", sense="Min", vclass="Integer", tag="One-dimensional pattern cutting"
+    ),
+    "knapsack": dict(
+        family="selection",
+        sense="Max",
+        vclass="Continuous",
+        tag="Fractional knapsack under a capacity",
+    ),
+    "project_selection": dict(
+        family="selection",
+        sense="Max",
+        vclass="Binary",
+        tag="Pick projects under budget/risk/dependency",
+    ),
+    "portfolio": dict(
+        family="selection",
+        sense="Max",
+        vclass="Continuous",
+        tag="CVaR portfolio with policy constraints",
+    ),
+    "revenue_management": dict(
+        family="selection",
+        sense="Max",
+        vclass="Continuous",
+        tag="Network capacity allocation and stochastic overbooking",
+    ),
+    "inverse_optimization": dict(
+        family="inference",
+        sense="Min",
+        vclass="Continuous",
+        tag="Infer costs from exact, noisy, routed, and market observations",
+    ),
+    "radiotherapy": dict(
+        family="healthcare",
+        sense="Min",
+        vclass="Mixed",
+        tag="IMRT fluence maps, DVH tails, robust setup scenarios, and beam selection",
+    ),
+    "land_use": dict(
+        family="land", sense="Max", vclass="Binary", tag="Assign parcels to zoning types"
+    ),
+    "crop_planning": dict(
+        family="land", sense="Max", vclass="Continuous", tag="Allocate acreage across crops"
+    ),
 }
 
-FAMILY_ORDER = ["network", "facility", "blending", "production", "scheduling", "selection", "inference", "land", "healthcare"]
+FAMILY_ORDER = [
+    "network",
+    "facility",
+    "blending",
+    "production",
+    "scheduling",
+    "selection",
+    "inference",
+    "land",
+    "healthcare",
+]
 
 SECTION_ICONS = {
     "Overview": "◆",
@@ -194,7 +368,7 @@ def collect_list(lines, i, marker):
         m = re.match(marker, line)
         indent = len(line) - len(line.lstrip())
         if m and indent == base_indent:
-            content = line[m.end():].strip()
+            content = line[m.end() :].strip()
             # gather nested lines (deeper indent) for this item
             sub = []
             i += 1
@@ -292,11 +466,15 @@ def build():
     nav = ['<a class="nav-top" href="#overview" data-target="overview">Overview</a>']
     for fam in FAMILY_ORDER:
         label = FAMILIES[fam][0]
-        nav.append(f'<div class="nav-group"><div class="nav-group-label">{html.escape(label)}</div>')
+        nav.append(
+            f'<div class="nav-group"><div class="nav-group-label">{html.escape(label)}</div>'
+        )
         stems = [s for s in META if META[s]["family"] == fam]
         stems.sort(key=lambda s: docs[s][0])
         for s in stems:
-            nav.append(f'<a class="nav-item" href="#{s}" data-target="{s}" data-search="{html.escape(docs[s][0].lower()+" "+META[s]["tag"].lower())}">{html.escape(docs[s][0])}</a>')
+            nav.append(
+                f'<a class="nav-item" href="#{s}" data-target="{s}" data-search="{html.escape(docs[s][0].lower() + " " + META[s]["tag"].lower())}">{html.escape(docs[s][0])}</a>'
+            )
         nav.append("</div>")
     nav_html = "\n".join(nav)
 
@@ -305,7 +483,9 @@ def build():
     for fam in FAMILY_ORDER:
         label, blurb = FAMILIES[fam]
         cards_html.append(f'<div class="fam-block" data-family="{fam}">')
-        cards_html.append(f'<div class="fam-head"><span class="fam-dot fam-{fam}"></span><h3>{html.escape(label)}</h3><p>{html.escape(blurb)}</p></div>')
+        cards_html.append(
+            f'<div class="fam-head"><span class="fam-dot fam-{fam}"></span><h3>{html.escape(label)}</h3><p>{html.escape(blurb)}</p></div>'
+        )
         cards_html.append('<div class="card-grid">')
         stems = [s for s in META if META[s]["family"] == fam]
         stems.sort(key=lambda s: docs[s][0])
@@ -336,10 +516,10 @@ def build():
             secs = []
             for name, body in sections:
                 icon = SECTION_ICONS.get(name, "§")
-                secs.append(f'''<section class="doc-section">
+                secs.append(f"""<section class="doc-section">
   <h3><span class="sec-icon">{icon}</span>{html.escape(name)}</h3>
   <div class="sec-body">{body}</div>
-</section>''')
+</section>""")
             articles.append(f'''<article id="{s}" class="view article">
   <a class="back" href="#overview" data-target="overview">← All generators</a>
   <header class="art-head fam-border-{fam}">
@@ -351,7 +531,7 @@ def build():
       <span class="chip chip-{m["vclass"].lower()}">{html.escape(m["vclass"])} variables</span>
     </div>
   </header>
-  {''.join(secs)}
+  {"".join(secs)}
 </article>''')
     articles_html = "\n".join(articles)
 
@@ -367,7 +547,7 @@ def build():
     )
     with open(OUT, "w") as f:
         f.write(page)
-    print(f"Wrote {OUT} ({len(page)/1024:.0f} KB, {len(META)} generators)")
+    print(f"Wrote {OUT} ({len(page) / 1024:.0f} KB, {len(META)} generators)")
 
 
 CSS = r"""

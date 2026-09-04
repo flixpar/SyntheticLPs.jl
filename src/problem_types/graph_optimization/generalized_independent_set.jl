@@ -10,17 +10,15 @@ the total number of vertex and penalty variables equals `target_variables`.
 """
 struct GeneralizedIndependentSetProblem <: ProblemGenerator
     n_vertices::Int
-    hard_edges::Vector{Tuple{Int,Int}}
-    soft_edges::Vector{Tuple{Int,Int}}
+    hard_edges::Vector{Tuple{Int, Int}}
+    soft_edges::Vector{Tuple{Int, Int}}
     vertex_benefits::Vector{Float64}
     edge_penalties::Vector{Float64}
     minimum_selected::Int
 end
 
 function GeneralizedIndependentSetProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     target_variables >= 6 ||
         throw(ArgumentError("generalized independent set needs at least 6 variables"))
@@ -45,13 +43,11 @@ function GeneralizedIndependentSetProblem(
         planted = Set(randperm(rng, n)[1:planted_size])
         # Leave at least `n_soft` unused pairs for the penalty variables;
         # otherwise tiny targets (6–10) request more soft edges than remain.
-        hard_count = min(max_edges - planted_size * (planted_size - 1) ÷ 2,
-                         max_edges - n_soft,
-                         max(n - 1, 2n))
-        hard_count = max(0, hard_count)
-        hard_edges = _graph_sample_edges(
-            rng, n, hard_count; planted_independent=planted,
+        hard_count = min(
+            max_edges - planted_size * (planted_size - 1) ÷ 2, max_edges - n_soft, max(n - 1, 2n)
         )
+        hard_count = max(0, hard_count)
+        hard_edges = _graph_sample_edges(rng, n, hard_count; planted_independent=planted)
         minimum_selected = feasibility_status == feasible ? planted_size : 0
     end
 
@@ -61,8 +57,7 @@ function GeneralizedIndependentSetProblem(
     edge_penalties = _graph_weights(rng, n_soft; low=5, high=80)
 
     return GeneralizedIndependentSetProblem(
-        n, hard_edges, soft_edges, vertex_benefits, edge_penalties,
-        minimum_selected,
+        n, hard_edges, soft_edges, vertex_benefits, edge_penalties, minimum_selected
     )
 end
 
@@ -74,7 +69,7 @@ function build_model(prob::GeneralizedIndependentSetProblem)
         model,
         Max,
         sum(prob.vertex_benefits[v] * x[v] for v in 1:prob.n_vertices) -
-        sum(prob.edge_penalties[e] * y[e] for e in eachindex(prob.soft_edges)),
+            sum(prob.edge_penalties[e] * y[e] for e in eachindex(prob.soft_edges)),
     )
     for (u, v) in prob.hard_edges
         @constraint(model, x[u] + x[v] <= 1)

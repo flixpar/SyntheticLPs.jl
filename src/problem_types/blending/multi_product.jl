@@ -9,6 +9,7 @@ Generator for multi-product blending problems that allocate a shared pool of
 ingredients across several products at minimum cost.
 
 # Overview
+
 A single set of raw ingredients is blended into multiple distinct products. The
 decisions are `x[i, p]`, the amount of ingredient `i` allocated to product `p`.
 The objective minimizes total ingredient cost. Each product must reach a minimum
@@ -17,16 +18,17 @@ weighted average of each attribute). Each ingredient has a shared supply limit
 spanning all products, and a global cost budget caps total spend.
 
 # Fields
-- `n_ingredients::Int`: Number of shared raw ingredients
-- `n_products::Int`: Number of products produced from the shared pool
-- `n_attributes::Int`: Number of quality attributes per product
-- `costs::Vector{Int}`: Cost per unit of each ingredient
-- `attributes::Matrix{Float64}`: Per-unit attribute values (`n_ingredients` × `n_attributes`)
-- `supply_limits::Vector{Float64}`: Shared supply available for each ingredient (across all products)
-- `cost_budget::Float64`: Maximum total blending cost
-- `product_amounts::Vector{Float64}`: Minimum amount required for each product
-- `product_quality_lower::Matrix{Float64}`: Lower quality band per product/attribute (`n_products` × `n_attributes`)
-- `product_quality_upper::Matrix{Float64}`: Upper quality band per product/attribute (`n_products` × `n_attributes`)
+
+  - `n_ingredients::Int`: Number of shared raw ingredients
+  - `n_products::Int`: Number of products produced from the shared pool
+  - `n_attributes::Int`: Number of quality attributes per product
+  - `costs::Vector{Int}`: Cost per unit of each ingredient
+  - `attributes::Matrix{Float64}`: Per-unit attribute values (`n_ingredients` × `n_attributes`)
+  - `supply_limits::Vector{Float64}`: Shared supply available for each ingredient (across all products)
+  - `cost_budget::Float64`: Maximum total blending cost
+  - `product_amounts::Vector{Float64}`: Minimum amount required for each product
+  - `product_quality_lower::Matrix{Float64}`: Lower quality band per product/attribute (`n_products` × `n_attributes`)
+  - `product_quality_upper::Matrix{Float64}`: Upper quality band per product/attribute (`n_products` × `n_attributes`)
 """
 struct MultiProductBlendingProblem <: ProblemGenerator
     n_ingredients::Int
@@ -52,11 +54,14 @@ then sets `n_ingredients = round(target_variables / n_products)` so that the
 product lands near `target_variables`.
 
 # Arguments
-- `target_variables`: Target number of variables (`n_ingredients * n_products`)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (`n_ingredients * n_products`)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function MultiProductBlendingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function MultiProductBlendingProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
@@ -79,7 +84,9 @@ function MultiProductBlendingProblem(target_variables::Int, feasibility_status::
     attr_avg = [sum(attributes[:, j]) / n_ingredients for j in 1:n_attributes]
 
     # Per-product required amounts
-    product_amounts = [min_blend_amount / n_products * rand(rng, Uniform(0.8, 1.2)) for _ in 1:n_products]
+    product_amounts = [
+        min_blend_amount / n_products * rand(rng, Uniform(0.8, 1.2)) for _ in 1:n_products
+    ]
     total_needed = sum(product_amounts)
 
     # Per-product quality bands around the attribute averages. Because the band
@@ -137,9 +144,16 @@ function MultiProductBlendingProblem(target_variables::Int, feasibility_status::
     end
 
     return MultiProductBlendingProblem(
-        n_ingredients, n_products, n_attributes,
-        costs, attributes, supply_limits, cost_budget,
-        product_amounts, product_quality_lower, product_quality_upper,
+        n_ingredients,
+        n_products,
+        n_attributes,
+        costs,
+        attributes,
+        supply_limits,
+        cost_budget,
+        product_amounts,
+        product_quality_lower,
+        product_quality_upper,
     )
 end
 
@@ -150,7 +164,8 @@ Build a JuMP model for the multi-product blending problem. Deterministic — use
 only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::MultiProductBlendingProblem)
     model = Model()
@@ -175,17 +190,23 @@ function build_model(prob::MultiProductBlendingProblem)
     end
 
     # Global cost budget
-    @constraint(model, sum(prob.costs[i] * sum(x[i, p] for p in 1:P) for i in 1:n) <= prob.cost_budget)
+    @constraint(
+        model, sum(prob.costs[i] * sum(x[i, p] for p in 1:P) for i in 1:n) <= prob.cost_budget
+    )
 
     # Per-product quality bands on the weighted-average of each attribute
     for p in 1:P
         for j in 1:prob.n_attributes
-            @constraint(model,
+            @constraint(
+                model,
                 sum(prob.attributes[i, j] * x[i, p] for i in 1:n) >=
-                prob.product_quality_lower[p, j] * sum(x[i, p] for i in 1:n))
-            @constraint(model,
+                    prob.product_quality_lower[p, j] * sum(x[i, p] for i in 1:n)
+            )
+            @constraint(
+                model,
                 sum(prob.attributes[i, j] * x[i, p] for i in 1:n) <=
-                prob.product_quality_upper[p, j] * sum(x[i, p] for i in 1:n))
+                    prob.product_quality_upper[p, j] * sum(x[i, p] for i in 1:n)
+            )
         end
     end
 

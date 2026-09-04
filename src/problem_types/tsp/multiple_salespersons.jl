@@ -19,13 +19,13 @@ struct TSPMultipleSalespersonsProblem <: ProblemGenerator
     n_salespersons::Int
     min_stops::Int
     max_stops::Int
-    locations::Vector{Tuple{Float64,Float64}}
+    locations::Vector{Tuple{Float64, Float64}}
     dist::Matrix{Float64}
 end
 
-function TSPMultipleSalespersonsProblem(target_variables::Int,
-                                        feasibility_status::FeasibilityStatus,
-                                        seed::Int)
+function TSPMultipleSalespersonsProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
     n = max(5, round(Int, sqrt(target_variables + 1)))
     n_customers = n - 1
@@ -48,9 +48,7 @@ function TSPMultipleSalespersonsProblem(target_variables::Int,
 
     locations = _tsp_stops(rng, n)
     dist = _tsp_distance(rng, locations)
-    return TSPMultipleSalespersonsProblem(
-        n, n_salespersons, min_stops, max_stops, locations, dist,
-    )
+    return TSPMultipleSalespersonsProblem(n, n_salespersons, min_stops, max_stops, locations, dist)
 end
 
 function build_model(prob::TSPMultipleSalespersonsProblem)
@@ -63,8 +61,7 @@ function build_model(prob::TSPMultipleSalespersonsProblem)
 
     @variable(model, x[i in nodes, j in nodes; i != j], Bin)
     @variable(model, 1 <= u[j in stops] <= max_stops)
-    @objective(model, Min,
-        sum(prob.dist[i, j] * x[i, j] for i in nodes, j in nodes if i != j))
+    @objective(model, Min, sum(prob.dist[i, j] * x[i, j] for i in nodes, j in nodes if i != j))
 
     depot_out = sum(x[1, j] for j in stops)
     @constraint(model, depot_out == fleet)
@@ -82,9 +79,10 @@ function build_model(prob::TSPMultipleSalespersonsProblem)
     if max_stops > 1
         for i in stops, j in stops
             i == j && continue
-            @constraint(model,
-                u[i] - u[j] + max_stops * x[i, j] +
-                (max_stops - 2) * x[j, i] <= max_stops - 1)
+            @constraint(
+                model,
+                u[i] - u[j] + max_stops * x[i, j] + (max_stops - 2) * x[j, i] <= max_stops - 1
+            )
         end
     else
         # A one-stop route cannot contain a customer-to-customer arc.

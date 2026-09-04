@@ -9,6 +9,7 @@ using Distributions
 Generator for energy generation mix optimization problems.
 
 # Overview
+
 Models short-horizon power dispatch. The decisions are generation levels for
 each selected source in each time period. The objective minimizes total
 generation cost. Constraints require demand satisfaction in every period,
@@ -16,25 +17,26 @@ respect source capacity bounds, impose a minimum zero-emission generation share,
 and include a period-level emissions-intensity row.
 
 # Fields
-- `n_sources::Int`: Number of power generation sources
-- `n_periods::Int`: Number of time periods
-- `sources::Vector{String}`: Names of energy sources
-- `time_periods::Vector{Int}`: Time period indices
-- `generation_costs::Dict{String,Float64}`: Cost per MWh for each source
-- `capacities::Dict{String,Float64}`: Maximum capacity (MW) for each source
-- `demands::Vector{Float64}`: Demand (MW) in each period
-- `emission_limits::Dict{String,Float64}`: Emission rate per MWh for each source
-- `renewable_fraction::Float64`: Minimum fraction of generation from renewables
+
+  - `n_sources::Int`: Number of power generation sources
+  - `n_periods::Int`: Number of time periods
+  - `sources::Vector{String}`: Names of energy sources
+  - `time_periods::Vector{Int}`: Time period indices
+  - `generation_costs::Dict{String,Float64}`: Cost per MWh for each source
+  - `capacities::Dict{String,Float64}`: Maximum capacity (MW) for each source
+  - `demands::Vector{Float64}`: Demand (MW) in each period
+  - `emission_limits::Dict{String,Float64}`: Emission rate per MWh for each source
+  - `renewable_fraction::Float64`: Minimum fraction of generation from renewables
 """
 struct EnergyProblem <: ProblemGenerator
     n_sources::Int
     n_periods::Int
     sources::Vector{String}
     time_periods::Vector{Int}
-    generation_costs::Dict{String,Float64}
-    capacities::Dict{String,Float64}
+    generation_costs::Dict{String, Float64}
+    capacities::Dict{String, Float64}
     demands::Vector{Float64}
-    emission_limits::Dict{String,Float64}
+    emission_limits::Dict{String, Float64}
     renewable_fraction::Float64
     emission_intensity_target::Float64
 end
@@ -45,9 +47,10 @@ end
 Construct an energy generation mix problem instance.
 
 # Arguments
-- `target_variables`: Target number of variables (n_sources × n_periods)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (n_sources × n_periods)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
 function EnergyProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
@@ -134,7 +137,7 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
         ("solar", true, 0.99, 0.25, 0.3),
         ("wind", true, 0.95, 0.35, 0.4),
         ("hydro", true, 0.90, 0.50, 0.6),
-        ("biomass", true, 0.88, 0.75, 1.1)
+        ("biomass", true, 0.88, 0.75, 1.1),
     ]
 
     # Select sources
@@ -147,8 +150,10 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
     n_renewables = min(n_renewables, length(renewable_indices))
     n_conventional = min(n_conventional, length(conventional_indices))
 
-    renewable_sources = source_types[sample(rng, renewable_indices, n_renewables, replace=false)]
-    conventional_sources = source_types[sample(rng, conventional_indices, n_conventional, replace=false)]
+    renewable_sources = source_types[sample(rng, renewable_indices, n_renewables; replace=false)]
+    conventional_sources = source_types[sample(
+        rng, conventional_indices, n_conventional; replace=false
+    )]
     selected_sources = vcat(renewable_sources, conventional_sources)
 
     sources = [s[1] for s in selected_sources]
@@ -203,16 +208,92 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
     total_share = sum(capacity_shares)
     for (i, (name, _, availability, capacity_factor, _)) in enumerate(selected_sources)
         normalized_share = capacity_shares[i] / total_share
-        effective_capacity = total_required_capacity * normalized_share / (availability * capacity_factor)
+        effective_capacity =
+            total_required_capacity * normalized_share / (availability * capacity_factor)
         capacities[name] = max(10.0, effective_capacity)
     end
 
     # Generate demands
     demands = Float64[]
 
-    residential_pattern = [0.6, 0.55, 0.5, 0.5, 0.55, 0.7, 0.85, 1.0, 0.95, 0.9, 0.85, 0.9, 0.95, 1.0, 0.9, 0.85, 0.9, 0.95, 1.0, 0.95, 0.9, 0.8, 0.7, 0.65]
-    commercial_pattern = [0.4, 0.35, 0.3, 0.3, 0.35, 0.5, 0.7, 0.9, 1.0, 1.0, 0.95, 0.9, 0.85, 0.9, 0.95, 1.0, 0.95, 0.9, 0.75, 0.6, 0.5, 0.45, 0.4, 0.35]
-    industrial_pattern = [0.8, 0.75, 0.7, 0.7, 0.75, 0.85, 0.95, 1.0, 1.0, 0.95, 0.9, 0.85, 0.9, 0.95, 1.0, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.7, 0.75, 0.8]
+    residential_pattern = [
+        0.6,
+        0.55,
+        0.5,
+        0.5,
+        0.55,
+        0.7,
+        0.85,
+        1.0,
+        0.95,
+        0.9,
+        0.85,
+        0.9,
+        0.95,
+        1.0,
+        0.9,
+        0.85,
+        0.9,
+        0.95,
+        1.0,
+        0.95,
+        0.9,
+        0.8,
+        0.7,
+        0.65,
+    ]
+    commercial_pattern = [
+        0.4,
+        0.35,
+        0.3,
+        0.3,
+        0.35,
+        0.5,
+        0.7,
+        0.9,
+        1.0,
+        1.0,
+        0.95,
+        0.9,
+        0.85,
+        0.9,
+        0.95,
+        1.0,
+        0.95,
+        0.9,
+        0.75,
+        0.6,
+        0.5,
+        0.45,
+        0.4,
+        0.35,
+    ]
+    industrial_pattern = [
+        0.8,
+        0.75,
+        0.7,
+        0.7,
+        0.75,
+        0.85,
+        0.95,
+        1.0,
+        1.0,
+        0.95,
+        0.9,
+        0.85,
+        0.9,
+        0.95,
+        1.0,
+        0.95,
+        0.9,
+        0.85,
+        0.8,
+        0.75,
+        0.7,
+        0.7,
+        0.75,
+        0.8,
+    ]
 
     hour_factors = if peak_demand < 100
         residential_pattern
@@ -279,8 +360,13 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
     end
 
     # Adjust for feasibility
-    solution_status = feasibility_status == feasible ? :feasible :
-                     feasibility_status == infeasible ? :infeasible : :all
+    solution_status = if feasibility_status == feasible
+        :feasible
+    elseif feasibility_status == infeasible
+        :infeasible
+    else
+        :all
+    end
     actual_status = solution_status
     if solution_status == :all
         actual_status = rand(rng) < 0.7 ? :feasible : :infeasible
@@ -382,8 +468,7 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
         end
 
         clean_sources = [s for s in sources if iszero(emission_limits[s])]
-        clean_capacity = isempty(clean_sources) ? 0.0 :
-                         sum(capacities[s] for s in clean_sources)
+        clean_capacity = isempty(clean_sources) ? 0.0 : sum(capacities[s] for s in clean_sources)
         required_clean_capacity = renewable_fraction * max_demand
         if isempty(clean_sources)
             # No zero-emission source exists, so any positive renewable floor is
@@ -438,8 +523,18 @@ function EnergyProblem(target_variables::Int, feasibility_status::FeasibilitySta
         max_emission * rand(rng, Uniform(0.7, 0.95))
     end
 
-    return EnergyProblem(n_sources, n_periods, sources, time_periods, generation_costs, capacities,
-                        demands, emission_limits, renewable_fraction, emission_intensity_target)
+    return EnergyProblem(
+        n_sources,
+        n_periods,
+        sources,
+        time_periods,
+        generation_costs,
+        capacities,
+        demands,
+        emission_limits,
+        renewable_fraction,
+        emission_intensity_target,
+    )
 end
 
 """
@@ -448,10 +543,12 @@ end
 Build a JuMP model for the energy generation mix problem.
 
 # Arguments
-- `prob`: EnergyProblem instance
+
+  - `prob`: EnergyProblem instance
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::EnergyProblem)
     model = Model()
@@ -460,13 +557,15 @@ function build_model(prob::EnergyProblem)
     @variable(model, 0 <= x[s in prob.sources, t in prob.time_periods] <= prob.capacities[s])
 
     # Objective
-    @objective(model, Min,
-        sum(prob.generation_costs[s] * x[s,t] for s in prob.sources, t in prob.time_periods)
+    @objective(
+        model,
+        Min,
+        sum(prob.generation_costs[s] * x[s, t] for s in prob.sources, t in prob.time_periods)
     )
 
     # Meet demand
     for t in prob.time_periods
-        @constraint(model, sum(x[s,t] for s in prob.sources) >= prob.demands[t])
+        @constraint(model, sum(x[s, t] for s in prob.sources) >= prob.demands[t])
     end
 
     # Emissions: cap the generation-weighted average emission intensity at a fixed
@@ -474,18 +573,20 @@ function build_model(prob::EnergyProblem)
     # `<= max_rate * sum(x)` form would be a tautology — a weighted average never
     # exceeds its largest weight).
     for t in prob.time_periods
-        @constraint(model,
-            sum(prob.emission_limits[s] * x[s,t] for s in prob.sources) <=
-            prob.emission_intensity_target * sum(x[s,t] for s in prob.sources)
+        @constraint(
+            model,
+            sum(prob.emission_limits[s] * x[s, t] for s in prob.sources) <=
+                prob.emission_intensity_target * sum(x[s, t] for s in prob.sources)
         )
     end
 
     # Renewables
     renewable_sources = [s for s in prob.sources if prob.emission_limits[s] == 0.0]
     for t in prob.time_periods
-        @constraint(model,
-            sum(x[s,t] for s in renewable_sources) >=
-            prob.renewable_fraction * sum(x[s,t] for s in prob.sources)
+        @constraint(
+            model,
+            sum(x[s, t] for s in renewable_sources) >=
+                prob.renewable_fraction * sum(x[s, t] for s in prob.sources)
         )
     end
 

@@ -38,8 +38,9 @@ struct OptimalTransmissionSwitchingProblem <: ProblemGenerator
 end
 
 # Add a candidate undirected line while retaining a deterministic orientation.
-function _ots_add_line!(line_from::Vector{Int}, line_to::Vector{Int},
-                        edge_set::Set{Tuple{Int,Int}}, a::Int, b::Int)
+function _ots_add_line!(
+    line_from::Vector{Int}, line_to::Vector{Int}, edge_set::Set{Tuple{Int, Int}}, a::Int, b::Int
+)
     a == b && return false
     key = a < b ? (a, b) : (b, a)
     key in edge_set && return false
@@ -63,9 +64,7 @@ status variables are relaxed. Unknown requests retain naturally sampled thermal
 limits rather than forcing either outcome.
 """
 function OptimalTransmissionSwitchingProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
 
@@ -80,7 +79,7 @@ function OptimalTransmissionSwitchingProblem(
     # Candidate network: a random spanning tree plus additional switchable lines.
     line_from = Int[]
     line_to = Int[]
-    edge_set = Set{Tuple{Int,Int}}()
+    edge_set = Set{Tuple{Int, Int}}()
     order = randperm(rng, n_buses)
     for idx in 2:n_buses
         parent_idx = rand(rng, 1:(idx - 1))
@@ -93,8 +92,7 @@ function OptimalTransmissionSwitchingProblem(
     max_attempts = 50 * n_lines
     while length(line_from) < n_lines && attempts < max_attempts
         attempts += 1
-        _ots_add_line!(line_from, line_to, edge_set,
-                       rand(rng, 1:n_buses), rand(rng, 1:n_buses))
+        _ots_add_line!(line_from, line_to, edge_set, rand(rng, 1:n_buses), rand(rng, 1:n_buses))
     end
     n_lines = length(line_from)
 
@@ -149,14 +147,13 @@ function OptimalTransmissionSwitchingProblem(
     witness_flow = zeros(Float64, n_lines)
     for l in 1:n_lines
         if planted_closed[l]
-            witness_flow[l] = susceptance[l] *
-                              (theta_witness[line_from[l]] - theta_witness[line_to[l]])
+            witness_flow[l] =
+                susceptance[l] * (theta_witness[line_from[l]] - theta_witness[line_to[l]])
         end
     end
 
     average_load = total_nominal_demand / max(n_lines, 1)
-    line_limit = [max(1.0, average_load * rand(rng, Uniform(0.45, 1.35)))
-                  for _ in 1:n_lines]
+    line_limit = [max(1.0, average_load * rand(rng, Uniform(0.45, 1.35))) for _ in 1:n_lines]
     if feasibility_status == feasible
         for l in 1:n_lines
             planted_closed[l] || continue
@@ -174,14 +171,28 @@ function OptimalTransmissionSwitchingProblem(
     flow_big_m = [2.0 * susceptance[l] * angle_limit for l in 1:n_lines]
 
     return OptimalTransmissionSwitchingProblem(
-        n_buses, n_lines, n_generators,
-        line_from, line_to, susceptance, line_limit, flow_big_m,
-        gen_bus, gen_cost, pmin, pmax, demand, switching_cost,
-        angle_limit, ref_bus,
+        n_buses,
+        n_lines,
+        n_generators,
+        line_from,
+        line_to,
+        susceptance,
+        line_limit,
+        flow_big_m,
+        gen_bus,
+        gen_cost,
+        pmin,
+        pmax,
+        demand,
+        switching_cost,
+        angle_limit,
+        ref_bus,
     )
 end
 
-"""Build the deterministic JuMP formulation for an OTS instance."""
+"""
+Build the deterministic JuMP formulation for an OTS instance.
+"""
 function build_model(prob::OptimalTransmissionSwitchingProblem)
     model = Model()
     B = prob.n_buses
@@ -193,9 +204,11 @@ function build_model(prob::OptimalTransmissionSwitchingProblem)
     @variable(model, flow[1:L])
     @variable(model, line_on[1:L], Bin)
 
-    @objective(model, Min,
+    @objective(
+        model,
+        Min,
         sum(prob.gen_cost[g] * p[g] for g in 1:G) +
-        sum(prob.switching_cost[l] * line_on[l] for l in 1:L)
+            sum(prob.switching_cost[l] * line_on[l] for l in 1:L)
     )
 
     @constraint(model, theta[prob.ref_bus] == 0)
@@ -203,8 +216,8 @@ function build_model(prob::OptimalTransmissionSwitchingProblem)
         @constraint(model, flow[l] <= prob.line_limit[l] * line_on[l])
         @constraint(model, flow[l] >= -prob.line_limit[l] * line_on[l])
 
-        dc_residual = flow[l] - prob.susceptance[l] *
-                      (theta[prob.line_from[l]] - theta[prob.line_to[l]])
+        dc_residual =
+            flow[l] - prob.susceptance[l] * (theta[prob.line_from[l]] - theta[prob.line_to[l]])
         @constraint(model, dc_residual <= prob.flow_big_m[l] * (1 - line_on[l]))
         @constraint(model, dc_residual >= -prob.flow_big_m[l] * (1 - line_on[l]))
     end

@@ -9,8 +9,8 @@
 # Directed Hamilton cycle plus extra arcs sampled by rejection. Large sparse
 # instances never materialize all n(n-1) ordered pairs.
 function _discrete_mcf_topology(rng::AbstractRNG, n_nodes::Int, n_arcs::Int)
-    arcs = Tuple{Int,Int}[]
-    seen = Set{Tuple{Int,Int}}()
+    arcs = Tuple{Int, Int}[]
+    seen = Set{Tuple{Int, Int}}()
     order = randperm(rng, n_nodes)
     for idx in 1:n_nodes
         arc = (order[idx], order[idx == n_nodes ? 1 : idx + 1])

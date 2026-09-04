@@ -4,6 +4,21 @@ A standardized framework for generating synthetic linear programming (LP) proble
 
 Requires Julia 1.11 or later.
 
+## Development
+
+The repository uses JuliaFormatter for Julia, Ruff for Python, and Aqua for
+Julia package-quality checks. After installing the pinned Python development
+requirements, initialize the Julia tooling environment once:
+
+```bash
+python3 -m pip install -r requirements-dev.txt
+make setup
+```
+
+Run `make format` to apply formatting, `make lint` for formatting and static
+quality checks, or `make check` for the complete lint-and-test suite. CI runs
+the same checks on every pull request and push to `main`.
+
 ## Overview
 
 This package provides:

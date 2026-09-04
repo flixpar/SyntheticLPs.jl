@@ -32,10 +32,10 @@ struct RobustElectiveSurgeryAssignmentProblem <: ProblemGenerator
     max_overtime::Vector{Float64}
     overtime_cost::Float64
     uncertainty_budget::Vector{Float64}
-    admissible::Vector{Tuple{Int,Int,Int}}
-    open_blocks::Vector{Tuple{Int,Int}}
-    feasible_witness::Union{Nothing,Vector{Int}}
-    infeasible_surgery::Union{Nothing,Int}
+    admissible::Vector{Tuple{Int, Int, Int}}
+    open_blocks::Vector{Tuple{Int, Int}}
+    feasible_witness::Union{Nothing, Vector{Int}}
+    infeasible_surgery::Union{Nothing, Int}
     feasibility_status::FeasibilityStatus
 end
 
@@ -50,9 +50,9 @@ function _robust_extra_capacity(deviations::Vector{Float64}, gamma::Float64)
     return value
 end
 
-function RobustElectiveSurgeryAssignmentProblem(target_variables::Int,
-                                                 feasibility_status::FeasibilityStatus,
-                                                 seed::Int)
+function RobustElectiveSurgeryAssignmentProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     target = max(target_variables, 20)
     base_target = max(20, round(Int, target / 1.7))
     best = nothing
@@ -72,9 +72,10 @@ function RobustElectiveSurgeryAssignmentProblem(target_variables::Int,
     end
     base = best
     rng = MersenneTwister(seed + 23063)
-    deviation = [clamp(1.2816 * base.surgery_duration_sd[i], 5.0,
-                       0.75 * base.surgery_duration[i])
-                 for i in 1:base.n_surgeries]
+    deviation = [
+        clamp(1.2816 * base.surgery_duration_sd[i], 5.0, 0.75 * base.surgery_duration[i]) for
+        i in 1:base.n_surgeries
+    ]
     gamma = [rand(rng, Uniform(1.0, 3.0)) for _ in base.open_blocks]
     max_overtime = fill(base.max_overtime, length(base.open_blocks))
 
@@ -87,22 +88,40 @@ function RobustElectiveSurgeryAssignmentProblem(target_variables::Int,
         end
         for q in eachindex(base.open_blocks)
             r, d = base.open_blocks[q]
-            nominal = sum(base.surgery_duration[i] + base.turnover
-                          for i in assigned_by_block[q]; init=0.0)
+            nominal = sum(
+                base.surgery_duration[i] + base.turnover for i in assigned_by_block[q]; init=0.0
+            )
             robust = _robust_extra_capacity(deviation[assigned_by_block[q]], gamma[q])
-            max_overtime[q] = max(max_overtime[q], ceil(nominal + robust -
-                                                        base.session_length[r, d]))
+            max_overtime[q] = max(
+                max_overtime[q], ceil(nominal + robust - base.session_length[r, d])
+            )
         end
     end
 
     return RobustElectiveSurgeryAssignmentProblem(
-        base.n_surgeries, base.n_rooms, base.n_days, base.specialty_names,
-        base.surgery_specialty, base.surgery_type_id, base.surgery_duration,
-        deviation, base.surgery_deadline, base.postponement_penalty,
-        base.surgery_surgeon, base.mandatory, base.surgeon_budget,
-        base.session_length, base.turnover, max_overtime, base.overtime_cost,
-        gamma, base.admissible, base.open_blocks, base.feasible_witness,
-        base.infeasible_surgery, feasibility_status,
+        base.n_surgeries,
+        base.n_rooms,
+        base.n_days,
+        base.specialty_names,
+        base.surgery_specialty,
+        base.surgery_type_id,
+        base.surgery_duration,
+        deviation,
+        base.surgery_deadline,
+        base.postponement_penalty,
+        base.surgery_surgeon,
+        base.mandatory,
+        base.surgeon_budget,
+        base.session_length,
+        base.turnover,
+        max_overtime,
+        base.overtime_cost,
+        gamma,
+        base.admissible,
+        base.open_blocks,
+        base.feasible_witness,
+        base.infeasible_surgery,
+        feasibility_status,
     )
 end
 
@@ -114,7 +133,7 @@ function build_model(prob::RobustElectiveSurgeryAssignmentProblem)
     open_index = Dict(block => q for (q, block) in enumerate(prob.open_blocks))
     by_surgery = [Int[] for _ in 1:N]
     by_block = [Int[] for _ in 1:Q]
-    by_surgeon_day = Dict{Tuple{Int,Int},Vector{Int}}()
+    by_surgeon_day = Dict{Tuple{Int, Int}, Vector{Int}}()
     for (a, (i, r, d)) in enumerate(prob.admissible)
         push!(by_surgery[i], a)
         push!(by_block[open_index[(r, d)]], a)
@@ -123,23 +142,30 @@ function build_model(prob::RobustElectiveSurgeryAssignmentProblem)
 
     @variable(model, assign[1:A], Bin)
     @variable(model, postpone[1:N], Bin)
-    @variable(model, 0 <= overtime[q=1:Q] <= prob.max_overtime[q])
+    @variable(model, 0 <= overtime[q = 1:Q] <= prob.max_overtime[q])
     @variable(model, theta[1:Q] >= 0)
     @variable(model, mu[1:A] >= 0)
 
-    @constraint(model, case_assignment[i=1:N],
-                sum(assign[a] for a in by_surgery[i]; init=0.0) + postpone[i] == 1)
+    @constraint(
+        model,
+        case_assignment[i = 1:N],
+        sum(assign[a] for a in by_surgery[i]; init=0.0) + postpone[i] == 1
+    )
     for i in 1:N
         prob.mandatory[i] && @constraint(model, postpone[i] == 0)
     end
     for q in 1:Q
         r, d = prob.open_blocks[q]
-        @constraint(model,
-            sum((prob.nominal_duration[prob.admissible[a][1]] + prob.turnover) * assign[a]
-                for a in by_block[q]; init=0.0) +
+        @constraint(
+            model,
+            sum(
+                (prob.nominal_duration[prob.admissible[a][1]] + prob.turnover) * assign[a] for
+                a in by_block[q];
+                init=0.0,
+            ) +
             prob.uncertainty_budget[q] * theta[q] +
-            sum(mu[a] for a in by_block[q]; init=0.0) - overtime[q] <=
-            prob.session_length[r, d])
+            sum(mu[a] for a in by_block[q]; init=0.0) - overtime[q] <= prob.session_length[r, d]
+        )
         for a in by_block[q]
             i = prob.admissible[a][1]
             @constraint(model, theta[q] + mu[a] >= prob.duration_deviation[i] * assign[a])
@@ -147,14 +173,19 @@ function build_model(prob::RobustElectiveSurgeryAssignmentProblem)
     end
     for (s, d) in sort!(collect(keys(by_surgeon_day)))
         idxs = by_surgeon_day[(s, d)]
-        @constraint(model,
+        @constraint(
+            model,
             sum(prob.nominal_duration[prob.admissible[a][1]] * assign[a] for a in idxs) <=
-            prob.surgeon_budget[s, d])
+                prob.surgeon_budget[s, d]
+        )
     end
 
-    @objective(model, Min,
+    @objective(
+        model,
+        Min,
         sum(prob.postponement_penalty[i] * postpone[i] for i in 1:N) +
-        prob.overtime_cost * sum(overtime[q] for q in 1:Q))
+            prob.overtime_cost * sum(overtime[q] for q in 1:Q)
+    )
     return model
 end
 

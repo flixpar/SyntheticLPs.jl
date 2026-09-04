@@ -16,15 +16,16 @@ at most `max_sit`; a longer gap is an overnight *rest*. Because
 pairing's duty structure can be recovered from its leg times alone.
 
 # Fields
-- `min_connect::Int`: minimum sit (connection) time between two legs of a duty
-- `max_sit::Int`: maximum sit time inside a duty (longer ground time = rest)
-- `max_legs_per_duty::Int`: maximum number of legs in one duty period
-- `max_duty_minutes::Int`: maximum elapsed duty time (first departure to last
-  arrival of the duty)
-- `max_block_minutes::Int`: maximum flight (block) time flown in one duty
-- `min_rest::Int`: minimum rest between two consecutive duties of a pairing
-- `max_rest::Int`: maximum rest between two consecutive duties
-- `max_duties::Int`: maximum number of duty periods in a pairing (trip length)
+
+  - `min_connect::Int`: minimum sit (connection) time between two legs of a duty
+  - `max_sit::Int`: maximum sit time inside a duty (longer ground time = rest)
+  - `max_legs_per_duty::Int`: maximum number of legs in one duty period
+  - `max_duty_minutes::Int`: maximum elapsed duty time (first departure to last
+    arrival of the duty)
+  - `max_block_minutes::Int`: maximum flight (block) time flown in one duty
+  - `min_rest::Int`: minimum rest between two consecutive duties of a pairing
+  - `max_rest::Int`: maximum rest between two consecutive duties
+  - `max_duties::Int`: maximum number of duty periods in a pairing (trip length)
 """
 struct CrewPairingRules
     min_connect::Int
@@ -76,6 +77,7 @@ Generator for airline crew pairing set-partitioning instances built from
 *operationally legal* pairings.
 
 # Overview
+
 A dated flight schedule is generated over a hub-and-spoke airport network, then
 crew pairings are built as time-and-airport-respecting walks through that
 schedule. Every generated pairing satisfies airport continuity, connection
@@ -87,6 +89,7 @@ The model is the classical crew pairing set-partitioning problem: choose a
 minimum-cost subset of pairings covering every flight exactly once.
 
 # Schedule construction
+
 The schedule itself is produced by *planting* lines of flying: each planted line
 is a legal pairing whose legs are created as it is flown (base -> ... -> base,
 with sit times, duty limits and overnight rests). The planted lines therefore
@@ -95,39 +98,41 @@ and provides the feasible witness. Additional columns are sampled as legal walks
 over the resulting schedule, so they freely mix legs from different lines.
 
 # Cost
+
 Pairing cost follows standard airline crew pay: a *credit* equal to the largest
 of block time, a minimum-duty-guarantee fraction of elapsed duty time, and a
 minimum daily credit per duty, paid at `pay_rate`, plus per-diem over the whole
 time away from base and a hotel cost per overnight.
 
 # Fields
-- `num_flights::Int`: number of flight legs in the schedule
-- `num_airports::Int`: number of airports
-- `bases::Vector{Int}`: crew base airports (a prefix of `1:num_airports`)
-- `airport_locations::Vector{Tuple{Float64,Float64}}`: airport coordinates (km)
-- `block_minutes::Matrix{Int}`: scheduled flight time between airport pairs
-- `flight_origins::Vector{Int}`: origin airport of each flight
-- `flight_destinations::Vector{Int}`: destination airport of each flight
-- `departure_times::Vector{Int}`: departure time (minutes from horizon start)
-- `arrival_times::Vector{Int}`: arrival time (minutes from horizon start)
-- `rules::CrewPairingRules`: duty/rest legality rules
-- `pairing_costs::Vector{Float64}`: cost of each pairing column
-- `flights_in_pairing::Vector{Vector{Int}}`: legs of each pairing, in order
-- `pairing_bases::Vector{Int}`: home base of each pairing
-- `pay_rate::Float64`: crew pay per credit hour
-- `duty_guarantee::Float64`: minimum-duty-guarantee fraction (credit per duty hour)
-- `min_daily_credit::Int`: minimum credited minutes per duty period
-- `per_diem_rate::Float64`: per-diem paid per hour away from base
-- `hotel_cost::Float64`: hotel cost per overnight
-- `feasible_witness::Union{Nothing,CrewPairingCoverWitness}`: planted partition
-- `infeasibility_certificate::Union{Nothing,UncoverableFlightCertificate}`
-- `feasibility_status::FeasibilityStatus`
+
+  - `num_flights::Int`: number of flight legs in the schedule
+  - `num_airports::Int`: number of airports
+  - `bases::Vector{Int}`: crew base airports (a prefix of `1:num_airports`)
+  - `airport_locations::Vector{Tuple{Float64,Float64}}`: airport coordinates (km)
+  - `block_minutes::Matrix{Int}`: scheduled flight time between airport pairs
+  - `flight_origins::Vector{Int}`: origin airport of each flight
+  - `flight_destinations::Vector{Int}`: destination airport of each flight
+  - `departure_times::Vector{Int}`: departure time (minutes from horizon start)
+  - `arrival_times::Vector{Int}`: arrival time (minutes from horizon start)
+  - `rules::CrewPairingRules`: duty/rest legality rules
+  - `pairing_costs::Vector{Float64}`: cost of each pairing column
+  - `flights_in_pairing::Vector{Vector{Int}}`: legs of each pairing, in order
+  - `pairing_bases::Vector{Int}`: home base of each pairing
+  - `pay_rate::Float64`: crew pay per credit hour
+  - `duty_guarantee::Float64`: minimum-duty-guarantee fraction (credit per duty hour)
+  - `min_daily_credit::Int`: minimum credited minutes per duty period
+  - `per_diem_rate::Float64`: per-diem paid per hour away from base
+  - `hotel_cost::Float64`: hotel cost per overnight
+  - `feasible_witness::Union{Nothing,CrewPairingCoverWitness}`: planted partition
+  - `infeasibility_certificate::Union{Nothing,UncoverableFlightCertificate}`
+  - `feasibility_status::FeasibilityStatus`
 """
 struct AirlineCrewProblem <: ProblemGenerator
     num_flights::Int
     num_airports::Int
     bases::Vector{Int}
-    airport_locations::Vector{Tuple{Float64,Float64}}
+    airport_locations::Vector{Tuple{Float64, Float64}}
     block_minutes::Matrix{Int}
     flight_origins::Vector{Int}
     flight_destinations::Vector{Int}
@@ -142,8 +147,8 @@ struct AirlineCrewProblem <: ProblemGenerator
     min_daily_credit::Int
     per_diem_rate::Float64
     hotel_cost::Float64
-    feasible_witness::Union{Nothing,CrewPairingCoverWitness}
-    infeasibility_certificate::Union{Nothing,UncoverableFlightCertificate}
+    feasible_witness::Union{Nothing, CrewPairingCoverWitness}
+    infeasibility_certificate::Union{Nothing, UncoverableFlightCertificate}
     feasibility_status::FeasibilityStatus
 end
 
@@ -167,10 +172,15 @@ mutable struct _CrewNet
     rules::CrewPairingRules
 end
 
-_crew_net(num_airports::Int, rules::CrewPairingRules) =
-    _CrewNet(Int[], Int[], Int[], Int[],
-             [Int[] for _ in 1:num_airports], [Int[] for _ in 1:num_airports],
-             rules)
+_crew_net(num_airports::Int, rules::CrewPairingRules) = _CrewNet(
+    Int[],
+    Int[],
+    Int[],
+    Int[],
+    [Int[] for _ in 1:num_airports],
+    [Int[] for _ in 1:num_airports],
+    rules,
+)
 
 """
     _crew_add_flight!(net, o, d, dep, arr) -> Int
@@ -216,8 +226,7 @@ Split a leg sequence into duty periods. A ground time above `max_sit` ends the
 duty; anything shorter is an in-duty connection. Indices are positions inside
 `legs`.
 """
-function _crew_duty_ranges(dep::Vector{Int}, arr::Vector{Int}, legs::Vector{Int},
-                           max_sit::Int)
+function _crew_duty_ranges(dep::Vector{Int}, arr::Vector{Int}, legs::Vector{Int}, max_sit::Int)
     ranges = UnitRange{Int}[]
     start = 1
     for i in 1:(length(legs) - 1)
@@ -236,17 +245,24 @@ end
 Re-derive a pairing's legality from the raw schedule data. Returns the violated
 properties, so an empty result certifies the pairing is flyable:
 
-- `:base_return` - the pairing does not start and end at its (base) airport
-- `:continuity` - some leg does not depart where the previous leg arrived
-- `:time` - a leg arrives before it departs, or a connection is shorter than
-  `min_connect`, or the legs are not in strictly increasing time order
-- `:duty` - a duty period exceeds `max_legs_per_duty`, `max_block_minutes` or
-  `max_duty_minutes`, or the pairing exceeds `max_duties`
-- `:rest` - a duty break is shorter than `min_rest` or longer than `max_rest`
+  - `:base_return` - the pairing does not start and end at its (base) airport
+  - `:continuity` - some leg does not depart where the previous leg arrived
+  - `:time` - a leg arrives before it departs, or a connection is shorter than
+    `min_connect`, or the legs are not in strictly increasing time order
+  - `:duty` - a duty period exceeds `max_legs_per_duty`, `max_block_minutes` or
+    `max_duty_minutes`, or the pairing exceeds `max_duties`
+  - `:rest` - a duty break is shorter than `min_rest` or longer than `max_rest`
 """
-function _crew_violations(org::Vector{Int}, dst::Vector{Int}, dep::Vector{Int},
-                          arr::Vector{Int}, legs::Vector{Int}, base::Int,
-                          bases::Vector{Int}, rules::CrewPairingRules)
+function _crew_violations(
+    org::Vector{Int},
+    dst::Vector{Int},
+    dep::Vector{Int},
+    arr::Vector{Int},
+    legs::Vector{Int},
+    base::Int,
+    bases::Vector{Int},
+    rules::CrewPairingRules,
+)
     bad = Symbol[]
     if isempty(legs)
         push!(bad, :base_return)
@@ -294,11 +310,16 @@ end
 Legality violations of pairing `p`, re-derived from the problem's own schedule
 data (see the low-level method for the property list).
 """
-_crew_violations(prob::AirlineCrewProblem, p::Int) =
-    _crew_violations(prob.flight_origins, prob.flight_destinations,
-                     prob.departure_times, prob.arrival_times,
-                     prob.flights_in_pairing[p], prob.pairing_bases[p],
-                     prob.bases, prob.rules)
+_crew_violations(prob::AirlineCrewProblem, p::Int) = _crew_violations(
+    prob.flight_origins,
+    prob.flight_destinations,
+    prob.departure_times,
+    prob.arrival_times,
+    prob.flights_in_pairing[p],
+    prob.pairing_bases[p],
+    prob.bases,
+    prob.rules,
+)
 
 # ---------------------------------------------------------------------------
 # Cost accounting
@@ -313,10 +334,17 @@ minimum-duty-guarantee fraction of elapsed duty time, and a minimum daily credit
 per duty; add per-diem over the time away from base and a hotel night per
 overnight rest. Deterministic given the pairing's schedule.
 """
-function _crew_pairing_cost(dep::Vector{Int}, arr::Vector{Int}, legs::Vector{Int},
-                            rules::CrewPairingRules, pay_rate::Float64,
-                            guarantee::Float64, min_daily::Int,
-                            per_diem::Float64, hotel::Float64)
+function _crew_pairing_cost(
+    dep::Vector{Int},
+    arr::Vector{Int},
+    legs::Vector{Int},
+    rules::CrewPairingRules,
+    pay_rate::Float64,
+    guarantee::Float64,
+    min_daily::Int,
+    per_diem::Float64,
+    hotel::Float64,
+)
     duties = _crew_duty_ranges(dep, arr, legs, rules.max_sit)
     block = sum(arr[f] - dep[f] for f in legs)
     duty_time = sum(arr[legs[last(r)]] - dep[legs[first(r)]] for r in duties)
@@ -330,16 +358,25 @@ end
 
 Cost of an arbitrary leg sequence under the instance's pay parameters.
 """
-_crew_pairing_cost(prob::AirlineCrewProblem, legs::Vector{Int}) =
-    _crew_pairing_cost(prob.departure_times, prob.arrival_times, legs, prob.rules,
-                       prob.pay_rate, prob.duty_guarantee, prob.min_daily_credit,
-                       prob.per_diem_rate, prob.hotel_cost)
+_crew_pairing_cost(prob::AirlineCrewProblem, legs::Vector{Int}) = _crew_pairing_cost(
+    prob.departure_times,
+    prob.arrival_times,
+    legs,
+    prob.rules,
+    prob.pay_rate,
+    prob.duty_guarantee,
+    prob.min_daily_credit,
+    prob.per_diem_rate,
+    prob.hotel_cost,
+)
 
 # ---------------------------------------------------------------------------
 # Construction helpers
 # ---------------------------------------------------------------------------
 
-"""Weighted choice without pulling in StatsBase; `weights` must be positive."""
+"""
+Weighted choice without pulling in StatsBase; `weights` must be positive.
+"""
 function _crew_wsample(rng::AbstractRNG, items::Vector{Int}, weights::Vector{Float64})
     total = sum(weights)
     r = rand(rng) * total
@@ -361,12 +398,17 @@ clamped to a narrowbody 45-240 minute range).
 """
 function _crew_geography(rng::AbstractRNG, num_airports::Int, num_bases::Int)
     width, height = 2000.0, 1400.0
-    locations = Tuple{Float64,Float64}[]
+    locations = Tuple{Float64, Float64}[]
     angle0 = rand(rng) * 2pi
     for b in 1:num_bases
         theta = angle0 + 2pi * (b - 1) / num_bases
-        push!(locations, (width / 2 + 0.30 * width * cos(theta) + 40 * (rand(rng) - 0.5),
-                          height / 2 + 0.30 * height * sin(theta) + 40 * (rand(rng) - 0.5)))
+        push!(
+            locations,
+            (
+                width / 2 + 0.30 * width * cos(theta) + 40 * (rand(rng) - 0.5),
+                height / 2 + 0.30 * height * sin(theta) + 40 * (rand(rng) - 0.5),
+            ),
+        )
     end
     for _ in (num_bases + 1):num_airports
         push!(locations, (rand(rng) * width, rand(rng) * height))
@@ -412,10 +454,19 @@ must keep the duty inside its block and elapsed limits; when `reserve` is set
 (the final duty of the line) they must additionally leave room to fly home to
 `base` afterwards. Returns `0` when nothing fits.
 """
-function _crew_next_airport(rng::AbstractRNG, block::Matrix{Int}, cur::Int, base::Int,
-                            num_bases::Int, num_airports::Int, dep_t::Int,
-                            duty_start::Int, duty_block::Int,
-                            rules::CrewPairingRules, reserve::Bool)
+function _crew_next_airport(
+    rng::AbstractRNG,
+    block::Matrix{Int},
+    cur::Int,
+    base::Int,
+    num_bases::Int,
+    num_airports::Int,
+    dep_t::Int,
+    duty_start::Int,
+    duty_block::Int,
+    rules::CrewPairingRules,
+    reserve::Bool,
+)
     cands = Int[]
     weights = Float64[]
     cur_is_base = cur <= num_bases
@@ -427,8 +478,8 @@ function _crew_next_airport(rng::AbstractRNG, block::Matrix{Int}, cur::Int, base
         if reserve && a != base
             home = block[a, base]
             duty_block + ft + home <= rules.max_block_minutes || continue
-            (dep_t + ft + rules.min_connect + home) - duty_start <=
-                rules.max_duty_minutes || continue
+            (dep_t + ft + rules.min_connect + home) - duty_start <= rules.max_duty_minutes ||
+                continue
         end
         push!(cands, a)
         a_is_base = a <= num_bases
@@ -448,15 +499,21 @@ separated by legal rests. The leg sequence is buffered and checked against
 two-leg out-and-back (always legal under the sampled rules) is committed
 instead. Returns `(base, legs)`.
 """
-function _crew_plant_line!(rng::AbstractRNG, net::_CrewNet, block::Matrix{Int},
-                           bases::Vector{Int}, num_airports::Int, n_days::Int,
-                           waves::Vector{Int})
+function _crew_plant_line!(
+    rng::AbstractRNG,
+    net::_CrewNet,
+    block::Matrix{Int},
+    bases::Vector{Int},
+    num_airports::Int,
+    n_days::Int,
+    waves::Vector{Int},
+)
     rules = net.rules
     num_bases = length(bases)
     base = rand(rng, bases)
 
     for attempt in 1:8
-        buffer = NTuple{4,Int}[]        # (origin, destination, dep, arr)
+        buffer = NTuple{4, Int}[]        # (origin, destination, dep, arr)
         n_duties = rand(rng, 1:rules.max_duties)
         t = (rand(rng, 1:n_days) - 1) * 1440 + rand(rng, waves) + 5 * rand(rng, 0:5)
         cur = base
@@ -469,14 +526,27 @@ function _crew_plant_line!(rng::AbstractRNG, net::_CrewNet, block::Matrix{Int},
             duty_legs = 0
             t_arr = t
             for l in 1:planned
-                dep_t = duty_legs == 0 ? duty_start :
-                        t_arr + rand(rng, (rules.min_connect ÷ 5):(rules.max_sit ÷ 5)) * 5
+                dep_t = if duty_legs == 0
+                    duty_start
+                else
+                    t_arr + rand(rng, (rules.min_connect ÷ 5):(rules.max_sit ÷ 5)) * 5
+                end
                 forced_home = is_final && l == planned
                 nxt = 0
                 if !forced_home
-                    nxt = _crew_next_airport(rng, block, cur, base, num_bases,
-                                             num_airports, dep_t, duty_start,
-                                             duty_block, rules, is_final)
+                    nxt = _crew_next_airport(
+                        rng,
+                        block,
+                        cur,
+                        base,
+                        num_bases,
+                        num_airports,
+                        dep_t,
+                        duty_start,
+                        duty_block,
+                        rules,
+                        is_final,
+                    )
                     nxt == 0 && (forced_home = true)
                 end
                 if forced_home
@@ -489,7 +559,7 @@ function _crew_plant_line!(rng::AbstractRNG, net::_CrewNet, block::Matrix{Int},
                 ft = block[cur, nxt]
                 arr_t = dep_t + ft
                 if duty_block + ft > rules.max_block_minutes ||
-                   arr_t - duty_start > rules.max_duty_minutes
+                    arr_t - duty_start > rules.max_duty_minutes
                     break
                 end
                 push!(buffer, (cur, nxt, dep_t, arr_t))
@@ -505,8 +575,9 @@ function _crew_plant_line!(rng::AbstractRNG, net::_CrewNet, block::Matrix{Int},
 
         if !isempty(buffer) && buffer[1][1] == base && buffer[end][2] == base
             legs = [_crew_add_flight!(net, o, d, dp, ar) for (o, d, dp, ar) in buffer]
-            if isempty(_crew_violations(net.org, net.dst, net.dep, net.arr, legs,
-                                        base, bases, rules))
+            if isempty(
+                _crew_violations(net.org, net.dst, net.dep, net.arr, legs, base, bases, rules)
+            )
                 return base, legs
             end
             # Never commit an illegal line: retract its legs and retry.
@@ -527,14 +598,19 @@ function _crew_plant_line!(rng::AbstractRNG, net::_CrewNet, block::Matrix{Int},
     return base, [f1, f2]
 end
 
-"""Undo the most recent `_crew_add_flight!` (used to retract a rejected line)."""
+"""
+Undo the most recent `_crew_add_flight!` (used to retract a rejected line).
+"""
 function _crew_pop_flight!(net::_CrewNet)
     id = length(net.org)
     o = net.org[id]
     pos = findfirst(==(id), net.by_origin[o])
     deleteat!(net.by_origin[o], pos)
     deleteat!(net.by_origin_dep[o], pos)
-    pop!(net.org); pop!(net.dst); pop!(net.dep); pop!(net.arr)
+    pop!(net.org)
+    pop!(net.dst)
+    pop!(net.dep)
+    pop!(net.arr)
     return nothing
 end
 
@@ -549,10 +625,19 @@ maximum number of duties, so any accepted walk is a legal pairing. The walk is
 accepted only while standing at `base`, which enforces base return. `budget`
 bounds the number of expansions so sampling stays cheap.
 """
-function _crew_extend!(rng::AbstractRNG, net::_CrewNet, base::Int, legs::Vector{Int},
-                       used::Set{Int}, duty_start::Int, duty_block::Int,
-                       duty_legs::Int, n_duties::Int, budget::Base.RefValue{Int},
-                       stop_prob::Float64)
+function _crew_extend!(
+    rng::AbstractRNG,
+    net::_CrewNet,
+    base::Int,
+    legs::Vector{Int},
+    used::Set{Int},
+    duty_start::Int,
+    duty_block::Int,
+    duty_legs::Int,
+    n_duties::Int,
+    budget::Base.RefValue{Int},
+    stop_prob::Float64,
+)
     r = net.rules
     max_total = r.max_legs_per_duty * r.max_duties
     at_base = net.dst[legs[end]] == base && length(legs) >= 2
@@ -561,7 +646,7 @@ function _crew_extend!(rng::AbstractRNG, net::_CrewNet, base::Int, legs::Vector{
     end
     (budget[] <= 0 || length(legs) >= max_total) && return at_base
 
-    options = Tuple{Int,Bool}[]
+    options = Tuple{Int, Bool}[]
     if duty_legs < r.max_legs_per_duty
         for g in _crew_successors(net, legs[end], r.min_connect, r.max_sit)
             g in used && continue
@@ -585,11 +670,23 @@ function _crew_extend!(rng::AbstractRNG, net::_CrewNet, base::Int, legs::Vector{
         push!(legs, g)
         push!(used, g)
         b = net.arr[g] - net.dep[g]
-        ok = new_duty ?
-             _crew_extend!(rng, net, base, legs, used, net.dep[g], b, 1,
-                           n_duties + 1, budget, stop_prob) :
-             _crew_extend!(rng, net, base, legs, used, duty_start, duty_block + b,
-                           duty_legs + 1, n_duties, budget, stop_prob)
+        ok = if new_duty
+            _crew_extend!(rng, net, base, legs, used, net.dep[g], b, 1, n_duties + 1, budget, stop_prob)
+        else
+            _crew_extend!(
+                rng,
+                net,
+                base,
+                legs,
+                used,
+                duty_start,
+                duty_block + b,
+                duty_legs + 1,
+                n_duties,
+                budget,
+                stop_prob,
+            )
+        end
         ok && return true
         pop!(legs)
         delete!(used, g)
@@ -612,8 +709,9 @@ function _crew_sample_pairing(rng::AbstractRNG, net::_CrewNet, base_starts::Vect
     used = Set{Int}(legs)
     budget = Ref(400)
     block = net.arr[start] - net.dep[start]
-    ok = _crew_extend!(rng, net, base, legs, used, net.dep[start], block, 1, 1,
-                       budget, 0.15 + 0.45 * rand(rng))
+    ok = _crew_extend!(
+        rng, net, base, legs, used, net.dep[start], block, 1, 1, budget, 0.15 + 0.45 * rand(rng)
+    )
     return ok ? (base, legs) : (base, Int[])
 end
 
@@ -628,6 +726,7 @@ Construct a crew pairing instance whose columns are all operationally legal
 pairings.
 
 # Sizing
+
 One binary variable per pairing column, and the generator emits exactly
 `target_variables` columns: it keeps sampling legal pairings until the target is
 met, and whenever the sampler stalls it grows the schedule with another planted
@@ -636,22 +735,22 @@ schedule holds roughly `0.55 * target_variables` flights, one covering equality
 each.
 
 # Feasibility
-- `feasible`: every planted line is kept as a column, so those columns partition
-  the flight set - an integral exact cover recorded in `feasible_witness`.
-- `infeasible`: the same construction plus one extra flight departing from a
-  non-base airport, scheduled beyond every other arrival so that nothing can
-  connect into it. No legal pairing can contain it (it can neither open a
-  pairing nor follow another leg), so its covering row is `0 == 1`
-  (`infeasibility_certificate`). Every other flight is still covered, making the
-  infeasibility minimal and structural.
-- `unknown`: a three-way mix - the planted partition is kept intact (feasible),
-  only a random subset of the planted lines is kept as columns (genuinely
-  undecided: the surviving columns may or may not still admit an exact cover),
-  or an uncoverable flight is planted (infeasible). Metadata is status-specific,
-  so `unknown` instances carry neither a witness nor a certificate.
+
+  - `feasible`: every planted line is kept as a column, so those columns partition
+    the flight set - an integral exact cover recorded in `feasible_witness`.
+  - `infeasible`: the same construction plus one extra flight departing from a
+    non-base airport, scheduled beyond every other arrival so that nothing can
+    connect into it. No legal pairing can contain it (it can neither open a
+    pairing nor follow another leg), so its covering row is `0 == 1`
+    (`infeasibility_certificate`). Every other flight is still covered, making the
+    infeasibility minimal and structural.
+  - `unknown`: a three-way mix - the planted partition is kept intact (feasible),
+    only a random subset of the planted lines is kept as columns (genuinely
+    undecided: the surviving columns may or may not still admit an exact cover),
+    or an uncoverable flight is planted (infeasible). Metadata is status-specific,
+    so `unknown` instances carry neither a witness nor a certificate.
 """
-function AirlineCrewProblem(target_variables::Int, feasibility_status::FeasibilityStatus,
-                            seed::Int)
+function AirlineCrewProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
 
     target = max(target_variables, 4)
@@ -676,8 +775,8 @@ function AirlineCrewProblem(target_variables::Int, feasibility_status::Feasibili
     # uncoverable flight is planted (infeasible).
     roll = feasibility_status == unknown ? rand(rng) : 0.0
     drop_planted = feasibility_status == unknown && 0.4 <= roll < 0.7
-    plant_orphan = feasibility_status == infeasible ||
-                   (feasibility_status == unknown && roll >= 0.7)
+    plant_orphan =
+        feasibility_status == infeasible || (feasibility_status == unknown && roll >= 0.7)
     keep_fraction = drop_planted ? 0.10 + 0.50 * rand(rng) : 1.0
 
     net = _crew_net(num_airports, rules)
@@ -713,12 +812,16 @@ function AirlineCrewProblem(target_variables::Int, feasibility_status::Feasibili
     stall = 0
     while length(columns) < target
         if stall >= 60 || isempty(base_starts)
-            base, legs = _crew_plant_line!(rng, net, block, bases, num_airports,
-                                           n_days, waves)
+            base, legs = _crew_plant_line!(rng, net, block, bases, num_airports, n_days, waves)
             idx = push_column!(base, legs)
             idx == 0 ? (all_planted_kept = false) : push!(planted_columns, idx)
-            append!(base_starts, [f for f in (length(net.org) - length(legs) + 1):length(net.org)
-                                  if net.org[f] <= num_bases])
+            append!(
+                base_starts,
+                [
+                    f for f in (length(net.org) - length(legs) + 1):length(net.org) if
+                    net.org[f] <= num_bases
+                ],
+            )
             stall = 0
             continue
         end
@@ -736,32 +839,67 @@ function AirlineCrewProblem(target_variables::Int, feasibility_status::Feasibili
         origin = num_bases < num_airports ? rand(rng, (num_bases + 1):num_airports) : 1
         destination = origin == num_airports ? 1 : origin + 1
         dep = maximum(net.arr) + rules.max_rest + 60
-        orphan = _crew_add_flight!(net, origin, destination, dep,
-                                   dep + block[origin, destination])
-        predecessors = count(f -> f != orphan && net.dst[f] == origin &&
-                                  (rules.min_connect <= dep - net.arr[f] <= rules.max_sit ||
-                                   rules.min_rest <= dep - net.arr[f] <= rules.max_rest),
-                             1:length(net.org))
-        cert = UncoverableFlightCertificate(orphan, origin, destination,
-                                            predecessors)
+        orphan = _crew_add_flight!(net, origin, destination, dep, dep + block[origin, destination])
+        predecessors = count(
+            f ->
+                f != orphan &&
+                net.dst[f] == origin &&
+                (
+                    rules.min_connect <= dep - net.arr[f] <= rules.max_sit ||
+                    rules.min_rest <= dep - net.arr[f] <= rules.max_rest
+                ),
+            1:length(net.org),
+        )
+        cert = UncoverableFlightCertificate(orphan, origin, destination, predecessors)
         # Metadata is status-specific: `unknown` promises nothing, so it keeps
         # neither a witness nor a certificate even when a branch happens to
         # settle the question.
         certificate = feasibility_status == infeasible ? cert : nothing
     end
 
-    witness = (feasibility_status == feasible && all_planted_kept) ?
-              CrewPairingCoverWitness(sort(planted_columns)) : nothing
+    witness = if (feasibility_status == feasible && all_planted_kept)
+        CrewPairingCoverWitness(sort(planted_columns))
+    else
+        nothing
+    end
 
-    costs = [_crew_pairing_cost(net.dep, net.arr, legs, rules, pay_rate,
-                                duty_guarantee, min_daily_credit, per_diem_rate,
-                                hotel_cost) for legs in columns]
+    costs = [
+        _crew_pairing_cost(
+            net.dep,
+            net.arr,
+            legs,
+            rules,
+            pay_rate,
+            duty_guarantee,
+            min_daily_credit,
+            per_diem_rate,
+            hotel_cost,
+        ) for legs in columns
+    ]
 
-    return AirlineCrewProblem(length(net.org), num_airports, bases, locations, block,
-                              net.org, net.dst, net.dep, net.arr, rules, costs,
-                              columns, column_bases, pay_rate, duty_guarantee,
-                              min_daily_credit, per_diem_rate, hotel_cost, witness,
-                              certificate, feasibility_status)
+    return AirlineCrewProblem(
+        length(net.org),
+        num_airports,
+        bases,
+        locations,
+        block,
+        net.org,
+        net.dst,
+        net.dep,
+        net.arr,
+        rules,
+        costs,
+        columns,
+        column_bases,
+        pay_rate,
+        duty_guarantee,
+        min_daily_credit,
+        per_diem_rate,
+        hotel_cost,
+        witness,
+        certificate,
+        feasibility_status,
+    )
 end
 
 """
@@ -771,9 +909,10 @@ Build the crew pairing set-partitioning model. Deterministic - uses only the
 struct's fields.
 
 # Model
-- `x[p] in {0,1}`: pairing `p` is flown
-- objective: `min sum_p c_p x_p`
-- covering: `sum_{p : f in A_p} x_p == 1` for every flight `f`
+
+  - `x[p] in {0,1}`: pairing `p` is flown
+  - objective: `min sum_p c_p x_p`
+  - covering: `sum_{p : f in A_p} x_p == 1` for every flight `f`
 
 A flight contained in no column yields an empty left-hand side, i.e. the
 infeasible row `0 == 1` - exactly the certificate the infeasible mode plants.

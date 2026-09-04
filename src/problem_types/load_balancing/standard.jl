@@ -8,6 +8,7 @@ using Distributions
 Generator for load balancing / traffic-engineering problems on a directed network.
 
 # Overview
+
 Models min-max-utilization routing. The decisions are an aggregate flow on each
 directed link plus a global maximum-utilization variable `u`. The objective
 minimizes the maximum link utilization `max_link(f / capacity)`. Link capacity
@@ -17,26 +18,28 @@ withdrawal at sinks). Conservation is what couples the links, so the model is a
 genuine routing LP rather than a collection of independent per-link bounds.
 
 Feasibility:
-- `feasible`: the network is connected and `u` is unbounded above, so any
-  routable demand is feasible; capacities are scaled so the optimum keeps `u`
-  modest (realistic utilization).
-- `infeasible`: a traffic source's outgoing link capacities are zeroed, so
-  flow conservation at that node cannot hold (it must push out more than the
-  zero available outgoing capacity) — a structural contradiction independent
-  of `u`.
+
+  - `feasible`: the network is connected and `u` is unbounded above, so any
+    routable demand is feasible; capacities are scaled so the optimum keeps `u`
+    modest (realistic utilization).
+  - `infeasible`: a traffic source's outgoing link capacities are zeroed, so
+    flow conservation at that node cannot hold (it must push out more than the
+    zero available outgoing capacity) — a structural contradiction independent
+    of `u`.
 
 # Fields
-- `n_nodes::Int`: Number of nodes in the network
-- `links::Vector{Tuple{Int,Int}}`: List of directed links in the network
-- `capacities::Dict{Tuple{Int,Int},Float64}`: Capacity of each link
-- `demands::Dict{Tuple{Int,Int},Float64}`: Traffic demand `(source, target) => amount`
-- `net_injection::Vector{Float64}`: Per-node net supply (outflow minus inflow required)
+
+  - `n_nodes::Int`: Number of nodes in the network
+  - `links::Vector{Tuple{Int,Int}}`: List of directed links in the network
+  - `capacities::Dict{Tuple{Int,Int},Float64}`: Capacity of each link
+  - `demands::Dict{Tuple{Int,Int},Float64}`: Traffic demand `(source, target) => amount`
+  - `net_injection::Vector{Float64}`: Per-node net supply (outflow minus inflow required)
 """
 struct LoadBalancingProblem <: ProblemGenerator
     n_nodes::Int
-    links::Vector{Tuple{Int,Int}}
-    capacities::Dict{Tuple{Int,Int},Float64}
-    demands::Dict{Tuple{Int,Int},Float64}
+    links::Vector{Tuple{Int, Int}}
+    capacities::Dict{Tuple{Int, Int}, Float64}
+    demands::Dict{Tuple{Int, Int}, Float64}
     net_injection::Vector{Float64}
 end
 
@@ -46,23 +49,32 @@ end
 Construct a load balancing problem instance.
 
 # Arguments
-- `target_variables`: Target number of variables (`1 + n_links`)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (`1 + n_links`)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function LoadBalancingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function LoadBalancingProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # Scale-dependent magnitude ranges (capacities/demands only).
     if target_variables <= 250
-        capacity_mean = 500.0; capacity_std = 150.0
-        demand_mean = 50.0; demand_std = 20.0
+        capacity_mean = 500.0
+        capacity_std = 150.0
+        demand_mean = 50.0
+        demand_std = 20.0
     elseif target_variables <= 1000
-        capacity_mean = 2000.0; capacity_std = 600.0
-        demand_mean = 150.0; demand_std = 60.0
+        capacity_mean = 2000.0
+        capacity_std = 600.0
+        demand_mean = 150.0
+        demand_std = 60.0
     else
-        capacity_mean = 8000.0; capacity_std = 2000.0
-        demand_mean = 500.0; demand_std = 200.0
+        capacity_mean = 8000.0
+        capacity_std = 2000.0
+        demand_mean = 500.0
+        demand_std = 200.0
     end
 
     # Variables = 1 (the utilization u) + n_links. Size n_nodes so the complete
@@ -73,7 +85,7 @@ function LoadBalancingProblem(target_variables::Int, feasibility_status::Feasibi
     # Build a strongly connected directed network: a bidirectional spanning tree
     # (so every node can reach every other) plus random links up to n_links.
     possible_links = [(i, j) for i in 1:n_nodes for j in 1:n_nodes if i != j]
-    links = Tuple{Int,Int}[]
+    links = Tuple{Int, Int}[]
     connected = [1]
     remaining = collect(2:n_nodes)
     while !isempty(remaining)
@@ -93,8 +105,17 @@ function LoadBalancingProblem(target_variables::Int, feasibility_status::Feasibi
     end
 
     # Capacities (truncated normal).
-    min_cap = max(10.0, rand(rng, truncated(Normal(capacity_mean * 0.3, capacity_std * 0.2), 10.0, capacity_mean)))
-    max_cap = min_cap + rand(rng, truncated(Normal(capacity_mean * 1.2, capacity_std), capacity_mean * 0.5, capacity_mean * 3.0))
+    min_cap = max(
+        10.0,
+        rand(rng, truncated(Normal(capacity_mean * 0.3, capacity_std * 0.2), 10.0, capacity_mean)),
+    )
+    max_cap =
+        min_cap + rand(
+            rng,
+            truncated(
+                Normal(capacity_mean * 1.2, capacity_std), capacity_mean * 0.5, capacity_mean * 3.0
+            ),
+        )
     cap_dist = truncated(Normal((min_cap + max_cap) / 2, (max_cap - min_cap) / 6), min_cap, max_cap)
     capacities = Dict(a => rand(rng, cap_dist) for a in links)
 
@@ -103,14 +124,21 @@ function LoadBalancingProblem(target_variables::Int, feasibility_status::Feasibi
     demand_pairs = unique([(rand(rng, 1:n_nodes), rand(rng, 1:n_nodes)) for _ in 1:n_demands])
     filter!(p -> p[1] != p[2], demand_pairs)
 
-    dmin = max(1.0, rand(rng, truncated(Normal(demand_mean * 0.2, demand_std * 0.1), 1.0, demand_mean * 0.5)))
-    dmax = dmin + rand(rng, truncated(Normal(demand_mean * 0.8, demand_std), demand_mean * 0.3, demand_mean * 2.0))
+    dmin = max(
+        1.0,
+        rand(rng, truncated(Normal(demand_mean * 0.2, demand_std * 0.1), 1.0, demand_mean * 0.5)),
+    )
+    dmax =
+        dmin + rand(
+            rng,
+            truncated(Normal(demand_mean * 0.8, demand_std), demand_mean * 0.3, demand_mean * 2.0),
+        )
     dmean = (dmin + dmax) / 2
     dscale = max((dmax - dmin) / 6, 1e-6)
     dshape = max(dmean / dscale, 1.0)
     demand_dist = truncated(Gamma(dshape, dscale), dmin, dmax)
 
-    demands = Dict{Tuple{Int,Int},Float64}()
+    demands = Dict{Tuple{Int, Int}, Float64}()
     for p in demand_pairs
         demands[p] = rand(rng, demand_dist)
     end
@@ -122,7 +150,11 @@ function LoadBalancingProblem(target_variables::Int, feasibility_status::Feasibi
         net_injection[t] -= amount
     end
 
-    actual_status = feasibility_status == unknown ? (rand(rng) < 0.7 ? feasible : infeasible) : feasibility_status
+    actual_status = if feasibility_status == unknown
+        (rand(rng) < 0.7 ? feasible : infeasible)
+    else
+        feasibility_status
+    end
 
     if actual_status == feasible
         # Keep the optimal utilization realistic: every net-source node's outgoing
@@ -181,8 +213,9 @@ function build_model(prob::LoadBalancingProblem)
 
     # Flow conservation at every node: outflow - inflow == net demand injection.
     for node in 1:prob.n_nodes
-        inflow = isempty(prob.links) ? 0.0 : sum(f[a] for a in prob.links if a[2] == node; init = 0.0)
-        outflow = isempty(prob.links) ? 0.0 : sum(f[a] for a in prob.links if a[1] == node; init = 0.0)
+        inflow = isempty(prob.links) ? 0.0 : sum(f[a] for a in prob.links if a[2] == node; init=0.0)
+        outflow =
+            isempty(prob.links) ? 0.0 : sum(f[a] for a in prob.links if a[1] == node; init=0.0)
         @constraint(model, outflow - inflow == prob.net_injection[node])
     end
 

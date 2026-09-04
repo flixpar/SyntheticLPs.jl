@@ -7,6 +7,7 @@ using Random
 Generator for blending problems that minimize cost while meeting quality requirements.
 
 # Overview
+
 Models least-cost mixture design, such as fuel, chemical, food, or material
 blending. The decisions are continuous ingredient quantities. The objective
 minimizes ingredient cost while producing at least the required blend amount.
@@ -15,17 +16,18 @@ supply limits, an optional total budget, and optional per-ingredient minimum or
 maximum usage rules.
 
 # Fields
-- `n_ingredients::Int`: Number of ingredients
-- `n_attributes::Int`: Number of quality attributes
-- `costs::Vector{Int}`: Cost per unit of each ingredient
-- `attributes::Matrix{Float64}`: Attribute values (n_ingredients × n_attributes)
-- `lower_bounds::Vector{Float64}`: Minimum required value for each attribute
-- `upper_bounds::Vector{Float64}`: Maximum allowed value for each attribute
-- `supply_limits::Vector{Float64}`: Maximum available amount of each ingredient
-- `cost_budget::Float64`: Maximum total cost allowed
-- `min_blend_amount::Float64`: Minimum amount to produce
-- `min_usage_required::Dict{Int,Float64}`: Minimum usage requirements (optional)
-- `max_usage_limits::Dict{Int,Float64}`: Maximum usage limits (optional)
+
+  - `n_ingredients::Int`: Number of ingredients
+  - `n_attributes::Int`: Number of quality attributes
+  - `costs::Vector{Int}`: Cost per unit of each ingredient
+  - `attributes::Matrix{Float64}`: Attribute values (n_ingredients × n_attributes)
+  - `lower_bounds::Vector{Float64}`: Minimum required value for each attribute
+  - `upper_bounds::Vector{Float64}`: Maximum allowed value for each attribute
+  - `supply_limits::Vector{Float64}`: Maximum available amount of each ingredient
+  - `cost_budget::Float64`: Maximum total cost allowed
+  - `min_blend_amount::Float64`: Minimum amount to produce
+  - `min_usage_required::Dict{Int,Float64}`: Minimum usage requirements (optional)
+  - `max_usage_limits::Dict{Int,Float64}`: Maximum usage limits (optional)
 """
 struct BlendingProblem <: ProblemGenerator
     n_ingredients::Int
@@ -37,8 +39,8 @@ struct BlendingProblem <: ProblemGenerator
     supply_limits::Vector{Float64}
     cost_budget::Float64
     min_blend_amount::Float64
-    min_usage_required::Dict{Int,Float64}
-    max_usage_limits::Dict{Int,Float64}
+    min_usage_required::Dict{Int, Float64}
+    max_usage_limits::Dict{Int, Float64}
 end
 
 """
@@ -47,9 +49,10 @@ end
 Construct a blending problem instance.
 
 # Arguments
-- `target_variables`: Target number of variables (ingredients)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (ingredients)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
 function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
@@ -70,8 +73,13 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
     attributes = rand(rng, min_attr:0.01:max_attr, n_ingredients, n_attributes)
 
     # Determine actual status
-    solution_status = feasibility_status == feasible ? :feasible :
-                     feasibility_status == infeasible ? :infeasible : :all
+    solution_status = if feasibility_status == feasible
+        :feasible
+    elseif feasibility_status == infeasible
+        :infeasible
+    else
+        :all
+    end
     actual_status = solution_status
     if solution_status == :all
         actual_status = rand(rng) < 0.5 ? :feasible : :infeasible
@@ -82,8 +90,8 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
     upper_bounds = zeros(n_attributes)
     supply_limits = fill(Inf, n_ingredients)
     cost_budget = Inf
-    min_usage_required = Dict{Int,Float64}()
-    max_usage_limits = Dict{Int,Float64}()
+    min_usage_required = Dict{Int, Float64}()
+    max_usage_limits = Dict{Int, Float64}()
 
     if actual_status == :feasible
         # Generate intelligent baseline solution
@@ -93,7 +101,7 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
             cost_efficiency[i] = quality_score / costs[i]
         end
 
-        efficiency_order = sortperm(cost_efficiency, rev=true)
+        efficiency_order = sortperm(cost_efficiency; rev=true)
 
         blend_amounts = zeros(n_ingredients)
         primary_count = max(3, round(Int, n_ingredients * 0.6))
@@ -110,7 +118,8 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
         secondary_ingredients = efficiency_order[(primary_count + 1):end]
         for i in secondary_ingredients
             if !isempty(secondary_ingredients)
-                blend_amounts[i] = secondary_total / length(secondary_ingredients) * (0.5 + rand(rng))
+                blend_amounts[i] =
+                    secondary_total / length(secondary_ingredients) * (0.5 + rand(rng))
             end
         end
 
@@ -120,7 +129,9 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
         # Calculate achieved qualities
         achieved_qualities = zeros(n_attributes)
         for j in 1:n_attributes
-            achieved_qualities[j] = sum(attributes[i, j] * blend_amounts[i] for i in 1:n_ingredients) / sum(blend_amounts)
+            achieved_qualities[j] =
+                sum(attributes[i, j] * blend_amounts[i] for i in 1:n_ingredients) /
+                sum(blend_amounts)
         end
 
         # Set tight quality bounds
@@ -137,7 +148,9 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
             tolerance = tolerance_level
             position_in_band = 0.6 + rand(rng) * 0.2
 
-            total_range = 2 * tolerance * achieved_qualities[j] / (1 - 2 * tolerance + 2 * tolerance * position_in_band)
+            total_range =
+                2 * tolerance * achieved_qualities[j] /
+                (1 - 2 * tolerance + 2 * tolerance * position_in_band)
             lower_bound = achieved_qualities[j] - total_range * position_in_band
             upper_bound = lower_bound + total_range
 
@@ -188,7 +201,7 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
             quality_leaders = Vector{Int}[]
             for j in 1:n_attributes
                 quality_values = [(attributes[i, j], i) for i in 1:n_ingredients]
-                sort!(quality_values, rev=true)
+                sort!(quality_values; rev=true)
                 top_count = max(1, div(n_ingredients, 4))
                 leaders = [pair[2] for pair in quality_values[1:top_count]]
                 push!(quality_leaders, leaders)
@@ -283,7 +296,7 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
                 end
             end
 
-            expensive_ingredients = sortperm(costs, rev=true)[1:max(2, div(n_ingredients, 3))]
+            expensive_ingredients = sortperm(costs; rev=true)[1:max(2, div(n_ingredients, 3))]
             for i in expensive_ingredients
                 supply_limits[i] = min_blend_amount * 0.2
             end
@@ -299,8 +312,19 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
         end
     end
 
-    return BlendingProblem(n_ingredients, n_attributes, costs, attributes, lower_bounds, upper_bounds,
-                          supply_limits, cost_budget, min_blend_amount, min_usage_required, max_usage_limits)
+    return BlendingProblem(
+        n_ingredients,
+        n_attributes,
+        costs,
+        attributes,
+        lower_bounds,
+        upper_bounds,
+        supply_limits,
+        cost_budget,
+        min_blend_amount,
+        min_usage_required,
+        max_usage_limits,
+    )
 end
 
 """
@@ -309,10 +333,12 @@ end
 Build a JuMP model for the blending problem.
 
 # Arguments
-- `prob`: BlendingProblem instance
+
+  - `prob`: BlendingProblem instance
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::BlendingProblem)
     model = Model()
@@ -335,7 +361,9 @@ function build_model(prob::BlendingProblem)
 
     # Cost budget
     if prob.cost_budget < Inf
-        @constraint(model, sum(prob.costs[i] * x[i] for i in 1:prob.n_ingredients) <= prob.cost_budget)
+        @constraint(
+            model, sum(prob.costs[i] * x[i] for i in 1:prob.n_ingredients) <= prob.cost_budget
+        )
     end
 
     # Additional constraints
@@ -349,14 +377,16 @@ function build_model(prob::BlendingProblem)
 
     # Quality attribute bounds
     for j in 1:prob.n_attributes
-        @constraint(model,
+        @constraint(
+            model,
             sum(prob.attributes[i, j] * x[i] for i in 1:prob.n_ingredients) >=
-            prob.lower_bounds[j] * sum(x[i] for i in 1:prob.n_ingredients)
+                prob.lower_bounds[j] * sum(x[i] for i in 1:prob.n_ingredients)
         )
 
-        @constraint(model,
+        @constraint(
+            model,
             sum(prob.attributes[i, j] * x[i] for i in 1:prob.n_ingredients) <=
-            prob.upper_bounds[j] * sum(x[i] for i in 1:prob.n_ingredients)
+                prob.upper_bounds[j] * sum(x[i] for i in 1:prob.n_ingredients)
         )
     end
 

@@ -20,9 +20,7 @@ struct FixedChargeTransportationProblem <: ProblemGenerator
 end
 
 function FixedChargeTransportationProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
     target_lanes = max(4, round(Int, max(target_variables, 1) / 2))
@@ -31,10 +29,12 @@ function FixedChargeTransportationProblem(
 
     demands = rand(rng, 8:35, n_destinations)
     supplies = rand(rng, 15:55, n_sources)
-    variable_costs = [round(1.0 + 14.0 * rand(rng), digits=3)
-                      for _ in 1:n_sources, _ in 1:n_destinations]
-    fixed_costs = [round(20.0 + 180.0 * rand(rng), digits=2)
-                   for _ in 1:n_sources, _ in 1:n_destinations]
+    variable_costs = [
+        round(1.0 + 14.0 * rand(rng); digits=3) for _ in 1:n_sources, _ in 1:n_destinations
+    ]
+    fixed_costs = [
+        round(20.0 + 180.0 * rand(rng); digits=2) for _ in 1:n_sources, _ in 1:n_destinations
+    ]
     lane_capacities = rand(rng, 10:45, n_sources, n_destinations)
 
     if feasibility_status == feasible
@@ -61,8 +61,7 @@ function FixedChargeTransportationProblem(
     end
 
     return FixedChargeTransportationProblem(
-        n_sources, n_destinations, supplies, demands,
-        variable_costs, fixed_costs, lane_capacities,
+        n_sources, n_destinations, supplies, demands, variable_costs, fixed_costs, lane_capacities
     )
 end
 
@@ -73,10 +72,13 @@ function build_model(prob::FixedChargeTransportationProblem)
 
     @variable(model, shipment[1:I, 1:J] >= 0)
     @variable(model, lane_open[1:I, 1:J], Bin)
-    @objective(model, Min,
-        sum(prob.variable_costs[i, j] * shipment[i, j] +
-            prob.fixed_costs[i, j] * lane_open[i, j]
-            for i in 1:I, j in 1:J)
+    @objective(
+        model,
+        Min,
+        sum(
+            prob.variable_costs[i, j] * shipment[i, j] + prob.fixed_costs[i, j] * lane_open[i, j]
+            for i in 1:I, j in 1:J
+        )
     )
 
     for i in 1:I

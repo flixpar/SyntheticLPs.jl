@@ -15,9 +15,7 @@ struct ContainerLoadingProblem <: ProblemGenerator
 end
 
 function ContainerLoadingProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
     # Variable count is n_items * n_containers + n_containers. The smallest
@@ -65,7 +63,7 @@ function build_model(prob::ContainerLoadingProblem)
         @constraint(
             model,
             sum(prob.item_requirements[d, i] * assign[i, b] for i in 1:prob.n_items) <=
-            prob.capacities[d, b] * used[b],
+                prob.capacities[d, b] * used[b],
         )
     end
     return model
@@ -75,6 +73,6 @@ register_variant(
     :container_loading,
     :standard,
     ContainerLoadingProblem,
-    "Three-resource binary item-to-container loading with container activation",
+    "Three-resource binary item-to-container loading with container activation";
     default=true,
 )

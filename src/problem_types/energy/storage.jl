@@ -9,6 +9,7 @@ using Distributions
 Generator for energy generation mix optimization with battery storage.
 
 # Overview
+
 Models a power dispatch problem over a sequence of time periods where, in addition
 to dispatchable generation sources, a single battery can charge, discharge, and
 carry a state of charge between periods. The objective minimizes total generation
@@ -20,27 +21,28 @@ A terminal state-of-charge constraint requires the battery to end no lower than 
 started, so the battery cannot be drained "for free" to subsidize generation.
 
 # Fields
-- `n_sources::Int`: Number of power generation sources
-- `n_periods::Int`: Number of time periods
-- `sources::Vector{String}`: Names of energy sources
-- `time_periods::Vector{Int}`: Time period indices (1:n_periods)
-- `generation_costs::Dict{String,Float64}`: Cost per MWh for each source
-- `capacities::Dict{String,Float64}`: Maximum capacity (MW) for each source
-- `demands::Vector{Float64}`: Demand (MW) in each period
-- `renewable_sources::Vector{String}`: Subset of sources that count as renewable
-- `renewable_fraction::Float64`: Minimum fraction of generation from renewables
-- `storage_capacity::Float64`: Maximum battery energy storage (MWh)
-- `storage_power::Float64`: Maximum charge/discharge rate (MW)
-- `storage_efficiency::Float64`: Round-trip (charging) efficiency in (0, 1]
-- `initial_level::Float64`: Initial battery state of charge (MWh)
+
+  - `n_sources::Int`: Number of power generation sources
+  - `n_periods::Int`: Number of time periods
+  - `sources::Vector{String}`: Names of energy sources
+  - `time_periods::Vector{Int}`: Time period indices (1:n_periods)
+  - `generation_costs::Dict{String,Float64}`: Cost per MWh for each source
+  - `capacities::Dict{String,Float64}`: Maximum capacity (MW) for each source
+  - `demands::Vector{Float64}`: Demand (MW) in each period
+  - `renewable_sources::Vector{String}`: Subset of sources that count as renewable
+  - `renewable_fraction::Float64`: Minimum fraction of generation from renewables
+  - `storage_capacity::Float64`: Maximum battery energy storage (MWh)
+  - `storage_power::Float64`: Maximum charge/discharge rate (MW)
+  - `storage_efficiency::Float64`: Round-trip (charging) efficiency in (0, 1]
+  - `initial_level::Float64`: Initial battery state of charge (MWh)
 """
 struct StorageEnergyProblem <: ProblemGenerator
     n_sources::Int
     n_periods::Int
     sources::Vector{String}
     time_periods::Vector{Int}
-    generation_costs::Dict{String,Float64}
-    capacities::Dict{String,Float64}
+    generation_costs::Dict{String, Float64}
+    capacities::Dict{String, Float64}
     demands::Vector{Float64}
     renewable_sources::Vector{String}
     renewable_fraction::Float64
@@ -56,20 +58,24 @@ end
 Construct an energy-with-storage problem instance.
 
 Variable count in `build_model`:
-- generation `x[s, t]`            => n_sources * n_periods
-- `storage_level[t in 0:T]`       => n_periods + 1
-- `charge[t]`                     => n_periods
-- `discharge[t]`                  => n_periods
-Total = n_sources * n_periods + 3 * n_periods + 1
-      = (n_sources + 3) * n_periods + 1
-The dimensions are sized so this total lands near `target_variables`.
+
+  - generation `x[s, t]`            => n_sources * n_periods
+  - `storage_level[t in 0:T]`       => n_periods + 1
+  - `charge[t]`                     => n_periods
+  - `discharge[t]`                  => n_periods
+    Total = n_sources * n_periods + 3 * n_periods + 1
+    = (n_sources + 3) * n_periods + 1
+    The dimensions are sized so this total lands near `target_variables`.
 
 # Arguments
-- `target_variables`: Target number of decision variables
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of decision variables
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function StorageEnergyProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function StorageEnergyProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # Determine scale
@@ -92,7 +98,9 @@ function StorageEnergyProblem(target_variables::Int, feasibility_status::Feasibi
     n_sources = clamp(n_sources, min_sources, max_sources)
     # Clamp to max_periods up front: otherwise an over-cap initial estimate makes
     # the loop believe it is already on target and break before scaling n_sources.
-    n_periods = clamp(round(Int, (target_variables - 1) / (n_sources + 3)), min_periods, max_periods)
+    n_periods = clamp(
+        round(Int, (target_variables - 1) / (n_sources + 3)), min_periods, max_periods
+    )
 
     # Iteratively adjust to reach target (accounting for the +3 storage var sets)
     for _ in 1:20
@@ -103,8 +111,10 @@ function StorageEnergyProblem(target_variables::Int, feasibility_status::Feasibi
         ratio = target_variables / current_vars
         if ratio > 1.05
             if n_periods < max_periods
-                n_periods = min(max_periods, max(min_periods,
-                    round(Int, (target_variables - 1) / (n_sources + 3))))
+                n_periods = min(
+                    max_periods,
+                    max(min_periods, round(Int, (target_variables - 1) / (n_sources + 3))),
+                )
             elseif n_sources < max_sources
                 n_sources = min(max_sources, n_sources + 1)
             else
@@ -112,8 +122,7 @@ function StorageEnergyProblem(target_variables::Int, feasibility_status::Feasibi
             end
         elseif ratio < 0.95
             if n_periods > min_periods
-                n_periods = max(min_periods,
-                    round(Int, (target_variables - 1) / (n_sources + 3)))
+                n_periods = max(min_periods, round(Int, (target_variables - 1) / (n_sources + 3)))
             elseif n_sources > min_sources
                 n_sources = max(min_sources, n_sources - 1)
             else
@@ -156,25 +165,34 @@ function StorageEnergyProblem(target_variables::Int, feasibility_status::Feasibi
     renewable_indices = findall(s -> s[2], source_types)
     conventional_indices = findall(s -> !s[2], source_types)
 
-    name_counter = Dict{String,Int}()
+    name_counter = Dict{String, Int}()
     function build_fleet(indices, n)
-        fleet = Tuple{String,String,Bool,Float64,Float64,Float64}[]
+        fleet = Tuple{String, String, Bool, Float64, Float64, Float64}[]
         (isempty(indices) || n <= 0) && return fleet
         order = shuffle(rng, indices)
         for k in 1:n
             base = source_types[order[((k - 1) % length(order)) + 1]]
             name_counter[base[1]] = get(name_counter, base[1], 0) + 1
-            uname = name_counter[base[1]] == 1 ? base[1] :
-                    string(base[1], "_", name_counter[base[1]])
-            push!(fleet, (uname, base[1], base[2],
-                clamp(base[3] * rand(rng, Uniform(0.97, 1.03)), 0.5, 1.0),
-                base[4] * rand(rng, Uniform(0.9, 1.1)),
-                base[5] * rand(rng, Uniform(0.9, 1.1))))
+            uname =
+                name_counter[base[1]] == 1 ? base[1] : string(base[1], "_", name_counter[base[1]])
+            push!(
+                fleet,
+                (
+                    uname,
+                    base[1],
+                    base[2],
+                    clamp(base[3] * rand(rng, Uniform(0.97, 1.03)), 0.5, 1.0),
+                    base[4] * rand(rng, Uniform(0.9, 1.1)),
+                    base[5] * rand(rng, Uniform(0.9, 1.1)),
+                ),
+            )
         end
         return fleet
     end
-    selected_sources = vcat(build_fleet(renewable_indices, n_renewables),
-                            build_fleet(conventional_indices, n_conventional))
+    selected_sources = vcat(
+        build_fleet(renewable_indices, n_renewables),
+        build_fleet(conventional_indices, n_conventional),
+    )
     # Keep total sources consistent with the variable-count sizing
     n_sources = length(selected_sources)
 
@@ -183,7 +201,7 @@ function StorageEnergyProblem(target_variables::Int, feasibility_status::Feasibi
     time_periods = collect(1:n_periods)
 
     # Generation costs
-    generation_costs = Dict{String,Float64}()
+    generation_costs = Dict{String, Float64}()
     for (name, _technology, is_renewable, _, _, cost_factor) in selected_sources
         base_cost = base_generation_cost * cost_factor
         if is_renewable
@@ -194,7 +212,7 @@ function StorageEnergyProblem(target_variables::Int, feasibility_status::Feasibi
     end
 
     # Capacities
-    capacities = Dict{String,Float64}()
+    capacities = Dict{String, Float64}()
     total_required_capacity = peak_demand * capacity_margin
     capacity_shares = Float64[]
     for (_name, technology, _, _, _, _) in selected_sources
@@ -214,14 +232,39 @@ function StorageEnergyProblem(target_variables::Int, feasibility_status::Feasibi
     total_share = sum(capacity_shares)
     for (i, (name, _technology, _, availability, capacity_factor, _)) in enumerate(selected_sources)
         normalized_share = capacity_shares[i] / total_share
-        effective_capacity = total_required_capacity * normalized_share / (availability * capacity_factor)
+        effective_capacity =
+            total_required_capacity * normalized_share / (availability * capacity_factor)
         capacities[name] = max(10.0, effective_capacity)
     end
 
     # Demands (daily load pattern with mild noise)
     demands = Float64[]
-    hour_factors = [0.6, 0.55, 0.5, 0.5, 0.55, 0.7, 0.85, 1.0, 0.95, 0.9,
-                    0.85, 0.9, 0.95, 1.0, 0.9, 0.85, 0.9, 0.95, 1.0, 0.95, 0.9, 0.8, 0.7, 0.65]
+    hour_factors = [
+        0.6,
+        0.55,
+        0.5,
+        0.5,
+        0.55,
+        0.7,
+        0.85,
+        1.0,
+        0.95,
+        0.9,
+        0.85,
+        0.9,
+        0.95,
+        1.0,
+        0.9,
+        0.85,
+        0.9,
+        0.95,
+        1.0,
+        0.95,
+        0.9,
+        0.8,
+        0.7,
+        0.65,
+    ]
     base_demand = peak_demand * (1 - demand_variation)
     for p in 1:n_periods
         hour_idx = 1 + (p - 1) % 24
@@ -282,9 +325,19 @@ function StorageEnergyProblem(target_variables::Int, feasibility_status::Feasibi
     end
 
     return StorageEnergyProblem(
-        n_sources, n_periods, sources, time_periods, generation_costs,
-        capacities, demands, renewable_sources, renewable_fraction,
-        storage_capacity, storage_power, storage_efficiency, initial_level,
+        n_sources,
+        n_periods,
+        sources,
+        time_periods,
+        generation_costs,
+        capacities,
+        demands,
+        renewable_sources,
+        renewable_fraction,
+        storage_capacity,
+        storage_power,
+        storage_efficiency,
+        initial_level,
     )
 end
 
@@ -295,7 +348,8 @@ Build a JuMP model for the energy-with-storage problem. Completely deterministic
 uses only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::StorageEnergyProblem)
     model = Model()
@@ -313,21 +367,23 @@ function build_model(prob::StorageEnergyProblem)
     @variable(model, 0 <= discharge[t in T] <= prob.storage_power)
 
     # Objective: minimize total generation cost
-    @objective(model, Min,
-        sum(prob.generation_costs[s] * x[s, t] for s in sources, t in T))
+    @objective(model, Min, sum(prob.generation_costs[s] * x[s, t] for s in sources, t in T))
 
     # Initial state of charge
     @constraint(model, storage_level[0] == prob.initial_level)
 
     for t in T
         # Meet demand: generation + net discharge >= demand
-        @constraint(model,
-            sum(x[s, t] for s in sources) + discharge[t] - charge[t] >= prob.demands[t])
+        @constraint(
+            model, sum(x[s, t] for s in sources) + discharge[t] - charge[t] >= prob.demands[t]
+        )
 
         # Storage balance: round-trip efficiency applied on charging
-        @constraint(model,
-            storage_level[t] == storage_level[t-1] +
-                prob.storage_efficiency * charge[t] - discharge[t])
+        @constraint(
+            model,
+            storage_level[t] ==
+                storage_level[t - 1] + prob.storage_efficiency * charge[t] - discharge[t]
+        )
     end
 
     # Terminal state-of-charge: battery cannot end below where it started,
@@ -336,9 +392,11 @@ function build_model(prob::StorageEnergyProblem)
 
     # Minimum renewable fraction each period
     for t in T
-        @constraint(model,
+        @constraint(
+            model,
             sum(x[s, t] for s in prob.renewable_sources) >=
-                prob.renewable_fraction * sum(x[s, t] for s in sources))
+                prob.renewable_fraction * sum(x[s, t] for s in sources)
+        )
     end
 
     return model

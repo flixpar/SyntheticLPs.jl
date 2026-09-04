@@ -8,6 +8,7 @@ using Distributions
 Generator for equipment-constrained batch blending problems.
 
 # Overview
+
 Models blending a product across several discrete production batches on a single
 mixer. The decisions are the amount of each ingredient assigned to each batch,
 `x[i, b]`. The objective minimizes total ingredient cost. Each batch is limited by
@@ -17,16 +18,17 @@ satisfy per-batch quality bounds on a set of blended attributes. Per-batch quali
 targets are varied across batches to reduce symmetry and degeneracy.
 
 # Fields
-- `n_ingredients::Int`: Number of available ingredients
-- `n_batches::Int`: Number of production batches (mixer runs)
-- `n_attributes::Int`: Number of blended quality attributes
-- `costs::Vector{Int}`: Unit cost of each ingredient
-- `attributes::Matrix{Float64}`: Attribute value of each ingredient (n_ingredients × n_attributes)
-- `lower_bounds::Matrix{Float64}`: Per-batch lower bound on each attribute (n_batches × n_attributes)
-- `upper_bounds::Matrix{Float64}`: Per-batch upper bound on each attribute (n_batches × n_attributes)
-- `supply_limits::Vector{Float64}`: Total supply available for each ingredient across all batches
-- `min_blend_amount::Float64`: Minimum total amount of product to produce
-- `mixer_capacity::Float64`: Maximum total amount that can be mixed in a single batch
+
+  - `n_ingredients::Int`: Number of available ingredients
+  - `n_batches::Int`: Number of production batches (mixer runs)
+  - `n_attributes::Int`: Number of blended quality attributes
+  - `costs::Vector{Int}`: Unit cost of each ingredient
+  - `attributes::Matrix{Float64}`: Attribute value of each ingredient (n_ingredients × n_attributes)
+  - `lower_bounds::Matrix{Float64}`: Per-batch lower bound on each attribute (n_batches × n_attributes)
+  - `upper_bounds::Matrix{Float64}`: Per-batch upper bound on each attribute (n_batches × n_attributes)
+  - `supply_limits::Vector{Float64}`: Total supply available for each ingredient across all batches
+  - `min_blend_amount::Float64`: Minimum total amount of product to produce
+  - `mixer_capacity::Float64`: Maximum total amount that can be mixed in a single batch
 """
 struct EquipmentBatchBlendingProblem <: ProblemGenerator
     n_ingredients::Int
@@ -51,11 +53,14 @@ Total = n_ingredients * n_batches. The number of batches is chosen first and the
 number of ingredients is sized as round(target / n_batches) to hit the target.
 
 # Arguments
-- `target_variables`: Target number of variables (n_ingredients × n_batches)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (n_ingredients × n_batches)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function EquipmentBatchBlendingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function EquipmentBatchBlendingProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
@@ -141,8 +146,16 @@ function EquipmentBatchBlendingProblem(target_variables::Int, feasibility_status
     end
 
     return EquipmentBatchBlendingProblem(
-        n_ingredients, n_batches, n_attributes, costs, attributes,
-        lower_bounds, upper_bounds, supply_limits, min_blend_amount, mixer_capacity,
+        n_ingredients,
+        n_batches,
+        n_attributes,
+        costs,
+        attributes,
+        lower_bounds,
+        upper_bounds,
+        supply_limits,
+        min_blend_amount,
+        mixer_capacity,
     )
 end
 
@@ -153,7 +166,8 @@ Build a JuMP model for the equipment-constrained batch blending problem.
 Deterministic — uses only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::EquipmentBatchBlendingProblem)
     model = Model()
@@ -183,12 +197,16 @@ function build_model(prob::EquipmentBatchBlendingProblem)
     # Per-batch quality bounds (homogeneous in the batch total amount).
     for b in 1:B
         for j in 1:prob.n_attributes
-            @constraint(model,
+            @constraint(
+                model,
                 sum(prob.attributes[i, j] * x[i, b] for i in 1:n) >=
-                prob.lower_bounds[b, j] * sum(x[i, b] for i in 1:n))
-            @constraint(model,
+                    prob.lower_bounds[b, j] * sum(x[i, b] for i in 1:n)
+            )
+            @constraint(
+                model,
                 sum(prob.attributes[i, j] * x[i, b] for i in 1:n) <=
-                prob.upper_bounds[b, j] * sum(x[i, b] for i in 1:n))
+                    prob.upper_bounds[b, j] * sum(x[i, b] for i in 1:n)
+            )
         end
     end
 

@@ -15,13 +15,7 @@ catch
 end
 
 function revenue_product_signature(product)
-    return (
-        product.id,
-        product.origin,
-        product.destination,
-        product.fare_class,
-        product.resources,
-    )
+    return (product.id, product.origin, product.destination, product.fare_class, product.resources)
 end
 
 function check_revenue_network(problem)
@@ -60,8 +54,7 @@ end
 
 @testset "Revenue management category" begin
     @test list_variants(:revenue_management) == [:standard, :stochastic_overbooking]
-    @test ProblemVariant(:revenue_management) ==
-          ProblemVariant(:revenue_management, :standard)
+    @test ProblemVariant(:revenue_management) == ProblemVariant(:revenue_management, :standard)
     @test problem_info(:revenue_management)[:default_variant] == :standard
 
     @testset "standard sizing, network data, and deterministic construction" begin
@@ -81,7 +74,7 @@ end
         @test first.n_resources == second.n_resources
         @test first.n_nodes == second.n_nodes
         @test revenue_product_signature.(first.products) ==
-              revenue_product_signature.(second.products)
+            revenue_product_signature.(second.products)
         @test first.product_resources == second.product_resources
         @test first.resource_products == second.resource_products
         @test first.resource_names == second.resource_names
@@ -141,8 +134,8 @@ end
                 @test object.set isa REVENUE_MOI.LessThan{Float64}
                 @test object.set.upper == problem.capacity[r]
                 @test all(
-                    normalized_coefficient(row, model[:acceptance][j]) == 1.0
-                    for j in problem.resource_products[r]
+                    normalized_coefficient(row, model[:acceptance][j]) == 1.0 for
+                    j in problem.resource_products[r]
                 )
             end
         end
@@ -156,8 +149,7 @@ end
 
             certificate = something(problem.infeasibility_certificate)
             mandatory = sum(
-                problem.commitment[j]
-                for j in problem.resource_products[certificate.resource]
+                problem.commitment[j] for j in problem.resource_products[certificate.resource]
             )
             @test certificate.committed_load ≈ mandatory
             @test certificate.capacity == problem.capacity[certificate.resource]
@@ -169,9 +161,11 @@ end
         for seed in 0:63
             _, problem = generate_problem(REVENUE_STANDARD, 120, unknown, seed)
             push!(statuses, problem.resolved_status)
-            @test problem.resolved_status == feasible ?
-                  SyntheticLPs._revenue_management_witness_is_valid(problem) :
-                  SyntheticLPs._revenue_management_certificate_is_valid(problem)
+            @test if problem.resolved_status == feasible
+                SyntheticLPs._revenue_management_witness_is_valid(problem)
+            else
+                SyntheticLPs._revenue_management_certificate_is_valid(problem)
+            end
         end
         @test statuses == Set((feasible, infeasible))
     end
@@ -184,12 +178,18 @@ end
             @test actual >= 14
 
             adjusted_target = max(target, 14)
-            scenarios = adjusted_target < 150 ? (3:5) :
-                        adjusted_target < 1_200 ? (4:8) : (6:12)
+            scenarios = if adjusted_target < 150
+                (3:5)
+            elseif adjusted_target < 1_200
+                (4:8)
+            else
+                (6:12)
+            end
             best_error = minimum(
-                abs(max(2, round(Int, adjusted_target / (1 + 2 * s))) *
-                    (1 + 2 * s) - adjusted_target)
-                for s in scenarios
+                abs(
+                    max(2, round(Int, adjusted_target / (1 + 2 * s))) * (1 + 2 * s) -
+                    adjusted_target,
+                ) for s in scenarios
             )
             @test abs(actual - adjusted_target) == best_error
             check_revenue_network(problem)
@@ -197,8 +197,7 @@ end
             @test length(problem.scenario_probability) == problem.n_scenarios
             @test all(problem.scenario_probability .> 0)
             @test sum(problem.scenario_probability) ≈ 1.0
-            @test size(problem.show_rate) ==
-                  (problem.n_products, problem.n_scenarios)
+            @test size(problem.show_rate) == (problem.n_products, problem.n_scenarios)
             @test all(0.55 .<= problem.show_rate .<= 0.995)
             @test all(problem.denied_service_cost .> problem.fare)
             @test all(0 .< problem.max_denied_fraction .< 0.08)
@@ -208,7 +207,7 @@ end
         _, first = generate_problem(REVENUE_OVERBOOKING, 500, infeasible, 7_771)
         _, second = generate_problem(REVENUE_OVERBOOKING, 500, infeasible, 7_771)
         @test revenue_product_signature.(first.products) ==
-              revenue_product_signature.(second.products)
+            revenue_product_signature.(second.products)
         @test first.product_resources == second.product_resources
         @test first.resource_products == second.resource_products
         @test first.resource_names == second.resource_names
@@ -239,8 +238,7 @@ end
             _, problem = generate_problem(REVENUE_OVERBOOKING, 500, feasible, seed)
             push!(show_profiles, problem.show_profile)
         end
-        @test show_profiles ==
-              Set((:stable_business, :mixed_leisure, :disruption_prone))
+        @test show_profiles == Set((:stable_business, :mixed_leisure, :disruption_prone))
     end
 
     @testset "stochastic recourse formulation and status guarantees" begin
@@ -255,7 +253,7 @@ end
             @test witness.bookings == problem.commitment
             @test all(iszero, witness.denied)
             @test witness.served ≈
-                  problem.show_rate .* reshape(problem.commitment, problem.n_products, 1)
+                problem.show_rate .* reshape(problem.commitment, problem.n_products, 1)
             @test start_value(model[:bookings][1]) == witness.bookings[1]
             @test start_value(model[:served][1, 1]) == witness.served[1, 1]
             @test start_value(model[:denied][1, 1]) == 0.0
@@ -266,8 +264,7 @@ end
             @test balance_object.set.value == 0.0
             @test normalized_coefficient(balance, model[:served][1, 1]) == 1.0
             @test normalized_coefficient(balance, model[:denied][1, 1]) == 1.0
-            @test normalized_coefficient(balance, model[:bookings][1]) ≈
-                  -problem.show_rate[1, 1]
+            @test normalized_coefficient(balance, model[:bookings][1]) ≈ -problem.show_rate[1, 1]
 
             denial_row = model[:product_denial_cap][1, 1]
             denial_object = constraint_object(denial_row)
@@ -275,10 +272,9 @@ end
             @test denial_object.set.upper == 0.0
             @test normalized_coefficient(denial_row, model[:denied][1, 1]) == 1.0
             @test normalized_coefficient(denial_row, model[:bookings][1]) ≈
-                  -problem.max_denied_fraction[1] * problem.show_rate[1, 1]
+                -problem.max_denied_fraction[1] * problem.show_rate[1, 1]
 
-            @test size(model[:scenario_capacity]) ==
-                  (problem.n_resources, problem.n_scenarios)
+            @test size(model[:scenario_capacity]) == (problem.n_resources, problem.n_scenarios)
             @test length(model[:scenario_denial_cap]) == problem.n_scenarios
         end
 
@@ -292,8 +288,8 @@ end
             certificate = something(problem.infeasibility_certificate)
             mandatory = sum(
                 (1 - problem.max_denied_fraction[j]) *
-                problem.show_rate[j, certificate.scenario] * problem.commitment[j]
-                for j in problem.resource_products[certificate.resource]
+                problem.show_rate[j, certificate.scenario] *
+                problem.commitment[j] for j in problem.resource_products[certificate.resource]
             )
             @test certificate.mandatory_service_load ≈ mandatory
             @test certificate.capacity == problem.capacity[certificate.resource]
@@ -305,9 +301,11 @@ end
         for seed in 0:63
             _, problem = generate_problem(REVENUE_OVERBOOKING, 500, unknown, seed)
             push!(statuses, problem.resolved_status)
-            @test problem.resolved_status == feasible ?
-                  SyntheticLPs._stochastic_overbooking_witness_is_valid(problem) :
-                  SyntheticLPs._stochastic_overbooking_certificate_is_valid(problem)
+            @test if problem.resolved_status == feasible
+                SyntheticLPs._stochastic_overbooking_witness_is_valid(problem)
+            else
+                SyntheticLPs._stochastic_overbooking_certificate_is_valid(problem)
+            end
         end
         @test statuses == Set((feasible, infeasible))
     end
@@ -323,27 +321,27 @@ end
             second_model = SyntheticLPs.build_model(problem)
             @test num_variables(first_model) == num_variables(second_model)
             @test num_constraints(first_model; count_variable_in_set_constraints=true) ==
-                  num_constraints(second_model; count_variable_in_set_constraints=true)
+                num_constraints(second_model; count_variable_in_set_constraints=true)
             first_variables = all_variables(first_model)
             second_variables = all_variables(second_model)
             @test name.(first_variables) == name.(second_variables)
             first_objective = objective_function(first_model)
             second_objective = objective_function(second_model)
-            @test [coefficient(first_objective, variable) for variable in first_variables] ==
-                  [coefficient(second_objective, variable) for variable in second_variables]
+            @test [coefficient(first_objective, variable) for variable in first_variables] == [coefficient(second_objective, variable) for variable in second_variables]
         end
     end
 
     if HAS_REVENUE_HIGHS
         @testset "direct HiGHS status contracts (no retries)" begin
             for reference in (REVENUE_STANDARD, REVENUE_OVERBOOKING),
-                status in (feasible, infeasible), target in (50, 150, 500), seed in 0:5
+                status in (feasible, infeasible), target in (50, 150, 500),
+                seed in 0:5
+
                 model, _ = generate_problem(reference, target, status, seed)
                 set_optimizer(model, HiGHS.Optimizer)
                 set_silent(model)
                 optimize!(model)
-                expected = status == feasible ? REVENUE_MOI.OPTIMAL :
-                                                 REVENUE_MOI.INFEASIBLE
+                expected = status == feasible ? REVENUE_MOI.OPTIMAL : REVENUE_MOI.INFEASIBLE
                 @test termination_status(model) == expected
             end
         end

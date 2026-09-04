@@ -13,6 +13,7 @@ a pure LP. Includes sector/region exposure limits, asset class allocation bounds
 exposure constraints, position size limits, and turnover constraints.
 
 # Overview
+
 Models institutional portfolio construction. The decisions are asset weights
 plus auxiliary variables for CVaR and turnover linearization. The objective
 maximizes expected return. Constraints impose a CVaR risk limit, full investment
@@ -21,29 +22,30 @@ factor exposure bands, individual position limits, and turnover from a benchmark
 portfolio.
 
 # Fields
-- `n_assets::Int`: Number of investable assets
-- `n_scenarios::Int`: Number of return scenarios for CVaR linearization
-- `n_sectors::Int`: Number of industry sectors
-- `n_regions::Int`: Number of geographic regions
-- `n_asset_classes::Int`: Number of asset classes (e.g., equities, bonds, alternatives)
-- `n_factors::Int`: Number of risk factors
-- `expected_returns::Vector{Float64}`: Expected return per asset
-- `scenario_returns::Matrix{Float64}`: Return matrix (n_scenarios × n_assets)
-- `beta::Float64`: CVaR confidence level (e.g., 0.95)
-- `cvar_limit::Float64`: Maximum allowable CVaR
-- `sector_assignments::Vector{Int}`: Sector index per asset
-- `region_assignments::Vector{Int}`: Region index per asset
-- `asset_class_assignments::Vector{Int}`: Asset class index per asset
-- `sector_upper::Vector{Float64}`: Max allocation per sector
-- `region_upper::Vector{Float64}`: Max allocation per region
-- `asset_class_lower::Vector{Float64}`: Min allocation per asset class
-- `asset_class_upper::Vector{Float64}`: Max allocation per asset class
-- `factor_loadings::Matrix{Float64}`: Factor loading matrix (n_assets × n_factors)
-- `factor_lower::Vector{Float64}`: Lower bound on factor exposure
-- `factor_upper::Vector{Float64}`: Upper bound on factor exposure
-- `max_position::Vector{Float64}`: Max weight per asset
-- `benchmark::Vector{Float64}`: Benchmark portfolio weights
-- `turnover_limit::Float64`: Max total turnover from benchmark
+
+  - `n_assets::Int`: Number of investable assets
+  - `n_scenarios::Int`: Number of return scenarios for CVaR linearization
+  - `n_sectors::Int`: Number of industry sectors
+  - `n_regions::Int`: Number of geographic regions
+  - `n_asset_classes::Int`: Number of asset classes (e.g., equities, bonds, alternatives)
+  - `n_factors::Int`: Number of risk factors
+  - `expected_returns::Vector{Float64}`: Expected return per asset
+  - `scenario_returns::Matrix{Float64}`: Return matrix (n_scenarios × n_assets)
+  - `beta::Float64`: CVaR confidence level (e.g., 0.95)
+  - `cvar_limit::Float64`: Maximum allowable CVaR
+  - `sector_assignments::Vector{Int}`: Sector index per asset
+  - `region_assignments::Vector{Int}`: Region index per asset
+  - `asset_class_assignments::Vector{Int}`: Asset class index per asset
+  - `sector_upper::Vector{Float64}`: Max allocation per sector
+  - `region_upper::Vector{Float64}`: Max allocation per region
+  - `asset_class_lower::Vector{Float64}`: Min allocation per asset class
+  - `asset_class_upper::Vector{Float64}`: Max allocation per asset class
+  - `factor_loadings::Matrix{Float64}`: Factor loading matrix (n_assets × n_factors)
+  - `factor_lower::Vector{Float64}`: Lower bound on factor exposure
+  - `factor_upper::Vector{Float64}`: Upper bound on factor exposure
+  - `max_position::Vector{Float64}`: Max weight per asset
+  - `benchmark::Vector{Float64}`: Benchmark portfolio weights
+  - `turnover_limit::Float64`: Max total turnover from benchmark
 """
 struct PortfolioProblem <: ProblemGenerator
     n_assets::Int
@@ -80,9 +82,10 @@ Variables: x[i] (weights), z[s] (CVaR shortfall), alpha (VaR), d_plus/d_minus (t
 Total = 3 * n_assets + n_scenarios + 1.
 
 # Arguments
-- `target_variables`: Target number of variables
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
 function PortfolioProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
@@ -145,7 +148,7 @@ function PortfolioProblem(target_variables::Int, feasibility_status::Feasibility
     scenario_returns = factor_returns * factor_loadings' + idiosyncratic
 
     # --- Expected returns ---
-    expected_returns = vec(mean(scenario_returns, dims=1))
+    expected_returns = vec(mean(scenario_returns; dims=1))
     expected_returns .+= rand(rng, Normal(0.0, 0.01), n_assets)
 
     # --- CVaR parameters ---
@@ -160,16 +163,26 @@ function PortfolioProblem(target_variables::Int, feasibility_status::Feasibility
 
     # --- Sector upper limits ---
     sector_counts = [count(==(s), sector_assignments) for s in 1:n_sectors]
-    sector_upper = [min(1.0, (sector_counts[s] / n_assets) * rand(rng, Uniform(1.2, 2.5))) for s in 1:n_sectors]
+    sector_upper = [
+        min(1.0, (sector_counts[s] / n_assets) * rand(rng, Uniform(1.2, 2.5))) for s in 1:n_sectors
+    ]
 
     # --- Region upper limits ---
     region_counts = [count(==(r), region_assignments) for r in 1:n_regions]
-    region_upper = [min(1.0, (region_counts[r] / n_assets) * rand(rng, Uniform(1.2, 2.5))) for r in 1:n_regions]
+    region_upper = [
+        min(1.0, (region_counts[r] / n_assets) * rand(rng, Uniform(1.2, 2.5))) for r in 1:n_regions
+    ]
 
     # --- Asset class bounds ---
     class_counts = [count(==(c), asset_class_assignments) for c in 1:n_asset_classes]
-    asset_class_lower = [max(0.0, (class_counts[c] / n_assets) * rand(rng, Uniform(0.1, 0.5))) for c in 1:n_asset_classes]
-    asset_class_upper = [min(1.0, (class_counts[c] / n_assets) * rand(rng, Uniform(1.2, 2.5))) for c in 1:n_asset_classes]
+    asset_class_lower = [
+        max(0.0, (class_counts[c] / n_assets) * rand(rng, Uniform(0.1, 0.5))) for
+        c in 1:n_asset_classes
+    ]
+    asset_class_upper = [
+        min(1.0, (class_counts[c] / n_assets) * rand(rng, Uniform(1.2, 2.5))) for
+        c in 1:n_asset_classes
+    ]
     for c in 1:n_asset_classes
         asset_class_upper[c] = max(asset_class_upper[c], asset_class_lower[c] + 0.05)
     end
@@ -291,12 +304,29 @@ function PortfolioProblem(target_variables::Int, feasibility_status::Feasibility
     end
 
     return PortfolioProblem(
-        n_assets, n_scenarios, n_sectors, n_regions, n_asset_classes, n_factors,
-        expected_returns, scenario_returns, beta, cvar_limit,
-        sector_assignments, region_assignments, asset_class_assignments,
-        sector_upper, region_upper, asset_class_lower, asset_class_upper,
-        factor_loadings, factor_lower, factor_upper,
-        max_position, benchmark, turnover_limit
+        n_assets,
+        n_scenarios,
+        n_sectors,
+        n_regions,
+        n_asset_classes,
+        n_factors,
+        expected_returns,
+        scenario_returns,
+        beta,
+        cvar_limit,
+        sector_assignments,
+        region_assignments,
+        asset_class_assignments,
+        sector_upper,
+        region_upper,
+        asset_class_lower,
+        asset_class_upper,
+        factor_loadings,
+        factor_lower,
+        factor_upper,
+        max_position,
+        benchmark,
+        turnover_limit,
     )
 end
 
@@ -307,7 +337,8 @@ Build a JuMP model for the CVaR portfolio optimization problem. Deterministic �
 only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::PortfolioProblem)
     model = Model()
@@ -331,7 +362,9 @@ function build_model(prob::PortfolioProblem)
     end
 
     # CVaR risk limit
-    @constraint(model, alpha + (1.0 / ((1.0 - prob.beta) * S)) * sum(z[s] for s in 1:S) <= prob.cvar_limit)
+    @constraint(
+        model, alpha + (1.0 / ((1.0 - prob.beta) * S)) * sum(z[s] for s in 1:S) <= prob.cvar_limit
+    )
 
     # Budget constraint (fully invested)
     @constraint(model, sum(x[i] for i in 1:n) == 1.0)
@@ -363,8 +396,12 @@ function build_model(prob::PortfolioProblem)
 
     # Factor exposure bounds
     for f in 1:prob.n_factors
-        @constraint(model, sum(prob.factor_loadings[i, f] * x[i] for i in 1:n) >= prob.factor_lower[f])
-        @constraint(model, sum(prob.factor_loadings[i, f] * x[i] for i in 1:n) <= prob.factor_upper[f])
+        @constraint(
+            model, sum(prob.factor_loadings[i, f] * x[i] for i in 1:n) >= prob.factor_lower[f]
+        )
+        @constraint(
+            model, sum(prob.factor_loadings[i, f] * x[i] for i in 1:n) <= prob.factor_upper[f]
+        )
     end
 
     # Position size limits

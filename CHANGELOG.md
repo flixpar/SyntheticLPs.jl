@@ -4,6 +4,127 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-09-04 (PR #52 review fixes)
+
+**Previous Commit**: `07943c3`
+
+**Commits**: (pending)
+
+**Datetime**: 2026-09-04 UTC
+
+**Summary**: Addressed the review of PR #52. Fixed a formatter setting that
+silently corrupted the command-line option names in both `scripts/` CLIs, fixed
+the `Julia 1.11` CI job that the PR's new workflow exposed, and made
+`generate_lps.jl` repair its own environment. Added a regression guard. Then cut
+test and session start-up time by precompiling every registered generator.
+
+**Details**:
+
+- `format_docstrings = true` made JuliaFormatter rewrite every bare option-name
+  literal inside `@add_arg_table!` into a triple-quoted docstring. Julia keeps
+  the newline before a closing `"""` on its own line, so ArgParse registered
+  `"--var-mean\n"` rather than `"--var-mean"`. Every unaliased option in
+  `scripts/generate_lps.jl` (24) and `scripts/analyze_problem_statuses.jl` (11)
+  was affected, including `--problem-types`, which `main` reads on every
+  invocation, so both CLIs failed even with default arguments.
+- Disabled `format_docstrings` in `.JuliaFormatter.toml` (with a comment
+  recording why) and restored all 35 option names to single-line literals.
+- Added a `Script CLI option names` testset that reads the `scripts/` sources
+  textually — they need ArgParse and HiGHS and so are not loadable from the test
+  environment — and asserts no argument table contains a triple-quoted literal
+  or an option name with whitespace. The existing CI `test` job runs only
+  `julia-runtest`, which never loads the scripts, so this class of breakage was
+  otherwise invisible to CI.
+- Stopped tracking the root `Manifest.toml`. It was resolved under Julia 1.12
+  and pinned `JuliaSyntaxHighlighting`, a 1.12-only stdlib, so the new `Julia
+  1.11` CI job failed with "Could not locate the source code for the
+  JuliaSyntaxHighlighting package" while `Julia 1` (1.12) passed. `.gitignore`
+  has always listed `Manifest*.toml` with the note that it "should not be
+  committed for packages" — the file simply predated that rule. Each CI job now
+  resolves its own manifest for the Julia version it runs.
+- Gave `scripts/generate_lps.jl` the same `Pkg.activate`/`develop`/`instantiate`
+  preamble `scripts/analyze_problem_statuses.jl` already had. `scripts/Manifest.toml`
+  is untracked, so it goes stale whenever the package gains a dependency; it had
+  missed `Dualization`, which made every `--project=scripts` run fail to
+  precompile. The script now repairs the environment itself and runs straight
+  from a clone without a `--project` flag. Corrected its usage examples, which
+  advertised `--project=@.` — an environment without HiGHS or ArgParse.
+- Profiled where the test suite spends its time, after the new CI workflow made
+  the cost visible. The suite is **53.2% JIT compilation** (`@time` over
+  `runtests.jl`: 233 s, 53.24% compilation). A cold pass over all 127 variants
+  takes 79.6 s; a second pass over the same work takes 0.12 s, and 0.47 s with
+  fresh seeds *and* sizes — so it is compilation, not caching of results. The
+  cost tracks the **number of generator types**, not instance size or solve
+  count: HiGHS is only ~9% of the suite (ablation: 233 s with the solver
+  testsets, 213 s without), and the target-500 instances cost 7.5 s to generate
+  and 11.4 s to solve corpus-wide. Expect the suite to slow roughly linearly as
+  variants are added.
+- Tried and **reverted** a `PrecompileTools` `@compile_workload` over every
+  variant. It worked as intended locally — compilation 53.24% → 34.08%, suite
+  233 s → 168 s, and a cold sweep over all 127 variants in a fresh session
+  79.6 s → 0.34 s — but precompilation only relocates compilation rather than
+  removing it, so the gain depends on the cache surviving. CI invalidates it on
+  every commit that touches `src/`, and CI wall clock regressed 11m25s → 13m42s
+  (`Julia 1` 8m48s → 13m26s; the lint job 1m02s → 5m12s, because `make setup`
+  precompiles the package into the `quality` environment as well). Locally the
+  workload still won on a touched `src/` (309 s vs 337 s) and clearly won on an
+  untouched one (196 s vs ~330 s), but not by enough to justify the shared CI
+  cost. Kept for the record: the per-package `precompile_workload` preference
+  that PrecompileTools reads makes such a workload opt-out-able, if this is
+  revisited.
+- Switched the test suite to `-O1` in CI, the `Makefile`, and the documented
+  commands. Because the suite is compilation-bound, lowering the optimization
+  level trades a little runtime for much less codegen and wins outright, with
+  every assertion still running (166,410 passing in each case). Matched runs:
+  `-O2` 342 s / 5m24.6 s, **`-O1` 256–270 s / 4m09.7–4m23.4 s (−23%)**, `-O0`
+  225 s / 3m38.7 s (−34%). `-O0` is faster still but was not adopted, to keep
+  routine runs closer to release codegen. `--compile=min` was also tried and
+  rejected: it never finished the suite in 85 minutes, because interpreting the
+  generator code costs far more than the compilation it avoids. The `test` job
+  now calls `Pkg.test` directly rather than `julia-actions/julia-runtest`, which
+  exposes no `julia_args` and defaults to `coverage=true` — coverage was being
+  computed and discarded, as nothing in the repo consumes it.
+- Added a command-line category filter to `test/runtests.jl`. Positional
+  arguments (space- or comma-separated, and reachable through
+  `Pkg.test(; test_args=…)`) restrict the global-RNG sweep, the per-variant
+  generator sweep, and the `test/problem_types/*.jl` include loop to the named
+  categories, so iterating on one generator costs ~15 s instead of ~4 minutes.
+  Framework-level testsets always run; an unregistered name raises rather than
+  silently running nothing. No arguments — the default, and what CI uses — runs
+  everything. This is the test-side counterpart to `--problem-types` / `--types`
+  on the generation and analysis scripts, which select what to *generate*.
+- Dropped the Julia version matrix, testing only the latest stable release, and
+  aligned the quality job to it as well (it had pinned 1.11 while the test job
+  floated). Version compatibility is not a goal for this project, and because
+  matrix jobs run in parallel the second version cost a full job of runner time
+  without shortening the wall clock. `Project.toml` still declares
+  `julia = "1.11"` as the floor; it is simply no longer verified in CI.
+- Made `make setup` run `Pkg.resolve()` before `Pkg.instantiate()`. The `quality`
+  environment dev-depends on the package, so its manifest goes stale whenever the
+  package gains a dependency — adding `PrecompileTools` broke `make lint` until
+  it was resolved, the same failure mode as the stale `scripts/Manifest.toml`.
+
+## 2026-09-03 (automated code quality)
+
+**Previous Commit**: `7603f8b`
+
+**Commits**: (pending)
+
+**Datetime**: 2026-09-03 UTC
+
+**Summary**: Added reproducible formatting, linting, package-quality checks,
+and continuous integration for the Julia and Python sources.
+
+**Details**:
+
+- Added JuliaFormatter, Ruff, EditorConfig, and dedicated Julia tooling
+  configuration, with `make format`, `make lint`, and `make check` entry points.
+- Added Aqua package-quality checks and completed the missing standard-library
+  compatibility bounds they identified.
+- Added CI jobs that enforce formatting and linting and test the package on
+  Julia 1.11 and the latest stable Julia release.
+- Applied the configured formatters to the existing Julia and Python sources.
+
 ## 2026-09-01 (documentation cleanup)
 
 **Previous Commit**: `033de59`

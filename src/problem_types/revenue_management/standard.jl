@@ -16,7 +16,9 @@ struct RevenueManagementProduct
     resources::Vector{Int}
 end
 
-"""Feasible acceptance vector stored for solver-independent status auditing."""
+"""
+Feasible acceptance vector stored for solver-independent status auditing.
+"""
 struct RevenueManagementWitness
     acceptance::Vector{Float64}
 end
@@ -60,8 +62,8 @@ struct RevenueManagementProblem <: ProblemGenerator
     capacity::Vector{Float64}
     market_profile::Symbol
     resolved_status::FeasibilityStatus
-    feasible_witness::Union{Nothing,RevenueManagementWitness}
-    infeasibility_certificate::Union{Nothing,RevenueManagementCapacityCertificate}
+    feasible_witness::Union{Nothing, RevenueManagementWitness}
+    infeasibility_certificate::Union{Nothing, RevenueManagementCapacityCertificate}
 end
 
 function _sample_revenue_market_profile(rng::AbstractRNG)
@@ -117,7 +119,13 @@ end
 
 @inline function _sample_revenue_fare_class(rng::AbstractRNG)
     draw = rand(rng)
-    return draw < 0.62 ? :economy : draw < 0.86 ? :premium : :business
+    return if draw < 0.62
+        :economy
+    elseif draw < 0.86
+        :premium
+    else
+        :business
+    end
 end
 
 function _generate_revenue_products(
@@ -141,11 +149,13 @@ function _generate_revenue_products(
         elseif rand(rng) < profile.connection_share && !isempty(inbound) && !isempty(outbound)
             first_leg = rand(rng, inbound)
             candidates = [
-                r for r in outbound
-                if resource_destination[r] != resource_origin[first_leg]
+                r for r in outbound if resource_destination[r] != resource_origin[first_leg]
             ]
-            isempty(candidates) ? [rand(rng, 1:n_resources)] :
+            if isempty(candidates)
+                [rand(rng, 1:n_resources)]
+            else
                 [first_leg, rand(rng, candidates)]
+            end
         else
             [rand(rng, 1:n_resources)]
         end
@@ -153,19 +163,27 @@ function _generate_revenue_products(
         origin = resource_origin[first(resources)]
         destination = resource_destination[last(resources)]
         fare_class = _sample_revenue_fare_class(rng)
-        products[j] = RevenueManagementProduct(
-            j,
-            origin,
-            destination,
-            fare_class,
-            resources,
-        )
+        products[j] = RevenueManagementProduct(j, origin, destination, fare_class, resources)
 
-        class_fare = fare_class == :economy ? 1.0 : fare_class == :premium ? 1.65 : 2.7
-        class_demand = fare_class == :economy ? 1.0 : fare_class == :premium ? 0.58 : 0.32
+        class_fare = if fare_class == :economy
+            1.0
+        elseif fare_class == :premium
+            1.65
+        else
+            2.7
+        end
+        class_demand = if fare_class == :economy
+            1.0
+        elseif fare_class == :premium
+            0.58
+        else
+            0.32
+        end
         base_fare = rand(rng, Uniform(profile.base_fare...))
         route_factor = length(resources) == 1 ? 1.0 : rand(rng, Uniform(1.55, 1.9))
-        fare[j] = round(base_fare * class_fare * route_factor * rand(rng, Uniform(0.88, 1.12)); digits=2)
+        fare[j] = round(
+            base_fare * class_fare * route_factor * rand(rng, Uniform(0.88, 1.12)); digits=2
+        )
 
         mean_demand = rand(rng, Uniform(profile.base_demand...)) * class_demand
         demand[j] = round(clamp(rand(rng, LogNormal(log(mean_demand), 0.32)), 2.0, 140.0); digits=2)
@@ -180,26 +198,24 @@ Construct a deterministic network DLP. The model has exactly one acceptance
 variable per product, so `n_products = max(2, target_variables)`.
 """
 function RevenueManagementProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
-    resolved_status = feasibility_status == unknown ?
-                      (rand(rng) < 0.72 ? feasible : infeasible) : feasibility_status
+    resolved_status = if feasibility_status == unknown
+        (rand(rng) < 0.72 ? feasible : infeasible)
+    else
+        feasibility_status
+    end
 
     n_products = max(2, target_variables)
     resource_ratio = rand(rng, Uniform(3.0, 5.5))
     n_resources = clamp(round(Int, n_products / resource_ratio), 2, min(n_products, 80))
     profile = _sample_revenue_market_profile(rng)
-    n_nodes, resource_names, resource_origin, resource_destination =
-        _generate_revenue_network(n_resources)
+    n_nodes, resource_names, resource_origin, resource_destination = _generate_revenue_network(
+        n_resources
+    )
     products, fare, demand = _generate_revenue_products(
-        rng,
-        n_products,
-        resource_origin,
-        resource_destination,
-        profile,
+        rng, n_products, resource_origin, resource_destination, profile
     )
     product_resources = [copy(product.resources) for product in products]
     resource_products = [Int[] for _ in 1:n_resources]
@@ -240,18 +256,14 @@ function RevenueManagementProblem(
         affected_products = resource_products[critical_resource]
         for j in affected_products
             commitment[j] = max(
-                commitment[j],
-                round(demand[j] * rand(rng, Uniform(0.30, 0.62)); digits=3),
+                commitment[j], round(demand[j] * rand(rng, Uniform(0.30, 0.62)); digits=3)
             )
         end
         committed_load = sum(commitment[j] for j in affected_products)
         capacity[critical_resource] = committed_load * rand(rng, Uniform(0.68, 0.88))
         excess = committed_load - capacity[critical_resource]
         infeasibility_certificate = RevenueManagementCapacityCertificate(
-            critical_resource,
-            committed_load,
-            capacity[critical_resource],
-            excess,
+            critical_resource, committed_load, capacity[critical_resource], excess
         )
     end
 
@@ -282,10 +294,7 @@ function RevenueManagementProblem(
     return problem
 end
 
-function _revenue_management_witness_is_valid(
-    problem::RevenueManagementProblem;
-    atol::Float64=1e-8,
-)
+function _revenue_management_witness_is_valid(problem::RevenueManagementProblem; atol::Float64=1e-8)
     problem.resolved_status == feasible || return false
     problem.infeasibility_certificate === nothing || return false
     witness = problem.feasible_witness
@@ -303,8 +312,7 @@ function _revenue_management_witness_is_valid(
 end
 
 function _revenue_management_certificate_is_valid(
-    problem::RevenueManagementProblem;
-    atol::Float64=1e-8,
+    problem::RevenueManagementProblem; atol::Float64=1e-8
 )
     problem.resolved_status == infeasible || return false
     problem.feasible_witness === nothing || return false
@@ -314,14 +322,9 @@ function _revenue_management_certificate_is_valid(
     committed_load = sum(
         problem.commitment[j] for j in problem.resource_products[certificate.resource]
     )
-    isapprox(certificate.committed_load, committed_load; atol=atol, rtol=1e-10) ||
+    isapprox(certificate.committed_load, committed_load; atol=atol, rtol=1e-10) || return false
+    isapprox(certificate.capacity, problem.capacity[certificate.resource]; atol=atol, rtol=1e-10) ||
         return false
-    isapprox(
-        certificate.capacity,
-        problem.capacity[certificate.resource];
-        atol=atol,
-        rtol=1e-10,
-    ) || return false
     isapprox(
         certificate.excess,
         committed_load - problem.capacity[certificate.resource];
@@ -340,8 +343,7 @@ deterministic and consumes only stored problem data.
 function build_model(problem::RevenueManagementProblem)
     model = Model()
     @variable(
-        model,
-        problem.commitment[j] <= acceptance[j in 1:problem.n_products] <= problem.demand[j],
+        model, problem.commitment[j] <= acceptance[j in 1:problem.n_products] <= problem.demand[j],
     )
     # Preserve the legacy model lookup while giving the variable its clearer
     # domain name. Both keys reference the same JuMP container.
@@ -352,11 +354,7 @@ function build_model(problem::RevenueManagementProblem)
             set_start_value(acceptance[j], witness.acceptance[j])
         end
     end
-    @objective(
-        model,
-        Max,
-        sum(problem.fare[j] * acceptance[j] for j in 1:problem.n_products),
-    )
+    @objective(model, Max, sum(problem.fare[j] * acceptance[j] for j in 1:problem.n_products),)
     @constraint(
         model,
         resource_capacity[r in 1:problem.n_resources],
@@ -369,6 +367,6 @@ register_variant(
     :revenue_management,
     :standard,
     RevenueManagementProblem,
-    "Deterministic network revenue management with typed hub itineraries, fare classes, group commitments, and shared leg capacity",
+    "Deterministic network revenue management with typed hub itineraries, fare classes, group commitments, and shared leg capacity";
     default=true,
 )

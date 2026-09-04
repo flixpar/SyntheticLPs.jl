@@ -12,6 +12,7 @@ each resource. This is the allocation-plus-sequencing MILP of Maaroufi, Camus
 generalized job shop (Pham & Klinkert, EJOR 2008).
 
 # Overview
+
 A surgical suite opens `n_rooms` ORs for one day (480-minute regular sessions)
 with `n_surgeons` surgeons, each available in a time window (full day, morning,
 or afternoon; occasionally extending past the session close when a surgeon
@@ -27,11 +28,12 @@ absorbed by a tardiness variable and penalized by an urgency weight. The
 objective is weighted tardiness plus a small makespan term.
 
 # Model
-- `assign_room[o, r] ∈ {0,1}` for eligible rooms, `assign_surgeon[o, s] ∈ {0,1}`
-  for eligible surgeons (each surgery gets exactly one of each);
-- `room_order` / `surgeon_order` binaries: one per unordered surgery pair per
-  shared eligible room / shared eligible surgeon, selecting the pair's order;
-- `start[o] ≥ 0` (minutes into the day), `tardiness[o] ≥ 0`, `makespan ≥ 0`.
+
+  - `assign_room[o, r] ∈ {0,1}` for eligible rooms, `assign_surgeon[o, s] ∈ {0,1}`
+    for eligible surgeons (each surgery gets exactly one of each);
+  - `room_order` / `surgeon_order` binaries: one per unordered surgery pair per
+    shared eligible room / shared eligible surgeon, selecting the pair's order;
+  - `start[o] ≥ 0` (minutes into the day), `tardiness[o] ≥ 0`, `makespan ≥ 0`.
 
 Constraints: exactly-one room and surgeon per surgery; big-M disjunctions per
 shared room (`+ turnover`) and per shared surgeon (`+ surgeon_turnover`);
@@ -40,6 +42,7 @@ completed by the window end, when that surgeon is chosen); soft target-end
 rows `start[o] + duration[o] - tardiness[o] ≤ target_end[o]`; makespan rows.
 
 # Feasibility control
+
 Surgeon availability windows are HARD constraints, so feasibility is not
 automatic: a specialty's caseload could exceed its eligible surgeons' window
 capacity. The constructor therefore builds a full feasible schedule: surgeries
@@ -58,29 +61,30 @@ deadline already in the LP relaxation (the same certificate pattern as
 `job_shop_scheduling`).
 
 # Fields
-- `n_surgeries::Int`, `n_rooms::Int`, `n_surgeons::Int`: dimensions
-- `surgery_specialty::Vector{Symbol}`: specialty name per surgery
-- `surgery_duration::Vector{Float64}`: planned duration (minutes) per surgery
-- `eligible_rooms::Vector{Vector{Int}}`: rooms each surgery may use
-- `eligible_surgeons::Vector{Vector{Int}}`: surgeons who may perform each surgery
-- `surgeon_window_start::Vector{Float64}` / `surgeon_window_end::Vector{Float64}`:
-  availability window per surgeon (minutes into the day)
-- `room_turnover::Float64`: OR turnover between consecutive cases (minutes)
-- `surgeon_turnover::Float64`: surgeon turnover between consecutive cases (minutes)
-- `target_end::Vector{Float64}`: soft target completion time per surgery
-- `tardiness_weight::Vector{Float64}`: per-minute overrun weight per surgery
-- `big_m::Float64`: big-M constant for the disjunctive constraints
-- `room_pairs::Vector{Tuple{Int,Int,Int}}`: `(surgery_o, surgery_p, room)` triples
-  (o < p) sharing an eligible room — indices of `room_order`
-- `surgeon_pairs::Vector{Tuple{Int,Int,Int}}`: `(surgery_o, surgery_p, surgeon)`
-  triples (o < p) sharing an eligible surgeon — indices of `surgeon_order`
-- `feasible_witness::Union{Nothing,Vector{Tuple{Int,Int,Float64}}}`:
-  `(assigned_room, assigned_surgeon, start)` per surgery of the planted
-  feasible schedule (only for `feasible` instances)
-- `infeasible_surgery::Union{Nothing,Int}`: surgery carrying the hard deadline
-  (only for `infeasible` instances)
-- `hard_deadline::Union{Nothing,Float64}`: the contradictory hard deadline
-- `feasibility_status::FeasibilityStatus`: resolved feasibility status
+
+  - `n_surgeries::Int`, `n_rooms::Int`, `n_surgeons::Int`: dimensions
+  - `surgery_specialty::Vector{Symbol}`: specialty name per surgery
+  - `surgery_duration::Vector{Float64}`: planned duration (minutes) per surgery
+  - `eligible_rooms::Vector{Vector{Int}}`: rooms each surgery may use
+  - `eligible_surgeons::Vector{Vector{Int}}`: surgeons who may perform each surgery
+  - `surgeon_window_start::Vector{Float64}` / `surgeon_window_end::Vector{Float64}`:
+    availability window per surgeon (minutes into the day)
+  - `room_turnover::Float64`: OR turnover between consecutive cases (minutes)
+  - `surgeon_turnover::Float64`: surgeon turnover between consecutive cases (minutes)
+  - `target_end::Vector{Float64}`: soft target completion time per surgery
+  - `tardiness_weight::Vector{Float64}`: per-minute overrun weight per surgery
+  - `big_m::Float64`: big-M constant for the disjunctive constraints
+  - `room_pairs::Vector{Tuple{Int,Int,Int}}`: `(surgery_o, surgery_p, room)` triples
+    (o < p) sharing an eligible room — indices of `room_order`
+  - `surgeon_pairs::Vector{Tuple{Int,Int,Int}}`: `(surgery_o, surgery_p, surgeon)`
+    triples (o < p) sharing an eligible surgeon — indices of `surgeon_order`
+  - `feasible_witness::Union{Nothing,Vector{Tuple{Int,Int,Float64}}}`:
+    `(assigned_room, assigned_surgeon, start)` per surgery of the planted
+    feasible schedule (only for `feasible` instances)
+  - `infeasible_surgery::Union{Nothing,Int}`: surgery carrying the hard deadline
+    (only for `infeasible` instances)
+  - `hard_deadline::Union{Nothing,Float64}`: the contradictory hard deadline
+  - `feasibility_status::FeasibilityStatus`: resolved feasibility status
 """
 struct SurgicalCaseSequencingProblem <: ProblemGenerator
     n_surgeries::Int
@@ -97,22 +101,22 @@ struct SurgicalCaseSequencingProblem <: ProblemGenerator
     target_end::Vector{Float64}
     tardiness_weight::Vector{Float64}
     big_m::Float64
-    room_pairs::Vector{Tuple{Int,Int,Int}}
-    surgeon_pairs::Vector{Tuple{Int,Int,Int}}
-    feasible_witness::Union{Nothing,Vector{Tuple{Int,Int,Float64}}}
-    infeasible_surgery::Union{Nothing,Int}
-    hard_deadline::Union{Nothing,Float64}
+    room_pairs::Vector{Tuple{Int, Int, Int}}
+    surgeon_pairs::Vector{Tuple{Int, Int, Int}}
+    feasible_witness::Union{Nothing, Vector{Tuple{Int, Int, Float64}}}
+    infeasible_surgery::Union{Nothing, Int}
+    hard_deadline::Union{Nothing, Float64}
     feasibility_status::FeasibilityStatus
 end
 
 # Exact decision-variable count for a sampled candidate: one room- and one
 # surgeon-assignment binary per eligibility entry, one ordering binary per
 # shared-resource pair, plus start/tardiness per surgery and one makespan.
-function _sequencing_var_count(eligible_rooms::Vector{Vector{Int}},
-                               eligible_surgeons::Vector{Vector{Int}})
+function _sequencing_var_count(
+    eligible_rooms::Vector{Vector{Int}}, eligible_surgeons::Vector{Vector{Int}}
+)
     n_surgeries = length(eligible_rooms)
-    n = sum(length, eligible_rooms) + sum(length, eligible_surgeons) +
-        2 * n_surgeries + 1
+    n = sum(length, eligible_rooms) + sum(length, eligible_surgeons) + 2 * n_surgeries + 1
     for o in 1:n_surgeries, p in (o + 1):n_surgeries
         n += length(intersect(eligible_rooms[o], eligible_rooms[p]))
         n += length(intersect(eligible_surgeons[o], eligible_surgeons[p]))
@@ -128,15 +132,18 @@ end
 # times come from a serial pass respecting room/surgeon disjunctions and
 # windows. Returns `(assigned_room, assigned_surgeon, start, window_end,
 # eligible_surgeons)` with windows/eligibility possibly repaired.
-function _sequencing_build_schedule(rng::AbstractRNG, durations::Vector{Float64},
-                                    eligible_rooms::Vector{Vector{Int}},
-                                    eligible_surgeons::Vector{Vector{Int}},
-                                    surgeon_specialty_idx::Vector{Int},
-                                    surgery_specialty_idx::Vector{Int},
-                                    window_start::Vector{Float64},
-                                    window_end::Vector{Float64},
-                                    room_turnover::Float64,
-                                    surgeon_turnover::Float64)
+function _sequencing_build_schedule(
+    rng::AbstractRNG,
+    durations::Vector{Float64},
+    eligible_rooms::Vector{Vector{Int}},
+    eligible_surgeons::Vector{Vector{Int}},
+    surgeon_specialty_idx::Vector{Int},
+    surgery_specialty_idx::Vector{Int},
+    window_start::Vector{Float64},
+    window_end::Vector{Float64},
+    room_turnover::Float64,
+    surgeon_turnover::Float64,
+)
     n_surgeries = length(durations)
     n_surgeons = length(window_start)
     eligible_surgeons = deepcopy(eligible_surgeons)
@@ -150,8 +157,9 @@ function _sequencing_build_schedule(rng::AbstractRNG, durations::Vector{Float64}
     for o in sortperm(durations; rev=true)
         best_s, best_slack = 0, -Inf
         for s in eligible_surgeons[o]
-            slack = 0.92 * (window_end[s] - window_start[s]) -
-                    (load[s] + (load[s] > 0 ? surgeon_turnover : 0.0) + durations[o])
+            slack =
+                0.92 * (window_end[s] - window_start[s]) -
+                (load[s] + (load[s] > 0 ? surgeon_turnover : 0.0) + durations[o])
             if slack > best_slack
                 best_s, best_slack = s, slack
             end
@@ -161,8 +169,9 @@ function _sequencing_build_schedule(rng::AbstractRNG, durations::Vector{Float64}
             # surgeon with the most remaining capacity.
             pool = findall(==(surgery_specialty_idx[o]), surgeon_specialty_idx)
             for s in shuffle(rng, pool)
-                slack = 0.92 * (window_end[s] - window_start[s]) -
-                        (load[s] + (load[s] > 0 ? surgeon_turnover : 0.0) + durations[o])
+                slack =
+                    0.92 * (window_end[s] - window_start[s]) -
+                    (load[s] + (load[s] > 0 ? surgeon_turnover : 0.0) + durations[o])
                 if slack > best_slack
                     best_s, best_slack = s, slack
                 end
@@ -174,8 +183,9 @@ function _sequencing_build_schedule(rng::AbstractRNG, durations::Vector{Float64}
             # Still no fit: the chosen surgeon stays late — extend their window
             # (and capacity) to take the case.
             needed = load[best_s] + (load[best_s] > 0 ? surgeon_turnover : 0.0) + durations[o]
-            window_end[best_s] = max(window_end[best_s],
-                                     5.0 * ceil((window_start[best_s] + needed / 0.92) / 5.0))
+            window_end[best_s] = max(
+                window_end[best_s], 5.0 * ceil((window_start[best_s] + needed / 0.92) / 5.0)
+            )
         end
         assigned_surgeon[o] = best_s
         load[best_s] += (load[best_s] > 0 ? surgeon_turnover : 0.0) + durations[o]
@@ -194,9 +204,11 @@ function _sequencing_build_schedule(rng::AbstractRNG, durations::Vector{Float64}
     end
     # Half-day surgeons pick home rooms first (they need lightly loaded rooms
     # to fit their windows), then full-day surgeons by descending caseload.
-    home_order = sort(collect(1:n_surgeons),
-                      by=s -> (window_end[s] - window_start[s],
-                               -sum(durations[o] for o in cases_of[s]; init=0.0)))
+    home_order = sort(
+        collect(1:n_surgeons);
+        by=s ->
+            (window_end[s] - window_start[s], -sum(durations[o] for o in cases_of[s]; init=0.0)),
+    )
     for s in home_order
         isempty(cases_of[s]) && continue
         common = intersect([eligible_rooms[o] for o in cases_of[s]]...)
@@ -227,8 +239,11 @@ function _sequencing_build_schedule(rng::AbstractRNG, durations::Vector{Float64}
     deferred = Int[]
     for r in 1:n_rooms
         cases_r = [o for o in 1:n_surgeries if assigned_room[o] == r]
-        sort!(cases_r, by=o -> (window_start[assigned_surgeon[o]],
-                                window_end[assigned_surgeon[o]], -durations[o]))
+        sort!(
+            cases_r;
+            by=o ->
+                (window_start[assigned_surgeon[o]], window_end[assigned_surgeon[o]], -durations[o]),
+        )
         for o in cases_r
             s = assigned_surgeon[o]
             t = max(room_free[r], window_start[s], surgeon_free[s])
@@ -269,10 +284,11 @@ function _sequencing_build_schedule(rng::AbstractRNG, durations::Vector{Float64}
 end
 
 # Exact count restricted to the pair binaries (used for the struct fields).
-function _sequencing_pair_lists(eligible_rooms::Vector{Vector{Int}},
-                                eligible_surgeons::Vector{Vector{Int}})
-    room_pairs = Tuple{Int,Int,Int}[]
-    surgeon_pairs = Tuple{Int,Int,Int}[]
+function _sequencing_pair_lists(
+    eligible_rooms::Vector{Vector{Int}}, eligible_surgeons::Vector{Vector{Int}}
+)
+    room_pairs = Tuple{Int, Int, Int}[]
+    surgeon_pairs = Tuple{Int, Int, Int}[]
     n_surgeries = length(eligible_rooms)
     for o in 1:n_surgeries, p in (o + 1):n_surgeries
         for r in intersect(eligible_rooms[o], eligible_rooms[p])
@@ -295,11 +311,14 @@ surgery counts, computing the exact variable count of each sampled instance,
 and keeps the closest one.
 
 # Arguments
-- `target_variables`: Target number of decision variables
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of decision variables
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function SurgicalCaseSequencingProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     target = max(target_variables, 20)
@@ -342,8 +361,7 @@ function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status
             k = _orsched_pick(rng, cum)
             profile = _ORSCHED_SPECIALTIES[spec_ids[k]]
             surgery_type = _orsched_sample_benchmark_type(rng, spec_ids[k])
-            durations[o] = clamp(5.0 * round(_orsched_type_mean(surgery_type) / 5.0),
-                                 20.0, 480.0)
+            durations[o] = clamp(5.0 * round(_orsched_type_mean(surgery_type) / 5.0), 20.0, 480.0)
             specialties[o] = profile.name
             spec_index[o] = spec_ids[k]
         end
@@ -357,10 +375,8 @@ function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status
         for k in spec_ids
             cases_k = [o for o in 1:n_surgeries if spec_index[o] == k]
             isempty(cases_k) && continue
-            eff_load_k = sum(durations[o] for o in cases_k) +
-                         length(cases_k) * surgeon_turnover
-            n_k = max(1, ceil(Int, eff_load_k / (0.85 * 480.0) *
-                                               rand(rng, Uniform(1.0, 1.2))))
+            eff_load_k = sum(durations[o] for o in cases_k) + length(cases_k) * surgeon_turnover
+            n_k = max(1, ceil(Int, eff_load_k / (0.85 * 480.0) * rand(rng, Uniform(1.0, 1.2))))
             append!(surgeon_specialty, fill(k, n_k))
         end
         n_surgeons = length(surgeon_specialty)
@@ -376,9 +392,12 @@ function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status
             if !(surgeon_specialty[s] in seen_specialty) || u < 0.55
                 window_start[s], window_end[s] = 0.0, 480.0
             elseif u < 0.75
-                window_start[s], window_end[s] = 0.0, 5.0 * round(rand(rng, Uniform(210.0, 300.0)) / 5.0)
+                window_start[s], window_end[s] = 0.0,
+                5.0 * round(rand(rng, Uniform(210.0, 300.0)) / 5.0)
             else
-                window_start[s], window_end[s] = 5.0 * round(rand(rng, Uniform(180.0, 300.0)) / 5.0), 480.0
+                window_start[s], window_end[s] = 5.0 *
+                                                 round(rand(rng, Uniform(180.0, 300.0)) / 5.0),
+                480.0
             end
             push!(seen_specialty, surgeon_specialty[s])
         end
@@ -389,8 +408,8 @@ function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status
             pool = findall(==(k), surgeon_specialty)
             isempty(pool) && continue
             cases_k = [o for o in 1:n_surgeries if spec_index[o] == k]
-            eff_load_k = sum(durations[o] for o in cases_k; init=0.0) +
-                         length(cases_k) * surgeon_turnover
+            eff_load_k =
+                sum(durations[o] for o in cases_k; init=0.0) + length(cases_k) * surgeon_turnover
             cap_k() = sum(0.85 * (window_end[s] - window_start[s]) for s in pool)
             for s in shuffle(rng, pool)
                 cap_k() >= 1.02 * eff_load_k && break
@@ -401,19 +420,18 @@ function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status
         # Room count follows the caseload: enough ORs that the day's list
         # (durations plus turnovers plus the unavoidable morning idle time of
         # rooms hosting afternoon surgeons) fills 75-95% of session minutes.
-        idle_allowance = sum(window_start[s] for s in 1:n_surgeons
-                             if window_start[s] > 0; init=0.0)
-        total_minutes = sum(durations) + n_surgeries * room_turnover +
-                        0.7 * idle_allowance
-        n_rooms = max(n_rooms_min,
-                      ceil(Int, total_minutes / (480.0 * rand(rng, Uniform(0.75, 0.95)))))
+        idle_allowance = sum(window_start[s] for s in 1:n_surgeons if window_start[s] > 0; init=0.0)
+        total_minutes = sum(durations) + n_surgeries * room_turnover + 0.7 * idle_allowance
+        n_rooms = max(
+            n_rooms_min, ceil(Int, total_minutes / (480.0 * rand(rng, Uniform(0.75, 0.95))))
+        )
 
         # Eligible surgeons: one or two surgeons of the surgery's specialty.
         eligible_surgeons = Vector{Vector{Int}}(undef, n_surgeries)
         for o in 1:n_surgeries
             pool = findall(==(spec_index[o]), surgeon_specialty)
-            eligible_surgeons[o] = rand(rng) < 0.65 ? [rand(rng, pool)] :
-                                   shuffle(rng, pool)[1:min(2, length(pool))]
+            eligible_surgeons[o] =
+                rand(rng) < 0.65 ? [rand(rng, pool)] : shuffle(rng, pool)[1:min(2, length(pool))]
         end
 
         # Eligible rooms: most surgeries can use any room; some need specially
@@ -430,21 +448,36 @@ function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status
 
         # Feasible schedule (witness): capacity-aware assignment + simulation;
         # may repair eligibility and window ends.
-        assigned_room, assigned_surgeon, start, final_window_end, final_eligible =
-            _sequencing_build_schedule(rng, durations, eligible_rooms, eligible_surgeons,
-                                       surgeon_specialty, spec_index,
-                                       window_start, window_end,
-                                       room_turnover, surgeon_turnover)
+        assigned_room, assigned_surgeon, start, final_window_end, final_eligible = _sequencing_build_schedule(
+            rng,
+            durations,
+            eligible_rooms,
+            eligible_surgeons,
+            surgeon_specialty,
+            spec_index,
+            window_start,
+            window_end,
+            room_turnover,
+            surgeon_turnover,
+        )
 
         total = _sequencing_var_count(eligible_rooms, final_eligible)
         gap = abs(total - target) / target
         if gap < best_gap
             best_gap = gap
-            best = (durations=durations, specialties=specialties,
-                    eligible_rooms=eligible_rooms, eligible_surgeons=final_eligible,
-                    window_start=window_start, window_end=final_window_end,
-                    n_rooms=n_rooms, n_surgeons=n_surgeons, assigned_room=assigned_room,
-                    assigned_surgeon=assigned_surgeon, start=start)
+            best = (
+                durations=durations,
+                specialties=specialties,
+                eligible_rooms=eligible_rooms,
+                eligible_surgeons=final_eligible,
+                window_start=window_start,
+                window_end=final_window_end,
+                n_rooms=n_rooms,
+                n_surgeons=n_surgeons,
+                assigned_room=assigned_room,
+                assigned_surgeon=assigned_surgeon,
+                start=start,
+            )
             gap <= 0.05 && break
         end
         scale = sqrt(target / max(total, 1))
@@ -470,23 +503,27 @@ function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status
     tardiness_weight = Vector{Float64}(undef, n_surgeries)
     for o in 1:n_surgeries
         u = rand(rng)
-        tardiness_weight[o] = u < 0.12 ? rand(rng, Uniform(4.0, 8.0)) :
-                              u < 0.40 ? rand(rng, Uniform(2.0, 4.0)) :
-                              rand(rng, Uniform(0.5, 2.0))
+        tardiness_weight[o] = if u < 0.12
+            rand(rng, Uniform(4.0, 8.0))
+        elseif u < 0.40
+            rand(rng, Uniform(2.0, 4.0))
+        else
+            rand(rng, Uniform(0.5, 2.0))
+        end
     end
 
     # Big-M valid for every feasible start: starts complete within a surgeon
     # window (window ends may reach past the session close when a surgeon stays
     # late) plus one duration and turnover.
-    big_m = max(480.0, maximum(window_end)) + maximum(durations) +
-            room_turnover + surgeon_turnover
+    big_m = max(480.0, maximum(window_end)) + maximum(durations) + room_turnover + surgeon_turnover
 
     witness = nothing
     infeasible_surgery = nothing
     hard_deadline = nothing
     if feasibility_status == feasible
-        witness = [(best.assigned_room[o], best.assigned_surgeon[o], best.start[o])
-                   for o in 1:n_surgeries]
+        witness = [
+            (best.assigned_room[o], best.assigned_surgeon[o], best.start[o]) for o in 1:n_surgeries
+        ]
     elseif feasibility_status == infeasible
         # Hard completion deadline below the surgery's own duration. Completion
         # is start + duration ≥ duration (start ≥ 0), so the deadline is
@@ -497,11 +534,26 @@ function SurgicalCaseSequencingProblem(target_variables::Int, feasibility_status
     end
 
     return SurgicalCaseSequencingProblem(
-        n_surgeries, n_rooms, n_surgeons,
-        best.specialties, durations, eligible_rooms, eligible_surgeons,
-        window_start, window_end, room_turnover, surgeon_turnover,
-        target_end, tardiness_weight, big_m, room_pairs, surgeon_pairs,
-        witness, infeasible_surgery, hard_deadline, feasibility_status,
+        n_surgeries,
+        n_rooms,
+        n_surgeons,
+        best.specialties,
+        durations,
+        eligible_rooms,
+        eligible_surgeons,
+        window_start,
+        window_end,
+        room_turnover,
+        surgeon_turnover,
+        target_end,
+        tardiness_weight,
+        big_m,
+        room_pairs,
+        surgeon_pairs,
+        witness,
+        infeasible_surgery,
+        hard_deadline,
+        feasibility_status,
     )
 end
 
@@ -512,7 +564,8 @@ Build the JuMP model for the daily surgical case sequencing problem.
 Deterministic — uses only data from the struct fields.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::SurgicalCaseSequencingProblem)
     model = Model()
@@ -523,10 +576,14 @@ function build_model(prob::SurgicalCaseSequencingProblem)
     dur = prob.surgery_duration
     M = prob.big_m
 
-    @variable(model, assign_room[o in 1:n_surgeries, r in 1:n_rooms;
-                                 r in prob.eligible_rooms[o]], Bin)
-    @variable(model, assign_surgeon[o in 1:n_surgeries, s in 1:n_surgeons;
-                                    s in prob.eligible_surgeons[o]], Bin)
+    @variable(
+        model, assign_room[o in 1:n_surgeries, r in 1:n_rooms; r in prob.eligible_rooms[o]], Bin
+    )
+    @variable(
+        model,
+        assign_surgeon[o in 1:n_surgeries, s in 1:n_surgeons; s in prob.eligible_surgeons[o]],
+        Bin
+    )
     @variable(model, room_order[1:length(prob.room_pairs)], Bin)
     @variable(model, surgeon_order[1:length(prob.surgeon_pairs)], Bin)
     @variable(model, start[1:n_surgeries] >= 0)
@@ -543,26 +600,44 @@ function build_model(prob::SurgicalCaseSequencingProblem)
     # `room_order[idx] = 1` orders o before p in room r; both disjunctions are
     # vacuous unless both surgeries take that room.
     for (idx, (o, p, r)) in enumerate(prob.room_pairs)
-        @constraint(model, start[p] >= start[o] + dur[o] + prob.room_turnover -
-            M * (3 - room_order[idx] - assign_room[o, r] - assign_room[p, r]))
-        @constraint(model, start[o] >= start[p] + dur[p] + prob.room_turnover -
-            M * (2 + room_order[idx] - assign_room[o, r] - assign_room[p, r]))
+        @constraint(
+            model,
+            start[p] >=
+                start[o] + dur[o] + prob.room_turnover -
+            M * (3 - room_order[idx] - assign_room[o, r] - assign_room[p, r])
+        )
+        @constraint(
+            model,
+            start[o] >=
+                start[p] + dur[p] + prob.room_turnover -
+            M * (2 + room_order[idx] - assign_room[o, r] - assign_room[p, r])
+        )
     end
 
     # Surgeon no-overlap with surgeon turnover (per shared surgeon).
     for (idx, (o, p, s)) in enumerate(prob.surgeon_pairs)
-        @constraint(model, start[p] >= start[o] + dur[o] + prob.surgeon_turnover -
-            M * (3 - surgeon_order[idx] - assign_surgeon[o, s] - assign_surgeon[p, s]))
-        @constraint(model, start[o] >= start[p] + dur[p] + prob.surgeon_turnover -
-            M * (2 + surgeon_order[idx] - assign_surgeon[o, s] - assign_surgeon[p, s]))
+        @constraint(
+            model,
+            start[p] >=
+                start[o] + dur[o] + prob.surgeon_turnover -
+            M * (3 - surgeon_order[idx] - assign_surgeon[o, s] - assign_surgeon[p, s])
+        )
+        @constraint(
+            model,
+            start[o] >=
+                start[p] + dur[p] + prob.surgeon_turnover -
+            M * (2 + surgeon_order[idx] - assign_surgeon[o, s] - assign_surgeon[p, s])
+        )
     end
 
     # Surgeon availability windows bind when the surgeon is chosen.
     for o in 1:n_surgeries, s in prob.eligible_surgeons[o]
-        @constraint(model, start[o] >= prob.surgeon_window_start[s] -
-            M * (1 - assign_surgeon[o, s]))
-        @constraint(model, start[o] + dur[o] <= prob.surgeon_window_end[s] +
-            M * (1 - assign_surgeon[o, s]))
+        @constraint(
+            model, start[o] >= prob.surgeon_window_start[s] - M * (1 - assign_surgeon[o, s])
+        )
+        @constraint(
+            model, start[o] + dur[o] <= prob.surgeon_window_end[s] + M * (1 - assign_surgeon[o, s])
+        )
     end
 
     # Soft target ends (regular session close) and makespan.
@@ -575,9 +650,11 @@ function build_model(prob::SurgicalCaseSequencingProblem)
         @constraint(model, makespan >= start[o] + dur[o])
     end
 
-    @objective(model, Min,
-        sum(prob.tardiness_weight[o] * tardiness[o] for o in 1:n_surgeries) +
-        0.05 * makespan)
+    @objective(
+        model,
+        Min,
+        sum(prob.tardiness_weight[o] * tardiness[o] for o in 1:n_surgeries) + 0.05 * makespan
+    )
 
     return model
 end

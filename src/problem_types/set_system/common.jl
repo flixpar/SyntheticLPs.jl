@@ -10,9 +10,7 @@ function _set_system_size(target_variables::Int, element_fraction::Float64)
 end
 
 function _set_random_column(
-    rng::AbstractRNG,
-    n_elements::Int;
-    max_size::Int=max(1, min(n_elements, 8)),
+    rng::AbstractRNG, n_elements::Int; max_size::Int=max(1, min(n_elements, 8))
 )
     effective_max = max(1, min(n_elements, max_size))
     # Mix short uniform columns with a heavier upper tail.
@@ -28,10 +26,7 @@ end
 # `n_planted` columns are a constructive exact-cover/packing witness and ensure
 # that every row is nonempty.
 function _set_columns_with_partition(
-    rng::AbstractRNG,
-    n_elements::Int,
-    n_columns::Int;
-    max_size::Int=max(2, min(n_elements, 6)),
+    rng::AbstractRNG, n_elements::Int, n_columns::Int; max_size::Int=max(2, min(n_elements, 6))
 )
     order = randperm(rng, n_elements)
     columns = Vector{Vector{Int}}()
@@ -51,12 +46,7 @@ function _set_columns_with_partition(
     return columns, n_planted
 end
 
-function _set_positive_coefficients(
-    rng::AbstractRNG,
-    n::Int;
-    low::Int=1,
-    high::Int=100,
-)
+function _set_positive_coefficients(rng::AbstractRNG, n::Int; low::Int=1, high::Int=100)
     return Float64[rand(rng, low:high) for _ in 1:n]
 end
 

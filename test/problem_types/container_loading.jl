@@ -5,5 +5,7 @@
     @test_nowarn generate_problem("container_loading/standard", 2, unknown, 1)
     @test_nowarn generate_problem("container_loading/standard", 11, feasible, 1)
     @test_nowarn generate_problem("container_loading/two_dimensional_bin_packing", 2, unknown, 1)
-    @test_nowarn generate_problem("container_loading/two_dimensional_bin_packing", 29, infeasible, 1)
+    @test_nowarn generate_problem(
+        "container_loading/two_dimensional_bin_packing", 29, infeasible, 1
+    )
 end

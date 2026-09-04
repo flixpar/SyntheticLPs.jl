@@ -18,11 +18,9 @@
     unstable_count(p) = sum(count(==(Int8(0)), ph) for ph in p.phases)
 
     # Exact variable-count formula and sizing across a committed matrix.
-    for target in (50, 100, 500, 1000, 5000),
-        status in (feasible, infeasible, unknown), seed in 0:3
+    for target in (50, 100, 500, 1000, 5000), status in (feasible, infeasible, unknown), seed in 0:3
         m, p = generate_problem(nnv, target, status, seed)
-        @test num_variables(m) ==
-              p.input_dim + 1 + 2 * sum(p.hidden_sizes) + unstable_count(p)
+        @test num_variables(m) == p.input_dim + 1 + 2 * sum(p.hidden_sizes) + unstable_count(p)
         @test abs(num_variables(m) - target) <= 0.25 * target
         @test p.feasibility_status == status
         # Every layer is wide enough to host two unstable ReLUs.
@@ -44,7 +42,7 @@
         previous_lower, previous_upper = p.input_lower, p.input_upper
         for layer in eachindex(p.hidden_sizes)
             lo, up = SyntheticLPs.nnv_affine_bounds(
-                p.weights[layer], p.biases[layer], previous_lower, previous_upper,
+                p.weights[layer], p.biases[layer], previous_lower, previous_upper
             )
             @test lo ≈ p.pre_lower[layer]
             @test up ≈ p.pre_upper[layer]
@@ -57,16 +55,13 @@
                 elseif phase == -1
                     @test p.pre_upper[layer][neuron] < 0.0
                 else
-                    @test p.pre_lower[layer][neuron] < 0.0 <
-                          p.pre_upper[layer][neuron]
+                    @test p.pre_lower[layer][neuron] < 0.0 < p.pre_upper[layer][neuron]
                 end
             end
-            previous_lower, previous_upper =
-                p.activation_lower[layer], p.activation_upper[layer]
+            previous_lower, previous_upper = p.activation_lower[layer], p.activation_upper[layer]
         end
         out_lo, out_up = SyntheticLPs.nnv_affine_bounds(
-            reshape(p.output_weights, 1, :), [p.output_bias],
-            previous_lower, previous_upper,
+            reshape(p.output_weights, 1, :), [p.output_bias], previous_lower, previous_upper
         )
         @test p.output_lower ≈ out_lo[1]
         @test p.interval_output_upper ≈ out_up[1]
@@ -75,8 +70,7 @@
 
     # The planted opposing pair: mirrored weights, odd-symmetric bias, exactly
     # negated preactivation interval, and positive output weights on both.
-    for target in (60, 300, 1500), status in (feasible, infeasible, unknown),
-        seed in 0:2
+    for target in (60, 300, 1500), status in (feasible, infeasible, unknown), seed in 0:2
         _, p = generate_problem(nnv, target, status, seed)
         u, v = p.mirrored_pair
         @test u != v
@@ -103,19 +97,19 @@
             @test pre ≈ w.preactivations[layer]
             @test act ≈ w.activations[layer]
             # Variable bounds of the model.
-            @test all(p.pre_lower[layer] .- 1e-8 .<= pre .<=
-                      p.pre_upper[layer] .+ 1e-8)
-            @test all(p.activation_lower[layer] .- 1e-8 .<= act .<=
-                      p.activation_upper[layer] .+ 1e-8)
+            @test all(p.pre_lower[layer] .- 1e-8 .<= pre .<= p.pre_upper[layer] .+ 1e-8)
+            @test all(
+                p.activation_lower[layer] .- 1e-8 .<= act .<= p.activation_upper[layer] .+ 1e-8
+            )
 
             unstable = findall(==(Int8(0)), p.phases[layer])
             @test length(w.relu_binaries[layer]) == length(unstable)
             for neuron in eachindex(p.phases[layer])
                 phase = p.phases[layer][neuron]
                 if phase == -1
-                    @test isapprox(act[neuron], 0.0; atol = 1e-9)
+                    @test isapprox(act[neuron], 0.0; atol=1e-9)
                 elseif phase == 1
-                    @test isapprox(act[neuron], pre[neuron]; atol = 1e-9)
+                    @test isapprox(act[neuron], pre[neuron]; atol=1e-9)
                 end
             end
             # The big-M rows, evaluated at the induced binary pattern.
@@ -144,14 +138,15 @@
     # ---- Infeasibility certificate ----
     sample_max(p, rng, n) = maximum(
         begin
-            x = [rand(rng) < 0.5 ?
-                 (rand(rng) < 0.5 ? p.input_lower[i] : p.input_upper[i]) :
-                 p.input_lower[i] +
-                 rand(rng) * (p.input_upper[i] - p.input_lower[i])
-                 for i in 1:p.input_dim]
-            dot(p.output_weights,
-                SyntheticLPs.nnv_forward(p.weights, p.biases, x)[2][end]) +
-                p.output_bias
+            x = [
+                if rand(rng) < 0.5
+                    (rand(rng) < 0.5 ? p.input_lower[i] : p.input_upper[i])
+                else
+                    p.input_lower[i] + rand(rng) * (p.input_upper[i] - p.input_lower[i])
+                end for i in 1:p.input_dim
+            ]
+            dot(p.output_weights, SyntheticLPs.nnv_forward(p.weights, p.biases, x)[2][end]) +
+            p.output_bias
         end for _ in 1:n
     )
 
@@ -162,11 +157,13 @@
         @test p.feasible_witness === nothing
 
         # The stored affine collapse reproduces the bound exactly.
-        bound = cert.input_constant + sum(
-            max(cert.input_coefficients[i] * p.input_lower[i],
-                cert.input_coefficients[i] * p.input_upper[i])
-            for i in 1:p.input_dim
-        )
+        bound =
+            cert.input_constant + sum(
+                max(
+                    cert.input_coefficients[i] * p.input_lower[i],
+                    cert.input_coefficients[i] * p.input_upper[i],
+                ) for i in 1:p.input_dim
+            )
         @test bound ≈ cert.attainable_upper
         @test cert.attainable_upper ≈ p.attainable_upper
 
@@ -203,8 +200,9 @@
         # The planted pair makes interval propagation provably loose.
         u, v = cert.mirrored_pair
         @test cert.mirrored_pair == p.mirrored_pair
-        @test cert.mirrored_gap ≈ min(p.output_weights[u] * p.pre_upper[end][u],
-                                      p.output_weights[v] * p.pre_upper[end][v])
+        @test cert.mirrored_gap ≈ min(
+            p.output_weights[u] * p.pre_upper[end][u], p.output_weights[v] * p.pre_upper[end][v]
+        )
         @test cert.mirrored_gap > 0.0
         @test cert.attainable_upper <= cert.interval_upper - cert.mirrored_gap + 1e-7
 
@@ -224,17 +222,18 @@
 
     # Reproducibility and global-RNG isolation. The witness/certificate fields
     # are composite types, so equality is compared structurally.
-    deep_equal(a, b) = isequal(a, b) || (typeof(a) === typeof(b) &&
-        !isempty(fieldnames(typeof(a))) &&
-        all(deep_equal(getfield(a, f), getfield(b, f))
-            for f in fieldnames(typeof(a))))
+    deep_equal(a, b) =
+        isequal(a, b) || (
+            typeof(a) === typeof(b) &&
+            !isempty(fieldnames(typeof(a))) &&
+            all(deep_equal(getfield(a, f), getfield(b, f)) for f in fieldnames(typeof(a)))
+        )
     for status in (feasible, infeasible, unknown)
         Random.seed!(987)
         _, p1 = generate_problem(nnv, 220, status, 42)
         Random.seed!(12345)
         _, p2 = generate_problem(nnv, 220, status, 42)
-        @test all(deep_equal(getfield(p1, f), getfield(p2, f))
-                  for f in fieldnames(typeof(p1)))
+        @test all(deep_equal(getfield(p1, f), getfield(p2, f)) for f in fieldnames(typeof(p1)))
         m1 = SyntheticLPs.build_model(p1)
         m2 = SyntheticLPs.build_model(p2)
         @test num_variables(m1) == num_variables(m2)
@@ -256,7 +255,7 @@
         # ... and on the unrelaxed MILP, where the feasible witness must also
         # be integrally realisable.
         for target in (60, 200), status in (feasible, infeasible), seed in 0:2
-            m, _ = generate_problem(nnv, target, status, seed; relax_integer = false)
+            m, _ = generate_problem(nnv, target, status, seed; relax_integer=false)
             set_optimizer(m, HiGHS.Optimizer)
             set_silent(m)
             set_attribute(m, "time_limit", 60.0)

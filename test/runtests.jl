@@ -19,6 +19,33 @@ catch
     false
 end
 
+# Optional focus filter, taken from the command line. Naming one or more
+# categories limits the per-variant sweeps and the per-category include loop to
+# them, for iterating on one generator without paying for all 127:
+#
+#     julia --project=@. -O1 test/runtests.jl transportation
+#     julia --project=@. -O1 test/runtests.jl tsp,knapsack
+#     Pkg.test(; test_args=["tsp"], julia_args=["-O1"])
+#
+# The framework-level testsets always run: they are cheap and guard the shared
+# machinery. No arguments — the default, and what CI uses — runs everything.
+const TEST_CATEGORIES = Symbol[
+    Symbol(strip(t)) for a in ARGS for t in split(a, ',') if !isempty(strip(t))
+]
+
+in_scope(ref) = isempty(TEST_CATEGORIES) || ref.category in TEST_CATEGORIES
+
+if !isempty(TEST_CATEGORIES)
+    # A typo would otherwise run only the framework testsets and pass, which
+    # looks exactly like a successful focused run.
+    unregistered = filter(!in(Set(list_categories())), TEST_CATEGORIES)
+    isempty(unregistered) || error(
+        "Unknown test categories: $(join(unregistered, ", ")). " *
+        "Known categories: $(join(sort(list_categories()), ", "))",
+    )
+    @info "Focused test run; pass no arguments to run everything." categories = TEST_CATEGORIES
+end
+
 # A deliberately always-feasible generator used to exercise retry exhaustion.
 struct ContractViolationTestProblem <: ProblemGenerator
     seed::Int
@@ -85,7 +112,8 @@ function test_problem_generator(ref)
 
             # Verify that the models are identical (same number of vars and constraints)
             @test num_variables(model1) == num_variables(model2)
-            @test num_constraints(model1, count_variable_in_set_constraints=true) == num_constraints(model2, count_variable_in_set_constraints=true)
+            @test num_constraints(model1, count_variable_in_set_constraints=true) ==
+                num_constraints(model2, count_variable_in_set_constraints=true)
 
             # Verify that problem instances are identical (same struct type and data)
             @test typeof(problem1) == typeof(problem2)
@@ -137,6 +165,7 @@ end
     # advance the caller's global stream, and must stay reproducible per seed.
     @testset "Global RNG Isolation" begin
         for ref in list_problems()
+            in_scope(ref) || continue
             Random.seed!(5171)
             expected = rand(3)
 
@@ -166,13 +195,16 @@ end
         @test Set(p.category for p in problems) == Set(cats)
 
         # Listing variants of a category (returned sorted by variant name).
-        @test issubset(Set([:standard, :balanced, :capacitated, :transshipment,
-                            :emission_constrained]), Set(list_variants(:transportation)))
+        @test issubset(
+            Set([:standard, :balanced, :capacitated, :transshipment, :emission_constrained]),
+            Set(list_variants(:transportation)),
+        )
         @test list_variants(:portfolio) == [:cvar, :tracking_error]
 
         # ProblemVariant construction, parsing, and printing.
         @test ProblemVariant("transportation") == ProblemVariant(:transportation, :standard)
-        @test ProblemVariant("transportation/standard") == ProblemVariant(:transportation, :standard)
+        @test ProblemVariant("transportation/standard") ==
+            ProblemVariant(:transportation, :standard)
         @test string(ProblemVariant("transportation/standard")) == "transportation/standard"
         @test_throws ErrorException ProblemVariant("a/b/c")
 
@@ -186,11 +218,35 @@ end
         m_kw, _ = generate_problem(:transportation, 100, unknown, 0; variant=:standard)
         m_ref, _ = generate_problem(ProblemVariant("transportation/standard"), 100, unknown, 0)
         m_str, _ = generate_problem("transportation/standard", 100, unknown, 0)
-        @test num_variables(m_cat) == num_variables(m_kw) == num_variables(m_ref) == num_variables(m_str)
+        @test num_variables(m_cat) ==
+            num_variables(m_kw) ==
+            num_variables(m_ref) ==
+            num_variables(m_str)
 
         # Unknown category / variant are rejected.
         @test_throws ErrorException generate_problem(:not_a_category, 50, unknown, 0)
         @test_throws ErrorException generate_problem(:transportation, 50, unknown, 0; variant=:nope)
+    end
+
+    # Regression guard for the CLI argument tables under `scripts/`. Formatting
+    # `@add_arg_table!` blocks with JuliaFormatter's `format_docstrings` option
+    # rewrites each bare option-name literal into a triple-quoted docstring,
+    # which silently appends a newline and makes ArgParse register `"--seed\n"`
+    # instead of `"--seed"`. The scripts are not loadable from the test
+    # environment (they need ArgParse and HiGHS), so check the sources textually.
+    @testset "Script CLI option names" begin
+        script_dir = joinpath(dirname(@__DIR__), "scripts")
+        for script in sort(readdir(script_dir; join=true))
+            endswith(script, ".jl") || continue
+            src = read(script, String)
+            occursin("@add_arg_table!", src) || continue
+            # Every option name is a plain single-line literal, never a
+            # triple-quoted block that would carry a trailing newline.
+            @test !occursin("\"\"\"", src)
+            for m in eachmatch(r"^[ \t]*\"(-[^\"\n]*)\""m, src)
+                @test !occursin(r"\s", m.captures[1])
+            end
+        end
     end
 
     # Focused per-category quality contracts live in separate files so a
@@ -198,23 +254,33 @@ end
     # one reviewable unit.
     problem_type_test_dir = joinpath(@__DIR__, "problem_types")
     if isdir(problem_type_test_dir)
-        for test_file in sort(readdir(problem_type_test_dir; join = true))
-            endswith(test_file, ".jl") && include(test_file)
+        for test_file in sort(readdir(problem_type_test_dir; join=true))
+            endswith(test_file, ".jl") || continue
+            category = Symbol(basename(test_file)[1:(end - 3)])
+            (isempty(TEST_CATEGORIES) || category in TEST_CATEGORIES) || continue
+            include(test_file)
         end
     end
 
     # Test individual problem generators (every registered variant)
     for ref in list_problems()
+        in_scope(ref) || continue
         test_problem_generator(ref)
     end
 
     # Test batch dataset generation
     @testset "Dataset Generation" begin
         # Basic in-memory generation (no solver required)
-        instances = generate_dataset(num_problems = 6, var_mean = 80, var_std = 20,
-                                     var_min = 30, var_max = 150, seed = 123,
-                                     problem_types = [:transportation, :knapsack],
-                                     max_candidate_multiplier = 2)
+        instances = generate_dataset(
+            num_problems=6,
+            var_mean=80,
+            var_std=20,
+            var_min=30,
+            var_max=150,
+            seed=123,
+            problem_types=[:transportation, :knapsack],
+            max_candidate_multiplier=2,
+        )
         @test instances isa Vector{GeneratedInstance}
         @test length(instances) == 6
         @test all(inst -> inst.num_variables > 0, instances)
@@ -225,83 +291,110 @@ end
         @test all(inst -> inst.variant in Set(list_variants(inst.problem_type)), instances)
 
         # Reproducibility: same seed → identical dataset
-        instances2 = generate_dataset(num_problems = 6, var_mean = 80, var_std = 20,
-                                      var_min = 30, var_max = 150, seed = 123,
-                                      problem_types = [:transportation, :knapsack],
-                                      max_candidate_multiplier = 2)
+        instances2 = generate_dataset(
+            num_problems=6,
+            var_mean=80,
+            var_std=20,
+            var_min=30,
+            var_max=150,
+            seed=123,
+            problem_types=[:transportation, :knapsack],
+            max_candidate_multiplier=2,
+        )
         @test [i.problem_type for i in instances] == [i.problem_type for i in instances2]
         @test [i.num_variables for i in instances] == [i.num_variables for i in instances2]
         @test [i.seed for i in instances] == [i.seed for i in instances2]
 
         # Restricting problem types is respected
-        subset = generate_dataset(num_problems = 5, var_mean = 80, var_std = 20,
-                                  var_min = 30, var_max = 150, seed = 1,
-                                  problem_types = [:transportation, :knapsack],
-                                  max_candidate_multiplier = 2)
+        subset = generate_dataset(
+            num_problems=5,
+            var_mean=80,
+            var_std=20,
+            var_min=30,
+            var_max=150,
+            seed=1,
+            problem_types=[:transportation, :knapsack],
+            max_candidate_multiplier=2,
+        )
         @test all(inst -> inst.problem_type in (:transportation, :knapsack), subset)
 
         # Direct Distributions.jl size distributions are accepted.
-        uniform_subset = generate_dataset(num_problems = 6,
-                                          size_distribution = Uniform(30, 150),
-                                          problem_types = [:transportation, :knapsack],
-                                          seed = 2,
-                                          max_candidate_multiplier = 2)
+        uniform_subset = generate_dataset(
+            num_problems=6,
+            size_distribution=Uniform(30, 150),
+            problem_types=[:transportation, :knapsack],
+            seed=2,
+            max_candidate_multiplier=2,
+        )
         @test length(uniform_subset) == 6
         @test all(inst -> inst.num_variables > 0, uniform_subset)
 
         # Distributions without a finite lower support are truncated at n = 2.
-        normal_subset = generate_dataset(num_problems = 100,
-                                         size_distribution = Normal(500, 200),
-                                         problem_types = [:knapsack],
-                                         seed = 5,
-                                         candidate_multiplier = 1,
-                                         max_candidate_multiplier = 1)
+        normal_subset = generate_dataset(
+            num_problems=100,
+            size_distribution=Normal(500, 200),
+            problem_types=[:knapsack],
+            seed=5,
+            candidate_multiplier=1,
+            max_candidate_multiplier=1,
+        )
         @test length(normal_subset) == 100
         @test minimum(inst -> inst.target_variables, normal_subset) >= 2
 
         # Per-type matching allocates an even quota to each selected type.
-        by_type = generate_dataset(num_problems = 6,
-                                   size_distribution = Uniform(30, 150),
-                                   problem_types = [:transportation, :knapsack],
-                                   match_size_by_type = true,
-                                   seed = 3,
-                                   max_candidate_multiplier = 2)
+        by_type = generate_dataset(
+            num_problems=6,
+            size_distribution=Uniform(30, 150),
+            problem_types=[:transportation, :knapsack],
+            match_size_by_type=true,
+            seed=3,
+            max_candidate_multiplier=2,
+        )
         @test count(inst -> inst.problem_type == :transportation, by_type) == 3
         @test count(inst -> inst.problem_type == :knapsack, by_type) == 3
 
         @test_throws ErrorException generate_dataset(
-            num_problems = 1,
-            problem_types = [:transportation, :knapsack],
-            match_size_by_type = true,
+            num_problems=1, problem_types=[:transportation, :knapsack], match_size_by_type=true
         )
 
         @test_throws ErrorException generate_dataset(
-            num_problems = 2,
-            size_distribution = Uniform(-10, -1),
-            problem_types = [:knapsack],
+            num_problems=2, size_distribution=Uniform(-10, -1), problem_types=[:knapsack]
         )
 
         # Matching can be disabled for independent sampling.
-        unmatched = generate_dataset(num_problems = 4, var_mean = 80, var_std = 20,
-                                     var_min = 30, var_max = 150, seed = 4,
-                                     problem_types = [:transportation, :knapsack],
-                                     match_size_distribution = false)
+        unmatched = generate_dataset(
+            num_problems=4,
+            var_mean=80,
+            var_std=20,
+            var_min=30,
+            var_max=150,
+            seed=4,
+            problem_types=[:transportation, :knapsack],
+            match_size_distribution=false,
+        )
         @test length(unmatched) == 4
 
         # Unknown problem types are rejected
-        @test_throws ErrorException generate_dataset(num_problems = 1,
-                                                     problem_types = [:not_a_real_type])
+        @test_throws ErrorException generate_dataset(
+            num_problems=1, problem_types=[:not_a_real_type]
+        )
 
         # quality_filter without an optimizer is an error
-        @test_throws ErrorException generate_dataset(num_problems = 1, quality_filter = true)
+        @test_throws ErrorException generate_dataset(num_problems=1, quality_filter=true)
 
         # File output and manifest
         tmp = mktempdir()
-        written = generate_dataset(num_problems = 4, var_mean = 80, var_std = 20,
-                                   var_min = 30, var_max = 150, seed = 7,
-                                   problem_types = [:transportation, :knapsack],
-                                   max_candidate_multiplier = 2,
-                                   output_dir = tmp)
+        written = generate_dataset(
+            num_problems=4,
+            var_mean=80,
+            var_std=20,
+            var_min=30,
+            var_max=150,
+            seed=7,
+            problem_types=[:transportation, :knapsack],
+            max_candidate_multiplier=2,
+            output_dir=tmp,
+        )
         @test length(written) == 4
         @test all(inst -> inst.filename !== nothing, written)
         @test all(inst -> isfile(joinpath(tmp, inst.filename)), written)
@@ -315,15 +408,22 @@ end
 
         # Manifest can be disabled
         tmp2 = mktempdir()
-        generate_dataset(num_problems = 2, var_mean = 80, var_std = 20,
-                         var_min = 30, var_max = 150, seed = 7,
-                         problem_types = [:transportation, :knapsack],
-                         max_candidate_multiplier = 2,
-                         output_dir = tmp2, write_manifest = false)
+        generate_dataset(
+            num_problems=2,
+            var_mean=80,
+            var_std=20,
+            var_min=30,
+            var_max=150,
+            seed=7,
+            problem_types=[:transportation, :knapsack],
+            max_candidate_multiplier=2,
+            output_dir=tmp2,
+            write_manifest=false,
+        )
         @test !isfile(joinpath(tmp2, "manifest.json"))
 
         # QualityCriteria carries through configured thresholds
-        crit = QualityCriteria(min_constraints = 10, min_iterations = 5)
+        crit = QualityCriteria(min_constraints=10, min_iterations=5)
         @test crit.min_constraints == 10
         @test crit.min_iterations == 5
     end
@@ -339,10 +439,10 @@ end
         @objective(m, Max, x + y + z + w)
         @constraint(m, x + y + z + w <= 100)
 
-        aff_before = num_constraints(m; count_variable_in_set_constraints = false)
+        aff_before = num_constraints(m; count_variable_in_set_constraints=false)
         result = bounds_to_constraints!(m)
         @test result === m  # mutates and returns the same model
-        aff_after = num_constraints(m; count_variable_in_set_constraints = false)
+        aff_after = num_constraints(m; count_variable_in_set_constraints=false)
 
         # +4 rows: lower(y), upper(y), fixed(z), upper(w). x ≥ 0 is left alone.
         @test aff_after == aff_before + 4
@@ -362,24 +462,36 @@ end
         # variable count. (Integrality is relaxed by default before conversion.)
         ref = ProblemVariant("knapsack/bounded")
         m_plain, _ = generate_problem(ref, 100, unknown, 0)
-        m_conv, _  = generate_problem(ref, 100, unknown, 0; bounds_to_constraints = true)
+        m_conv, _ = generate_problem(ref, 100, unknown, 0; bounds_to_constraints=true)
         @test num_variables(m_conv) == num_variables(m_plain)
-        @test num_constraints(m_conv; count_variable_in_set_constraints = false) >
-              num_constraints(m_plain; count_variable_in_set_constraints = false)
+        @test num_constraints(m_conv; count_variable_in_set_constraints=false) >
+            num_constraints(m_plain; count_variable_in_set_constraints=false)
 
         # generate_dataset threads the option through: converted bounds raise the
         # recorded constraint counts, and the choice is recorded in the manifest.
         tmp = mktempdir()
-        plain = generate_dataset(num_problems = 4, var_mean = 80, var_std = 20,
-                                 var_min = 30, var_max = 150, seed = 21,
-                                 problem_types = ["knapsack/bounded"],
-                                 max_candidate_multiplier = 2)
-        converted = generate_dataset(num_problems = 4, var_mean = 80, var_std = 20,
-                                     var_min = 30, var_max = 150, seed = 21,
-                                     problem_types = ["knapsack/bounded"],
-                                     max_candidate_multiplier = 2,
-                                     bounds_to_constraints = true,
-                                     output_dir = tmp)
+        plain = generate_dataset(
+            num_problems=4,
+            var_mean=80,
+            var_std=20,
+            var_min=30,
+            var_max=150,
+            seed=21,
+            problem_types=["knapsack/bounded"],
+            max_candidate_multiplier=2,
+        )
+        converted = generate_dataset(
+            num_problems=4,
+            var_mean=80,
+            var_std=20,
+            var_min=30,
+            var_max=150,
+            seed=21,
+            problem_types=["knapsack/bounded"],
+            max_candidate_multiplier=2,
+            bounds_to_constraints=true,
+            output_dir=tmp,
+        )
         @test sum(i -> i.num_constraints, converted) > sum(i -> i.num_constraints, plain)
         manifest = JSON.parsefile(joinpath(tmp, "manifest.json"))
         @test manifest["config"]["bounds_to_constraints"] == true
@@ -431,42 +543,42 @@ end
         # The option is available throughout model and dataset generation. The
         # selected dimensions and manifest describe the returned dual models.
         generated_primal, _ = generate_problem("product_mix", 60, feasible, 4)
-        generated_dual, _ = generate_problem("product_mix", 60, feasible, 4;
-                                             dualize = true)
+        generated_dual, _ = generate_problem("product_mix", 60, feasible, 4; dualize=true)
         @test objective_sense(generated_dual) != objective_sense(generated_primal)
         @test num_variables(generated_dual) != num_variables(generated_primal)
 
         # Random generation leaves the transformation off by default, accepts a
         # probability for diversity, and keeps `dualize=true` as an explicit
         # force-all override.
-        random_plain, plain_ref, _ = generate_random_problem(40; seed = 11)
+        random_plain, plain_ref, _ = generate_random_problem(40; seed=11)
         random_sampled, sampled_ref, _ = generate_random_problem(
-            40; seed = 11, dualize_probability = 1.0,
+            40; seed=11, dualize_probability=1.0
         )
-        random_forced, forced_ref, _ = generate_random_problem(
-            40; seed = 11, dualize = true,
-        )
+        random_forced, forced_ref, _ = generate_random_problem(40; seed=11, dualize=true)
         @test plain_ref == sampled_ref == forced_ref
         @test !is_dual_reformulation(random_plain)
         @test is_dual_reformulation(random_sampled)
         @test is_dual_reformulation(random_forced)
         @test objective_sense(random_plain) != objective_sense(random_sampled)
         @test num_variables(random_sampled) == num_variables(random_forced)
-        @test num_constraints(random_sampled; count_variable_in_set_constraints = false) ==
-              num_constraints(random_forced; count_variable_in_set_constraints = false)
-        @test_throws ArgumentError generate_random_problem(
-            40; dualize_probability = -0.1,
-        )
-        @test_throws ArgumentError generate_random_problem(
-            40; dualize_probability = 1.1,
-        )
+        @test num_constraints(random_sampled; count_variable_in_set_constraints=false) ==
+            num_constraints(random_forced; count_variable_in_set_constraints=false)
+        @test_throws ArgumentError generate_random_problem(40; dualize_probability=-0.1)
+        @test_throws ArgumentError generate_random_problem(40; dualize_probability=1.1)
 
         tmp = mktempdir()
-        instances = generate_dataset(num_problems = 2, var_mean = 40, var_std = 5,
-                                     var_min = 30, var_max = 50, seed = 9,
-                                     problem_types = ["product_mix"],
-                                     match_size_distribution = false,
-                                     dualize = true, output_dir = tmp)
+        instances = generate_dataset(
+            num_problems=2,
+            var_mean=40,
+            var_std=5,
+            var_min=30,
+            var_max=50,
+            seed=9,
+            problem_types=["product_mix"],
+            match_size_distribution=false,
+            dualize=true,
+            output_dir=tmp,
+        )
         @test all(inst -> inst.num_variables > 0 && inst.filename !== nothing, instances)
         @test all(inst -> inst.dualized, instances)
         manifest = JSON.parsefile(joinpath(tmp, "manifest.json"))
@@ -475,29 +587,45 @@ end
         @test all(inst -> inst["dualized"], manifest["instances"])
 
         # A nontrivial probability produces a reproducible primal/dual mixture.
-        mixture = generate_dataset(num_problems = 12, var_mean = 40, var_std = 5,
-                                   var_min = 30, var_max = 50, seed = 19,
-                                   problem_types = ["product_mix"],
-                                   match_size_distribution = false,
-                                   dualize_probability = 0.5)
-        repeated = generate_dataset(num_problems = 12, var_mean = 40, var_std = 5,
-                                    var_min = 30, var_max = 50, seed = 19,
-                                    problem_types = ["product_mix"],
-                                    match_size_distribution = false,
-                                    dualize_probability = 0.5)
+        mixture = generate_dataset(
+            num_problems=12,
+            var_mean=40,
+            var_std=5,
+            var_min=30,
+            var_max=50,
+            seed=19,
+            problem_types=["product_mix"],
+            match_size_distribution=false,
+            dualize_probability=0.5,
+        )
+        repeated = generate_dataset(
+            num_problems=12,
+            var_mean=40,
+            var_std=5,
+            var_min=30,
+            var_max=50,
+            seed=19,
+            problem_types=["product_mix"],
+            match_size_distribution=false,
+            dualize_probability=0.5,
+        )
         @test any(inst -> inst.dualized, mixture)
         @test any(inst -> !inst.dualized, mixture)
         @test [inst.dualized for inst in mixture] == [inst.dualized for inst in repeated]
         @test [inst.seed for inst in mixture] == [inst.seed for inst in repeated]
 
-        default_dataset = generate_dataset(num_problems = 3, var_mean = 40, var_std = 5,
-                                           var_min = 30, var_max = 50, seed = 19,
-                                           problem_types = ["product_mix"],
-                                           match_size_distribution = false)
-        @test all(inst -> !inst.dualized, default_dataset)
-        @test_throws ArgumentError generate_dataset(
-            num_problems = 0, dualize_probability = 1.1,
+        default_dataset = generate_dataset(
+            num_problems=3,
+            var_mean=40,
+            var_std=5,
+            var_min=30,
+            var_max=50,
+            seed=19,
+            problem_types=["product_mix"],
+            match_size_distribution=false,
         )
+        @test all(inst -> !inst.dualized, default_dataset)
+        @test_throws ArgumentError generate_dataset(num_problems=0, dualize_probability=1.1)
 
         if HAS_HIGHS
             set_optimizer(primal, HiGHS.Optimizer)
@@ -531,8 +659,14 @@ end
         @test classify(MOI.DUAL_INFEASIBLE, feasible) === :violated
 
         # Uncertifiable: must never be reported as a violation or consume a retry.
-        for status in (MOI.TIME_LIMIT, MOI.INFEASIBLE_OR_UNBOUNDED, MOI.ALMOST_OPTIMAL,
-                       MOI.NUMERICAL_ERROR, MOI.ITERATION_LIMIT, MOI.OTHER_ERROR)
+        for status in (
+            MOI.TIME_LIMIT,
+            MOI.INFEASIBLE_OR_UNBOUNDED,
+            MOI.ALMOST_OPTIMAL,
+            MOI.NUMERICAL_ERROR,
+            MOI.ITERATION_LIMIT,
+            MOI.OTHER_ERROR,
+        )
             @test classify(status, feasible) === :inconclusive
             @test classify(status, infeasible) === :inconclusive
         end
@@ -548,77 +682,100 @@ end
     # rather than via `Pkg.test()`.
     if HAS_HIGHS
 
-    # Project-level feasibility-contract verification via the `optimizer` kwarg.
-    @testset "Feasibility Contract Verification" begin
-        # Without an optimizer, behavior is unchanged (deterministic, no solving).
-        m1, _ = generate_problem("transportation/standard", 80, unknown, 5)
-        @test num_variables(m1) > 0
+        # Project-level feasibility-contract verification via the `optimizer` kwarg.
+        @testset "Feasibility Contract Verification" begin
+            # Without an optimizer, behavior is unchanged (deterministic, no solving).
+            m1, _ = generate_problem("transportation/standard", 80, unknown, 5)
+            @test num_variables(m1) > 0
 
-        # max_feasibility_retries must be >= 1.
-        @test_throws ErrorException generate_problem("transportation/standard", 80,
-                                                     unknown, 5; max_feasibility_retries = 0)
-
-        # Exhausting the retry budget is an error: never return a model known to
-        # violate the requested contract or a seed that does not reproduce it.
-        empty!(CONTRACT_TEST_SEEDS)
-        exhaustion_error = try
-            SyntheticLPs._generate_problem_verified(
-                ContractViolationTestProblem, 1, infeasible, 41;
-                optimizer = HiGHS.Optimizer, max_feasibility_retries = 3,
+            # max_feasibility_retries must be >= 1.
+            @test_throws ErrorException generate_problem(
+                "transportation/standard", 80, unknown, 5; max_feasibility_retries=0
             )
-            nothing
-        catch err
-            err
-        end
-        @test exhaustion_error isa ErrorException
-        @test CONTRACT_TEST_SEEDS == [41, 42, 43]
-        @test occursin("after 3 attempts", sprint(showerror, exhaustion_error))
-        @test occursin("seeds 41 through 43", sprint(showerror, exhaustion_error))
 
-        # The returned model is left pristine (no optimizer attached, not solved).
-        m2, _ = generate_problem("transportation/standard", 80, feasible, 5;
-                                 optimizer = HiGHS.Optimizer)
-        @test JuMP.mode(m2) == JuMP.AUTOMATIC
+            # Exhausting the retry budget is an error: never return a model known to
+            # violate the requested contract or a seed that does not reproduce it.
+            empty!(CONTRACT_TEST_SEEDS)
+            exhaustion_error = try
+                SyntheticLPs._generate_problem_verified(
+                    ContractViolationTestProblem,
+                    1,
+                    infeasible,
+                    41;
+                    optimizer=HiGHS.Optimizer,
+                    max_feasibility_retries=3,
+                )
+                nothing
+            catch err
+                err
+            end
+            @test exhaustion_error isa ErrorException
+            @test CONTRACT_TEST_SEEDS == [41, 42, 43]
+            @test occursin("after 3 attempts", sprint(showerror, exhaustion_error))
+            @test occursin("seeds 41 through 43", sprint(showerror, exhaustion_error))
 
-        # An unbounded model has a nonempty feasible region, so it must never satisfy
-        # an `infeasible` request, and it fails a `feasible` request too (the contract
-        # requires OPTIMAL). End-to-end through the solve path.
-        let unbounded = Model()
-            @variable(unbounded, z >= 0)
-            @objective(unbounded, Min, -z)
-            @test SyntheticLPs._check_feasibility_contract(unbounded, HiGHS.Optimizer,
-                                                           infeasible)[1] === :violated
-            @test SyntheticLPs._check_feasibility_contract(unbounded, HiGHS.Optimizer,
-                                                           feasible)[1] === :violated
-        end
-        let bounded = Model()
-            @variable(bounded, 0 <= z <= 1)
-            @objective(bounded, Min, z)
-            @test SyntheticLPs._check_feasibility_contract(bounded, HiGHS.Optimizer,
-                                                           feasible)[1] === :holds
-            @test SyntheticLPs._check_feasibility_contract(bounded, HiGHS.Optimizer,
-                                                           infeasible)[1] === :violated
-        end
-    end
+            # The returned model is left pristine (no optimizer attached, not solved).
+            m2, _ = generate_problem(
+                "transportation/standard", 80, feasible, 5; optimizer=HiGHS.Optimizer
+            )
+            @test JuMP.mode(m2) == JuMP.AUTOMATIC
 
-    # Dataset generation honors the contract when an optimizer is supplied.
-    @testset "Dataset Feasibility Verification" begin
-        # feasible_only + optimizer: every emitted instance must actually be feasible.
-        insts = generate_dataset(num_problems = 8, var_mean = 120, var_std = 20,
-                                 var_min = 80, var_max = 200, seed = 31,
-                                 problem_types = [:unit_commitment, :crop_planning],
-                                 feasible_only = true, quality_filter = false,
-                                 optimizer = HiGHS.Optimizer,
-                                 max_candidate_multiplier = 3)
-        @test length(insts) == 8
-        for inst in insts
-            # Rebuild with the recorded (resolved) seed and confirm feasibility.
-            m, _ = generate_problem(ProblemVariant(inst.problem_type, inst.variant),
-                                    inst.target_variables, feasible, inst.seed)
-            set_optimizer(m, HiGHS.Optimizer); set_silent(m); optimize!(m)
-            @test termination_status(m) == MOI.OPTIMAL
+            # An unbounded model has a nonempty feasible region, so it must never satisfy
+            # an `infeasible` request, and it fails a `feasible` request too (the contract
+            # requires OPTIMAL). End-to-end through the solve path.
+            let unbounded = Model()
+                @variable(unbounded, z >= 0)
+                @objective(unbounded, Min, -z)
+                @test SyntheticLPs._check_feasibility_contract(
+                    unbounded, HiGHS.Optimizer, infeasible
+                )[1] === :violated
+                @test SyntheticLPs._check_feasibility_contract(
+                    unbounded, HiGHS.Optimizer, feasible
+                )[1] === :violated
+            end
+            let bounded = Model()
+                @variable(bounded, 0 <= z <= 1)
+                @objective(bounded, Min, z)
+                @test SyntheticLPs._check_feasibility_contract(
+                    bounded, HiGHS.Optimizer, feasible
+                )[1] === :holds
+                @test SyntheticLPs._check_feasibility_contract(
+                    bounded, HiGHS.Optimizer, infeasible
+                )[1] === :violated
+            end
         end
-    end
+
+        # Dataset generation honors the contract when an optimizer is supplied.
+        @testset "Dataset Feasibility Verification" begin
+            # feasible_only + optimizer: every emitted instance must actually be feasible.
+            insts = generate_dataset(
+                num_problems=8,
+                var_mean=120,
+                var_std=20,
+                var_min=80,
+                var_max=200,
+                seed=31,
+                problem_types=[:unit_commitment, :crop_planning],
+                feasible_only=true,
+                quality_filter=false,
+                optimizer=HiGHS.Optimizer,
+                max_candidate_multiplier=3,
+            )
+            @test length(insts) == 8
+            for inst in insts
+                # Rebuild with the recorded (resolved) seed and confirm feasibility.
+                m, _ = generate_problem(
+                    ProblemVariant(inst.problem_type, inst.variant),
+                    inst.target_variables,
+                    feasible,
+                    inst.seed,
+                )
+                set_optimizer(m, HiGHS.Optimizer)
+                set_silent(m)
+                optimize!(m)
+                @test termination_status(m) == MOI.OPTIMAL
+            end
+        end
 
     else
         @info "HiGHS not available; skipping solver-based feasibility testsets (run via Pkg.test() to include them)."

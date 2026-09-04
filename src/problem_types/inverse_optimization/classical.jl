@@ -1,4 +1,6 @@
-"""Exact primal/dual certificate stored for a classical inverse LP."""
+"""
+Exact primal/dual certificate stored for a classical inverse LP.
+"""
 struct ClassicalInverseWitness
     cost::Vector{Float64}
     dual_prices::Vector{Float64}
@@ -24,8 +26,8 @@ struct ClassicalInverseLPProblem <: ProblemGenerator
     observed_decision::Vector{Float64}
     capacity::Vector{Float64}
     resolved_status::FeasibilityStatus
-    feasible_witness::Union{Nothing,ClassicalInverseWitness}
-    infeasibility_certificate::Union{Nothing,PackingInteriorCertificate}
+    feasible_witness::Union{Nothing, ClassicalInverseWitness}
+    infeasibility_certificate::Union{Nothing, PackingInteriorCertificate}
 end
 
 function _classical_inverse_dimensions(target_variables::Int, ratio::Float64)
@@ -36,33 +38,31 @@ function _classical_inverse_dimensions(target_variables::Int, ratio::Float64)
         preferred = clamp(round(Int, n / ratio), 2, n - 1)
         for m in max(2, preferred - 2):min(n - 1, preferred + 2)
             count = 3 * n + m
-            candidate = (error=abs(count - target), activities=n,
-                         resources=m, count=count)
+            candidate = (error=abs(count - target), activities=n, resources=m, count=count)
             (candidate.error, abs(m - preferred), count) <
-                (best.error, abs(best.resources - preferred), best.count) &&
-                (best = candidate)
+            (best.error, abs(best.resources - preferred), best.count) && (best = candidate)
         end
     end
     return best.activities, best.resources
 end
 
 function ClassicalInverseLPProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     _check_inverse_target(target_variables)
     rng = MersenneTwister(seed)
     ratio = rand(rng, Uniform(2.5, 6.5))
-    n_activities, n_resources =
-        _classical_inverse_dimensions(target_variables, ratio)
+    n_activities, n_resources = _classical_inverse_dimensions(target_variables, ratio)
     data = _inverse_packing_data(rng, n_resources, n_activities)
 
     observed = rand(rng, LogNormal(log(18.0), 0.48), n_activities)
     consumption = Vector(data.consumption * observed)
     capacity = copy(consumption)
-    witness = feasibility_status == feasible ?
-        ClassicalInverseWitness(copy(data.true_cost), copy(data.true_dual)) : nothing
+    witness = if feasibility_status == feasible
+        ClassicalInverseWitness(copy(data.true_cost), copy(data.true_dual))
+    else
+        nothing
+    end
     certificate = nothing
 
     if feasibility_status == infeasible
@@ -110,21 +110,20 @@ function build_model(prob::ClassicalInverseLPProblem)
     @objective(
         model,
         Min,
-        sum(data.deviation_weight[j] *
-            (deviation_positive[j] + deviation_negative[j]) for j in 1:n),
+        sum(
+            data.deviation_weight[j] * (deviation_positive[j] + deviation_negative[j]) for j in 1:n
+        ),
     )
     @constraint(model, cost_normalization, sum(inferred_cost) == 1.0)
     @constraint(
         model,
         stationarity[j in 1:n],
-        _inverse_column_expression(data.consumption, shadow_price, j) ==
-            inferred_cost[j],
+        _inverse_column_expression(data.consumption, shadow_price, j) == inferred_cost[j],
     )
     @constraint(
         model,
         prior_deviation[j in 1:n],
-        inferred_cost[j] - data.prior_cost[j] ==
-            deviation_positive[j] - deviation_negative[j],
+        inferred_cost[j] - data.prior_cost[j] == deviation_positive[j] - deviation_negative[j],
     )
     @constraint(
         model,
@@ -143,10 +142,14 @@ function _classical_inverse_witness_is_valid(prob::ClassicalInverseLPProblem)
            all(witness.cost .<= data.cost_upper .+ 1.0e-10) &&
            all(witness.dual_prices .>= 0.0) &&
            isapprox(sum(witness.cost), 1.0; atol=1.0e-10) &&
-           isapprox(transpose(data.consumption) * witness.dual_prices,
-                    witness.cost; atol=1.0e-10) &&
-           isapprox(dot(prob.observed_decision, witness.cost),
-                    dot(prob.capacity, witness.dual_prices); atol=1.0e-9)
+           isapprox(
+               transpose(data.consumption) * witness.dual_prices, witness.cost; atol=1.0e-10
+           ) &&
+           isapprox(
+               dot(prob.observed_decision, witness.cost),
+               dot(prob.capacity, witness.dual_prices);
+               atol=1.0e-9,
+           )
 end
 
 register_variant(

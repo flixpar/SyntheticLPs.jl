@@ -10,18 +10,15 @@ variables. Generated graphs have a planted proper coloring.
 struct VertexColoringProblem <: ProblemGenerator
     n_vertices::Int
     n_colors::Int
-    edges::Vector{Tuple{Int,Int}}
+    edges::Vector{Tuple{Int, Int}}
     color_costs::Vector{Float64}
     assignment_limit::Int
 end
 
 function VertexColoringProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
-    target_variables >= 12 ||
-        throw(ArgumentError("vertex coloring needs at least 12 variables"))
+    target_variables >= 12 || throw(ArgumentError("vertex coloring needs at least 12 variables"))
     rng = MersenneTwister(seed)
 
     # Choose dimensions whose n*k assignment variables plus k color-use
@@ -36,7 +33,7 @@ function VertexColoringProblem(
 
     planted_colors = [mod(i - 1, k) + 1 for i in randperm(rng, n)]
     planted_sets = [Set(findall(==(c), planted_colors)) for c in 1:k]
-    forbidden = Set{Tuple{Int,Int}}()
+    forbidden = Set{Tuple{Int, Int}}()
     for color_class in planted_sets
         members = sort!(collect(color_class))
         for a in 1:(length(members) - 1), b in (a + 1):length(members)

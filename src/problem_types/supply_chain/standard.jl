@@ -10,13 +10,15 @@ Generator for supply chain optimization problems that minimize facility and tran
 meeting customer demands and respecting capacity constraints.
 
 This problem models realistic supply chain networks with:
-- Geographic clustering of customers and facilities
-- Multiple transportation modes with infrastructure availability
-- K-nearest connectivity guarantees for feasible instances
-- Facility opening costs and capacities
-- Mode-specific capacity constraints
+
+  - Geographic clustering of customers and facilities
+  - Multiple transportation modes with infrastructure availability
+  - K-nearest connectivity guarantees for feasible instances
+  - Facility opening costs and capacities
+  - Mode-specific capacity constraints
 
 # Overview
+
 Models strategic supply-chain network design. The decisions open facilities and
 ship customer demand from open facilities over available transportation modes.
 The objective minimizes fixed facility cost plus mode-specific transportation
@@ -24,33 +26,35 @@ cost. Constraints satisfy customer demand, gate shipments by open facility
 capacity, and limit aggregate shipment volume by transportation mode.
 
 # Fields
+
 All data generated in constructor based on target_variables and feasibility_status:
-- `n_facilities::Int`: Number of potential facility locations
-- `n_customers::Int`: Number of customer locations
-- `transport_modes::Vector{String}`: Selected transport modes
-- `facility_locs::Vector{Tuple{Float64,Float64}}`: Geographic facility locations
-- `customer_locs::Vector{Tuple{Float64,Float64}}`: Geographic customer locations
-- `cluster_centers::Vector{Tuple{Float64,Float64}}`: Cluster centers for customer distribution
-- `cluster_weights::Vector{Float64}`: Weights for cluster importance
-- `fixed_costs::Dict{Int, Float64}`: Fixed cost to open each facility
-- `demands::Dict{Int, Float64}`: Demand at each customer location
-- `capacities::Dict{Int, Float64}`: Capacity of each facility
-- `transport_costs::Dict{Tuple{Int,Int,String}, Float64}`: Transport cost per (facility, customer, mode)
-- `mode_capacities::Dict{String, Float64}`: Total capacity available for each transport mode
-- `total_demand::Float64`: Total demand across all customers
+
+  - `n_facilities::Int`: Number of potential facility locations
+  - `n_customers::Int`: Number of customer locations
+  - `transport_modes::Vector{String}`: Selected transport modes
+  - `facility_locs::Vector{Tuple{Float64,Float64}}`: Geographic facility locations
+  - `customer_locs::Vector{Tuple{Float64,Float64}}`: Geographic customer locations
+  - `cluster_centers::Vector{Tuple{Float64,Float64}}`: Cluster centers for customer distribution
+  - `cluster_weights::Vector{Float64}`: Weights for cluster importance
+  - `fixed_costs::Dict{Int, Float64}`: Fixed cost to open each facility
+  - `demands::Dict{Int, Float64}`: Demand at each customer location
+  - `capacities::Dict{Int, Float64}`: Capacity of each facility
+  - `transport_costs::Dict{Tuple{Int,Int,String}, Float64}`: Transport cost per (facility, customer, mode)
+  - `mode_capacities::Dict{String, Float64}`: Total capacity available for each transport mode
+  - `total_demand::Float64`: Total demand across all customers
 """
 struct SupplyChainProblem <: ProblemGenerator
     n_facilities::Int
     n_customers::Int
     transport_modes::Vector{String}
-    facility_locs::Vector{Tuple{Float64,Float64}}
-    customer_locs::Vector{Tuple{Float64,Float64}}
-    cluster_centers::Vector{Tuple{Float64,Float64}}
+    facility_locs::Vector{Tuple{Float64, Float64}}
+    customer_locs::Vector{Tuple{Float64, Float64}}
+    cluster_centers::Vector{Tuple{Float64, Float64}}
     cluster_weights::Vector{Float64}
     fixed_costs::Dict{Int, Float64}
     demands::Dict{Int, Float64}
     capacities::Dict{Int, Float64}
-    transport_costs::Dict{Tuple{Int,Int,String}, Float64}
+    transport_costs::Dict{Tuple{Int, Int, String}, Float64}
     mode_capacities::Dict{String, Float64}
     total_demand::Float64
 end
@@ -61,17 +65,19 @@ end
 Construct a supply chain problem instance with sophisticated geographic clustering and connectivity logic.
 
 # Sophisticated Feasibility Logic Preserved:
-- **Geographic clustering**: Customers clustered using Dirichlet-weighted clusters with log-normal spread
-- **Facility placement**: Beta-distributed strategic placement with market-access consideration
-- **K-nearest connectivity**: For feasible instances, ensures each customer connects to K nearest facilities
-- **Market potential**: Fixed costs correlated with proximity to customer clusters
-- **Infrastructure availability**: Mode-specific availability based on distance and characteristics
-- **Capacity balancing**: For feasible instances, adjusts facility and mode capacities to ensure feasibility
+
+  - **Geographic clustering**: Customers clustered using Dirichlet-weighted clusters with log-normal spread
+  - **Facility placement**: Beta-distributed strategic placement with market-access consideration
+  - **K-nearest connectivity**: For feasible instances, ensures each customer connects to K nearest facilities
+  - **Market potential**: Fixed costs correlated with proximity to customer clusters
+  - **Infrastructure availability**: Mode-specific availability based on distance and characteristics
+  - **Capacity balancing**: For feasible instances, adjusts facility and mode capacities to ensure feasibility
 
 # Arguments
-- `target_variables`: Target number of variables (approximately n_facilities × n_customers × n_transport_modes)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (approximately n_facilities × n_customers × n_transport_modes)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
 function SupplyChainProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
@@ -140,8 +146,7 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
         n_customers = min(5000, ceil(Int, n_customers * growth))
         # Rounding and the caps can leave the pool just short; top up on customers,
         # the dimension that scales most cheaply.
-        while n_facilities * n_customers * n_transport_modes < pool_target &&
-              n_customers < 5000
+        while n_facilities * n_customers * n_transport_modes < pool_target && n_customers < 5000
             n_customers += max(1, round(Int, n_customers * 0.2))
         end
     end
@@ -156,18 +161,20 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
         "truck" => rand(rng, Gamma(4, 0.25)),
         "rail" => rand(rng, Gamma(3, 0.2)),
         "ship" => rand(rng, Gamma(2, 0.15)),
-        "air" => rand(rng, Gamma(6, 0.5))
+        "air" => rand(rng, Gamma(6, 0.5)),
     )
 
     # Select transport modes
-    transport_modes = sample(rng, all_transport_modes, min(n_transport_modes, length(all_transport_modes)), replace=false)
+    transport_modes = sample(
+        rng, all_transport_modes, min(n_transport_modes, length(all_transport_modes)); replace=false
+    )
 
     # Generate geographic clusters for realistic location distribution
     n_clusters = max(2, round(Int, sqrt(n_customers) * clustering_factor))
     cluster_centers = [(grid_width * rand(rng), grid_height * rand(rng)) for _ in 1:n_clusters]
 
     # Generate facility locations (more dispersed than customers)
-    facility_locs = Vector{Tuple{Float64,Float64}}()
+    facility_locs = Vector{Tuple{Float64, Float64}}()
     for _ in 1:n_facilities
         # Use Beta distribution to create more realistic facility placement
         if rand(rng) < 0.4  # 40% chance to be near a cluster center (strategic placement)
@@ -184,7 +191,7 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
     end
 
     # Generate customer locations (more clustered)
-    customer_locs = Vector{Tuple{Float64,Float64}}()
+    customer_locs = Vector{Tuple{Float64, Float64}}()
     cluster_weights = rand(rng, Dirichlet(ones(n_clusters)))
 
     for _ in 1:n_customers
@@ -204,15 +211,17 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
 
     for f in 1:n_facilities
         distances_to_customers = [
-            sqrt((facility_locs[f][1] - c[1])^2 + (facility_locs[f][2] - c[2])^2)
-            for c in customer_locs
+            sqrt((facility_locs[f][1] - c[1])^2 + (facility_locs[f][2] - c[2])^2) for
+            c in customer_locs
         ]
         market_potential = sum(exp.(-distances_to_customers ./ (grid_width * 0.2)))
 
         location_factor = (facility_locs[f][1] / grid_width + facility_locs[f][2] / grid_height) / 2
 
-        base_cost = min_fixed_cost + (max_fixed_cost - min_fixed_cost) *
-                   (0.2 + 0.5 * market_potential / n_customers + 0.3 * location_factor)
+        base_cost =
+            min_fixed_cost +
+            (max_fixed_cost - min_fixed_cost) *
+            (0.2 + 0.5 * market_potential / n_customers + 0.3 * location_factor)
 
         cost_multiplier = rand(rng, LogNormal(log(1.0), 0.25))
         fixed_costs[f] = base_cost * cost_multiplier
@@ -223,14 +232,13 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
 
     for c in 1:n_customers
         distances_to_clusters = [
-            sqrt((customer_locs[c][1] - center[1])^2 + (customer_locs[c][2] - center[2])^2)
-            for center in cluster_centers
+            sqrt((customer_locs[c][1] - center[1])^2 + (customer_locs[c][2] - center[2])^2) for
+            center in cluster_centers
         ]
         _, cluster_idx = findmin(distances_to_clusters)
 
         cluster_influence = cluster_weights[cluster_idx]
-        base_demand_val = min_demand + (max_demand - min_demand) *
-                     (0.2 + 0.8 * cluster_influence)
+        base_demand_val = min_demand + (max_demand - min_demand) * (0.2 + 0.8 * cluster_influence)
 
         demand_multiplier = rand(rng, LogNormal(log(1.0), 0.4))
         demands[c] = base_demand_val * demand_multiplier
@@ -242,8 +250,9 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
     capacities = Dict{Int, Float64}()
 
     for f in 1:n_facilities
-        relative_cost = (fixed_costs[f] - minimum(values(fixed_costs))) /
-                       (maximum(values(fixed_costs)) - minimum(values(fixed_costs)))
+        relative_cost =
+            (fixed_costs[f] - minimum(values(fixed_costs))) /
+            (maximum(values(fixed_costs)) - minimum(values(fixed_costs)))
 
         base_capacity = avg_capacity * (0.6 + 0.8 * relative_cost)
         capacity_multiplier = rand(rng, Gamma(3, 1/3))
@@ -251,8 +260,8 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
     end
 
     # Generate transport costs and infrastructure availability
-    transport_costs = Dict{Tuple{Int,Int,String}, Float64}()
-    infrastructure = Dict{Tuple{Int,Int,String}, Bool}()
+    transport_costs = Dict{Tuple{Int, Int, String}, Float64}()
+    infrastructure = Dict{Tuple{Int, Int, String}, Bool}()
 
     # Score every (f,c,mode) candidate by a realistic per-mode availability, then
     # select a deterministic number of them. The previous Bernoulli draw made the
@@ -265,12 +274,15 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
 
     # Precompute facility-customer distances (used for availability scoring and
     # again for K-nearest coverage below).
-    dist_fc = [sqrt((facility_locs[f][1] - customer_locs[c][1])^2 +
-                    (facility_locs[f][2] - customer_locs[c][2])^2)
-               for f in 1:n_facilities, c in 1:n_customers]
+    dist_fc = [
+        sqrt(
+            (facility_locs[f][1] - customer_locs[c][1])^2 +
+            (facility_locs[f][2] - customer_locs[c][2])^2,
+        ) for f in 1:n_facilities, c in 1:n_customers
+    ]
 
     # Score every (f,c,mode) candidate by a realistic per-mode availability.
-    candidates = Tuple{Float64,Int,Int,String}[]   # (score, f, c, mode)
+    candidates = Tuple{Float64, Int, Int, String}[]   # (score, f, c, mode)
     for f in 1:n_facilities, c in 1:n_customers
         d = dist_fc[f, c]
         for mode in transport_modes
@@ -279,20 +291,24 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
             elseif mode == "rail"
                 min(0.8, 0.3 + 0.5 * (d / diag))
             elseif mode == "ship"
-                any(loc -> abs(loc[2]) < grid_height * 0.1, [facility_locs[f], customer_locs[c]]) ? 0.8 : 0.0
+                if any(loc -> abs(loc[2]) < grid_height * 0.1, [facility_locs[f], customer_locs[c]])
+                    0.8
+                else
+                    0.0
+                end
             else  # air
                 d > diag * 0.3 ? 0.7 : 0.2
             end
-            push!(candidates, (prob_available * infrastructure_density + rand(rng) * 0.05, f, c, mode))
+            push!(
+                candidates, (prob_available * infrastructure_density + rand(rng) * 0.05, f, c, mode)
+            )
         end
     end
     sort!(candidates; rev=true)
 
     # Total variables = n_facilities (the y binaries) + number of valid combos, so
     # the combo budget is target_variables - n_facilities.
-    n_combos = clamp(target_variables - n_facilities,
-                     max(1, n_customers),
-                     length(candidates))
+    n_combos = clamp(target_variables - n_facilities, max(1, n_customers), length(candidates))
 
     # For feasible instances, reserve K-nearest coverage combos (each customer
     # reachable from its K nearest facilities via a fallback mode) OUT of n_combos,
@@ -305,8 +321,8 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
     # budget and overshot the variable count.
     K_cov = min(max(3, ceil(Int, n_facilities ÷ 3)), n_facilities)
     K_cov = min(K_cov, max(1, n_combos ÷ n_customers))
-    selected = Tuple{Int,Int,String}[]
-    seen = Set{Tuple{Int,Int,String}}()
+    selected = Tuple{Int, Int, String}[]
+    seen = Set{Tuple{Int, Int, String}}()
     if feasibility_status == feasible
         for c in 1:n_customers
             for f in sortperm(view(dist_fc, :, c))[1:K_cov]
@@ -332,7 +348,8 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
         terrain_factor = rand(rng, LogNormal(log(1.0), 0.15))
         volume_factor = 1.0 - 0.25 * (demands[c] / demands_max)
         efficiency_factor = rand(rng, Beta(3, 2)) * 0.4 + 0.8
-        transport_costs[(f, c, mode)] = base_cost * dist_fc[f, c] * terrain_factor * volume_factor * efficiency_factor
+        transport_costs[(f, c, mode)] =
+            base_cost * dist_fc[f, c] * terrain_factor * volume_factor * efficiency_factor
     end
 
     # Generate mode capacities
@@ -354,7 +371,7 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
     end
 
     # Clean up transport costs to only include available routes
-    transport_costs = Dict(k => v for (k,v) in transport_costs if infrastructure[k])
+    transport_costs = Dict(k => v for (k, v) in transport_costs if infrastructure[k])
 
     # SOPHISTICATED FEASIBILITY ENFORCEMENT
     if feasibility_status == feasible
@@ -378,7 +395,9 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
         for f in 1:n_facilities
             linked_customers = customers_linked_to_facility[f]
             for c in linked_customers
-                approx_share[f] += demands[c] / length([ff for ff in 1:n_facilities if c in customers_linked_to_facility[ff]])
+                approx_share[f] +=
+                    demands[c] /
+                    length([ff for ff in 1:n_facilities if c in customers_linked_to_facility[ff]])
             end
         end
         for f in 1:n_facilities
@@ -435,7 +454,7 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
         capacities,
         transport_costs,
         mode_capacities,
-        total_demand
+        total_demand,
     )
 end
 
@@ -445,10 +464,12 @@ end
 Build a JuMP model for the supply chain problem (deterministic).
 
 # Arguments
-- `prob`: SupplyChainProblem instance
+
+  - `prob`: SupplyChainProblem instance
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::SupplyChainProblem)
     model = Model()
@@ -457,39 +478,40 @@ function build_model(prob::SupplyChainProblem)
     @variable(model, y[1:prob.n_facilities], Bin)
 
     # Create valid combinations
-    valid_combinations = [(f,c,m) for f in 1:prob.n_facilities, c in 1:prob.n_customers, m in prob.transport_modes
-                          if haskey(prob.transport_costs, (f,c,m))]
+    valid_combinations = [
+        (f, c, m) for
+        f in 1:prob.n_facilities, c in 1:prob.n_customers, m in prob.transport_modes if
+        haskey(prob.transport_costs, (f, c, m))
+    ]
 
     @variable(model, x[valid_combinations] >= 0)
 
     # Objective: Minimize total cost
-    @objective(model, Min,
+    @objective(
+        model,
+        Min,
         sum(prob.fixed_costs[f] * y[f] for f in 1:prob.n_facilities) +
-        sum(prob.transport_costs[combo] * x[combo] for combo in valid_combinations)
+            sum(prob.transport_costs[combo] * x[combo] for combo in valid_combinations)
     )
 
     # Customer demand satisfaction
     for c in 1:prob.n_customers
         combos_for_customer = filter(combo -> combo[2] == c, valid_combinations)
-        @constraint(model,
-            sum(x[combo] for combo in combos_for_customer) >= prob.demands[c]
-        )
+        @constraint(model, sum(x[combo] for combo in combos_for_customer) >= prob.demands[c])
     end
 
     # Facility capacity constraints
     for f in 1:prob.n_facilities
         combos_for_facility = filter(combo -> combo[1] == f, valid_combinations)
-        @constraint(model,
-            sum(x[combo] for combo in combos_for_facility) <= prob.capacities[f] * y[f]
+        @constraint(
+            model, sum(x[combo] for combo in combos_for_facility) <= prob.capacities[f] * y[f]
         )
     end
 
     # Transport mode capacity constraints
     for m in prob.transport_modes
         combos_for_mode = filter(combo -> combo[3] == m, valid_combinations)
-        @constraint(model,
-            sum(x[combo] for combo in combos_for_mode) <= prob.mode_capacities[m]
-        )
+        @constraint(model, sum(x[combo] for combo in combos_for_mode) <= prob.mode_capacities[m])
     end
 
     return model

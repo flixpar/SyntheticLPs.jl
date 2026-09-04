@@ -7,6 +7,7 @@ using Random
 Generator for 0/1 multi-dimensional (multi-constraint) knapsack problems (MDKP).
 
 # Overview
+
 Models the selection of a subset of items to maximize total value subject to
 *several* simultaneous resource limits — not just one weight budget. Each item
 `i` consumes a correlated bundle of `D` resources (e.g. weight, volume, budget,
@@ -24,24 +25,26 @@ continuous `[0, 1]` relaxation of the MDKP.
 Feasibility handling (relaxation-aware). For a maximization problem with only
 `<=` packing constraints, `x = 0` is always feasible, so shrinking a capacity can
 never make the model infeasible. Instead:
-- `feasible` / `unknown`: only the `D` packing constraints; always feasible
-  (`x = 0` admissible, objective pushes selection up to the binding resources).
-- `infeasible`: a structural *covering* floor is added. Let `r*` be the tightest
-  resource (smallest capacity relative to total usage). Sort items by their usage
-  of `r*` ascending and find the smallest count `m` whose summed smallest usages
-  strictly exceed `cap[r*]`. The added constraint `sum_i x_i >= m` ("select at
-  least `m` items") then contradicts the `r*` packing limit even in the
-  relaxation: any `m` items (even the `m` lightest) overflow resource `r*`. This
-  survives binary relaxation because the lightest-`m` argument is independent of
-  integrality.
+
+  - `feasible` / `unknown`: only the `D` packing constraints; always feasible
+    (`x = 0` admissible, objective pushes selection up to the binding resources).
+  - `infeasible`: a structural *covering* floor is added. Let `r*` be the tightest
+    resource (smallest capacity relative to total usage). Sort items by their usage
+    of `r*` ascending and find the smallest count `m` whose summed smallest usages
+    strictly exceed `cap[r*]`. The added constraint `sum_i x_i >= m` ("select at
+    least `m` items") then contradicts the `r*` packing limit even in the
+    relaxation: any `m` items (even the `m` lightest) overflow resource `r*`. This
+    survives binary relaxation because the lightest-`m` argument is independent of
+    integrality.
 
 # Fields
-- `n_items::Int`: Number of items (== number of decision variables)
-- `n_resources::Int`: Number of resource dimensions `D`
-- `values::Vector{Float64}`: Value of each item
-- `usage::Matrix{Float64}`: Resource usage, `usage[r, i]` = item `i` use of resource `r` (D × n_items)
-- `capacities::Vector{Float64}`: Capacity for each resource (length D)
-- `required_min_items::Int`: Covering floor `m` (only enforced when `> 0`, for infeasible instances)
+
+  - `n_items::Int`: Number of items (== number of decision variables)
+  - `n_resources::Int`: Number of resource dimensions `D`
+  - `values::Vector{Float64}`: Value of each item
+  - `usage::Matrix{Float64}`: Resource usage, `usage[r, i]` = item `i` use of resource `r` (D × n_items)
+  - `capacities::Vector{Float64}`: Capacity for each resource (length D)
+  - `required_min_items::Int`: Covering floor `m` (only enforced when `> 0`, for infeasible instances)
 """
 struct MultidimensionalKnapsackProblem <: ProblemGenerator
     n_items::Int
@@ -67,11 +70,14 @@ exactly. The number of resource dimensions `D` scales with problem size
 constraints.
 
 # Arguments
-- `target_variables`: Target number of decision variables (== number of items)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of decision variables (== number of items)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function MultidimensionalKnapsackProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function MultidimensionalKnapsackProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # One binary variable per item.
@@ -119,7 +125,7 @@ function MultidimensionalKnapsackProblem(target_variables::Int, feasibility_stat
     # Values: correlated with total resource consumption (sum over resources of
     # usage) but with independent noise, plus a base term, so value-density varies
     # item to item and the problem is non-trivial.
-    total_use = vec(sum(usage, dims=1))          # length n_items
+    total_use = vec(sum(usage; dims=1))          # length n_items
     mean_use = sum(total_use) / n_items
     values = zeros(Float64, n_items)
     for i in 1:n_items
@@ -175,7 +181,7 @@ function MultidimensionalKnapsackProblem(target_variables::Int, feasibility_stat
     end
 
     return MultidimensionalKnapsackProblem(
-        n_items, n_resources, values, usage, capacities, required_min_items,
+        n_items, n_resources, values, usage, capacities, required_min_items
     )
 end
 
@@ -186,10 +192,12 @@ Build a JuMP model for the multi-dimensional knapsack problem. Deterministic —
 uses only data from the struct fields.
 
 Decision variables:
-- `x[i]`: binary selection of item `i` (relaxed to `[0, 1]` by the framework)
+
+  - `x[i]`: binary selection of item `i` (relaxed to `[0, 1]` by the framework)
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::MultidimensionalKnapsackProblem)
     model = Model()

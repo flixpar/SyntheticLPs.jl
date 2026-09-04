@@ -12,26 +12,25 @@ struct MinMaxDeviationIMRTProblem <: ProblemGenerator
     resolved_status::FeasibilityStatus
     target_floor::Float64
     target_ceiling::Float64
-    structure_max::Dict{Symbol,Float64}
+    structure_max::Dict{Symbol, Float64}
     desired_dose::Vector{Float64}
     underdose_importance::Vector{Float64}
     overdose_importance::Vector{Float64}
     fluence_penalty::Float64
     smoothness_penalty::Float64
-    feasible_witness::Union{Nothing,RadiotherapyFluenceWitness}
-    infeasibility_certificate::Union{Nothing,RadiotherapyDoseConflictCertificate}
+    feasible_witness::Union{Nothing, RadiotherapyFluenceWitness}
+    infeasibility_certificate::Union{Nothing, RadiotherapyDoseConflictCertificate}
 end
 
 function MinMaxDeviationIMRTProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     case, spec, conflict_indices, rng = _rt_build_case(
-        target_variables, :minmax_deviation, feasibility_status, seed,
+        target_variables, :minmax_deviation, feasibility_status, seed
     )
-    target_floor, target_ceiling, structure_max, witness, certificate =
-        _rt_hard_limits(case, spec, feasibility_status, conflict_indices, rng)
+    target_floor, target_ceiling, structure_max, witness, certificate = _rt_hard_limits(
+        case, spec, feasibility_status, conflict_indices, rng
+    )
 
     n_voxels = size(case.voxel_locations_cm, 1)
     desired_dose = zeros(n_voxels)
@@ -47,19 +46,32 @@ function MinMaxDeviationIMRTProblem(
             overdose_importance[indices] .= 0.65
         else
             desired_dose[indices] .= 0.72 * spec.clinical_caps[structure]
-            importance = kind == :serial_oar ? 0.90 :
-                         kind == :parallel_oar ? 0.55 : 0.16
+            importance = if kind == :serial_oar
+                0.90
+            elseif kind == :parallel_oar
+                0.55
+            else
+                0.16
+            end
             overdose_importance[indices] .= importance * (0.9 + 0.2rand(rng))
         end
     end
-    fluence_penalty = (0.0008 + 0.0012rand(rng)) /
-                      length(case.reference_fluence)
-    smoothness_penalty = isempty(case.beamlet_edges) ? 0.0 :
-        (0.010 + 0.018rand(rng)) / length(case.beamlet_edges)
+    fluence_penalty = (0.0008 + 0.0012rand(rng)) / length(case.reference_fluence)
+    smoothness_penalty =
+        isempty(case.beamlet_edges) ? 0.0 : (0.010 + 0.018rand(rng)) / length(case.beamlet_edges)
     return MinMaxDeviationIMRTProblem(
-        case, feasibility_status, target_floor, target_ceiling, structure_max,
-        desired_dose, underdose_importance, overdose_importance,
-        fluence_penalty, smoothness_penalty, witness, certificate,
+        case,
+        feasibility_status,
+        target_floor,
+        target_ceiling,
+        structure_max,
+        desired_dose,
+        underdose_importance,
+        overdose_importance,
+        fluence_penalty,
+        smoothness_penalty,
+        witness,
+        certificate,
     )
 end
 
@@ -78,25 +90,41 @@ function build_model(problem::MinMaxDeviationIMRTProblem)
     @variable(model, worst_deviation >= 0)
     dose = _rt_dose_expressions(model, fluence, case.dose_matrix)
 
-    @constraint(model, underdose_hinge[i in target],
-                dose[i] + underdose[i] >= problem.desired_dose[i])
-    @constraint(model, overdose_hinge[i in 1:n_voxels],
-                dose[i] - overdose[i] <= problem.desired_dose[i])
-    @constraint(model, worst_underdose[i in target],
-                worst_deviation >= problem.underdose_importance[i] * underdose[i])
-    @constraint(model, worst_overdose[i in 1:n_voxels],
-                worst_deviation >= problem.overdose_importance[i] * overdose[i])
-    @constraint(model, variation_positive[e in 1:n_edges],
-                variation[e] >= fluence[case.beamlet_edges[e][1]] -
-                                     fluence[case.beamlet_edges[e][2]])
-    @constraint(model, variation_negative[e in 1:n_edges],
-                variation[e] >= fluence[case.beamlet_edges[e][2]] -
-                                     fluence[case.beamlet_edges[e][1]])
+    @constraint(
+        model, underdose_hinge[i in target], dose[i] + underdose[i] >= problem.desired_dose[i]
+    )
+    @constraint(
+        model, overdose_hinge[i in 1:n_voxels], dose[i] - overdose[i] <= problem.desired_dose[i]
+    )
+    @constraint(
+        model,
+        worst_underdose[i in target],
+        worst_deviation >= problem.underdose_importance[i] * underdose[i]
+    )
+    @constraint(
+        model,
+        worst_overdose[i in 1:n_voxels],
+        worst_deviation >= problem.overdose_importance[i] * overdose[i]
+    )
+    @constraint(
+        model,
+        variation_positive[e in 1:n_edges],
+        variation[e] >= fluence[case.beamlet_edges[e][1]] - fluence[case.beamlet_edges[e][2]]
+    )
+    @constraint(
+        model,
+        variation_negative[e in 1:n_edges],
+        variation[e] >= fluence[case.beamlet_edges[e][2]] - fluence[case.beamlet_edges[e][1]]
+    )
     _rt_add_hard_constraints!(model, problem, dose)
 
-    @objective(model, Min,
-               worst_deviation + problem.fluence_penalty * sum(fluence) +
-               problem.smoothness_penalty * sum(variation))
+    @objective(
+        model,
+        Min,
+        worst_deviation +
+            problem.fluence_penalty * sum(fluence) +
+            problem.smoothness_penalty * sum(variation)
+    )
     model[:dose] = dose
     return model
 end

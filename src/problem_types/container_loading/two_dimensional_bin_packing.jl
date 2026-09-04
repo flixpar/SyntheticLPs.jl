@@ -18,9 +18,7 @@ struct TwoDimensionalBinPackingProblem <: ProblemGenerator
 end
 
 function TwoDimensionalBinPackingProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
     # Variables are assignments, bin-use indicators, two coordinates per item,
@@ -62,7 +60,7 @@ function TwoDimensionalBinPackingProblem(
         maximum_used = n_bins
     end
     return TwoDimensionalBinPackingProblem(
-        n_items, n_bins, widths, heights, bin_width, bin_height, maximum_used,
+        n_items, n_bins, widths, heights, bin_width, bin_height, maximum_used
     )
 end
 
@@ -74,8 +72,8 @@ function build_model(prob::TwoDimensionalBinPackingProblem)
 
     @variable(model, assign[1:n, 1:b_count], Bin)
     @variable(model, used[1:b_count], Bin)
-    @variable(model, 0 <= xpos[i=1:n] <= prob.bin_width - prob.widths[i])
-    @variable(model, 0 <= ypos[i=1:n] <= prob.bin_height - prob.heights[i])
+    @variable(model, 0 <= xpos[i = 1:n] <= prob.bin_width - prob.widths[i])
+    @variable(model, 0 <= ypos[i = 1:n] <= prob.bin_height - prob.heights[i])
     @variable(model, relative[1:length(pairs), 1:4], Bin)
     @objective(model, Min, sum(used))
 
@@ -89,15 +87,20 @@ function build_model(prob::TwoDimensionalBinPackingProblem)
         @constraint(model, sum(used) <= prob.maximum_used)
     end
     for (p, (i, j)) in enumerate(pairs)
-        @constraint(model, xpos[i] + prob.widths[i] <= xpos[j] + prob.bin_width * (1 - relative[p, 1]))
-        @constraint(model, xpos[j] + prob.widths[j] <= xpos[i] + prob.bin_width * (1 - relative[p, 2]))
-        @constraint(model, ypos[i] + prob.heights[i] <= ypos[j] + prob.bin_height * (1 - relative[p, 3]))
-        @constraint(model, ypos[j] + prob.heights[j] <= ypos[i] + prob.bin_height * (1 - relative[p, 4]))
+        @constraint(
+            model, xpos[i] + prob.widths[i] <= xpos[j] + prob.bin_width * (1 - relative[p, 1])
+        )
+        @constraint(
+            model, xpos[j] + prob.widths[j] <= xpos[i] + prob.bin_width * (1 - relative[p, 2])
+        )
+        @constraint(
+            model, ypos[i] + prob.heights[i] <= ypos[j] + prob.bin_height * (1 - relative[p, 3])
+        )
+        @constraint(
+            model, ypos[j] + prob.heights[j] <= ypos[i] + prob.bin_height * (1 - relative[p, 4])
+        )
         for b in 1:b_count
-            @constraint(
-                model,
-                sum(relative[p, d] for d in 1:4) >= assign[i, b] + assign[j, b] - 1,
-            )
+            @constraint(model, sum(relative[p, d] for d in 1:4) >= assign[i, b] + assign[j, b] - 1,)
         end
     end
     # A valid aggregate area inequality strengthens the disjunctive relaxation
@@ -105,7 +108,7 @@ function build_model(prob::TwoDimensionalBinPackingProblem)
     @constraint(
         model,
         sum(prob.widths[i] * prob.heights[i] for i in 1:n) <=
-        prob.bin_width * prob.bin_height * sum(used),
+            prob.bin_width * prob.bin_height * sum(used),
     )
     return model
 end

@@ -9,8 +9,10 @@
 using Random
 
 # Category-level description (it groups several formulations).
-register_category(:tsp,
-    "Travelling-salesman routing: symmetric and one-way-street tours, alternative LP formulations, time windows, prize collection, multiple salespersons, and precedence constraints")
+register_category(
+    :tsp,
+    "Travelling-salesman routing: symmetric and one-way-street tours, alternative LP formulations, time windows, prize collection, multiple salespersons, and precedence constraints",
+)
 
 # --- Shared data helpers -----------------------------------------------------
 # Used by every tsp variant; names live in the module's namespace, hence the
@@ -37,7 +39,7 @@ function _tsp_stops(rng::AbstractRNG, n::Int)
     n_customers = n - 1
     n_rural = max(1, round(Int, 0.2 * n_customers))   # ~20% rural scatter
     n_town = n_customers - n_rural
-    stops = Tuple{Float64,Float64}[]
+    stops = Tuple{Float64, Float64}[]
     for _ in 1:n_town
         center = rand(rng, cluster_centers)
         x = clamp(center[1] + randn(rng) * cluster_spread, 0.0, grid_size)
@@ -56,15 +58,16 @@ end
 # up to 2-digit rounding (unlike the CVRP's deliberate per-arc asymmetry) and
 # makes symmetry exact. `min_dist` floors distinct-stop distances so clamped or
 # coincident coordinates can never produce a zero-length leg.
-function _tsp_distance(rng::AbstractRNG, locations::Vector{Tuple{Float64,Float64}},
-                       min_dist::Float64 = 0.5)
+function _tsp_distance(
+    rng::AbstractRNG, locations::Vector{Tuple{Float64, Float64}}, min_dist::Float64=0.5
+)
     n = length(locations)
     circuity = rand(rng, 1.15:0.05:1.45)
     dist = zeros(n, n)
-    for i in 1:n, j in i+1:n
+    for i in 1:n, j in (i + 1):n
         a, b = locations[i], locations[j]
         d = sqrt((a[1] - b[1])^2 + (a[2] - b[2])^2)
-        dist[i, j] = dist[j, i] = round(max(circuity * d, min_dist), digits = 2)
+        dist[i, j] = dist[j, i] = round(max(circuity * d, min_dist); digits=2)
     end
     return dist
 end
@@ -98,7 +101,7 @@ function _tsp_hall_block(rng::AbstractRNG, n::Int, k::Int)
     @assert 2 * k - 1 <= n - 1 "Hall block needs 2k-1 <= n-1 (got k=$k, n=$n)"
     order = shuffle(rng, collect(2:n))
     S = sort(order[1:k])
-    T = sort(order[k+1:2k-1])
+    T = sort(order[(k + 1):(2k - 1)])
     arc_ok = _tsp_full_support(n)
     for j in S, i in 1:n
         if i != j && !(i in T)
@@ -129,11 +132,11 @@ end
 # unless infeasible), and for an `infeasible` request size `n` against the
 # *delivered* variable count — `delivered(n, k)` is the variant's variable
 # count at dimension `n` once the block has deleted `k*(n-k)` arcs.
-function _tsp_plan_dimensions(rng::AbstractRNG, n0::Int, target::Int,
-                              status::FeasibilityStatus, delivered::Function)
+function _tsp_plan_dimensions(
+    rng::AbstractRNG, n0::Int, target::Int, status::FeasibilityStatus, delivered::Function
+)
     k = n0 >= 8 ? rand(rng, 2:3) : 2
-    n = status == infeasible ?
-        _tsp_pick_n(n0, target, k, m -> delivered(m, k)) : n0
+    n = status == infeasible ? _tsp_pick_n(n0, target, k, m -> delivered(m, k)) : n0
     return n, k
 end
 

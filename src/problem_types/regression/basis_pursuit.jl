@@ -3,9 +3,7 @@ using LinearAlgebra
 using Random
 
 const BASIS_PURSUIT_PROFILES = (
-    :gaussian_well_conditioned,
-    :correlated_columns,
-    :sparse_measurements,
+    :gaussian_well_conditioned, :correlated_columns, :sparse_measurements
 )
 
 """
@@ -17,7 +15,7 @@ Algebraic proof that a basis-pursuit instance is infeasible. For
 `b[r2] == multiplier * b[r1] + rhs_gap`, where `rhs_gap != 0`.
 """
 struct BasisPursuitCertificate
-    rows::Tuple{Int,Int}
+    rows::Tuple{Int, Int}
     multiplier::Float64
     rhs_gap::Float64
 end
@@ -38,11 +36,12 @@ certificate. `source_signal` generated the RHS before certificate injection; it
 is a feasible witness only when `resolved_status == feasible`.
 
 The three matrix profiles have materially different structure:
-- `gaussian_well_conditioned`: a dense Gaussian matrix whitened to have
-  orthonormal measurement rows (except at the unavoidable one-feature minimum);
-- `correlated_columns`: dense groups of highly coherent columns generated from
-  shared latent directions plus small independent perturbations;
-- `sparse_measurements`: sparse signed measurements with randomized supports.
+
+  - `gaussian_well_conditioned`: a dense Gaussian matrix whitened to have
+    orthonormal measurement rows (except at the unavoidable one-feature minimum);
+  - `correlated_columns`: dense groups of highly coherent columns generated from
+    shared latent directions plus small independent perturbations;
+  - `sparse_measurements`: sparse signed measurements with randomized supports.
 
 The split formulation always has an even number of variables. An even target of
 at least two is met exactly; an odd target is rounded up by one; targets below
@@ -58,14 +57,10 @@ struct BasisPursuitProblem <: ProblemGenerator
     weights::Vector{Float64}
     source_signal::Vector{Float64}
     support::Vector{Int}
-    certificate::Union{Nothing,BasisPursuitCertificate}
+    certificate::Union{Nothing, BasisPursuitCertificate}
 end
 
-function _basis_pursuit_gaussian_matrix(
-    rng::AbstractRNG,
-    n_measurements::Int,
-    n_features::Int,
-)
+function _basis_pursuit_gaussian_matrix(rng::AbstractRNG, n_measurements::Int, n_features::Int)
     A = randn(rng, n_measurements, n_features)
     if n_measurements <= n_features
         # Whitening gives A*A' = I up to roundoff while preserving dense,
@@ -80,11 +75,7 @@ function _basis_pursuit_gaussian_matrix(
     return A
 end
 
-function _basis_pursuit_correlated_matrix(
-    rng::AbstractRNG,
-    n_measurements::Int,
-    n_features::Int,
-)
+function _basis_pursuit_correlated_matrix(rng::AbstractRNG, n_measurements::Int, n_features::Int)
     n_groups = min(n_features, max(1, round(Int, sqrt(n_features))))
     prototypes = randn(rng, n_measurements, n_groups)
     for g in 1:n_groups
@@ -111,11 +102,7 @@ function _basis_pursuit_correlated_matrix(
     return A
 end
 
-function _basis_pursuit_sparse_matrix(
-    rng::AbstractRNG,
-    n_measurements::Int,
-    n_features::Int,
-)
+function _basis_pursuit_sparse_matrix(rng::AbstractRNG, n_measurements::Int, n_features::Int)
     A = zeros(Float64, n_measurements, n_features)
     width = clamp(round(Int, 0.12 * n_measurements), 1, n_measurements)
     for j in 1:n_features
@@ -139,10 +126,7 @@ function _basis_pursuit_sparse_matrix(
 end
 
 function _basis_pursuit_matrix(
-    rng::AbstractRNG,
-    n_measurements::Int,
-    n_features::Int,
-    profile::Symbol,
+    rng::AbstractRNG, n_measurements::Int, n_features::Int, profile::Symbol
 )
     A = if profile == :gaussian_well_conditioned
         _basis_pursuit_gaussian_matrix(rng, n_measurements, n_features)
@@ -174,9 +158,7 @@ mapped onto both rows as `(v/λ, v)`. The RHS of `r2` is then shifted by a
 nonzero gap so `A[r2, :] = λ A[r1, :]` but `b[r2] ≠ λ b[r1]`.
 """
 function _inject_basis_pursuit_certificate!(
-    A::Matrix{Float64},
-    b::Vector{Float64},
-    rng::AbstractRNG,
+    A::Matrix{Float64}, b::Vector{Float64}, rng::AbstractRNG
 )
     n_measurements, n_features = size(A)
     row_order = randperm(rng, n_measurements)
@@ -231,9 +213,7 @@ probability 0.8 and a certified infeasible instance otherwise; the result is
 stored in `resolved_status`.
 """
 function BasisPursuitProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
 
@@ -247,16 +227,11 @@ function BasisPursuitProblem(
     A = _basis_pursuit_matrix(rng, n_measurements, n_features, profile)
 
     max_support = max(1, min(n_features, n_measurements ÷ 3))
-    support_size = clamp(
-        round(Int, (0.05 + 0.10 * rand(rng)) * n_features),
-        1,
-        max_support,
-    )
+    support_size = clamp(round(Int, (0.05 + 0.10 * rand(rng)) * n_features), 1, max_support)
     support = sort(randperm(rng, n_features)[1:support_size])
     source_signal = zeros(Float64, n_features)
     for j in support
-        source_signal[j] =
-            (rand(rng, Bool) ? 1.0 : -1.0) * (0.75 + 2.25 * rand(rng))
+        source_signal[j] = (rand(rng, Bool) ? 1.0 : -1.0) * (0.75 + 2.25 * rand(rng))
     end
     b = A * source_signal
 
@@ -270,8 +245,11 @@ function BasisPursuitProblem(
     end
 
     weights = 0.5 .+ 1.5 .* rand(rng, n_features)
-    resolved_status = feasibility_status == unknown ?
-        (rand(rng) < 0.8 ? feasible : infeasible) : feasibility_status
+    resolved_status = if feasibility_status == unknown
+        (rand(rng) < 0.8 ? feasible : infeasible)
+    else
+        feasibility_status
+    end
 
     certificate = nothing
     if resolved_status == infeasible
@@ -304,16 +282,11 @@ function build_model(prob::BasisPursuitProblem)
 
     @variable(model, x_pos[1:prob.n_features] >= 0)
     @variable(model, x_neg[1:prob.n_features] >= 0)
-    @objective(
-        model,
-        Min,
-        sum(prob.weights[j] * (x_pos[j] + x_neg[j]) for j in 1:prob.n_features),
-    )
+    @objective(model, Min, sum(prob.weights[j] * (x_pos[j] + x_neg[j]) for j in 1:prob.n_features),)
     @constraint(
         model,
         measurements[i in 1:prob.n_measurements],
-        sum(prob.A[i, j] * (x_pos[j] - x_neg[j]) for j in 1:prob.n_features) ==
-            prob.b[i],
+        sum(prob.A[i, j] * (x_pos[j] - x_neg[j]) for j in 1:prob.n_features) == prob.b[i],
     )
 
     return model

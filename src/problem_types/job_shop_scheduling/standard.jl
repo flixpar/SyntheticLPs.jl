@@ -10,6 +10,7 @@ Generator for realistic job shop scheduling problems with sequential job routing
 machine no-overlap (disjunctive) constraints, release dates, and soft due dates.
 
 # Overview
+
 Each job consists of an ordered chain of operations, each requiring a specific
 machine for a given processing time. Operations of the same job must run in
 sequence; operations sharing a machine must not overlap (modeled with big-M
@@ -25,19 +26,20 @@ deadline tighter than the unavoidable `release + total job processing time`,
 creating a deterministic contradiction.
 
 # Fields
-- `n_jobs::Int`: Number of jobs
-- `n_machines::Int`: Number of machines
-- `n_ops::Int`: Total number of operations across all jobs
-- `job_operation_indices::Vector{Vector{Int}}`: Global operation indices, in order, per job
-- `operation_duration::Vector{Float64}`: Processing time of each operation
-- `operation_machine::Vector{Int}`: Machine assigned to each operation
-- `release_times::Vector{Float64}`: Earliest start time for each job's first operation
-- `due_dates::Vector{Float64}`: Soft (or, for infeasible instances, hard) due date per job
-- `weights::Vector{Float64}`: Tardiness penalty weight per job
-- `job_total_processing::Vector{Float64}`: Sum of operation durations per job
-- `machine_pairs::Vector{Tuple{Int,Int,Int}}`: `(machine, op_a, op_b)` pairs sharing a machine
-- `horizon::Float64`: Big-M value (scheduling horizon) for disjunctive constraints
-- `feasibility_status::FeasibilityStatus`: Resolved feasibility status of the instance
+
+  - `n_jobs::Int`: Number of jobs
+  - `n_machines::Int`: Number of machines
+  - `n_ops::Int`: Total number of operations across all jobs
+  - `job_operation_indices::Vector{Vector{Int}}`: Global operation indices, in order, per job
+  - `operation_duration::Vector{Float64}`: Processing time of each operation
+  - `operation_machine::Vector{Int}`: Machine assigned to each operation
+  - `release_times::Vector{Float64}`: Earliest start time for each job's first operation
+  - `due_dates::Vector{Float64}`: Soft (or, for infeasible instances, hard) due date per job
+  - `weights::Vector{Float64}`: Tardiness penalty weight per job
+  - `job_total_processing::Vector{Float64}`: Sum of operation durations per job
+  - `machine_pairs::Vector{Tuple{Int,Int,Int}}`: `(machine, op_a, op_b)` pairs sharing a machine
+  - `horizon::Float64`: Big-M value (scheduling horizon) for disjunctive constraints
+  - `feasibility_status::FeasibilityStatus`: Resolved feasibility status of the instance
 """
 struct JobShopSchedulingProblem <: ProblemGenerator
     n_jobs::Int
@@ -50,7 +52,7 @@ struct JobShopSchedulingProblem <: ProblemGenerator
     due_dates::Vector{Float64}
     weights::Vector{Float64}
     job_total_processing::Vector{Float64}
-    machine_pairs::Vector{Tuple{Int,Int,Int}}
+    machine_pairs::Vector{Tuple{Int, Int, Int}}
     horizon::Float64
     feasibility_status::FeasibilityStatus
 end
@@ -61,7 +63,9 @@ end
 Sample the number of operations for each of `n_jobs` jobs from a Normal centered at
 `mean_ops`, clamped to `[2, min(max_ops, n_machines + 2)]`. Returns a `Vector{Int}`.
 """
-function sample_operations_per_job(rng::AbstractRNG, n_jobs::Int, mean_ops::Float64, max_ops::Int, n_machines::Int)
+function sample_operations_per_job(
+    rng::AbstractRNG, n_jobs::Int, mean_ops::Float64, max_ops::Int, n_machines::Int
+)
     min_ops = 2
     cap = min(max_ops, n_machines + 2)
     ops = Vector{Int}(undef, n_jobs)
@@ -83,7 +87,7 @@ function build_routings(rng::AbstractRNG, operations_per_job::Vector{Int}, n_mac
     n_jobs = length(operations_per_job)
     machine_sequences = Vector{Vector{Int}}(undef, n_jobs)
     processing_times = Vector{Vector{Float64}}(undef, n_jobs)
-    base_scales = collect(range(1.3, 0.6, length=n_machines))
+    base_scales = collect(range(1.3, 0.6; length=n_machines))
 
     for (j, job_ops) in enumerate(operations_per_job)
         machines = Vector{Int}(undef, job_ops)
@@ -136,6 +140,7 @@ Construct a job shop scheduling instance whose decision-variable count lands nea
 `target_variables`.
 
 # Variable-count formula
+
 `build_model` creates: `n_ops` start-time vars + `n_jobs` completion vars +
 `n_jobs` tardiness vars + 1 makespan var + `pair_count` binary ordering vars,
 i.e. total = `n_ops + 2*n_jobs + 1 + pair_count`, where
@@ -144,11 +149,14 @@ number of jobs, computing this exact total for each candidate routing, and keeps
 the candidate closest to the target.
 
 # Arguments
-- `target_variables`: Target number of decision variables
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of decision variables
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function JobShopSchedulingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function JobShopSchedulingProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # Resolve status: 'unknown' produces a natural (non-forced) instance, so we
@@ -245,11 +253,11 @@ function JobShopSchedulingProblem(target_variables::Int, feasibility_status::Fea
     for (idx, mach) in enumerate(operation_machine)
         push!(machine_operation_indices[mach], idx)
     end
-    machine_pairs = Tuple{Int,Int,Int}[]
+    machine_pairs = Tuple{Int, Int, Int}[]
     for m in 1:n_machines
         ops = machine_operation_indices[m]
-        for i in 1:length(ops) - 1
-            for k in i + 1:length(ops)
+        for i in 1:(length(ops) - 1)
+            for k in (i + 1):length(ops)
                 push!(machine_pairs, (m, ops[i], ops[k]))
             end
         end
@@ -324,7 +332,8 @@ deadline (`completion[1] <= due_dates[1]`) tighter than its minimum completion t
 producing a deterministic infeasibility.
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::JobShopSchedulingProblem)
     model = Model()
@@ -342,7 +351,7 @@ function build_model(prob::JobShopSchedulingProblem)
 
     # Job sequencing, release, completion and (soft/hard) due-date constraints.
     for (j, op_indices) in enumerate(prob.job_operation_indices)
-        for idx in 1:length(op_indices) - 1
+        for idx in 1:(length(op_indices) - 1)
             cur = op_indices[idx]
             nxt = op_indices[idx + 1]
             @constraint(model, start_time[nxt] >= start_time[cur] + prob.operation_duration[cur])
@@ -350,7 +359,9 @@ function build_model(prob::JobShopSchedulingProblem)
         first_idx = op_indices[1]
         @constraint(model, start_time[first_idx] >= prob.release_times[j])
         for op_idx in op_indices
-            @constraint(model, completion[j] >= start_time[op_idx] + prob.operation_duration[op_idx])
+            @constraint(
+                model, completion[j] >= start_time[op_idx] + prob.operation_duration[op_idx]
+            )
         end
         if infeas && j == 1
             # HARD deadline (no tardiness escape): deterministic infeasibility.
@@ -364,8 +375,16 @@ function build_model(prob::JobShopSchedulingProblem)
     # Machine no-overlap via big-M disjunctions.
     for (pair_idx, (_machine, op_a, op_b)) in enumerate(prob.machine_pairs)
         bigM = prob.horizon
-        @constraint(model, start_time[op_b] >= start_time[op_a] + prob.operation_duration[op_a] - bigM * (1 - order_var[pair_idx]))
-        @constraint(model, start_time[op_a] >= start_time[op_b] + prob.operation_duration[op_b] - bigM * order_var[pair_idx])
+        @constraint(
+            model,
+            start_time[op_b] >=
+                start_time[op_a] + prob.operation_duration[op_a] - bigM * (1 - order_var[pair_idx])
+        )
+        @constraint(
+            model,
+            start_time[op_a] >=
+                start_time[op_b] + prob.operation_duration[op_b] - bigM * order_var[pair_idx]
+        )
     end
 
     for j in 1:n_jobs

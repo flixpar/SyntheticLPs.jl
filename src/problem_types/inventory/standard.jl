@@ -9,6 +9,7 @@ using Statistics
 Generator for inventory control problems with realistic and diverse patterns, combining richer scenario generation with precise feasibility control.
 
 # Overview
+
 Models single-item production and inventory planning over time. The decisions
 are production quantities and ending inventory levels; when backlog is enabled,
 the model also decides carried shortage. The objective minimizes production,
@@ -18,14 +19,15 @@ periods, and production capacity limits each period's production. When
 when it is true, inventory is split into positive inventory and backlog states.
 
 # Fields
-- `n_periods::Int`: Number of time periods
-- `prod_capacity::Int`: Production capacity per period
-- `initial_inventory::Int`: Starting inventory level
-- `backlog_allowed::Bool`: Whether backorders are permitted
-- `demands::Vector{Int}`: Demand for each period
-- `production_costs::Vector{Float64}`: Production cost per period
-- `holding_costs::Vector{Float64}`: Holding cost per period
-- `backlog_costs::Vector{Float64}`: Backlog/shortage cost per period
+
+  - `n_periods::Int`: Number of time periods
+  - `prod_capacity::Int`: Production capacity per period
+  - `initial_inventory::Int`: Starting inventory level
+  - `backlog_allowed::Bool`: Whether backorders are permitted
+  - `demands::Vector{Int}`: Demand for each period
+  - `production_costs::Vector{Float64}`: Production cost per period
+  - `holding_costs::Vector{Float64}`: Holding cost per period
+  - `backlog_costs::Vector{Float64}`: Backlog/shortage cost per period
 """
 struct InventoryProblem <: ProblemGenerator
     n_periods::Int
@@ -44,16 +46,22 @@ end
 Construct an inventory control problem instance with sophisticated feasibility control.
 
 # Arguments
-- `target_variables`: Target number of variables
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
 function InventoryProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
 
     # Determine business scale by target size
-    scale = target_variables <= 250 ? :small :
-            target_variables <= 1000 ? :medium : :large
+    scale = if target_variables <= 250
+        :small
+    elseif target_variables <= 1000
+        :medium
+    else
+        :large
+    end
 
     # Backlog incidence increases with scale
     backlog_prob = scale == :small ? 0.2 : (scale == :medium ? 0.4 : 0.6)
@@ -98,8 +106,8 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
         prod_cost_max = round(Int, prod_cost_base * (1 + prod_cost_spread))
 
         holding_rate = rand(rng, Uniform(0.05, 0.25)) / 12
-        holding_cost_min = max(0.01, round(prod_cost_base * holding_rate * 0.8, digits=2))
-        holding_cost_max = round(prod_cost_base * holding_rate * 1.2, digits=2)
+        holding_cost_min = max(0.01, round(prod_cost_base * holding_rate * 0.8; digits=2))
+        holding_cost_max = round(prod_cost_base * holding_rate * 1.2; digits=2)
 
     elseif scale == :medium
         prod_capacity = round(Int, rand(rng, Uniform(200, 2000)))
@@ -117,8 +125,8 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
         prod_cost_max = round(Int, prod_cost_base * (1 + prod_cost_spread))
 
         holding_rate = rand(rng, Uniform(0.03, 0.20)) / 12
-        holding_cost_min = max(0.01, round(prod_cost_base * holding_rate * 0.8, digits=2))
-        holding_cost_max = round(prod_cost_base * holding_rate * 1.2, digits=2)
+        holding_cost_min = max(0.01, round(prod_cost_base * holding_rate * 0.8; digits=2))
+        holding_cost_max = round(prod_cost_base * holding_rate * 1.2; digits=2)
 
     else # :large
         prod_capacity = round(Int, rand(rng, Uniform(1000, 50000)))
@@ -136,8 +144,8 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
         prod_cost_max = round(Int, prod_cost_base * (1 + prod_cost_spread))
 
         holding_rate = rand(rng, Uniform(0.01, 0.15)) / 12
-        holding_cost_min = max(0.01, round(prod_cost_base * holding_rate * 0.8, digits=2))
-        holding_cost_max = round(prod_cost_base * holding_rate * 1.2, digits=2)
+        holding_cost_min = max(0.01, round(prod_cost_base * holding_rate * 0.8; digits=2))
+        holding_cost_max = round(prod_cost_base * holding_rate * 1.2; digits=2)
     end
 
     backlog_cost_factor = rand(rng, Uniform(1.5, 5.0))
@@ -151,13 +159,17 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
     # Production & holding costs with mild dispersion and optional trends
     prod_cost_mean = (prod_cost_min + prod_cost_max) / 2
     prod_cost_std = (prod_cost_max - prod_cost_min) / 4
-    production_costs = clamp.(rand(rng, Normal(prod_cost_mean, prod_cost_std), n_periods),
-                              prod_cost_min, prod_cost_max)
+    production_costs = clamp.(
+        rand(rng, Normal(prod_cost_mean, prod_cost_std), n_periods), prod_cost_min, prod_cost_max
+    )
 
     holding_cost_mean = (holding_cost_min + holding_cost_max) / 2
     holding_cost_std = (holding_cost_max - holding_cost_min) / 4
-    holding_costs = clamp.(rand(rng, Normal(holding_cost_mean, holding_cost_std), n_periods),
-                           holding_cost_min, holding_cost_max)
+    holding_costs = clamp.(
+        rand(rng, Normal(holding_cost_mean, holding_cost_std), n_periods),
+        holding_cost_min,
+        holding_cost_max,
+    )
 
     # Seasonality patterns
     if rand(rng) < 0.6
@@ -231,8 +243,13 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
     end
 
     # ENFORCE FEASIBILITY/INFEASIBILITY with sophisticated logic
-    solution_status = feasibility_status == feasible ? :feasible :
-                     feasibility_status == infeasible ? :infeasible : :all
+    solution_status = if feasibility_status == feasible
+        :feasible
+    elseif feasibility_status == infeasible
+        :infeasible
+    else
+        :all
+    end
 
     if solution_status == :feasible
         # Realistic operator-side actions
@@ -253,10 +270,10 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
                         excess = demands[t] - round(Int, thr)
                         demands[t] = round(Int, thr)
                         if t > 1
-                            demands[t-1] += round(Int, excess * 0.3)
+                            demands[t - 1] += round(Int, excess * 0.3)
                         end
                         if t < n_periods
-                            demands[t+1] += round(Int, excess * 0.3)
+                            demands[t + 1] += round(Int, excess * 0.3)
                         end
                         if rand(rng) < 0.5
                             prod_capacity = round(Int, prod_capacity * 1.05)
@@ -273,14 +290,17 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
         if !backlog_allowed
             sf = max_shortfall(prod_capacity)
             if sf > 0
-                required_caps = [ceil(Int, max(0, cum_demands[t] - initial_inventory) / t) for t in 1:n_periods]
+                required_caps = [
+                    ceil(Int, max(0, cum_demands[t] - initial_inventory) / t) for t in 1:n_periods
+                ]
                 min_cap_needed = maximum(required_caps)
                 extra_inv_needed = sf
 
                 uplift_ratio = min_cap_needed > 0 ? min_cap_needed / max(1, prod_capacity) : 1.0
                 if uplift_ratio <= 1.5 && rand(rng) < 0.6
                     prod_capacity = max(prod_capacity, min_cap_needed)
-                elseif extra_inv_needed <= round(Int, max(10, 2 * (demand_min + demand_max) / 2)) && rand(rng) < 0.5
+                elseif extra_inv_needed <= round(Int, max(10, 2 * (demand_min + demand_max) / 2)) &&
+                    rand(rng) < 0.5
                     initial_inventory += extra_inv_needed
                 else
                     backlog_allowed = true
@@ -301,7 +321,7 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
             start = rand(rng, 1:max(1, n_periods - 3))
             dur = min(rand(rng, 2:4), n_periods - start + 1)
             surge = rand(rng, Uniform(1.5, 2.0))
-            for t in start:start+dur-1
+            for t in start:(start + dur - 1)
                 demands[t] = round(Int, demands[t] * surge)
             end
         elseif scenario < 0.50
@@ -329,8 +349,10 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
             for t in 1:n_periods
                 demands[t] = round(Int, demands[t] * rand(rng, Uniform(0.7, 1.4)))
             end
-            crisis = rand(rng, ceil(Int, n_periods/3):n_periods)
-            demands[crisis] = max(demands[crisis], round(Int, prod_capacity * rand(rng, Uniform(1.2, 1.5))))
+            crisis = rand(rng, ceil(Int, n_periods / 3):n_periods)
+            demands[crisis] = max(
+                demands[crisis], round(Int, prod_capacity * rand(rng, Uniform(1.2, 1.5)))
+            )
         end
 
         demands = max.(demands, 1)
@@ -340,7 +362,9 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
         # Guarantee prefix infeasibility
         sf = max_shortfall(prod_capacity)
         if sf <= 0
-            required_caps = [ceil(Int, max(0, cum_demands[t] - initial_inventory) / t) for t in 1:n_periods]
+            required_caps = [
+                ceil(Int, max(0, cum_demands[t] - initial_inventory) / t) for t in 1:n_periods
+            ]
             min_cap_needed = maximum(required_caps)
             margin = rand(rng, 1:max(1, round(Int, 0.1 * max(1, min_cap_needed))))
             new_cap = max(0, min_cap_needed - margin)
@@ -351,8 +375,16 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
         end
     end
 
-    return InventoryProblem(n_periods, prod_capacity, initial_inventory, backlog_allowed,
-                            demands, production_costs, holding_costs, backlog_costs)
+    return InventoryProblem(
+        n_periods,
+        prod_capacity,
+        initial_inventory,
+        backlog_allowed,
+        demands,
+        production_costs,
+        holding_costs,
+        backlog_costs,
+    )
 end
 
 """
@@ -361,10 +393,12 @@ end
 Build a JuMP model for the inventory control problem.
 
 # Arguments
-- `prob`: InventoryProblem instance
+
+  - `prob`: InventoryProblem instance
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::InventoryProblem)
     model = Model()
@@ -375,15 +409,24 @@ function build_model(prob::InventoryProblem)
         @variable(model, I_plus[0:prob.n_periods] >= 0)
         @variable(model, I_minus[0:prob.n_periods] >= 0)
 
-        @objective(model, Min,
-            sum(prob.production_costs[t]*x[t] + prob.holding_costs[t]*I_plus[t] + prob.backlog_costs[t]*I_minus[t]
-                for t in 1:prob.n_periods))
+        @objective(
+            model,
+            Min,
+            sum(
+                prob.production_costs[t]*x[t] +
+                prob.holding_costs[t]*I_plus[t] +
+                prob.backlog_costs[t]*I_minus[t] for t in 1:prob.n_periods
+            )
+        )
 
         @constraint(model, I_plus[0] == prob.initial_inventory)
         @constraint(model, I_minus[0] == 0)
 
         for t in 1:prob.n_periods
-            @constraint(model, I_plus[t-1] - I_minus[t-1] + x[t] - prob.demands[t] == I_plus[t] - I_minus[t])
+            @constraint(
+                model,
+                I_plus[t - 1] - I_minus[t - 1] + x[t] - prob.demands[t] == I_plus[t] - I_minus[t]
+            )
             @constraint(model, x[t] <= prob.prod_capacity)
         end
     else
@@ -391,13 +434,18 @@ function build_model(prob::InventoryProblem)
         @variable(model, x[1:prob.n_periods] >= 0)
         @variable(model, I[0:prob.n_periods] >= 0)
 
-        @objective(model, Min,
-            sum(prob.production_costs[t]*x[t] + prob.holding_costs[t]*I[t] for t in 1:prob.n_periods))
+        @objective(
+            model,
+            Min,
+            sum(
+                prob.production_costs[t]*x[t] + prob.holding_costs[t]*I[t] for t in 1:prob.n_periods
+            )
+        )
 
         @constraint(model, I[0] == prob.initial_inventory)
 
         for t in 1:prob.n_periods
-            @constraint(model, I[t-1] + x[t] - prob.demands[t] == I[t])
+            @constraint(model, I[t - 1] + x[t] - prob.demands[t] == I[t])
             @constraint(model, x[t] <= prob.prod_capacity)
         end
     end

@@ -59,8 +59,11 @@ function _orsched_case_mix(rng::AbstractRNG, n_specialties::Int)
         if !any(k -> k in short_ids, chosen)
             candidate = short_ids[argmax([table[k].weight for k in short_ids])]
             protected = findfirst(k -> k in long_ids, chosen)
-            replaceable = protected === nothing ? collect(eachindex(chosen)) :
-                          [j for j in eachindex(chosen) if j != protected]
+            replaceable = if protected === nothing
+                collect(eachindex(chosen))
+            else
+                [j for j in eachindex(chosen) if j != protected]
+            end
             chosen[first(replaceable)] = candidate
         end
         if !any(k -> k in long_ids, chosen)
@@ -77,30 +80,38 @@ end
 # Create an MSS and guarantee every service its quota without taking the only
 # guaranteed block from a previous service.  A donor is unassigned or strictly
 # above quota; a closed slot is opened if necessary.
-function _orsched_master_schedule(rng::AbstractRNG, n_rooms::Int, n_days::Int,
-                                  spec_ids::Vector{Int})
+function _orsched_master_schedule(
+    rng::AbstractRNG, n_rooms::Int, n_days::Int, spec_ids::Vector{Int}
+)
     n_specs = length(spec_ids)
-    weights = [_ORSCHED_SPECIALTIES[k].weight *
-               _ORSCHED_SPECIALTIES[k].aggregate_mean for k in spec_ids]
+    weights = [
+        _ORSCHED_SPECIALTIES[k].weight * _ORSCHED_SPECIALTIES[k].aggregate_mean for k in spec_ids
+    ]
     mss = zeros(Int, n_rooms, n_days)
     session = zeros(Float64, n_rooms, n_days)
     open_rate = rand(rng, Uniform(0.85, 0.97))
     for d in 1:n_days, r in 1:n_rooms
         rand(rng) > open_rate && continue
         u = rand(rng)
-        session[r, d] = u < 0.78 ? 480.0 : u < 0.95 ? 240.0 : 780.0
+        session[r, d] = if u < 0.78
+            480.0
+        elseif u < 0.95
+            240.0
+        else
+            780.0
+        end
         mss[r, d] = _orsched_pick(rng, cumsum(weights))
     end
     quota = max(1, n_days ÷ 5)
     for k in 1:n_specs
         while count(==(k), mss) < quota
             counts = [count(==(j), mss) for j in 1:n_specs]
-            donors = [(r, d) for d in 1:n_days for r in 1:n_rooms
-                      if session[r, d] > 0 &&
-                         (mss[r, d] == 0 || counts[mss[r, d]] > quota)]
+            donors = [
+                (r, d) for d in 1:n_days for
+                r in 1:n_rooms if session[r, d] > 0 && (mss[r, d] == 0 || counts[mss[r, d]] > quota)
+            ]
             if isempty(donors)
-                closed = [(r, d) for d in 1:n_days for r in 1:n_rooms
-                          if session[r, d] == 0]
+                closed = [(r, d) for d in 1:n_days for r in 1:n_rooms if session[r, d] == 0]
                 isempty(closed) && error("MSS dimensions cannot satisfy specialty quotas")
                 r, d = rand(rng, closed)
                 session[r, d] = 480.0
@@ -112,17 +123,16 @@ function _orsched_master_schedule(rng::AbstractRNG, n_rooms::Int, n_days::Int,
         end
     end
     @assert all(count(==(k), mss) >= quota for k in 1:n_specs)
-    @assert all((mss[r, d] == 0) == (session[r, d] == 0)
-                for r in 1:n_rooms, d in 1:n_days)
+    @assert all((mss[r, d] == 0) == (session[r, d] == 0) for r in 1:n_rooms, d in 1:n_days)
     return mss, session
 end
 
-function _orsched_surgeon_pool(rng::AbstractRNG, cases_per_spec::Vector{Int},
-                               n_days::Int, mss::Matrix{Int})
+function _orsched_surgeon_pool(
+    rng::AbstractRNG, cases_per_spec::Vector{Int}, n_days::Int, mss::Matrix{Int}
+)
     surgeon_specialty = Int[]
     for k in eachindex(cases_per_spec)
-        n_surgeons = clamp(round(Int, cases_per_spec[k] /
-                                rand(rng, Uniform(4.0, 7.0))), 1, 5)
+        n_surgeons = clamp(round(Int, cases_per_spec[k] / rand(rng, Uniform(4.0, 7.0))), 1, 5)
         append!(surgeon_specialty, fill(k, n_surgeons))
     end
     budget = zeros(Float64, length(surgeon_specialty), n_days)
@@ -143,9 +153,14 @@ end
 # archetypes; `duration_sd` preserves uncertainty for the robust formulation.
 # With `allow_urgent=false`, mandatory cases are designated only after a
 # feasible witness is planted, so clinical labels are never downgraded.
-function _orsched_waiting_list(rng::AbstractRNG, n_surgeries::Int,
-                               spec_ids::Vector{Int}, n_days::Int;
-                               with_los::Bool=false, allow_urgent::Bool=true)
+function _orsched_waiting_list(
+    rng::AbstractRNG,
+    n_surgeries::Int,
+    spec_ids::Vector{Int},
+    n_days::Int;
+    with_los::Bool=false,
+    allow_urgent::Bool=true,
+)
     table = _ORSCHED_SPECIALTIES
     cum = cumsum([table[k].weight for k in spec_ids])
     p_urgent = rand(rng, Uniform(0.08, 0.18))
@@ -200,15 +215,27 @@ function _orsched_waiting_list(rng::AbstractRNG, n_surgeries::Int,
         end
     end
 
-    base = (specialty=specialty, source_type=source_type, duration=duration,
-            duration_sd=duration_sd, urgency=urgency, deadline=deadline,
-            penalty=penalty, requested_urgent_fraction=p_urgent)
+    base = (
+        specialty=specialty,
+        source_type=source_type,
+        duration=duration,
+        duration_sd=duration_sd,
+        urgency=urgency,
+        deadline=deadline,
+        penalty=penalty,
+        requested_urgent_fraction=p_urgent,
+    )
     return with_los ? merge(base, (ward_los=ward_los, icu_los=icu_los)) : base
 end
 
-function _orsched_designate_mandatory!(rng::AbstractRNG, urgency::Vector{Symbol},
-                                       deadline::Vector{Int}, penalty::Vector{Float64},
-                                       assignment::Vector{Int}, fraction::Real)
+function _orsched_designate_mandatory!(
+    rng::AbstractRNG,
+    urgency::Vector{Symbol},
+    deadline::Vector{Int},
+    penalty::Vector{Float64},
+    assignment::Vector{Int},
+    fraction::Real,
+)
     scheduled = findall(>(0), assignment)
     isempty(scheduled) && return falses(length(assignment))
     n_mandatory = clamp(round(Int, fraction * length(assignment)), 1, length(scheduled))
@@ -239,23 +266,26 @@ end
 
 _orsched_load_target(rng::AbstractRNG) = rand(rng, _ORSCHED_BENCHMARK_LOADS)
 
-function _orsched_postop_days(surgery_day::Int, icu_los::Int, ward_los::Int,
-                              bed_horizon::Int)
-    icu_days = icu_los == 0 ? Int[] :
-               collect(surgery_day:min(bed_horizon, surgery_day + icu_los - 1))
+function _orsched_postop_days(surgery_day::Int, icu_los::Int, ward_los::Int, bed_horizon::Int)
+    icu_days =
+        icu_los == 0 ? Int[] : collect(surgery_day:min(bed_horizon, surgery_day + icu_los - 1))
     ward_start = surgery_day + icu_los
-    ward_days = ward_los == 0 ? Int[] :
-                collect(ward_start:min(bed_horizon, ward_start + ward_los - 1))
+    ward_days =
+        ward_los == 0 ? Int[] : collect(ward_start:min(bed_horizon, ward_start + ward_los - 1))
     return icu_days, ward_days
 end
 
-function _orsched_greedy_schedule(n_surgeries::Int, urgency::Vector{Symbol},
-                                  deadline::Vector{Int}, duration::Vector{Float64},
-                                  slots_for::Vector{Vector{Int}}, n_slots::Int,
-                                  consume!::Function)
+function _orsched_greedy_schedule(
+    n_surgeries::Int,
+    urgency::Vector{Symbol},
+    deadline::Vector{Int},
+    duration::Vector{Float64},
+    slots_for::Vector{Vector{Int}},
+    n_slots::Int,
+    consume!::Function,
+)
     rank = Dict(:urgent => 1, :semi_urgent => 2, :routine => 3)
-    order = sort(collect(1:n_surgeries),
-                 by=i -> (rank[urgency[i]], deadline[i], -duration[i]))
+    order = sort(collect(1:n_surgeries); by=i -> (rank[urgency[i]], deadline[i], -duration[i]))
     assignment = zeros(Int, n_surgeries)
     for i in order, slot in slots_for[i]
         if consume!(slot, i)
@@ -266,10 +296,9 @@ function _orsched_greedy_schedule(n_surgeries::Int, urgency::Vector{Symbol},
     return assignment
 end
 
-
-function _orsched_inject_surgeon_shortage!(surgeon_budget::Matrix{Float64},
-                                           surgeon::Int, duration::Float64,
-                                           working_days::Vector{Int})
+function _orsched_inject_surgeon_shortage!(
+    surgeon_budget::Matrix{Float64}, surgeon::Int, duration::Float64, working_days::Vector{Int}
+)
     n_days_worked = max(1, length(working_days))
     share = 0.5 * duration / n_days_worked
     for d in working_days

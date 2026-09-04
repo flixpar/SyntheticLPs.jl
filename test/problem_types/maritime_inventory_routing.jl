@@ -29,25 +29,26 @@
     end
 
     # The binary block is exactly the routing decisions.
-    m, p = generate_problem(:maritime_inventory_routing, 600, unknown, 1;
-                            relax_integer=false)
+    m, p = generate_problem(:maritime_inventory_routing, 600, unknown, 1; relax_integer=false)
     @test num_variables(m) == mirp_variables(p)
     @test num_constraints(m, VariableRef, MOI.ZeroOne) ==
-          p.n_vessels * p.n_ports * (p.n_periods + 1) +
-          p.n_vessels * length(p.arcs) * p.n_periods
+        p.n_vessels * p.n_ports * (p.n_periods + 1) + p.n_vessels * length(p.arcs) * p.n_periods
 
     # Sizing: the arc count is solved from the target, so every request lands
     # within 10% across four decades (the old dimension search saturated at
     # ~15.6k variables and missed 20000 by 22%, and missed 50 by 20%).
     for target in (50, 200, 1000, 4000, 20000),
-        status in (feasible, infeasible, unknown), seed in 0:3
+        status in (feasible, infeasible, unknown),
+        seed in 0:3
+
         m, _ = generate_problem(:maritime_inventory_routing, target, status, seed)
         @test abs(num_variables(m) - target) <= 0.10 * target
     end
     # Realised sizes are monotone in the target.
-    sizes = [num_variables(generate_problem(:maritime_inventory_routing,
-                                            target, unknown, 7)[1])
-             for target in (50, 100, 200, 400, 800, 1600, 3200, 6400, 12800, 20000)]
+    sizes = [
+        num_variables(generate_problem(:maritime_inventory_routing, target, unknown, 7)[1]) for
+        target in (50, 100, 200, 400, 800, 1600, 3200, 6400, 12800, 20000)
+    ]
     @test issorted(sizes)
 
     # Sailing-network conventions: waiting arcs everywhere, both depot shuttle
@@ -63,10 +64,8 @@
         @test all(p.travel_time[i, i] == 0.0 for i in 1:P)
         @test p.period_length == maximum(p.travel_time[i, j] for (i, j) in p.arcs)
         @test all(p.travel_time[i, j] <= p.period_length for (i, j) in p.arcs)
-        @test all(p.initial_inventory[c] <= p.inventory_capacity[c]
-                  for c in 1:p.n_customers)
-        @test all(p.initial_load[v] <= p.vessel_capacity[v]
-                  for v in 1:p.n_vessels)
+        @test all(p.initial_inventory[c] <= p.inventory_capacity[c] for c in 1:p.n_customers)
+        @test all(p.initial_load[v] <= p.vessel_capacity[v] for v in 1:p.n_vessels)
         # Every customer can be reached inside the horizon by the rotation.
         @test p.n_customers <= p.n_vessels * (p.n_periods ÷ 2)
     end
@@ -96,20 +95,20 @@
                 @test w.pickup[v, t] == 0.0 || w.position[v, t + 1] == 1
                 @test w.pickup[v, t] <= p.vessel_capacity[v]
                 for c in 1:C
-                    @test w.delivery[v, c, t] == 0.0 ||
-                          w.position[v, t + 1] == c + 1
+                    @test w.delivery[v, c, t] == 0.0 || w.position[v, t + 1] == c + 1
                     @test w.delivery[v, c, t] <= p.vessel_capacity[v]
                 end
             end
             # Onboard load balance and bounds.
             @test w.load[v, 1] == p.initial_load[v]
             for t in 1:T
-                @test isapprox(w.load[v, t + 1],
-                               w.load[v, t] + w.pickup[v, t] -
-                               sum(w.delivery[v, c, t] for c in 1:C); atol=1e-6)
+                @test isapprox(
+                    w.load[v, t + 1],
+                    w.load[v, t] + w.pickup[v, t] - sum(w.delivery[v, c, t] for c in 1:C);
+                    atol=1e-6,
+                )
             end
-            @test all(-1e-9 <= w.load[v, k] <= p.vessel_capacity[v] + 1e-9
-                      for k in 1:(T + 1))
+            @test all(-1e-9 <= w.load[v, k] <= p.vessel_capacity[v] + 1e-9 for k in 1:(T + 1))
         end
 
         # The depot never releases more than it has.
@@ -121,25 +120,28 @@
         for c in 1:C
             @test w.inventory[c, 1] == p.initial_inventory[c]
             for t in 1:T
-                @test isapprox(w.inventory[c, t + 1],
-                               w.inventory[c, t] +
-                               sum(w.delivery[v, c, t] for v in 1:V) -
-                               p.consumption[c, t]; atol=1e-6)
+                @test isapprox(
+                    w.inventory[c, t + 1],
+                    w.inventory[c, t] + sum(w.delivery[v, c, t] for v in 1:V) - p.consumption[c, t];
+                    atol=1e-6,
+                )
             end
-            @test all(-1e-9 <= w.inventory[c, k] <= p.inventory_capacity[c] + 1e-9
-                      for k in 1:(T + 1))
+            @test all(
+                -1e-9 <= w.inventory[c, k] <= p.inventory_capacity[c] + 1e-9 for k in 1:(T + 1)
+            )
         end
     end
 
     # The witness is a primal point of the unrelaxed model: map it onto the
     # variables and let JuMP re-check every row, bound and integrality set.
     for target in (150, 900), seed in 0:1
-        model, p = generate_problem(:maritime_inventory_routing, target,
-                                    feasible, seed; relax_integer=false)
+        model, p = generate_problem(
+            :maritime_inventory_routing, target, feasible, seed; relax_integer=false
+        )
         w = p.feasible_witness
         V, C, T, P = p.n_vessels, p.n_customers, p.n_periods, p.n_ports
         arc_index = Dict(a => k for (k, a) in enumerate(p.arcs))
-        point = Dict{VariableRef,Float64}()
+        point = Dict{VariableRef, Float64}()
         for v in 1:V, t in 0:T, q in 1:P
             point[model[:location][v, q, t]] = w.position[v, t + 1] == q ? 1.0 : 0.0
         end
@@ -166,8 +168,7 @@
     # the shortage. Both bounds use only linear rows, so the refutation also
     # applies to the LP relaxation.
     for target in (120, 800, 4000), seed in 0:2
-        _, q = generate_problem(:maritime_inventory_routing, target,
-                                infeasible, seed)
+        _, q = generate_problem(:maritime_inventory_routing, target, infeasible, seed)
         cert = q.infeasibility_certificate
         @test cert !== nothing
         @test q.feasible_witness === nothing
@@ -177,18 +178,22 @@
         @test isapprox(cert.initial_inventory, sum(q.initial_inventory); atol=1e-6)
         @test isapprox(cert.initial_load, sum(q.initial_load); atol=1e-6)
         @test isapprox(cert.depot_supply, sum(q.depot_supply[1:H]); atol=1e-6)
-        @test isapprox(cert.supply_bound,
-                       cert.initial_inventory + cert.initial_load +
-                       cert.depot_supply; atol=1e-6)
-        @test isapprox(cert.throughput_bound,
-                       cert.initial_inventory +
-                       sum((q.initial_load[v] + H * q.vessel_capacity[v]) / 2
-                           for v in 1:q.n_vessels); atol=1e-6)
+        @test isapprox(
+            cert.supply_bound,
+            cert.initial_inventory + cert.initial_load + cert.depot_supply;
+            atol=1e-6,
+        )
+        @test isapprox(
+            cert.throughput_bound,
+            cert.initial_inventory +
+            sum((q.initial_load[v] + H * q.vessel_capacity[v]) / 2 for v in 1:q.n_vessels);
+            atol=1e-6,
+        )
         @test cert.deliverable == min(cert.supply_bound, cert.throughput_bound)
         @test cert.deliverable < cert.consumption
         # The starving is structural: the whole horizon is short too.
-        @test sum(q.initial_inventory) + sum(q.initial_load) +
-              sum(q.depot_supply) < sum(q.consumption)
+        @test sum(q.initial_inventory) + sum(q.initial_load) + sum(q.depot_supply) <
+            sum(q.consumption)
     end
 
     # Reproducibility and global-RNG isolation.
@@ -196,8 +201,7 @@
     _, p1 = generate_problem(:maritime_inventory_routing, 220, unknown, 42)
     Random.seed!(12345)
     _, p2 = generate_problem(:maritime_inventory_routing, 220, unknown, 42)
-    @test all(isequal(getfield(p1, f), getfield(p2, f))
-              for f in fieldnames(typeof(p1)))
+    @test all(isequal(getfield(p1, f), getfield(p2, f)) for f in fieldnames(typeof(p1)))
 
     if HAS_HIGHS
         # The feasibility contract holds end-to-end on the LP relaxation.
@@ -213,8 +217,9 @@
         # ... and on the unrelaxed integer model, which is what catches a
         # witness that only works fractionally.
         for target in (150, 700), status in (feasible, infeasible), s in 0:2
-            m, _ = generate_problem(:maritime_inventory_routing, target, status,
-                                    s; relax_integer=false)
+            m, _ = generate_problem(
+                :maritime_inventory_routing, target, status, s; relax_integer=false
+            )
             set_optimizer(m, HiGHS.Optimizer)
             set_silent(m)
             set_time_limit_sec(m, 60.0)

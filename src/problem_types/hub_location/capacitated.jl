@@ -47,19 +47,22 @@ node's whole outbound/inbound volume to its single hub. Costs are metric, so
 optimal paths visit at most two hubs and the flow formulation is exact.
 
 # Data conventions (Australia Post)
+
 Asymmetric lognormal-skewed flows and the AP cost parameters `chi = 3`,
 `alpha = 0.75`, `delta = 2` with instance-level jitter. The `profile` field
 mirrors the AP `CapL` (loose) / `CapT` (tight) capacity files:
-- `:loose` - total capacity well above total flow (hub count is economic);
-- `:tight` - total capacity close to total flow (capacity binds).
+
+  - `:loose` - total capacity well above total flow (hub count is economic);
+  - `:tight` - total capacity close to total flow (capacity binds).
 
 # Fields
-- `n_nodes`, `hubs::Vector{Int}` (candidates), `profile::Symbol`
-- `chi`, `alpha`, `delta`: leg cost multipliers
-- `locations`, `dist::Matrix{Float64}`, `flow::Matrix{Float64}` (asymmetric)
-- `outvolume::Vector{Float64}`, `involume::Vector{Float64}`: `O_i`, `D_i`
-- `fixed_cost::Vector{Float64}`, `capacity::Vector{Float64}` (aligned with `hubs`)
-- `feasible_witness`, `infeasibility_certificate`, `feasibility_status`
+
+  - `n_nodes`, `hubs::Vector{Int}` (candidates), `profile::Symbol`
+  - `chi`, `alpha`, `delta`: leg cost multipliers
+  - `locations`, `dist::Matrix{Float64}`, `flow::Matrix{Float64}` (asymmetric)
+  - `outvolume::Vector{Float64}`, `involume::Vector{Float64}`: `O_i`, `D_i`
+  - `fixed_cost::Vector{Float64}`, `capacity::Vector{Float64}` (aligned with `hubs`)
+  - `feasible_witness`, `infeasibility_certificate`, `feasibility_status`
 """
 struct CapacitatedHubLocationProblem <: ProblemGenerator
     n_nodes::Int
@@ -68,23 +71,23 @@ struct CapacitatedHubLocationProblem <: ProblemGenerator
     chi::Float64
     alpha::Float64
     delta::Float64
-    locations::Vector{Tuple{Float64,Float64}}
+    locations::Vector{Tuple{Float64, Float64}}
     dist::Matrix{Float64}
     flow::Matrix{Float64}
     outvolume::Vector{Float64}
     involume::Vector{Float64}
     fixed_cost::Vector{Float64}
     capacity::Vector{Float64}
-    feasible_witness::Union{Nothing,HubCapacitatedWitness}
-    infeasibility_certificate::Union{Nothing,CapacityShortfallCertificate}
+    feasible_witness::Union{Nothing, HubCapacitatedWitness}
+    infeasibility_certificate::Union{Nothing, CapacityShortfallCertificate}
     feasibility_status::FeasibilityStatus
 end
 
 const _HUB_CAPACITY_PROFILES = (:loose, :tight)
 
-function _build_capacitated(n_nodes::Int, n_hubs::Int,
-                            feasibility_status::FeasibilityStatus,
-                            rng::AbstractRNG)
+function _build_capacitated(
+    n_nodes::Int, n_hubs::Int, feasibility_status::FeasibilityStatus, rng::AbstractRNG
+)
     n = n_nodes
     h = clamp(n_hubs, 2, n)
     profile = rand(rng, _HUB_CAPACITY_PROFILES)
@@ -97,9 +100,9 @@ function _build_capacitated(n_nodes::Int, n_hubs::Int,
 
     decay = rand(rng, Uniform(0.5, 1.1))
     noise = rand(rng, Uniform(0.7, 1.2))
-    flow = _hub_gravity_flows(rng, n, populations, dist, decay, noise;
-                              symmetric=false,
-                              scale=rand(rng, Uniform(0.5, 2.0)))
+    flow = _hub_gravity_flows(
+        rng, n, populations, dist, decay, noise; symmetric=false, scale=rand(rng, Uniform(0.5, 2.0))
+    )
     outvolume = vec(sum(flow; dims=2))
     involume = vec(sum(flow; dims=1))
     total_flow = sum(outvolume)
@@ -111,8 +114,7 @@ function _build_capacitated(n_nodes::Int, n_hubs::Int,
     # Fixed costs calibrated against the transport-cost scale.
     flow_cost_scale = sum(flow[i, j] * dist[i, j] for i in 1:n, j in 1:n if i != j)
     base_fixed = flow_cost_scale / h * rand(rng, Uniform(0.2, 0.7))
-    fixed_cost = [base_fixed * exp(rand(rng, Uniform(log(0.8), log(1.25))))
-                  for _ in hubs]
+    fixed_cost = [base_fixed * exp(rand(rng, Uniform(log(0.8), log(1.25)))) for _ in hubs]
 
     witness = nothing
     certificate = nothing
@@ -122,34 +124,45 @@ function _build_capacitated(n_nodes::Int, n_hubs::Int,
         certificate = CapacityShortfallCertificate(total_flow, sum(capacity))
     else
         if feasibility_status == feasible
-            target = total_flow *
-                     (profile == :loose ? rand(rng, Uniform(1.35, 1.7)) :
-                                         rand(rng, Uniform(1.15, 1.3)))
+            target =
+                total_flow *
+                (profile == :loose ? rand(rng, Uniform(1.35, 1.7)) : rand(rng, Uniform(1.15, 1.3)))
         else
-            target = total_flow *
-                     (profile == :loose ? rand(rng, Uniform(1.0, 1.25)) :
-                                         rand(rng, Uniform(0.97, 1.06)))
+            target =
+                total_flow *
+                (profile == :loose ? rand(rng, Uniform(1.0, 1.25)) : rand(rng, Uniform(0.97, 1.06)))
         end
         capacity = _hub_split_capacity(rng, target, h)
         if feasibility_status == feasible
             # Make room for the largest single origin at the roomiest hub,
             # then scale up until the integral best-fit assignment succeeds.
-            capacity[argmax(capacity)] = max(maximum(capacity),
-                                             1.05 * maximum(outvolume))
+            capacity[argmax(capacity)] = max(maximum(capacity), 1.05 * maximum(outvolume))
             witness = _hub_capacitated_assignment(dist, hubs, outvolume, capacity)
             while witness === nothing
                 capacity .*= 1.1
-                witness = _hub_capacitated_assignment(dist, hubs, outvolume,
-                                                       capacity)
+                witness = _hub_capacitated_assignment(dist, hubs, outvolume, capacity)
             end
         end
     end
 
-    return CapacitatedHubLocationProblem(n, hubs, profile, chi, alpha, delta,
-                                         locations, dist, flow, outvolume,
-                                         involume, fixed_cost, capacity,
-                                         witness, certificate,
-                                         feasibility_status)
+    return CapacitatedHubLocationProblem(
+        n,
+        hubs,
+        profile,
+        chi,
+        alpha,
+        delta,
+        locations,
+        dist,
+        flow,
+        outvolume,
+        involume,
+        fixed_cost,
+        capacity,
+        witness,
+        certificate,
+        feasibility_status,
+    )
 end
 
 """
@@ -175,9 +188,9 @@ decreasing-volume order at the nearest hub with enough residual room. Returns
 `nothing` if this constructive packing fails so the caller can scale capacity
 and retry.
 """
-function _hub_capacitated_assignment(dist::Matrix{Float64}, hubs::Vector{Int},
-                                     outvolume::Vector{Float64},
-                                     capacity::Vector{Float64})
+function _hub_capacitated_assignment(
+    dist::Matrix{Float64}, hubs::Vector{Int}, outvolume::Vector{Float64}, capacity::Vector{Float64}
+)
     n = length(outvolume)
     residual = copy(capacity)
     assignment = zeros(Int, n)
@@ -226,17 +239,18 @@ An iterative re-sizing loop adjusts the node-count hint to land near the
 target.
 
 # Feasibility (relaxation-aware)
-- `feasible`: a verified best-fit assignment respects every hub capacity
-  (`HubCapacitatedWitness`), with total capacity comfortably above total flow.
-- `infeasible`: total capacity strictly below total flow
-  (`CapacityShortfallCertificate`); summing the capacity rows against the
-  single-allocation rows contradicts already in the relaxation.
-- `unknown`: total capacity is sampled near total flow (tight profile) or
-  moderately above it (loose profile), so capacity may or may not suffice.
+
+  - `feasible`: a verified best-fit assignment respects every hub capacity
+    (`HubCapacitatedWitness`), with total capacity comfortably above total flow.
+  - `infeasible`: total capacity strictly below total flow
+    (`CapacityShortfallCertificate`); summing the capacity rows against the
+    single-allocation rows contradicts already in the relaxation.
+  - `unknown`: total capacity is sampled near total flow (tight profile) or
+    moderately above it (loose profile), so capacity may or may not suffice.
 """
-function CapacitatedHubLocationProblem(target_variables::Int,
-                                       feasibility_status::FeasibilityStatus,
-                                       seed::Int)
+function CapacitatedHubLocationProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     target = max(target_variables, 1)
     hint_n = clamp(round(Int, 0.9 * target^(1 / 3)), 4, 80)
     hint_h = clamp(round(Int, hint_n / 3), 2, hint_n)
@@ -276,24 +290,26 @@ Build the capacitated single-allocation flow model. Deterministic - uses only
 struct fields.
 
 Variables (for each destination `j`; `H` = candidates, `h = |H|`):
-- `u[(j,i,k)] >= 0`, `k in H`: collection arc `i -> k` (`i != j`)
-- `v[(j,k,m)] >= 0`, `k != m in H`: discounted transfer arc
-- `d[(j,k)] >= 0`, `k in H`: delivery arc `k -> j`
-- `z[(i,k)] in {0,1}`, `k in H`: node `i` allocated to hub `k`
-- `y[k] in {0,1}`, `k in H`: open hub `k`
+
+  - `u[(j,i,k)] >= 0`, `k in H`: collection arc `i -> k` (`i != j`)
+  - `v[(j,k,m)] >= 0`, `k != m in H`: discounted transfer arc
+  - `d[(j,k)] >= 0`, `k in H`: delivery arc `k -> j`
+  - `z[(i,k)] in {0,1}`, `k in H`: node `i` allocated to hub `k`
+  - `y[k] in {0,1}`, `k in H`: open hub `k`
 
 Objective: `sum_k f_k y_k + sum_j [ chi*d_ik*u + alpha*d_km*v + delta*d_kj*d ]`.
 
 Constraints:
-- supply / delivery / hub conservation (as in the multiple-allocation model,
-  with every candidate admissible - no reach windows)
-- single allocation: `sum_{k in H} z_ik == 1`
-- hub self-allocation: `z_kk == y_k` for every candidate hub `k`
-- allocation coupling: `sum_j u[(j,i,k)] <= O_i z_ik` and
-  `d[(i,k)] <= D_i z_ik` (all of a node's volume uses its own hub)
-- hub capacity: `sum_i O_i z_ik <= Gamma_k y_k` (collection inflow)
-- linking: `u <= w_ij y_k`, `v <= W^j y_k` (both endpoints), `d <= W^j y_k`,
-  `z_ik <= y_k`
+
+  - supply / delivery / hub conservation (as in the multiple-allocation model,
+    with every candidate admissible - no reach windows)
+  - single allocation: `sum_{k in H} z_ik == 1`
+  - hub self-allocation: `z_kk == y_k` for every candidate hub `k`
+  - allocation coupling: `sum_j u[(j,i,k)] <= O_i z_ik` and
+    `d[(i,k)] <= D_i z_ik` (all of a node's volume uses its own hub)
+  - hub capacity: `sum_i O_i z_ik <= Gamma_k y_k` (collection inflow)
+  - linking: `u <= w_ij y_k`, `v <= W^j y_k` (both endpoints), `d <= W^j y_k`,
+    `z_ik <= y_k`
 """
 function build_model(prob::CapacitatedHubLocationProblem)
     model = Model()
@@ -301,9 +317,9 @@ function build_model(prob::CapacitatedHubLocationProblem)
     H = prob.hubs
     h = length(H)
 
-    collections = NTuple{3,Int}[]      # (j, i, k)
-    transfers = NTuple{3,Int}[]        # (j, k, m)
-    deliveries = NTuple{2,Int}[]       # (j, k)
+    collections = NTuple{3, Int}[]      # (j, i, k)
+    transfers = NTuple{3, Int}[]        # (j, k, m)
+    deliveries = NTuple{2, Int}[]       # (j, k)
     for j in 1:n
         for i in 1:n, k in H
             i == j && continue
@@ -317,7 +333,7 @@ function build_model(prob::CapacitatedHubLocationProblem)
             push!(deliveries, (j, k))
         end
     end
-    allocations = NTuple{2,Int}[]
+    allocations = NTuple{2, Int}[]
     for i in 1:n, k in H
         push!(allocations, (i, k))
     end
@@ -332,11 +348,14 @@ function build_model(prob::CapacitatedHubLocationProblem)
     fixed_of(k) = prob.fixed_cost[position[k]]
     capacity_of(k) = prob.capacity[position[k]]
 
-    @objective(model, Min,
+    @objective(
+        model,
+        Min,
         sum(fixed_of(k) * y[k] for k in H) +
-        sum(prob.chi * prob.dist[i, k] * u[(j, i, k)] for (j, i, k) in collections) +
-        sum(prob.alpha * prob.dist[k, m] * v[(j, k, m)] for (j, k, m) in transfers) +
-        sum(prob.delta * prob.dist[k, j] * d[(j, k)] for (j, k) in deliveries))
+            sum(prob.chi * prob.dist[i, k] * u[(j, i, k)] for (j, i, k) in collections) +
+            sum(prob.alpha * prob.dist[k, m] * v[(j, k, m)] for (j, k, m) in transfers) +
+            sum(prob.delta * prob.dist[k, j] * d[(j, k)] for (j, k) in deliveries)
+    )
 
     for j in 1:n
         w_j = sum(prob.flow[i, j] for i in 1:n if i != j)
@@ -349,8 +368,7 @@ function build_model(prob::CapacitatedHubLocationProblem)
             inflow = sum(u[(j, i, k)] for i in 1:n if i != j; init=0.0)
             out_transfer = sum(v[(j, k, m)] for m in H if m != k; init=0.0)
             in_transfer = sum(v[(j, m, k)] for m in H if m != k; init=0.0)
-            @constraint(model,
-                inflow + in_transfer == out_transfer + d[(j, k)])
+            @constraint(model, inflow + in_transfer == out_transfer + d[(j, k)])
         end
         for i in 1:n, k in H
             i == j && continue
@@ -371,9 +389,9 @@ function build_model(prob::CapacitatedHubLocationProblem)
     end
     for i in 1:n, k in H
         # All of node i's outbound volume enters the network at its own hub.
-        @constraint(model,
-            sum(u[(j, i, k)] for j in 1:n if j != i) <=
-            prob.outvolume[i] * z[(i, k)])
+        @constraint(
+            model, sum(u[(j, i, k)] for j in 1:n if j != i) <= prob.outvolume[i] * z[(i, k)]
+        )
         # All of node i's inbound volume is delivered from its own hub.
         @constraint(model, d[(i, k)] <= prob.involume[i] * z[(i, k)])
         @constraint(model, z[(i, k)] <= y[k])
@@ -383,9 +401,7 @@ function build_model(prob::CapacitatedHubLocationProblem)
     end
     for k in H
         # Hub capacity on collected inflow (AP convention), active when open.
-        @constraint(model,
-            sum(prob.outvolume[i] * z[(i, k)] for i in 1:n) <=
-            capacity_of(k) * y[k])
+        @constraint(model, sum(prob.outvolume[i] * z[(i, k)] for i in 1:n) <= capacity_of(k) * y[k])
     end
 
     return model

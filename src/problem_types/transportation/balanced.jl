@@ -8,6 +8,7 @@ Generator for *balanced* transportation problems, where total supply must exactl
 equal total demand and both supply and demand constraints are enforced as equalities.
 
 # Overview
+
 Models the classic balanced transportation problem. The decisions are shipment
 amounts on every source-destination lane. The objective minimizes total shipping
 cost, computed from distance-based per-lane costs. Unlike the standard variant
@@ -18,11 +19,12 @@ is feasible if and only if total supply equals total demand, so the constructor
 controls feasibility purely through the supply/demand totals.
 
 # Fields
-- `n_sources::Int`: Number of supply sources
-- `n_destinations::Int`: Number of demand destinations
-- `supplies::Vector{Int}`: Supply at each source
-- `demands::Vector{Int}`: Demand at each destination
-- `costs::Matrix{Float64}`: Distance-based transportation cost from each source to each destination
+
+  - `n_sources::Int`: Number of supply sources
+  - `n_destinations::Int`: Number of demand destinations
+  - `supplies::Vector{Int}`: Supply at each source
+  - `demands::Vector{Int}`: Demand at each destination
+  - `costs::Matrix{Float64}`: Distance-based transportation cost from each source to each destination
 """
 struct BalancedTransportationProblem <: ProblemGenerator
     n_sources::Int
@@ -43,19 +45,23 @@ source-destination lane), so the dimensions are sized to land near
 
 Feasibility handling (a balanced TP with equality constraints is feasible iff
 total supply == total demand):
-- `feasible`: supplies/demands are adjusted so the two totals are made *exactly*
-  equal (rounding off-by-one guarded), guaranteeing a feasible point exists.
-- `infeasible`: total demand is forced to exceed total supply by a clear positive
-  margin, making the equalities mutually contradictory.
-- `unknown`: totals are left as generated (a natural instance, balanced only by
-  chance), with no forced infeasibility.
+
+  - `feasible`: supplies/demands are adjusted so the two totals are made *exactly*
+    equal (rounding off-by-one guarded), guaranteeing a feasible point exists.
+  - `infeasible`: total demand is forced to exceed total supply by a clear positive
+    margin, making the equalities mutually contradictory.
+  - `unknown`: totals are left as generated (a natural instance, balanced only by
+    chance), with no forced infeasibility.
 
 # Arguments
-- `target_variables`: Target number of variables (n_sources × n_destinations)
-- `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-- `seed`: Random seed for reproducibility
+
+  - `target_variables`: Target number of variables (n_sources × n_destinations)
+  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
+  - `seed`: Random seed for reproducibility
 """
-function BalancedTransportationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function BalancedTransportationProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
@@ -111,8 +117,10 @@ function BalancedTransportationProblem(target_variables::Int, feasibility_status
 
     distances = zeros(n_sources, n_destinations)
     for i in 1:n_sources, j in 1:n_destinations
-        distances[i, j] = sqrt((source_positions[i][1] - dest_positions[j][1])^2 +
-                               (source_positions[i][2] - dest_positions[j][2])^2)
+        distances[i, j] = sqrt(
+            (source_positions[i][1] - dest_positions[j][1])^2 +
+            (source_positions[i][2] - dest_positions[j][2])^2,
+        )
     end
 
     min_cost, max_cost = cost_range
@@ -129,7 +137,7 @@ function BalancedTransportationProblem(target_variables::Int, feasibility_status
     # which is essential for guaranteeing exact balance.
     function distribute_additions!(vec::Vector{Int}, amount::Int)
         if amount <= 0
-            return
+            return nothing
         end
         w = rand(rng, length(vec))
         w_sum = sum(w)
@@ -192,10 +200,12 @@ total distance-based shipping cost, and enforces equality on both supply
 (`sum_j x_ij == supply_i`) and demand (`sum_i x_ij == demand_j`).
 
 # Arguments
-- `prob`: BalancedTransportationProblem instance
+
+  - `prob`: BalancedTransportationProblem instance
 
 # Returns
-- `model`: The JuMP model
+
+  - `model`: The JuMP model
 """
 function build_model(prob::BalancedTransportationProblem)
     model = Model()
@@ -204,8 +214,11 @@ function build_model(prob::BalancedTransportationProblem)
     @variable(model, x[1:prob.n_sources, 1:prob.n_destinations] >= 0)
 
     # Objective: minimize total shipping cost.
-    @objective(model, Min, sum(prob.costs[i, j] * x[i, j]
-                               for i in 1:prob.n_sources, j in 1:prob.n_destinations))
+    @objective(
+        model,
+        Min,
+        sum(prob.costs[i, j] * x[i, j] for i in 1:prob.n_sources, j in 1:prob.n_destinations)
+    )
 
     # Supply equalities: each source ships out exactly its supply.
     for i in 1:prob.n_sources

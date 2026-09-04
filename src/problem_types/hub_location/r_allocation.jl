@@ -34,8 +34,10 @@ linking relaxed from equalities to inequalities `sum_m x_ikmj <= w_ij * z_ik`
 symmetrised, so each unordered pair is one commodity.
 
 # Fields
+
 As `PHubMedianProblem`, plus:
-- `r::Int`: number of hubs every node is allocated to (exactly)
+
+  - `r::Int`: number of hubs every node is allocated to (exactly)
 """
 struct RAllocationHubProblem <: ProblemGenerator
     n_nodes::Int
@@ -44,20 +46,18 @@ struct RAllocationHubProblem <: ProblemGenerator
     chi::Float64
     alpha::Float64
     delta::Float64
-    locations::Vector{Tuple{Float64,Float64}}
+    locations::Vector{Tuple{Float64, Float64}}
     dist::Matrix{Float64}
     cost::Matrix{Float64}
     flow::Matrix{Float64}
     reach::Float64
     admissible::Vector{Vector{Int}}
-    feasible_witness::Union{Nothing,HubBackupWitness}
-    infeasibility_certificate::Union{Nothing,DisjointRegionCertificate}
+    feasible_witness::Union{Nothing, HubBackupWitness}
+    infeasibility_certificate::Union{Nothing, DisjointRegionCertificate}
     feasibility_status::FeasibilityStatus
 end
 
-function _build_r_allocation(n_nodes::Int,
-                             feasibility_status::FeasibilityStatus,
-                             rng::AbstractRNG)
+function _build_r_allocation(n_nodes::Int, feasibility_status::FeasibilityStatus, rng::AbstractRNG)
     n = n_nodes
     p = clamp(round(Int, n / 3) + rand(rng, 0:1), 3, min(8, n - 1))
     # Keep r below the node count so windows stay small at tiny sizes.
@@ -67,16 +67,25 @@ function _build_r_allocation(n_nodes::Int,
         q = p + 1
         centers = _hub_ring_centers(rng, q)
         node_group = vcat(collect(1:q), rand(rng, 1:q, max(0, n - q)))
-        min_sep = minimum(hypot(centers[a][1] - centers[b][1],
-                                centers[a][2] - centers[b][2])
-                          for a in 1:q for b in (a + 1):q)
+        min_sep = minimum(
+            hypot(centers[a][1] - centers[b][1], centers[a][2] - centers[b][2]) for a in 1:q for
+            b in (a + 1):q
+        )
         spread = 0.15 * min_sep
-        locations = [g <= q ? centers[g] :
-                     (clamp(centers[node_group[g]][1] + rand(rng, Uniform(-spread, spread)),
-                            0.0, 100.0),
-                      clamp(centers[node_group[g]][2] + rand(rng, Uniform(-spread, spread)),
-                            0.0, 100.0))
-                     for g in 1:n]
+        locations = [
+            if g <= q
+                centers[g]
+            else
+                (
+                    clamp(
+                        centers[node_group[g]][1] + rand(rng, Uniform(-spread, spread)), 0.0, 100.0
+                    ),
+                    clamp(
+                        centers[node_group[g]][2] + rand(rng, Uniform(-spread, spread)), 0.0, 100.0
+                    ),
+                )
+            end for g in 1:n
+        ]
         dist = _hub_distance_matrix(locations)
         groups = [Int[] for _ in 1:q]
         for g in 1:n
@@ -97,9 +106,11 @@ function _build_r_allocation(n_nodes::Int,
         # The r nearest planted hubs of every node, in order.
         assignments = [sort(hubs; by=k -> dist[i, k]) for i in 1:n]
         assignments = [a[1:min(r, length(a))] for a in assignments]
-        reach = feasibility_status == feasible ?
-                cover * rand(rng, Uniform(1.005, 1.1)) :
-                cover * rand(rng, Uniform(0.8, 1.25))
+        reach = if feasibility_status == feasible
+            cover * rand(rng, Uniform(1.005, 1.1))
+        else
+            cover * rand(rng, Uniform(0.8, 1.25))
+        end
         certificate = nothing
     end
 
@@ -107,27 +118,47 @@ function _build_r_allocation(n_nodes::Int,
     populations = _hub_populations(rng, n)
     decay = rand(rng, Uniform(0.4, 1.0))
     noise = rand(rng, Uniform(0.6, 1.1))
-    flow = _hub_gravity_flows(rng, n, populations, dist, decay, noise;
-                              symmetric=true, scale=rand(rng, Uniform(20.0, 90.0)))
+    flow = _hub_gravity_flows(
+        rng,
+        n,
+        populations,
+        dist,
+        decay,
+        noise;
+        symmetric=true,
+        scale=rand(rng, Uniform(20.0, 90.0)),
+    )
     admissible = _hub_reach_admissible(dist, reach)
 
     # Feasible requests must give every node r admissible candidates.
     if feasibility_status == feasible
         for i in 1:n
             while length(admissible[i]) < r
-                push!(admissible[i],
-                      sort(1:n; by=k -> dist[i, k])[length(admissible[i]) + 1])
+                push!(admissible[i], sort(1:n; by=k -> dist[i, k])[length(admissible[i]) + 1])
             end
             sort!(admissible[i])
         end
         reach = maximum(maximum(dist[i, k] for k in admissible[i]) for i in 1:n)
     end
 
-    witness = feasibility_status == feasible ?
-              HubBackupWitness(hubs, assignments, reach) : nothing
-    return RAllocationHubProblem(n, p, r, 1.0, rand(rng, Uniform(0.2, 0.8)), 1.0,
-                                 locations, dist, cost, flow, reach, admissible,
-                                 witness, certificate, feasibility_status)
+    witness = feasibility_status == feasible ? HubBackupWitness(hubs, assignments, reach) : nothing
+    return RAllocationHubProblem(
+        n,
+        p,
+        r,
+        1.0,
+        rand(rng, Uniform(0.2, 0.8)),
+        1.0,
+        locations,
+        dist,
+        cost,
+        flow,
+        reach,
+        admissible,
+        witness,
+        certificate,
+        feasibility_status,
+    )
 end
 
 """
@@ -142,8 +173,9 @@ Feasibility handling mirrors `p_hub_median` (cover witness / disjoint-region
 certificate), except that feasible requests also guarantee `|A_i| >= r` for
 every node.
 """
-function RAllocationHubProblem(target_variables::Int,
-                               feasibility_status::FeasibilityStatus, seed::Int)
+function RAllocationHubProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     target = max(target_variables, 1)
     hint = clamp(round(Int, 2.0 * target^0.25), 3, 70)
     best = nothing
@@ -176,22 +208,23 @@ end
 Build the four-index path-flow model with r-allocation linking. Deterministic.
 
 Differences from `build_model(::PHubMedianProblem)`:
-- allocation rows: `sum_{k in A_i} z_ik == r`
-- every open hub allocates its own node to itself: `z_kk == y_k`
-- path-to-allocation linking uses inequalities (a pair uses at most one of the
-  origin's / destination's r hubs):
-  `sum_m x_ikmj <= w_ij * z_ik` and `sum_k x_ikmj <= w_ij * z_jm`
+
+  - allocation rows: `sum_{k in A_i} z_ik == r`
+  - every open hub allocates its own node to itself: `z_kk == y_k`
+  - path-to-allocation linking uses inequalities (a pair uses at most one of the
+    origin's / destination's r hubs):
+    `sum_m x_ikmj <= w_ij * z_ik` and `sum_k x_ikmj <= w_ij * z_jm`
 """
 function build_model(prob::RAllocationHubProblem)
     model = Model()
     n = prob.n_nodes
     A = prob.admissible
 
-    paths = NTuple{4,Int}[]
+    paths = NTuple{4, Int}[]
     for i in 1:n, j in (i + 1):n, k in A[i], m in A[j]
         push!(paths, (i, j, k, m))
     end
-    allocations = NTuple{2,Int}[]
+    allocations = NTuple{2, Int}[]
     for i in 1:n, k in A[i]
         push!(allocations, (i, k))
     end
@@ -201,18 +234,18 @@ function build_model(prob::RAllocationHubProblem)
     @variable(model, z[allocations], Bin)
     @variable(model, y[hub_candidates], Bin)
 
-    by_pair = Dict{NTuple{2,Int},Vector{NTuple{4,Int}}}()
-    by_first_hub = Dict{NTuple{3,Int},Vector{NTuple{4,Int}}}()
-    by_last_hub = Dict{NTuple{3,Int},Vector{NTuple{4,Int}}}()
+    by_pair = Dict{NTuple{2, Int}, Vector{NTuple{4, Int}}}()
+    by_first_hub = Dict{NTuple{3, Int}, Vector{NTuple{4, Int}}}()
+    by_last_hub = Dict{NTuple{3, Int}, Vector{NTuple{4, Int}}}()
     for path in paths
         i, j, k, m = path
-        push!(get!(by_pair, (i, j), NTuple{4,Int}[]), path)
-        push!(get!(by_first_hub, (i, j, k), NTuple{4,Int}[]), path)
-        push!(get!(by_last_hub, (i, j, m), NTuple{4,Int}[]), path)
+        push!(get!(by_pair, (i, j), NTuple{4, Int}[]), path)
+        push!(get!(by_first_hub, (i, j, k), NTuple{4, Int}[]), path)
+        push!(get!(by_last_hub, (i, j, m), NTuple{4, Int}[]), path)
     end
-    empty_set = NTuple{4,Int}[]
+    empty_set = NTuple{4, Int}[]
 
-    path_cost(path::NTuple{4,Int}) =
+    path_cost(path::NTuple{4, Int}) =
         prob.chi * prob.cost[path[1], path[3]] +
         prob.alpha * prob.cost[path[3], path[4]] +
         prob.delta * prob.cost[path[4], path[2]]
@@ -223,14 +256,16 @@ function build_model(prob::RAllocationHubProblem)
         w = prob.flow[i, j]
         @constraint(model, sum(x[path] for path in get(by_pair, (i, j), empty_set)) == w)
         for k in A[i]
-            @constraint(model,
-                sum(x[path] for path in get(by_first_hub, (i, j, k), empty_set)) <=
-                w * z[(i, k)])
+            @constraint(
+                model,
+                sum(x[path] for path in get(by_first_hub, (i, j, k), empty_set)) <= w * z[(i, k)]
+            )
         end
         for m in A[j]
-            @constraint(model,
-                sum(x[path] for path in get(by_last_hub, (i, j, m), empty_set)) <=
-                w * z[(j, m)])
+            @constraint(
+                model,
+                sum(x[path] for path in get(by_last_hub, (i, j, m), empty_set)) <= w * z[(j, m)]
+            )
         end
     end
 

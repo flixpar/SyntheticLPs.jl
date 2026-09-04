@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Formatting and linting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          # Same version as the test job, so both install one Julia rather than two.
+          version: "1"
+      - uses: julia-actions/cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+          cache: pip
+      - run: python -m pip install -r requirements-dev.txt
+      - run: make setup
+      - run: make lint
+
+  test:
+    name: Julia ${{ matrix.julia-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Latest stable only. A version-compatibility matrix was dropped
+        # deliberately: matrix jobs run in parallel, so a second version costs a
+        # full job of runner time without shortening the wall clock. Add versions
+        # back here if compatibility ever needs verifying.
+        julia-version:
+          - "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.julia-version }}
+      - uses: julia-actions/cache@v2
+      - uses: julia-actions/julia-buildpkg@v1
+      # Not julia-actions/julia-runtest: it does not expose arbitrary julia_args,
+      # and it defaults to coverage=true. The suite is compilation-bound (~53% of
+      # its runtime was JIT), so -O1 cuts wall clock by ~23% with every assertion
+      # still running, and nothing here consumes coverage data.
+      - run: julia --project=. -e 'using Pkg; Pkg.test(; coverage=false, julia_args=["-O1"])'

@@ -10,16 +10,12 @@ with a cover budget below the matching lower bound.
 """
 struct VertexCoverProblem <: ProblemGenerator
     n_vertices::Int
-    edges::Vector{Tuple{Int,Int}}
+    edges::Vector{Tuple{Int, Int}}
     costs::Vector{Float64}
     maximum_selected::Int
 end
 
-function VertexCoverProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
-)
+function VertexCoverProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     target_variables >= 2 || throw(ArgumentError("vertex cover needs at least 2 variables"))
     rng = MersenneTwister(seed)
     n = target_variables
@@ -31,7 +27,7 @@ function VertexCoverProblem(
     else
         cover_size = max(1, round(Int, 0.4 * n))
         cover = Set(randperm(rng, n)[1:cover_size])
-        candidates = Tuple{Int,Int}[]
+        candidates = Tuple{Int, Int}[]
         for u in 1:(n - 1), v in (u + 1):n
             (u in cover || v in cover) && push!(candidates, (u, v))
         end
