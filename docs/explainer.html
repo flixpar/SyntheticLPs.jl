@@ -172,7 +172,7 @@ window.MathJax={
 <div class="scrim" id="scrim"></div>
 <div class="layout">
   <aside class="sidebar" id="sidebar">
-    <div class="brand"><b>SyntheticLPs</b><span>Generator Explainer · 33 problem types</span></div>
+    <div class="brand"><b>SyntheticLPs</b><span>Generator Explainer · 34 problem types</span></div>
     <input class="search" id="search" type="search" placeholder="Filter generators…" autocomplete="off">
     <nav id="nav">
       <a class="nav-top" href="#overview" data-target="overview">Overview</a>
@@ -197,6 +197,7 @@ window.MathJax={
 <div class="nav-group"><div class="nav-group-label">Production &amp; Planning</div>
 <a class="nav-item" href="#energy" data-target="energy" data-search="energy dispatch generators over time to meet demand">Energy</a>
 <a class="nav-item" href="#inventory" data-target="inventory" data-search="inventory single-item lot sizing over a horizon">Inventory</a>
+<a class="nav-item" href="#process_planning" data-target="process_planning" data-search="process planning refinery assay blending and petrochemical campaign planning">Process Planning</a>
 <a class="nav-item" href="#product_mix" data-target="product_mix" data-search="product mix profit-max with market lower/upper bounds">Product Mix</a>
 <a class="nav-item" href="#production_planning" data-target="production_planning" data-search="production planning profit-max under shared resource capacities">Production Planning</a>
 <a class="nav-item" href="#resource_allocation" data-target="resource_allocation" data-search="resource allocation allocate scarce resources among activities">Resource Allocation</a>
@@ -387,6 +388,14 @@ window.MathJax={
   <div class="chips">
     <span class="chip chip-sense">Min</span>
     <span class="chip chip-continuous">Continuous</span>
+  </div>
+</a>
+<a class="card fam-border-production" href="#process_planning" data-target="process_planning" data-search="process planning multi-period production planning for petroleum refineries and chemical process plants: crude assays, conversion units, blending, quality specifications, campaigns, contracts, and inventory. refinery assay blending and petrochemical campaign planning">
+  <div class="card-top"><span class="card-title">Process Planning</span></div>
+  <p class="card-tag">Refinery assay blending and petrochemical campaign planning</p>
+  <div class="chips">
+    <span class="chip chip-sense">Max</span>
+    <span class="chip chip-mixed">Mixed</span>
   </div>
 </a>
 <a class="card fam-border-production" href="#product_mix" data-target="product_mix" data-search="product mix product mix generates a continuous profit-maximization lp that chooses production levels across many products with resource capacities and market lower and upper bounds. profit-max with market lower/upper bounds">
@@ -1389,6 +1398,52 @@ x[i] &lt;= max_food_amounts[i]    for listed foods</pre>
 </section><section class="doc-section">
   <h3><span class="sec-icon">✎</span>Practical Notes</h3>
   <div class="sec-body"><p>This generator is useful for testing long, sparse, time-linked LPs and prefix-feasibility behavior. <code>unknown</code> is unusual here compared with several other generators: it does not randomly choose feasible or infeasible; it returns the base stochastic data without explicit feasibility repair or sabotage. Feasible requests may switch a no-backlog instance into a backlog-allowed instance if that is the selected or necessary repair.</p></div>
+</section>
+</article>
+<article id="process_planning" class="view article">
+  <a class="back" href="#overview" data-target="overview">← All generators</a>
+  <header class="art-head fam-border-production">
+    <div class="art-eyebrow"><span class="fam-dot fam-production"></span>Production &amp; Planning</div>
+    <h2>Process Planning</h2>
+    <p class="art-intro">Multi-period production planning for petroleum refineries and chemical process plants: crude assays, conversion units, blending, quality specifications, campaigns, contracts, and inventory.</p>
+    <div class="chips">
+      <span class="chip chip-sense">Objective: Max</span>
+      <span class="chip chip-mixed">Mixed variables</span>
+    </div>
+  </header>
+  <section class="doc-section">
+  <h3><span class="sec-icon">◆</span>Overview</h3>
+  <div class="sec-body"><p>The <code>process_planning</code> category covers the two classical planning workhorses of the process industries. The <code>refinery</code> variant is the classical &quot;refinery LP&quot; - the industrial LP application, in continuous industrial use since the 1950s: buy crude under term and spot contracts, distill it on the crude distillation unit, upgrade intermediates on conversion units, blend finished products from assay-origin streams under quality specifications, and sell against seasonal demand while carrying tank inventories. The <code>campaign</code> variant is the medium-term planning model of a petrochemical complex in state-task-network form, where product grades run as campaigns on shared trains with changeovers.</p>
+<p>Both variants are multi-period LPs (the campaign model is a natural MIP whose selectors relax to <code>[0,1]</code> under the default <code>relax_integer=true</code>), with seasonal demand, storage that couples the periods, and a profit-maximisation objective.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">▦</span>Generator Data and Sizing</h3>
+  <div class="sec-body"><p>**<code>refinery</code>.** A configuration ladder determines the processing structure, sampled with the target&#x27;s scale:</p>
+<table><thead><tr><th>configuration</th><th>units</th><th>products</th></tr></thead><tbody><tr><td><code>:topping_reform</code></td><td>CDU + reformer</td><td>PGAS, RGL, DIES, HFO (+PGL, LNAPH)</td></tr><tr><td><code>:hydroskimming</code></td><td>+ naphtha/kero/diesel hydrotreaters, isomeriser</td><td>+ JET</td></tr><tr><td><code>:catalytic</code></td><td>+ vacuum distillation, FCC (± hydrocracker)</td><td>+ ASPH</td></tr><tr><td><code>:deep_conversion</code></td><td>+ hydrocracker, delayed coker</td><td>+ COKE</td></tr></tbody></table>
+<p>Crude assays are sampled from a lightness/sweetness slate: distillation-cut yields interpolate between heavy and light assay tables (renormalised to one barrel), sulphur inherits from the crude with cut-dependent concentration factors, and the crude price carries lightness and sweetness premia. Conversion units run in modes with fixed yield vectors - reformer severity pairs with mode-specific reformate pools, FCC and hydrocracker in max-gasoline/max-distillate operation - and swing cuts shift bounded volume between adjacent CDU cuts. The exact variable count is</p>
+<pre class="formula">n_periods * (3*n_crudes + n_crudes*n_swing + n_crudes*n_modes +
+             n_crudes*n_blend_pairs + 2*n_products)</pre>
+<p>with the horizon solved in closed form and scanned (<code>3..126</code> periods); the row count is <code>n_periods * (n_crudes + n_crudes*n_streams + n_units + n_products + n_active_specs + 2)</code>. Volumes are in thousand barrels per period (a 60-400 kbpd refinery), which keeps bounds near <code>1e2-1e4</code> for solver scaling. Targets through <code>MAX_REFINERY_PLANNING_VARIABLES = 200_000</code> are supported; larger targets raise <code>ArgumentError</code> before any assay data is allocated. Measured over the sweep in the category tests, realised sizes land within a few percent of the request across four decades.</p>
+<p>**<code>campaign</code>.** The complex is assembled from a chain library - vinyls (EDC/VCM/PVC grades), aromatics (cumene/phenol/acetone with a co-product and two-input bisphenol and PET steps), polyolefins (three trains sharing monomer markets), polyester (PX-PTA-PET), C1 chemistry (methanol/acetic acid/vinyl acetate/PVOH), and nitrogen fertilisers - with 1-6 chains sampled with the target and shared raw materials (ethylene, propylene, natural gas) merging into common feed markets. The exact variable count is</p>
+<pre class="formula">n_periods * (n_tasks + 2*n_campaign_tasks + n_raws*n_tiers +
+             n_materials + n_finals)</pre>
+<p>with raw purchasing in 1-3 price tiers (contract quota, spot, premium - a convex piecewise-linear cost the LP exploits directly) and the row count <code>n_periods * (n_materials + n_units + n_campaign_units + 4*n_campaign_tasks) - n_campaign_tasks*(campaign_length - 1)</code>. Targets through <code>MAX_CAMPAIGN_PLANNING_VARIABLES = 20_000</code> are supported.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>Reference Plan and Specifications</h3>
+  <div class="sec-body"><p>Every instance is planted around a reference plan computed inside the constructor from a constructor-local MersenneTwister. The refinery plan runs the crude mix through the network at realistic unit utilisations (isomerise the light naphtha, reform nearly all heavy naphtha, crack most of the vacuum gas oil, cap coker naphtha at a tenth of the gasoline pool), splits each stream&#x27;s net availability across its eligible product pools with affinity-biased shares, and sizes contracts, capacities, and tankage above the plan&#x27;s peaks. Product specifications are then selected as the tightest industry band the planted recipe clears with margin in every period - octane 84-87/89-93 AKI, sulphur from 15 ppm to 3.5 wt %, cetane 40-51, fuel-oil viscosity 180-700 cSt, and a seasonal RVP window - so specifications are always realistic and always satisfiable by the refinery as planted. RVP blends linearly in the Chevron index <code>RVP^1.25</code> and viscosity in the Walter index <code>cSt^(1/3)</code>, exactly as in commercial refinery LPs. The campaign plan schedules campaign blocks of at least the minimum campaign length per train, propagates material flows in feed-topological order, splits tiered purchases around consumption, and sizes unit capacities and tankage above the resulting peaks.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">∑</span>LP Formulation</h3>
+  <div class="sec-body"><p>**<code>refinery</code>** (pure LP, profit maximisation). Variables per (crude, period): purchases, tank levels, CDU feed, swing displacements, per-mode unit feed by crude origin, assay-origin blend allocations, and product sales and tank levels. Rows: crude inventory balance and aggregate tankage, CDU capacity, per-origin stream balances (production equals unit feed plus blending - no free dumping), per-unit mode-aggregated capacity with turnaround windows, product inventory balance, and per-period quality rows <code>sum_s (q_s - rhs) * blend_s ⋚ 0</code> with index-transformed coefficients for RVP and viscosity.</p>
+<p>**<code>campaign</code>** (MIP, margin maximisation). Variables: task rates, binary campaign selectors and start indicators, tiered purchases, material inventories, and final sales. Rows: material balance per material and period, unit capacity, train exclusivity, rate linking (<code>rate &lt;= capacity * active</code>), minimum turndown (<code>rate &gt;= fraction * capacity * active</code>), minimum campaign length <code>sum_{k=t..t+L-1} active_k &gt;= L * (active_t - active_{t-1})</code>, and start definitions charged a changeover cost. With <code>relax_integer=true</code> (the default) the selectors relax to <code>[0,1]</code> and the model is a pure LP.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">⚖</span>Feasibility Controls</h3>
+  <div class="sec-body"><ul><li><code>feasible</code>: the reference plan itself is the stored witness<p>(<code>RefineryPlanWitness</code> / <code>CampaignScheduleWitness</code>) - a complete primal point, re-verified by pure arithmetic and by <code>primal_feasibility_report</code> in the category tests, including the unrelaxed campaign MIP.</p></li><li><code>infeasible</code>: a cumulative supply-demand cut. The refinery certificate<p>(<code>RefinerySupplyCertificate</code>) limits a product&#x27;s cumulative term demand above <code>initial stock + yield_bound * min(CDU horizon capacity, initial crude stock + purchase ceilings)</code>, where <code>yield_bound</code> is the best-mode conversion fraction of crude into that product&#x27;s blendstocks; the campaign certificate (<code>CampaignCapacityCertificate</code>) bounds cumulative output by the producing task&#x27;s unit capacity (<code>rate &lt;= capacity * active &lt;= capacity</code>, valid for relaxed selectors) and its raw-tier supply. Both are aggregations of linear rows and variable bounds only - **the refutations survive <code>relax_integrality</code>** - and the certificates are recomputed from struct fields in the tests.</p></li><li><code>unknown</code>: a correlated market scenario (<code>RefineryMarketScenario</code> /<p><code>CampaignMarketScenario</code>) scales the supply side (purchase ceilings, unit capacities) by <code>supply_factor</code> and term sales floors by <code>demand_factor</code>, positioned along the band by the golden-ratio sequence of the seed so any block of seeds is a genuine feasibility mix rather than a binomial accident; measured mixes land near 50/50 for the refinery and 25-40% infeasible for the campaign.</p></li></ul></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">▤</span>Model Characteristics</h3>
+  <div class="sec-body"><table><thead><tr><th>variant</th><th>sense</th><th>class</th><th>typical size range</th></tr></thead><tbody><tr><td><code>refinery</code></td><td>Max</td><td>pure LP</td><td>60 - 200,000 variables</td></tr><tr><td><code>campaign</code></td><td>Max</td><td>MIP (LP-relaxed by default)</td><td>48 - 20,000 variables</td></tr></tbody></table>
+<p>Structural density comes from the assay-origin blend block (<code>n_crudes * n_blend_pairs * n_periods</code> refinery variables), the swing-cut freedom at CDU cut points, the mode splits on conversion units, and the campaign scheduling block. Coefficient magnitudes stay near <code>1e-3..1e2</code> (qualities are unitless numbers, volumes are in thousand barrels or kilotonnes), so the models are well-conditioned for simplex and interior point alike.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">✎</span>Practical Notes</h3>
+  <div class="sec-body"><ul><li>The refinery is a pure LP, so <code>relax_integer</code> has no effect; the campaign<p>model&#x27;s binaries are the campaign selectors only.</p></li><li>Infeasibility *proofs* on very large refinery instances (tens of thousands<p>of variables of equality network) can exceed short solver time limits even though the certificate refutes the model instantly by arithmetic; the category tests check solver contracts at moderate sizes.</p></li><li>The witness and the certificates are exact arithmetic statements about the<p>stored fields, not solver calls; <code>test/problem_types/process_planning.jl</code> recomputes both from the struct and additionally hands the witness to JuMP through <code>primal_feasibility_report</code>.</p></li></ul></div>
 </section>
 </article>
 <article id="product_mix" class="view article">
@@ -2418,7 +2473,7 @@ g_k = b_k^T y_k - c^T x_k \ge 0.\]</div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">§</span>Restricted optimal value and market inference</h3>
   <div class="sec-body"><p>The general inverse optimal-value problem is NP-hard. The <code>restricted_optimal_value</code> LP implements the tractable restriction in which a specified plan must remain optimal while its value reaches a target. Separate rows pin both the primal and dual value to that target.</p>
-<p><code>market_clearing</code> infers time-invariant generator offer costs from a multi-period merit-order dispatch with capacity and ramp constraints. It is a copper-plate economic-dispatch benchmark, not a network-constrained LMP model. The fleet mixes baseload, intermediate, and peaking units, with type-dependent capacity and offer distributions and a diurnal demand profile.</p></div>
+<p><code>market_clearing</code> infers time-invariant generator offer costs from a multi-period merit-order dispatch with capacity and ramp constraints. It is a copper-plate economic-dispatch benchmark, not a network-constrained LMP model. The fleet mixes baseload, intermediate, and peaking units, with type-dependent capacity and offer distributions and a diurnal demand profile. Feasible priors are conditioned so the recorded dispatch is strictly suboptimal under the prior: ordinary measurement-noise draws are resampled first, and if they all preserve the merit order, the closest actionable offer pair is crossed around its midpoint. This avoids zero-adjustment inverse instances while minimizing the fallback distortion from the planted offers.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">§</span>Feasibility profiles</h3>
   <div class="sec-body"><p>Status requests alter the inverse evidence rather than adding unrelated contradictory rows.</p>
@@ -2427,7 +2482,7 @@ g_k = b_k^T y_k - c^T x_k \ge 0.\]</div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">§</span>Validation</h3>
   <div class="sec-body"><p>The focused tests check:</p>
-<ul><li>exact or near-exact target sizing and deterministic rebuilds;</li><li>sparse-matrix, topology, fleet, and observation invariants;</li><li>witness and certificate arithmetic recomputed from raw fields;</li><li>feasible and infeasible solver contracts across variants and scales;</li><li>informative priors for both path families; and</li><li>end-to-end semantics by solving the inverse model and then independently<p>solving or evaluating the recovered forward model.</p></li></ul></div>
+<ul><li>exact or near-exact target sizing and deterministic rebuilds;</li><li>sparse-matrix, topology, fleet, and observation invariants;</li><li>witness and certificate arithmetic recomputed from raw fields;</li><li>feasible and infeasible solver contracts across variants and scales;</li><li>informative priors for both path families and market dispatch; and</li><li>end-to-end semantics by solving the inverse model and then independently<p>solving or evaluating the recovered forward model.</p></li></ul></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">§</span>References</h3>
   <div class="sec-body"><ul><li>R. K. Ahuja and J. B. Orlin, *Inverse Optimization*, Operations Research<p>49(5), 2001.</p></li><li>A. Aswani, Z.-J. M. Shen, and A. Siddiq, *Inverse Optimization with Noisy<p>Data*, Operations Research 66(3), 2018.</p></li><li>T. C. Y. Chan, R. Mahmood, and I. Y. Zhu, *Inverse Optimization: Theory and<p>Applications*, Operations Research 73(2), 2025.</p></li><li>J. Jia, X. Guan, X. Qian, and P. M. Pardalos, *Restricted Inverse Optimal<p>Value Problem on Linear Programming under Weighted L1 Norm*, 2023.</p></li><li>C. Ruiz, A. J. Conejo, and D. Bertsimas, *Revealing Rival Marginal Offer<p>Prices via Inverse Optimization*, IEEE Transactions on Power Systems 28(3), 2013.</p></li></ul></div>

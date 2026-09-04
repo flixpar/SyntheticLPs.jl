@@ -4,6 +4,67 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-09-04 (process-planning generators)
+
+**Previous Commit**: `7603f8b`
+
+**Commits**: `642641a`
+
+**Datetime**: 2026-09-04 02:05 UTC
+
+**Summary**: Added the `process_planning` category with two research-grounded
+multi-period generators: `refinery`, the classical refinery planning LP (crude
+assays, CDU swing cuts, multi-mode conversion units, assay-origin blending
+under industry quality specifications, seasonal term/spot demand, tank
+inventories), and `campaign`, a state-task-network petrochemical
+campaign-planning MIP (chain library from vinyls to fertilisers, tiered
+purchasing, campaign trains with minimum lengths and changeovers, relaxed to a
+pure LP by the default `relax_integer=true`).
+
+**Details**:
+
+- `src/problem_types/process_planning/refinery.jl`: four-configuration ladder
+  (topping+reform, hydroskimming, catalytic, deep conversion) determining the
+  unit set, stream set, and product slate; crude assays from a
+  lightness/sweetness slate with cut-level sulphur concentration; reformer
+  severity pairs with mode-specific reformate pools; max-gasoline and
+  max-distillate FCC/hydrocracker modes; swing cuts between adjacent CDU cuts;
+  quality rows blending octane/cetane linearly, RVP in the Chevron `^1.25`
+  index and viscosity in the Walter `cbrt` index; specifications selected as
+  the tightest industry band the planted recipe clears with margin (dropped if
+  none clears); volumes in thousand barrels so bounds stay near `1e2-1e4`.
+  Feasibility planting: complete primal-point witness (`RefineryPlanWitness`),
+  cumulative crude-supply-versus-term-demand certificate
+  (`RefinerySupplyCertificate`) built from linear rows only (best-mode yield
+  path × min(CDU horizon capacity, initial stock + purchase ceilings)), and a
+  golden-ratio-positioned market scenario for `unknown` that measures near a
+  50/50 feasibility mix. Capped at 200,000 variables with `ArgumentError`
+  above.
+- `src/problem_types/process_planning/campaign.jl`: seven-chain petrochemical
+  library with realistic stoichiometry (multi-input PET and bisphenol tasks,
+  the phenol/acetone co-product, oxidation mass gain), shared feed markets,
+  campaign blocks with unit exclusivity, minimum turndown, minimum campaign
+  length and changeover penalties, tiered contract/spot/premium purchasing,
+  turnarounds on raw-fed single-task units only (inter-fed rates are
+  production-determined), merchant versus internal allocation of
+  dual-purpose intermediates. Witness (`CampaignScheduleWitness`) is a primal
+  point of the unrelaxed MIP; certificate
+  (`CampaignCapacityCertificate`) bounds a product's cumulative output by its
+  producing task's capacity and raw-tier supply, valid with selectors relaxed.
+  Capped at 20,000 variables.
+- `test/problem_types/process_planning.jl`: registry shape, exact variable and
+  row-count formulas re-derived from struct fields, sizing sweeps and
+  monotonicity, assay/contract/stoichiometry invariants, specification-band
+  membership, yield-path upper bound on the witness, witness arithmetic plus
+  `primal_feasibility_report` on the unrelaxed models, certificate
+  recomputation, status-artifact truth tables, reproducibility and global-RNG
+  isolation, and HiGHS contracts (feasible→OPTIMAL, infeasible→INFEASIBLE,
+  unrelaxed campaign MIP feasible, genuine unknown-status mixes).
+- `docs/process_planning.md` in the established seven-section shape, plus the
+  docs index entry, `scripts/build_explainer.py` META entry, and the rebuilt
+  `docs/explainer.html`; README catalog line and category-count bumps in
+  README.md and CLAUDE.md.
+
 ## 2026-09-01 (documentation cleanup)
 
 **Previous Commit**: `033de59`

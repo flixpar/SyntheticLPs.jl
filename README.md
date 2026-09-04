@@ -19,7 +19,7 @@ This package provides:
 
 Each problem domain is a **category** (e.g. `:transportation`) grouping one or
 more **variants** — concrete formulations with their own data generation and
-model structure. There are 45 categories; the default variant is listed first.
+model structure. There are 46 categories; the default variant is listed first.
 Detailed notes for many categories live under [`docs/`](docs/README.md).
 
 - `airline_crew` — `standard`
@@ -50,6 +50,7 @@ Detailed notes for many categories live under [`docs/`](docs/README.md).
 - `operating_room_scheduling` — `elective_assignment`, `benchmark_loading`, `case_sequencing`, `master_surgical_schedule`, `robust_elective`, `weekly_planning`
 - `portfolio` — `cvar`, `tracking_error`
 - `product_mix` — `standard`
+- `process_planning` — `refinery`, `campaign`
 - `production_planning` — `standard`
 - `project_selection` — `standard`
 - `radiotherapy` — `weighted_deviation`, `beam_angle_selection`, `mean_tail_dose`, `minmax_deviation`, `robust_fluence`

@@ -58,7 +58,7 @@ julia --project=scripts scripts/generate_lps.jl -o output -n 50 --feasible-only 
 
 Problems are a two-level hierarchy: a **category** is a problem domain (e.g.
 `:transportation`) grouping one or more **variants**, each a concrete generator
-with its own data generation and formulation (e.g. `:standard`). There are 45
+with its own data generation and formulation (e.g. `:standard`). There are 46
 categories. Query the live registry — `list_categories()`, `list_variants(:cat)`,
 `list_problems()`, `problem_info(...)` — rather than a hardcoded list; `README.md`
 holds the catalog and `docs/<category>.md` the per-category notes.
@@ -172,7 +172,8 @@ register_variant(:category, :standard, VariantStruct, "Description")
    planted rather than hoped for, store a typed `feasible_witness` for `feasible`
    requests, a typed `infeasibility_certificate` for `infeasible` ones, and
    neither for `unknown` (the pattern used by `hub_location`, `product_mix`,
-   `airline_crew`, `nurse_scheduling`, `neural_network_verification`,
+   `process_planning`, `airline_crew`, `nurse_scheduling`,
+   `neural_network_verification`,
    `maritime_inventory_routing`, `supply_chain/network_planning`,
    `telecom_network_design`, and others). In a MIP category, build the certificate
    from LP rows alone so the infeasibility survives the default
