@@ -119,7 +119,7 @@ const _PP_CUT_LUMP = (
     lpg_cut = :light_naphtha,
     light_naphtha = :light_naphtha,
     heavy_naphtha = :light_naphtha,
-    kerosene = :kerosene,
+    kerosene = :distillate,
     distillate = :distillate,
     gasoil = :distillate,
     vgo = :resid,
@@ -1664,14 +1664,20 @@ function _pp_impossible_specification!(rng::AbstractRNG, fs::RefineryFlowsheet,
         isempty(candidates) && continue
         q, is_max = candidates[rand(rng, 1:length(candidates))]
         values = [fs.qualities[s, q] for s in product.components]
+        # The certificate argues from the tightened bound alone. Withdraw an
+        # opposing bound the tightening would leave on the wrong side of it: an
+        # empty published window is not a quality specification, and it would add
+        # a second, unrecorded reason for the infeasibility.
         if is_max
             achievable = minimum(values)
             bound = achievable * rand(rng, Uniform(0.80, 0.94))
             product.spec_max[q] = bound
+            product.spec_min[q] > bound && (product.spec_min[q] = -Inf)
         else
             achievable = maximum(values)
             bound = achievable * rand(rng, Uniform(1.06, 1.25))
             product.spec_min[q] = bound
+            product.spec_max[q] < bound && (product.spec_max[q] = Inf)
         end
         # The grade must actually be contracted, out of an empty opening tank.
         data.product_initial_inventory[p] = 0.0
@@ -1874,19 +1880,27 @@ function _pp_plan_instance(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
     # go. Bound the volume of each stream that a minimum rate can push out, so
     # the spot outlets below are always wide enough to take it.
     forced = zeros(Float64, S)
+    period_forced = zeros(Float64, S)
     for t in 1:T
         for c in 1:C, k in eachindex(fs.cut_classes)
             s = fs.cut_stream[c, k]
             forced[s] = max(forced[s], fs.cut_yields[c, k] * cdu_min_throughput[t])
         end
+        # Parallel trains hold their minimum rates in the same period, so what a
+        # shared stream is forced to take is the sum over the units that make it,
+        # not the largest single contribution.
+        fill!(period_forced, 0.0)
         for u in 1:U
             unit_min_throughput[u, t] <= 0.0 && continue
             unit = fs.units[u]
             for (o, out) in enumerate(unit.outputs)
                 best = maximum(mode.yields[f, o] for mode in unit.modes,
                                f in eachindex(unit.feeds))
-                forced[out] = max(forced[out], best * unit_min_throughput[u, t])
+                period_forced[out] += best * unit_min_throughput[u, t]
             end
+        end
+        for s in 1:S
+            forced[s] = max(forced[s], period_forced[s])
         end
     end
 
@@ -2127,6 +2141,17 @@ function _pp_settle_specifications!(rng::AbstractRNG, fs::RefineryFlowsheet,
                 product.spec_max[q] = max(candidate,
                                           reachable_low +
                                           0.005 * max(abs(reachable_low), 1.0))
+            end
+            # A negative slack applied to a narrow published window (ULSD density
+            # is the tight one) can push the two ends past each other, leaving a
+            # grade that cannot be blended at all. That is the
+            # requested-infeasible branch's business, not a side effect of
+            # stating a specification, so reopen the window around the quality
+            # the recipe actually reaches.
+            if isfinite(product.spec_min[q]) && isfinite(product.spec_max[q]) &&
+               product.spec_min[q] > product.spec_max[q]
+                product.spec_min[q] = min(product.spec_min[q], achieved_min[q])
+                product.spec_max[q] = max(product.spec_max[q], achieved_max[q])
             end
         end
     end

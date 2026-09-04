@@ -112,6 +112,33 @@ process-network investment MILP. The corpus grows from 45 to 46 categories.
   contracts including the unrelaxed integer models), `docs/process_planning.md`,
   and the explainer metadata entry; rebuilt `docs/explainer.html`.
 
+**Review fixes** (same work, applied after a correctness pass):
+
+- `_PP_CUT_LUMP` mapped `kerosene` to itself. On the three-cut slate
+  (`light_naphtha`, `distillate`, `resid`), which carries no kerosene, the
+  resolution walk therefore never terminated on a present cut and the
+  `idx === nothing` fallback dumped the entire kerosene yield into the *last*
+  cut, residue — for a condensate that turned a 0.5% residue cut into 25% of the
+  barrel and gave kerosene volume residue quality (0.985 SG, 2.6x whole-crude
+  sulfur, zero cetane). Kerosene now lumps into distillate, its heavier
+  neighbour, as the surrounding documentation already described.
+- `capacity_expansion` clamped a planted expansion by the unrounded `covering`
+  size while publishing `max_expansion` rounded to four digits, so the stored
+  witness could exceed the bound the model states by up to 5e-5 — above HiGHS's
+  primal feasibility tolerance. Both window ends are now rounded where they are
+  drawn, so the plan is clamped by exactly the published bounds.
+- `_pp_impossible_specification!` could tighten a maximum specification below the
+  grade's existing minimum (ULSD and gasoline density), leaving an empty
+  published window: a second, unrecorded reason for the infeasibility. The
+  opposing bound is now withdrawn. `_pp_settle_specifications!` could close a
+  narrow window the same way when its slack range straddles zero (ULSD density on
+  unknown-status instances, which the docstring explicitly excludes); the window
+  is now reopened around the quality the recipe reaches.
+- The turndown-forced volume that sizes spot outlets took the largest single
+  unit's contribution rather than the sum over the units making that stream, so a
+  configuration with parallel trains could publish a merchant outlet too small
+  for the volume its own minimum rates push out.
+
 ## 2026-09-04 (PR #52 review fixes)
 
 **Previous Commit**: `07943c3`

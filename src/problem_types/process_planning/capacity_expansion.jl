@@ -578,20 +578,24 @@ function ProcessCapacityExpansionProblem(target_variables::Int,
         step = max(peak * rand(rng, Uniform(0.25, 0.60)), 1e-3)
         # The reference operation is always buildable: one expansion covers the
         # whole level, so the plan's balances close on the levels it really runs.
-        covering = max(peak * rand(rng, Uniform(1.05, 1.80)), step)
-        min_expansion = step * rand(rng, Uniform(0.10, 0.45))
+        # Both window ends are rounded here rather than at storage time, so the
+        # planted expansions are clamped by exactly the bounds the model
+        # publishes; rounding afterwards can move a bound below the expansion it
+        # was supposed to admit.
+        covering = round(max(peak * rand(rng, Uniform(1.05, 1.80)), step), digits=4)
+        min_expansion = round(step * rand(rng, Uniform(0.10, 0.45)), digits=4)
         # A requested-feasible instance publishes that window. Otherwise the
         # window is an engineering rule — a plant is debottlenecked in steps of a
         # given size — which may or may not stretch to the market being asked for.
         stated_max = planned ? covering :
-                     max(peak * rand(rng, Uniform(0.30, 1.40)), step)
+                     round(max(peak * rand(rng, Uniform(0.30, 1.40)), step),
+                           digits=4)
         technologies[i] = ProcessTechnology(
             technologies[i].name, technologies[i].layer, technologies[i].main_output,
             technologies[i].outputs, technologies[i].inputs,
             technologies[i].operating_cost, technologies[i].fixed_investment,
             technologies[i].variable_investment,
-            round(existing, digits=4), round(min_expansion, digits=4),
-            round(stated_max, digits=4))
+            round(existing, digits=4), min_expansion, stated_max)
         installed = technologies[i].existing_capacity
         for t in 1:T
             shortfall = level[i, t] - installed

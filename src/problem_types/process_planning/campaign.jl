@@ -20,8 +20,8 @@ throughput rates, campaign selectors and starts, tiered raw-material
 purchases, material inventories, and final sales for every period. The task
 rates follow the planted campaign blocks exactly, so feasibility can be
 re-checked by pure arithmetic against every row - material balances, unit
-capacity with campaign exclusivity, minimum campaign rate and length - and
-by `primal_feasibility_report` in the category tests.
+capacity with campaign exclusivity, minimum campaign rate and length - by
+[`campaign_plan_satisfies`](@ref), with no solver involved.
 """
 struct CampaignScheduleWitness
     rate::Matrix{Float64}        # [task, period]
