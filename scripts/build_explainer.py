@@ -126,6 +126,12 @@ META = {
         vclass="Continuous",
         tag="Classic min-cost diet with nutrient bounds",
     ),
+    "process_planning": dict(
+        family="production",
+        sense="Max",
+        vclass="Mixed",
+        tag="Refinery and chemical-process planning: crude slates, conversion yields, blending, campaigns, capacity",
+    ),
     "production_planning": dict(
         family="production",
         sense="Max",

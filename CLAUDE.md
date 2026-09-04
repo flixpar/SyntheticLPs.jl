@@ -104,7 +104,7 @@ julia --project=scripts scripts/generate_lps.jl -o output -n 50 --feasible-only 
 
 Problems are a two-level hierarchy: a **category** is a problem domain (e.g.
 `:transportation`) grouping one or more **variants**, each a concrete generator
-with its own data generation and formulation (e.g. `:standard`). There are 45
+with its own data generation and formulation (e.g. `:standard`). There are 46
 categories. Query the live registry — `list_categories()`, `list_variants(:cat)`,
 `list_problems()`, `problem_info(...)` — rather than a hardcoded list; `README.md`
 holds the catalog and `docs/<category>.md` the per-category notes.

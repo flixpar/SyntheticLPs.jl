@@ -60,6 +60,7 @@ where relaxation changes the solved model.
 - [Network Flow](network_flow.md)
 - [Operating Room Scheduling](operating_room_scheduling.md)
 - [Portfolio](portfolio.md)
+- [Process Planning](process_planning.md)
 - [Product Mix](product_mix.md)
 - [Production Planning](production_planning.md)
 - [Project Selection](project_selection.md)
