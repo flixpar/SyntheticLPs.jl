@@ -93,6 +93,12 @@ test and session start-up time by precompiling every registered generator.
   silently running nothing. No arguments — the default, and what CI uses — runs
   everything. This is the test-side counterpart to `--problem-types` / `--types`
   on the generation and analysis scripts, which select what to *generate*.
+- Dropped the Julia version matrix, testing only the latest stable release, and
+  aligned the quality job to it as well (it had pinned 1.11 while the test job
+  floated). Version compatibility is not a goal for this project, and because
+  matrix jobs run in parallel the second version cost a full job of runner time
+  without shortening the wall clock. `Project.toml` still declares
+  `julia = "1.11"` as the floor; it is simply no longer verified in CI.
 - Made `make setup` run `Pkg.resolve()` before `Pkg.instantiate()`. The `quality`
   environment dev-depends on the package, so its manifest goes stale whenever the
   package gains a dependency — adding `PrecompileTools` broke `make lint` until

@@ -22,7 +22,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
         with:
-          version: "1.11"
+          # Same version as the test job, so both install one Julia rather than two.
+          version: "1"
       - uses: julia-actions/cache@v2
       - uses: actions/setup-python@v5
         with:
@@ -38,8 +39,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Latest stable only. A version-compatibility matrix was dropped
+        # deliberately: matrix jobs run in parallel, so a second version costs a
+        # full job of runner time without shortening the wall clock. Add versions
+        # back here if compatibility ever needs verifying.
         julia-version:
-          - "1.11"
           - "1"
     steps:
       - uses: actions/checkout@v4
