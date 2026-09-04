@@ -55,6 +55,7 @@ META = {
     "blending":              dict(family="blending",  sense="Min",     vclass="Continuous", tag="Hit quality bands at minimum ingredient cost"),
     "feed_blending":         dict(family="blending",  sense="Min",     vclass="Continuous", tag="Feed formulation with nutrient floors/caps"),
     "diet_problem":          dict(family="blending",  sense="Min",     vclass="Continuous", tag="Classic min-cost diet with nutrient bounds"),
+    "process_planning":      dict(family="production",sense="Max",     vclass="Mixed",      tag="Refinery and chemical-process planning: crude slates, conversion yields, blending, campaigns, capacity"),
     "production_planning":   dict(family="production",sense="Max",     vclass="Continuous", tag="Profit-max under shared resource capacities"),
     "product_mix":           dict(family="production",sense="Max",     vclass="Continuous", tag="Profit-max with market lower/upper bounds"),
     "resource_allocation":   dict(family="production",sense="Max",     vclass="Continuous", tag="Allocate scarce resources among activities"),

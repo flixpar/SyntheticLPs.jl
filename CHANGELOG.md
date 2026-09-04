@@ -4,6 +4,88 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-09-04 (multi-period process-planning generators)
+
+**Previous Commit**: `7603f8b`
+
+**Commits**: (pending)
+
+**Datetime**: 2026-09-04 13:40 UTC
+
+**Summary**: Added a `process_planning` category with three research-grounded
+multi-period generators: `refinery`, the refinery production-planning LP over a
+crude slate, an assay-driven distillation and conversion flowsheet, intermediate
+tankage and specification-constrained blending; `mode_switching`, the same
+flowsheet with the operating mode of each conversion unit and its changeovers
+left to the solver (a MILP); and `capacity_expansion`, the long-range chemical
+process-network investment MILP. The corpus grows from 45 to 46 categories.
+
+**Details**:
+
+- Added `src/problem_types/process_planning/common.jl`, the shared flowsheet.
+  Five crude archetypes (condensate through extra heavy) carry API gravity,
+  whole-crude sulfur and volumetric cut yields taken from published assays
+  (Hibernia, Bakken, WTI); the assay is lumped onto the instance's cut slate and
+  perturbed per crude. Distillation cuts are segregated *per crude* so every
+  stream has a fixed quality vector, which is what keeps the blend rows linear
+  rather than bilinear (the pooling problem). Eleven unit templates
+  (hydrotreating, isomerization, reforming, catalytic cracking, hydrocracking,
+  delayed coking, alkylation) carry per-mode volumetric yield slates calibrated
+  to reported commercial ranges, and eight finished-grade templates carry
+  published quality windows on nine properties (density, sulfur, RON, MON, RVP,
+  aromatics, cetane, cold flow, viscosity index).
+- Sizing: the per-period variable block is exactly affine in the crude count for
+  a fixed configuration, so the generator draws one configuration per complexity
+  level (topping, hydroskimming, cracking, full conversion), pins the affine
+  coefficients with two probes, solves for the crude count at each candidate
+  horizon in closed form, and keeps the triple closest to the target. Requests
+  land within about 20% from 50 to 20,000 variables (usually within 5%), and
+  refinery complexity, grade count and parallel trains scale with the target.
+- Feasibility: a complete operation is simulated forward through the flowsheet
+  with residual allocation, so every balance row holds exactly; capacities,
+  tanks, availability, contracts and blend windows are then placed around it and
+  the operation is stored as a witness that `refinery_plan_satisfies` re-checks
+  row by row. Requested-infeasible instances carry one of two solver-independent
+  certificates: contracted volume above a conversion bound (a yield-potential
+  argument computed backwards through the flowsheet DAG, taking each feed's best
+  mode, so it refutes every mode assignment and the LP relaxation), or a grade
+  specification tightened past every component that may enter it. Unknown-status
+  instances size assets from engineering rules and state each quality window at
+  the edge of what the configuration supports, without ever making a grade
+  unmakeable on its own; HiGHS finds both outcomes at every scale.
+- Added `capacity_expansion`, following the multiperiod MILP of Sahinidis &
+  Grossmann: layered chemical network, capacity recursion with fixed-charge
+  expansions, chemical balances at fixed conversion ratios, feedstock
+  availability, contracted demand and a discounted NPV objective. Its two
+  certificates bound a single chemical by the largest capacity its makers could
+  ever be expanded to, or the whole network by the value of the raw material the
+  market can supply.
+- Numerical care: sulfur is carried in weight ppm (the unit its specifications
+  use), each quality row is divided by its largest coefficient (the right-hand
+  side is zero, so the specification is unchanged), and implied-but-valid bounds
+  are stated on crude runs, unit feeds and blend flows. Before these, HiGHS's
+  dual simplex failed with `OTHER_ERROR` on some large infeasible instances that
+  its interior-point solver classified correctly; afterwards the constraint
+  matrix spans about four orders of magnitude instead of eight and the failures
+  are gone.
+- Every intermediate stream can be sold as it is, at a discount to the cheapest
+  grade it could have entered and against a limited spot volume — how a refinery
+  actually places naphtha, gas oil and VGO cargoes — so no stream is ever left
+  without an outlet.
+- Calibrated the price deck against realised margins rather than by eye: crude is
+  priced off a 38-API, 0.4 wt% sulfur marker with the usual differentials
+  (about \$0.35/bbl per API degree, \$3.5/bbl per wt% sulfur), which puts an
+  extra-heavy sour crude some \$20 below a condensate instead of \$45 below it.
+  With finished grades at \$45-105/bbl, solved instances now show the kind of
+  double-digit dollars-per-barrel upgrading margin a conversion refinery running
+  discounted heavy crude actually earns.
+- Added `test/problem_types/process_planning.jl` (registry shape, exact
+  variable-count formulas per variant, sizing accuracy and monotonicity,
+  flowsheet DAG and data invariants, witness and certificate arithmetic,
+  binary-block structure, reproducibility, edge sizes, and HiGHS feasibility
+  contracts including the unrelaxed integer models), `docs/process_planning.md`,
+  and the explainer metadata entry; rebuilt `docs/explainer.html`.
+
 ## 2026-09-01 (documentation cleanup)
 
 **Previous Commit**: `033de59`
