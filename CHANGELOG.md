@@ -4,6 +4,51 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-09-04 (PR #52 review fixes)
+
+**Previous Commit**: `07943c3`
+
+**Commits**: (pending)
+
+**Datetime**: 2026-09-04 UTC
+
+**Summary**: Addressed the review of PR #52. Fixed a formatter setting that
+silently corrupted the command-line option names in both `scripts/` CLIs, fixed
+the `Julia 1.11` CI job that the PR's new workflow exposed, and made
+`generate_lps.jl` repair its own environment. Added a regression guard.
+
+**Details**:
+
+- `format_docstrings = true` made JuliaFormatter rewrite every bare option-name
+  literal inside `@add_arg_table!` into a triple-quoted docstring. Julia keeps
+  the newline before a closing `"""` on its own line, so ArgParse registered
+  `"--var-mean\n"` rather than `"--var-mean"`. Every unaliased option in
+  `scripts/generate_lps.jl` (24) and `scripts/analyze_problem_statuses.jl` (11)
+  was affected, including `--problem-types`, which `main` reads on every
+  invocation, so both CLIs failed even with default arguments.
+- Disabled `format_docstrings` in `.JuliaFormatter.toml` (with a comment
+  recording why) and restored all 35 option names to single-line literals.
+- Added a `Script CLI option names` testset that reads the `scripts/` sources
+  textually — they need ArgParse and HiGHS and so are not loadable from the test
+  environment — and asserts no argument table contains a triple-quoted literal
+  or an option name with whitespace. The existing CI `test` job runs only
+  `julia-runtest`, which never loads the scripts, so this class of breakage was
+  otherwise invisible to CI.
+- Stopped tracking the root `Manifest.toml`. It was resolved under Julia 1.12
+  and pinned `JuliaSyntaxHighlighting`, a 1.12-only stdlib, so the new `Julia
+  1.11` CI job failed with "Could not locate the source code for the
+  JuliaSyntaxHighlighting package" while `Julia 1` (1.12) passed. `.gitignore`
+  has always listed `Manifest*.toml` with the note that it "should not be
+  committed for packages" — the file simply predated that rule. Each CI job now
+  resolves its own manifest for the Julia version it runs.
+- Gave `scripts/generate_lps.jl` the same `Pkg.activate`/`develop`/`instantiate`
+  preamble `scripts/analyze_problem_statuses.jl` already had. `scripts/Manifest.toml`
+  is untracked, so it goes stale whenever the package gains a dependency; it had
+  missed `Dualization`, which made every `--project=scripts` run fail to
+  precompile. The script now repairs the environment itself and runs straight
+  from a clone without a `--project` flag. Corrected its usage examples, which
+  advertised `--project=@.` — an environment without HiGHS or ArgParse.
+
 ## 2026-09-03 (automated code quality)
 
 **Previous Commit**: `7603f8b`

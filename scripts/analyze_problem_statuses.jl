@@ -45,63 +45,41 @@ const SIZE_BUCKETS = Dict(:small => (50, 100), :medium => (150, 300), :large => 
 function parse_commandline()
     s = ArgParseSettings(; autofix_names=true)
     @add_arg_table! s begin
-        """
-        --samples
-        """
+        "--samples"
         help = "Number of samples per problem type"
         arg_type = Int
         default = DEFAULT_NUM_SAMPLES
-        """
-        --target
-        """
+        "--target"
         help = "Target number of variables per instance (mutually exclusive with --size)"
         arg_type = Int
-        """
-        --target-min
-        """
+        "--target-min"
         help = "Minimum target number of variables per instance (use with --target-max; mutually exclusive with --size and --target)"
         arg_type = Int
-        """
-        --target-max
-        """
+        "--target-max"
         help = "Maximum target number of variables per instance (use with --target-min; mutually exclusive with --size and --target)"
         arg_type = Int
-        """
-        --size
-        """
+        "--size"
         help = "Legacy size bucket: small, medium, or large (mutually exclusive with --target/--target-min/--target-max)"
         arg_type = String
-        """
-        --timeout
-        """
+        "--timeout"
         help = "Per-solve time limit in seconds"
         arg_type = Float64
         default = DEFAULT_TIMEOUT_SEC
-        """
-        --seed
-        """
+        "--seed"
         help = "Base random seed"
         arg_type = Int
         default = DEFAULT_SEED
-        """
-        --csv
-        """
+        "--csv"
         help = "Path to write CSV summary"
         arg_type = String
-        """
-        --json
-        """
+        "--json"
         help = "Path to write JSON summary"
         arg_type = String
-        """
-        --types
-        """
+        "--types"
         help = "Filter problem types (space-separated or comma-separated)"
         arg_type = String
         nargs = '*'
-        """
-        --solution-status
-        """
+        "--solution-status"
         help = "Desired feasibility status for generated problems: feasible | infeasible | all"
         arg_type = String
     end

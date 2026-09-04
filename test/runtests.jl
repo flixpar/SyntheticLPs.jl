@@ -200,6 +200,27 @@ end
         @test_throws ErrorException generate_problem(:transportation, 50, unknown, 0; variant=:nope)
     end
 
+    # Regression guard for the CLI argument tables under `scripts/`. Formatting
+    # `@add_arg_table!` blocks with JuliaFormatter's `format_docstrings` option
+    # rewrites each bare option-name literal into a triple-quoted docstring,
+    # which silently appends a newline and makes ArgParse register `"--seed\n"`
+    # instead of `"--seed"`. The scripts are not loadable from the test
+    # environment (they need ArgParse and HiGHS), so check the sources textually.
+    @testset "Script CLI option names" begin
+        script_dir = joinpath(dirname(@__DIR__), "scripts")
+        for script in sort(readdir(script_dir; join=true))
+            endswith(script, ".jl") || continue
+            src = read(script, String)
+            occursin("@add_arg_table!", src) || continue
+            # Every option name is a plain single-line literal, never a
+            # triple-quoted block that would carry a trailing newline.
+            @test !occursin("\"\"\"", src)
+            for m in eachmatch(r"^[ \t]*\"(-[^\"\n]*)\""m, src)
+                @test !occursin(r"\s", m.captures[1])
+            end
+        end
+    end
+
     # Focused per-category quality contracts live in separate files so a
     # generator's source, documentation, and regression coverage can evolve as
     # one reviewable unit.

@@ -5,9 +5,19 @@
 # only parses CLI arguments and supplies HiGHS as the quality-filter solver.
 #
 # Examples:
-#   julia --project=@. scripts/generate_lps.jl -o output -n 100
-#   julia --project=@. scripts/generate_lps.jl -o output -n 50 --feasible-only -q -v
-#   julia --project=@. scripts/generate_lps.jl --problem-types transportation,knapsack -n 20
+#   julia --project=scripts scripts/generate_lps.jl -o output -n 100
+#   julia --project=scripts scripts/generate_lps.jl -o output -n 50 --feasible-only -q -v
+#   julia --project=scripts scripts/generate_lps.jl --problem-types transportation,knapsack -n 20
+
+# HiGHS and ArgParse live in the `scripts` environment rather than the package,
+# so activate it here and re-resolve the local package into it. This keeps the
+# script runnable straight from a clone, and repairs `scripts/Manifest.toml`
+# whenever the package gains a dependency (the manifest is untracked, so it goes
+# stale on its own). `scripts/analyze_problem_statuses.jl` does the same.
+using Pkg
+Pkg.activate(@__DIR__)
+Pkg.develop(; path=dirname(@__DIR__))
+Pkg.instantiate()
 
 using ArgParse
 using SyntheticLPs
@@ -27,110 +37,72 @@ function parse_commandline()
         help = "Number of LP instances to generate"
         arg_type = Int
         default = 100
-        """
-        --var-mean
-        """
+        "--var-mean"
         help = "Mean number of variables"
         arg_type = Float64
         default = 500.0
-        """
-        --var-std
-        """
+        "--var-std"
         help = "Standard deviation of number of variables"
         arg_type = Float64
         default = 200.0
-        """
-        --var-min
-        """
+        "--var-min"
         help = "Minimum number of variables"
         arg_type = Int
         default = 50
-        """
-        --var-max
-        """
+        "--var-max"
         help = "Maximum number of variables"
         arg_type = Int
         default = 2000
-        """
-        --size-distribution
-        """
+        "--size-distribution"
         help = "Target size distribution: normal (truncated by --var-min/max) or uniform"
         default = "normal"
-        """
-        --no-size-matching
-        """
+        "--no-size-matching"
         help = "Disable post-selection that matches actual model sizes to the target distribution"
         action = :store_true
-        """
-        --match-size-by-type
-        """
+        "--match-size-by-type"
         help = "Match the target size distribution independently within each selected problem type"
         action = :store_true
-        """
-        --candidate-multiplier
-        """
+        "--candidate-multiplier"
         help = "Minimum accepted candidates per final instance before size matching"
         arg_type = Int
         default = 2
-        """
-        --max-candidate-multiplier
-        """
+        "--max-candidate-multiplier"
         help = "Accepted-candidate cap per final instance for iterative size matching"
         arg_type = Int
         default = 12
-        """
-        --size-match-tolerance
-        """
+        "--size-match-tolerance"
         help = "Mean absolute log-ratio size error tolerance for matched actual sizes"
         arg_type = Float64
         default = 0.05
-        """
-        --strict-size-match
-        """
+        "--strict-size-match"
         help = "Fail if size matching cannot meet --size-match-tolerance"
         action = :store_true
-        """
-        --feasible-only
-        """
+        "--feasible-only"
         help = "Only generate problems guaranteed to be feasible"
         action = :store_true
-        """
-        --bounds-to-constraints
-        """
+        "--bounds-to-constraints"
         help = "Reformulate variable bounds (other than x >= 0) as explicit affine constraints"
         action = :store_true
-        """
-        --dualize
-        """
+        "--dualize"
         help = "Force every generated continuous model to use its dual formulation"
         action = :store_true
-        """
-        --dualize-probability
-        """
+        "--dualize-probability"
         help = "Probability of dualizing each generated model (default: 0, disabled)"
         arg_type = Float64
         default = 0.0
-        """
-        --problem-types
-        """
+        "--problem-types"
         help =
             "Comma-separated list of categories (e.g. transportation) or " *
             "category/variant references (e.g. portfolio/cvar) to sample " *
             "from. A category expands to all its variants. (default: all)"
         default = ""
-        """
-        --file-format
-        """
+        "--file-format"
         help = "Output file format / extension (e.g. mps, lp)"
         default = "mps"
-        """
-        --no-manifest
-        """
+        "--no-manifest"
         help = "Do not write a manifest.json describing the dataset"
         action = :store_true
-        """
-        --seed
-        """
+        "--seed"
         help = "Random seed for reproducibility (0 for non-deterministic)"
         arg_type = Int
         default = 0
@@ -140,33 +112,23 @@ function parse_commandline()
         "--quality-filter", "-q"
         help = "Solve each instance with HiGHS and filter out poor-quality test instances"
         action = :store_true
-        """
-        --solve-timeout
-        """
+        "--solve-timeout"
         help = "Per-instance solve time limit in seconds (used with --quality-filter)"
         arg_type = Float64
         default = 30.0
-        """
-        --min-iterations
-        """
+        "--min-iterations"
         help = "Minimum simplex iterations to keep an instance"
         arg_type = Int
         default = 3
-        """
-        --max-iteration-ratio
-        """
+        "--max-iteration-ratio"
         help = "Maximum simplex iterations as multiple of constraint count before flagging as degenerate"
         arg_type = Float64
         default = 100.0
-        """
-        --min-constraints
-        """
+        "--min-constraints"
         help = "Minimum number of constraints for a valid instance"
         arg_type = Int
         default = 5
-        """
-        --max-retries
-        """
+        "--max-retries"
         help = "Raw retry multiplier for generator failures and quality-filter rejections"
         arg_type = Int
         default = 10

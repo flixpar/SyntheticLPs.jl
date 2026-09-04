@@ -8,5 +8,8 @@ import_to_using = false
 pipe_to_function_call = false
 short_to_long_function_def = false
 always_use_return = false
-format_docstrings = true
+# Keep this disabled: it rewrites any bare string literal that precedes another
+# expression into a triple-quoted docstring, which silently appends a newline.
+# That corrupts the option names in the `@add_arg_table!` blocks under scripts/.
+format_docstrings = false
 normalize_line_endings = "unix"
