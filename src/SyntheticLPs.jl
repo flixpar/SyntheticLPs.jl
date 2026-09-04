@@ -5,6 +5,7 @@ import Dualization
 using Random
 using Distributions
 using JSON
+using PrecompileTools
 
 # Base types
 abstract type ProblemGenerator end
@@ -774,5 +775,34 @@ include("problem_types/workforce_shift_scheduling/workforce_shift_scheduling.jl"
 
 # Batch dataset generation (uses the interface functions defined above)
 include("dataset.jl")
+
+# Precompile a representative generation for every registered variant. The test
+# suite spends the majority of its time JIT-compiling these 127 generator types
+# (their constructors, `build_model`, and the JuMP model construction inside it),
+# and that work is otherwise repeated in every fresh session. Running it here
+# moves the cost into the package's precompile cache, which is written once and
+# reused by every later session — and, in CI, restored from the Julia depot cache.
+#
+# `target_variables` and `seed` are ordinary values rather than type parameters,
+# so one size and one seed cover every size and seed the callers use. The three
+# feasibility statuses are covered explicitly because each takes a different
+# branch, and helpers reachable from only one branch are compiled on first call
+# rather than with the enclosing method. Doing all three costs ~4s more than
+# doing one, since the paths share most of their compiled code.
+@setup_workload begin
+    refs = list_problems()
+    @compile_workload begin
+        for ref in refs
+            # Generators are heuristic; a variant that rejects this particular
+            # size must not abort precompilation of the rest.
+            for status in (unknown, feasible, infeasible)
+                try
+                    generate_problem(ref, 60, status, 11)
+                catch
+                end
+            end
+        end
+    end
+end
 
 end # module

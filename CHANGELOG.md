@@ -15,7 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 **Summary**: Addressed the review of PR #52. Fixed a formatter setting that
 silently corrupted the command-line option names in both `scripts/` CLIs, fixed
 the `Julia 1.11` CI job that the PR's new workflow exposed, and made
-`generate_lps.jl` repair its own environment. Added a regression guard.
+`generate_lps.jl` repair its own environment. Added a regression guard. Then cut
+test and session start-up time by precompiling every registered generator.
 
 **Details**:
 
@@ -48,6 +49,27 @@ the `Julia 1.11` CI job that the PR's new workflow exposed, and made
   precompile. The script now repairs the environment itself and runs straight
   from a clone without a `--project` flag. Corrected its usage examples, which
   advertised `--project=@.` — an environment without HiGHS or ArgParse.
+- Added a `PrecompileTools` `@compile_workload` that runs `generate_problem`
+  once per registered variant, for each of the three feasibility statuses.
+  Profiling showed the suite spent **53.2%** of its runtime in JIT compilation
+  (`@time` over `runtests.jl`: 233 s, 53.24% compilation): a cold pass over all
+  127 variants took 79.6 s, while the second pass over the same work took 0.12 s,
+  and 0.47 s with fresh seeds *and* sizes — so it was compilation, not caching of
+  results. The cost tracks the *number of generator types*, not instance size or
+  solve count, which is why HiGHS was only ~9% of the suite (measured by
+  ablation: 233 s with the solver testsets, 213 s without) and why the target-500
+  instances were minor (7.5 s to generate, 11.4 s to solve, corpus-wide).
+  Measured effect: compilation 53.24% → 34.08%, suite 233 s → 168 s, `Pkg.test`
+  execution 5m03 → 3m10, steady-state `Pkg.test` wall ~330 s → 196 s, and a cold
+  sweep over all 127 variants in a fresh session 79.6 s → 0.34 s. Costs are a
+  one-off ~81 s package precompile (repeated once per Julia configuration, so
+  `Pkg.test`'s `--check-bounds=yes` pays it again) and ~0.5 s added to every
+  `using SyntheticLPs`. Covering all three statuses rather than one cost only 4 s
+  of extra precompile, because the paths share most of their compiled code.
+- Made `make setup` run `Pkg.resolve()` before `Pkg.instantiate()`. The `quality`
+  environment dev-depends on the package, so its manifest goes stale whenever the
+  package gains a dependency — adding `PrecompileTools` broke `make lint` until
+  it was resolved, the same failure mode as the stale `scripts/Manifest.toml`.
 
 ## 2026-09-03 (automated code quality)
 

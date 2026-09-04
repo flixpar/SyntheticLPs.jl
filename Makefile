@@ -3,8 +3,11 @@ RUFF ?= ruff
 
 .PHONY: setup format format-check lint lint-julia lint-python test check
 
+# `resolve` before `instantiate`: the quality environment dev-depends on the
+# package, so its manifest goes stale whenever the package gains a dependency,
+# and `instantiate` alone will not pick that up.
 setup:
-	$(JULIA) --startup-file=no --project=quality -e 'using Pkg; Pkg.instantiate()'
+	$(JULIA) --startup-file=no --project=quality -e 'using Pkg; Pkg.resolve(); Pkg.instantiate()'
 
 format:
 	$(JULIA) --startup-file=no --project=quality -e 'using JuliaFormatter; format(".")'

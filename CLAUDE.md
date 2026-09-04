@@ -130,6 +130,14 @@ reproducible from a non-zero `seed`. `check_quality(model, optimizer; ...)` with
 ill-conditioned instances. The package stays solver-agnostic: the caller supplies
 the optimizer.
 
+**Precompilation** (bottom of `src/SyntheticLPs.jl`): a `PrecompileTools`
+`@compile_workload` calls `generate_problem` once per registered variant for each
+feasibility status. JIT-compiling the generator types, not solving or instance
+size, was the dominant cost in both the test suite and any fresh session — a cold
+pass over all 127 variants took 79.6s versus 0.34s precompiled. Adding a variant
+extends the workload automatically (it iterates `list_problems()`), so expect
+package precompilation to take ~80s and to rerun whenever `src/` changes.
+
 **Problem generators** (`src/problem_types/<category>/`): a `<category>.jl` entry
 point that `include`s one file per variant (or per closely related group), plus an
 optional `register_category` call for a category-level description.
