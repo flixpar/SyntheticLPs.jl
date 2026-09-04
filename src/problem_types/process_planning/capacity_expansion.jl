@@ -35,8 +35,8 @@ struct ProcessTechnology
     name::Symbol
     layer::Int
     main_output::Int
-    outputs::Vector{Pair{Int,Float64}}
-    inputs::Vector{Pair{Int,Float64}}
+    outputs::Vector{Pair{Int, Float64}}
+    inputs::Vector{Pair{Int, Float64}}
     operating_cost::Float64
     fixed_investment::Float64
     variable_investment::Float64
@@ -133,8 +133,8 @@ struct ProcessCapacityExpansionProblem <: ProblemGenerator
     demand_min::Matrix{Float64}
     demand_max::Matrix{Float64}
     discount::Vector{Float64}
-    feasible_witness::Union{Nothing,ProcessExpansionPlan}
-    infeasibility_certificate::Union{Nothing,ProcessExpansionCertificate}
+    feasible_witness::Union{Nothing, ProcessExpansionPlan}
+    infeasibility_certificate::Union{Nothing, ProcessExpansionCertificate}
     feasibility_status::FeasibilityStatus
 end
 
@@ -142,8 +142,7 @@ n_chemicals(prob::ProcessCapacityExpansionProblem) = length(prob.chemicals)
 n_technologies(prob::ProcessCapacityExpansionProblem) = length(prob.technologies)
 
 """Variables per period: operating level, capacity, expansion and its indicator, plus trade."""
-_pp_expansion_variables(n_tech::Int, n_raw::Int, n_sell::Int) =
-    4 * n_tech + n_raw + n_sell
+_pp_expansion_variables(n_tech::Int, n_raw::Int, n_sell::Int) = 4 * n_tech + n_raw + n_sell
 
 """Number of processes carrying a byproduct, and of intermediates that also trade."""
 _pp_expansion_byproducts(n_tech::Int, rate::Float64) = round(Int, rate * n_tech)
@@ -159,7 +158,8 @@ an exact function of the sizing decision.
 """
 function _pp_expansion_sellable(n_tech::Int, byproduct_rate::Float64)
     _, _, _, n_intermediate, n_final = _pp_expansion_shape(n_tech)
-    return n_final + _pp_expansion_traded_intermediates(n_intermediate) +
+    return n_final +
+           _pp_expansion_traded_intermediates(n_intermediate) +
            _pp_expansion_byproducts(n_tech, byproduct_rate)
 end
 
@@ -201,7 +201,7 @@ function _pp_expansion_dimensions(rng::AbstractRNG, target::Int)
             total = _pp_expansion_variables(n_tech, n_raw, n_sell) * T
             err = abs(total - target) / target
             shape = abs(T - horizon_pref) / 15
-            score = (round(err, digits=3), shape)
+            score = (round(err; digits=3), shape)
             if score < best_score
                 best_score = score
                 best = (n_tech, T)
@@ -227,8 +227,7 @@ function _pp_expansion_network(rng::AbstractRNG, n_tech::Int, byproduct_rate::Fl
     chemicals = ProcessChemical[]
     layer_members = [Int[] for _ in 1:n_layers]
     for _ in 1:n_raw
-        push!(chemicals, ProcessChemical(Symbol(:raw_, length(chemicals) + 1), 1,
-                                         true, false))
+        push!(chemicals, ProcessChemical(Symbol(:raw_, length(chemicals) + 1), 1, true, false))
         push!(layer_members[1], length(chemicals))
     end
     intermediate_index = 0
@@ -238,19 +237,29 @@ function _pp_expansion_network(rng::AbstractRNG, n_tech::Int, byproduct_rate::Fl
     traded_set = Set(shuffle(rng, collect(1:max(n_intermediate, 1)))[1:traded])
     for layer in 2:(n_layers - 1), _ in 1:per_layer
         intermediate_index += 1
-        push!(chemicals, ProcessChemical(Symbol(:intermediate_, length(chemicals) + 1),
-                                         layer, false, intermediate_index in traded_set))
+        push!(
+            chemicals,
+            ProcessChemical(
+                Symbol(:intermediate_, length(chemicals) + 1),
+                layer,
+                false,
+                intermediate_index in traded_set,
+            ),
+        )
         push!(layer_members[layer], length(chemicals))
     end
     for _ in 1:n_final
-        push!(chemicals, ProcessChemical(Symbol(:product_, length(chemicals) + 1),
-                                         n_layers, false, true))
+        push!(
+            chemicals,
+            ProcessChemical(Symbol(:product_, length(chemicals) + 1), n_layers, false, true),
+        )
         push!(layer_members[n_layers], length(chemicals))
     end
 
     technologies = ProcessTechnology[]
-    byproduct_set = Set(shuffle(rng, collect(1:n_tech))[
-        1:_pp_expansion_byproducts(n_tech, byproduct_rate)])
+    byproduct_set = Set(
+        shuffle(rng, collect(1:n_tech))[1:_pp_expansion_byproducts(n_tech, byproduct_rate)]
+    )
     for i in 1:n_tech
         # Deal processes round-robin over the producing layers so every chemical
         # has a maker before any gets a second one.
@@ -262,22 +271,31 @@ function _pp_expansion_network(rng::AbstractRNG, n_tech::Int, byproduct_rate::Fl
         chosen = shuffle(rng, lower)[1:n_inputs]
         yield = rand(rng, Uniform(0.60, 0.95))
         weights = rand(rng, Dirichlet(fill(2.0, n_inputs)))
-        inputs = [chosen[k] => round(weights[k] / yield, digits=4)
-                  for k in 1:n_inputs]
+        inputs = [chosen[k] => round(weights[k] / yield; digits=4) for k in 1:n_inputs]
         outputs = [main => 1.0]
         if i in byproduct_set
-            byproduct = ProcessChemical(Symbol(:byproduct_, length(chemicals) + 1),
-                                        layer, false, true)
+            byproduct = ProcessChemical(
+                Symbol(:byproduct_, length(chemicals) + 1), layer, false, true
+            )
             push!(chemicals, byproduct)
-            push!(outputs, length(chemicals) => round(rand(rng, Uniform(0.05, 0.35)),
-                                                      digits=3))
+            push!(outputs, length(chemicals) => round(rand(rng, Uniform(0.05, 0.35)); digits=3))
         end
-        push!(technologies, ProcessTechnology(
-            Symbol(:process_, i), layer, main, outputs, inputs,
-            round(rand(rng, Uniform(20.0, 120.0)), digits=2),
-            round(rand(rng, Uniform(8_000.0, 60_000.0)), digits=1),
-            round(rand(rng, Uniform(300.0, 1_500.0)), digits=2),
-            0.0, 0.0, 0.0))
+        push!(
+            technologies,
+            ProcessTechnology(
+                Symbol(:process_, i),
+                layer,
+                main,
+                outputs,
+                inputs,
+                round(rand(rng, Uniform(20.0, 120.0)); digits=2),
+                round(rand(rng, Uniform(8_000.0, 60_000.0)); digits=1),
+                round(rand(rng, Uniform(300.0, 1_500.0)); digits=2),
+                0.0,
+                0.0,
+                0.0,
+            ),
+        )
     end
     return chemicals, technologies
 end
@@ -291,8 +309,9 @@ from the top layer down, which is exact here because a byproduct is never an
 input, so no chemical's value can rise after the processes that consume it have
 been visited.
 """
-function _pp_expansion_potential(chemicals::Vector{ProcessChemical},
-                                 technologies::Vector{ProcessTechnology})
+function _pp_expansion_potential(
+    chemicals::Vector{ProcessChemical}, technologies::Vector{ProcessTechnology}
+)
     value = [chemical.sellable ? 1.0 : 0.0 for chemical in chemicals]
     isempty(technologies) && return value
     for layer in maximum(t.layer for t in technologies):-1:2
@@ -315,8 +334,7 @@ Largest volume of `chemical` the network could ever sell over the horizon: every
 process that makes it running at the capacity it would have after expanding by
 the maximum permitted amount in every period.
 """
-function _pp_expansion_capacity_bound(prob::ProcessCapacityExpansionProblem,
-                                      chemical::Int)
+function _pp_expansion_capacity_bound(prob::ProcessCapacityExpansionProblem, chemical::Int)
     bound = 0.0
     for t in 1:prob.n_periods
         for technology in prob.technologies
@@ -332,8 +350,9 @@ end
 """Largest total saleable volume the raw-material market can support (see the certificate)."""
 function _pp_expansion_feedstock_bound(prob::ProcessCapacityExpansionProblem)
     value = _pp_expansion_potential(prob.chemicals, prob.technologies)
-    return sum(value[j] * prob.availability[j, t]
-               for j in prob.raw_chemicals, t in 1:prob.n_periods)
+    return sum(
+        value[j] * prob.availability[j, t] for j in prob.raw_chemicals, t in 1:prob.n_periods
+    )
 end
 
 """
@@ -345,7 +364,7 @@ balance, raw-material availability and the demand window. Solver-independent.
 """
 function process_expansion_plan_satisfies(
     prob::ProcessCapacityExpansionProblem,
-    plan::Union{Nothing,ProcessExpansionPlan}=prob.feasible_witness;
+    plan::Union{Nothing, ProcessExpansionPlan}=prob.feasible_witness;
     atol::Float64=1e-6,
 )
     plan === nothing && return false
@@ -367,12 +386,11 @@ function process_expansion_plan_satisfies(
         technology = prob.technologies[i]
         for t in 1:T
             previous = t == 1 ? technology.existing_capacity : plan.capacity[i, t - 1]
-            abs(previous + plan.expansion[i, t] - plan.capacity[i, t]) <= tol ||
-                return false
+            abs(previous + plan.expansion[i, t] - plan.capacity[i, t]) <= tol || return false
             plan.expansion[i, t] <= technology.max_expansion * plan.expand[i, t] + tol ||
                 return false
-            plan.expansion[i, t] + tol >=
-                technology.min_expansion * plan.expand[i, t] || return false
+            plan.expansion[i, t] + tol >= technology.min_expansion * plan.expand[i, t] ||
+                return false
             plan.operating_level[i, t] <= plan.capacity[i, t] + tol || return false
         end
     end
@@ -391,8 +409,7 @@ function process_expansion_plan_satisfies(
         for j in 1:J
             balance[j] += plan.purchase[j, t] - plan.sales[j, t]
             abs(balance[j]) <= tol || return false
-            prob.chemicals[j].purchasable ||
-                (plan.purchase[j, t] <= tol || return false)
+            prob.chemicals[j].purchasable || (plan.purchase[j, t] <= tol || return false)
             prob.chemicals[j].sellable || (plan.sales[j, t] <= tol || return false)
             plan.purchase[j, t] <= prob.availability[j, t] + tol || return false
             plan.sales[j, t] + tol >= prob.demand_min[j, t] || return false
@@ -408,8 +425,9 @@ end
 Recompute the stored infeasibility certificate from the instance data and check
 that it still refutes the instance. No optimization solver is used.
 """
-function process_expansion_certificate_holds(prob::ProcessCapacityExpansionProblem;
-                                             atol::Float64=1e-6)
+function process_expansion_certificate_holds(
+    prob::ProcessCapacityExpansionProblem; atol::Float64=1e-6
+)
     certificate = prob.infeasibility_certificate
     certificate === nothing && return false
     if certificate.kind == expansion_demand_above_capacity_bound
@@ -423,10 +441,8 @@ function process_expansion_certificate_holds(prob::ProcessCapacityExpansionProbl
         required = sum(prob.demand_min)
     end
     scale = max(1.0, abs(achievable), abs(required))
-    isapprox(certificate.achievable, achievable; rtol=1e-9, atol=atol * scale) ||
-        return false
-    isapprox(certificate.required, required; rtol=1e-9, atol=atol * scale) ||
-        return false
+    isapprox(certificate.achievable, achievable; rtol=1e-9, atol=atol * scale) || return false
+    isapprox(certificate.required, required; rtol=1e-9, atol=atol * scale) || return false
     return achievable + atol * scale < required
 end
 
@@ -439,9 +455,12 @@ pull on the processes that make them, those processes pull on their inputs, and
 whatever reaches the bottom layer is bought. Byproducts are credited against the
 sales of their own chemical, so the balances close exactly.
 """
-function _pp_expansion_operate(rng::AbstractRNG, chemicals::Vector{ProcessChemical},
-                               technologies::Vector{ProcessTechnology},
-                               sale_target::Vector{Float64})
+function _pp_expansion_operate(
+    rng::AbstractRNG,
+    chemicals::Vector{ProcessChemical},
+    technologies::Vector{ProcessTechnology},
+    sale_target::Vector{Float64},
+)
     J = length(chemicals)
     I = length(technologies)
     required = copy(sale_target)
@@ -462,9 +481,11 @@ function _pp_expansion_operate(rng::AbstractRNG, chemicals::Vector{ProcessChemic
             weights = rand(rng, Dirichlet(fill(3.0, length(options))))
             for (k, i) in enumerate(options)
                 technology = technologies[i]
-                share = k == length(options) ?
-                        needed - sum(weights[1:(k - 1)]) * needed :
-                        weights[k] * needed
+                share = if k == length(options)
+                    needed - sum(weights[1:(k - 1)]) * needed
+                else
+                    weights[k] * needed
+                end
                 level[i] += share
                 for (input, coefficient) in technology.inputs
                     required[input] += coefficient * share
@@ -523,9 +544,9 @@ the target.
 - `unknown`: capacity, availability and contracts are drawn from a market view
   around the reference operation without being reconciled with it.
 """
-function ProcessCapacityExpansionProblem(target_variables::Int,
-                                         feasibility_status::FeasibilityStatus,
-                                         seed::Int)
+function ProcessCapacityExpansionProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
     target = max(target_variables, 1)
 
@@ -542,8 +563,7 @@ function ProcessCapacityExpansionProblem(target_variables::Int,
     growth = rand(rng, Uniform(0.0, 0.09))
     reference_sales = zeros(Float64, J, T)
     for j in sellable_chemicals
-        base = scale * rand(rng, Uniform(0.25, 1.6)) *
-               (chemicals[j].layer == 1 ? 0.2 : 1.0)
+        base = scale * rand(rng, Uniform(0.25, 1.6)) * (chemicals[j].layer == 1 ? 0.2 : 1.0)
         path = _pp_market_path(rng, T, base; volatility=0.05, seasonality=0.0)
         for t in 1:T
             reference_sales[j, t] = path[t] * (1.0 + growth)^(t - 1)
@@ -559,11 +579,11 @@ function ProcessCapacityExpansionProblem(target_variables::Int,
         for j in sellable_chemicals
             # Only the finished chemicals are pulled on directly; intermediates
             # and byproducts are sold out of whatever the network leaves over.
-            chemicals[j].layer == top_layer &&
-                (target_sales[j] = reference_sales[j, t])
+            chemicals[j].layer == top_layer && (target_sales[j] = reference_sales[j, t])
         end
-        level[:, t], purchase[:, t], sales[:, t] =
-            _pp_expansion_operate(rng, chemicals, technologies, target_sales)
+        level[:, t], purchase[:, t], sales[:, t] = _pp_expansion_operate(
+            rng, chemicals, technologies, target_sales
+        )
     end
 
     # Capacity: part of the network already stands, the rest is expanded into
@@ -582,26 +602,35 @@ function ProcessCapacityExpansionProblem(target_variables::Int,
         # planted expansions are clamped by exactly the bounds the model
         # publishes; rounding afterwards can move a bound below the expansion it
         # was supposed to admit.
-        covering = round(max(peak * rand(rng, Uniform(1.05, 1.80)), step), digits=4)
-        min_expansion = round(step * rand(rng, Uniform(0.10, 0.45)), digits=4)
+        covering = round(max(peak * rand(rng, Uniform(1.05, 1.80)), step); digits=4)
+        min_expansion = round(step * rand(rng, Uniform(0.10, 0.45)); digits=4)
         # A requested-feasible instance publishes that window. Otherwise the
         # window is an engineering rule — a plant is debottlenecked in steps of a
         # given size — which may or may not stretch to the market being asked for.
-        stated_max = planned ? covering :
-                     round(max(peak * rand(rng, Uniform(0.30, 1.40)), step),
-                           digits=4)
+        stated_max =
+            planned ? covering : round(max(peak * rand(rng, Uniform(0.30, 1.40)), step); digits=4)
         technologies[i] = ProcessTechnology(
-            technologies[i].name, technologies[i].layer, technologies[i].main_output,
-            technologies[i].outputs, technologies[i].inputs,
-            technologies[i].operating_cost, technologies[i].fixed_investment,
+            technologies[i].name,
+            technologies[i].layer,
+            technologies[i].main_output,
+            technologies[i].outputs,
+            technologies[i].inputs,
+            technologies[i].operating_cost,
+            technologies[i].fixed_investment,
             technologies[i].variable_investment,
-            round(existing, digits=4), min_expansion, stated_max)
+            round(existing; digits=4),
+            min_expansion,
+            stated_max,
+        )
         installed = technologies[i].existing_capacity
         for t in 1:T
             shortfall = level[i, t] - installed
             if shortfall > 0.0
-                amount = clamp(shortfall * rand(rng, Uniform(1.02, 1.30)),
-                               technologies[i].min_expansion, covering)
+                amount = clamp(
+                    shortfall * rand(rng, Uniform(1.02, 1.30)),
+                    technologies[i].min_expansion,
+                    covering,
+                )
                 expansion[i, t] = amount
                 expand[i, t] = 1
                 installed += amount
@@ -639,19 +668,21 @@ function ProcessCapacityExpansionProblem(target_variables::Int,
             base = rand(rng, Uniform(280.0, 900.0))
             purchase_cost[j, :] .= _pp_market_path(rng, T, base; volatility=0.07)
             reference = maximum(view(purchase, j, :))
-            offered = planned ?
-                      reference * rand(rng, Uniform(1.2, 2.5)) +
-                      scale * rand(rng, Uniform(0.05, 0.5)) :
-                      reference * rand(rng, Uniform(0.80, 1.70))
+            offered = if planned
+                reference * rand(rng, Uniform(1.2, 2.5)) + scale * rand(rng, Uniform(0.05, 0.5))
+            else
+                reference * rand(rng, Uniform(0.80, 1.70))
+            end
             for t in 1:T
-                availability[j, t] = planned ?
-                    max(offered, purchase[j, t] * rand(rng, Uniform(1.05, 1.4))) :
+                availability[j, t] = if planned
+                    max(offered, purchase[j, t] * rand(rng, Uniform(1.05, 1.4)))
+                else
                     offered * rand(rng, Uniform(0.90, 1.10))
+                end
             end
         end
         if chemical.sellable
-            base = rand(rng, Uniform(700.0, 2_400.0)) *
-                   (1.0 + 0.12 * (chemical.layer - 1))
+            base = rand(rng, Uniform(700.0, 2_400.0)) * (1.0 + 0.12 * (chemical.layer - 1))
             sale_price[j, :] .= _pp_market_path(rng, T, base; volatility=0.06)
             contract = rand(rng, Uniform(0.35, 0.85))
             # Not every chemical is sold forward: some move only on the spot
@@ -664,13 +695,14 @@ function ProcessCapacityExpansionProblem(target_variables::Int,
                 reference = sales[j, t]
                 if planned
                     demand_min[j, t] = reference * contract
-                    demand_max[j, t] = max(reference * rand(rng, Uniform(1.05, 1.7)),
-                                           demand_min[j, t] * 1.05)
+                    demand_max[j, t] = max(
+                        reference * rand(rng, Uniform(1.05, 1.7)), demand_min[j, t] * 1.05
+                    )
                 else
-                    demand_min[j, t] = contracted ?
-                                       reference * rand(rng, Uniform(0.50, 1.30)) : 0.0
-                    demand_max[j, t] = max(reference * rand(rng, Uniform(1.0, 1.8)),
-                                           demand_min[j, t] * 1.05)
+                    demand_min[j, t] = contracted ? reference * rand(rng, Uniform(0.50, 1.30)) : 0.0
+                    demand_max[j, t] = max(
+                        reference * rand(rng, Uniform(1.0, 1.8)), demand_min[j, t] * 1.05
+                    )
                 end
             end
         end
@@ -681,16 +713,35 @@ function ProcessCapacityExpansionProblem(target_variables::Int,
     plan = ProcessExpansionPlan(level, capacity, expansion, expand, purchase, sales)
     certificate = nothing
     if feasibility_status == infeasible
-        certificate = _pp_expansion_break!(rng, chemicals, technologies,
-                                           sellable_chemicals, raw_chemicals,
-                                           demand_min, demand_max, availability, T)
+        certificate = _pp_expansion_break!(
+            rng,
+            chemicals,
+            technologies,
+            sellable_chemicals,
+            raw_chemicals,
+            demand_min,
+            demand_max,
+            availability,
+            T,
+        )
     end
 
     problem = ProcessCapacityExpansionProblem(
-        T, chemicals, technologies, raw_chemicals, sellable_chemicals,
-        purchase_cost, availability, sale_price, demand_min, demand_max, discount,
-        feasibility_status == feasible ? plan : nothing, certificate,
-        feasibility_status)
+        T,
+        chemicals,
+        technologies,
+        raw_chemicals,
+        sellable_chemicals,
+        purchase_cost,
+        availability,
+        sale_price,
+        demand_min,
+        demand_max,
+        discount,
+        feasibility_status == feasible ? plan : nothing,
+        certificate,
+        feasibility_status,
+    )
 
     if feasibility_status == feasible
         @assert process_expansion_plan_satisfies(problem)
@@ -709,34 +760,42 @@ matching certificate: past what the processes making a single chemical could eve
 be expanded to produce, or past what the raw-material market can supply the whole
 network.
 """
-function _pp_expansion_break!(rng::AbstractRNG, chemicals::Vector{ProcessChemical},
-                              technologies::Vector{ProcessTechnology},
-                              sellable::Vector{Int}, raw::Vector{Int},
-                              demand_min::Matrix{Float64},
-                              demand_max::Matrix{Float64},
-                              availability::Matrix{Float64}, T::Int)
+function _pp_expansion_break!(
+    rng::AbstractRNG,
+    chemicals::Vector{ProcessChemical},
+    technologies::Vector{ProcessTechnology},
+    sellable::Vector{Int},
+    raw::Vector{Int},
+    demand_min::Matrix{Float64},
+    demand_max::Matrix{Float64},
+    availability::Matrix{Float64},
+    T::Int,
+)
     # A chemical nothing makes has a zero bound, which no positive contract can
     # sit strictly above by the margin the certificate needs; only argue about
     # chemicals some process actually produces.
-    made = [j for j in sellable
-            if any(any(pair.first == j for pair in technology.outputs)
-                   for technology in technologies)]
+    made = [
+        j for j in sellable if
+        any(any(pair.first == j for pair in technology.outputs) for technology in technologies)
+    ]
     if !isempty(made) && rand(rng) < 0.5
         j = made[rand(rng, 1:length(made))]
         bound = 0.0
         for t in 1:T, technology in technologies
             index = findfirst(pair -> pair.first == j, technology.outputs)
             index === nothing && continue
-            bound += technology.outputs[index].second *
-                     (technology.existing_capacity + t * technology.max_expansion)
+            bound +=
+                technology.outputs[index].second *
+                (technology.existing_capacity + t * technology.max_expansion)
         end
         required = bound * rand(rng, Uniform(1.15, 1.60))
         for t in 1:T
             demand_min[j, t] = required / T
             demand_max[j, t] = max(demand_max[j, t], demand_min[j, t] * 1.05)
         end
-        return ProcessExpansionCertificate(expansion_demand_above_capacity_bound, j,
-                                           bound, sum(view(demand_min, j, :)))
+        return ProcessExpansionCertificate(
+            expansion_demand_above_capacity_bound, j, bound, sum(view(demand_min, j, :))
+        )
     end
 
     value = _pp_expansion_potential(chemicals, technologies)
@@ -754,8 +813,9 @@ function _pp_expansion_break!(rng::AbstractRNG, chemicals::Vector{ProcessChemica
     for j in 1:size(demand_min, 1), t in 1:T
         demand_max[j, t] = max(demand_max[j, t], demand_min[j, t] * 1.05)
     end
-    return ProcessExpansionCertificate(expansion_demand_above_feedstock_bound, 0,
-                                       bound, sum(demand_min))
+    return ProcessExpansionCertificate(
+        expansion_demand_above_feedstock_bound, 0, bound, sum(demand_min)
+    )
 end
 
 """
@@ -783,11 +843,13 @@ function build_model(prob::ProcessCapacityExpansionProblem)
     @variable(model, capacity[1:I, 1:T] >= 0)
     @variable(model, expansion[1:I, 1:T] >= 0)
     @variable(model, expand[1:I, 1:T], Bin)
-    @variable(model, 0 <= purchase[j in prob.raw_chemicals, t in 1:T] <=
-                     prob.availability[j, t])
-    @variable(model, prob.demand_min[j, t] <=
-                     sales[j in prob.sellable_chemicals, t in 1:T] <=
-                     prob.demand_max[j, t])
+    @variable(model, 0 <= purchase[j in prob.raw_chemicals, t in 1:T] <= prob.availability[j, t])
+    @variable(
+        model,
+        prob.demand_min[j, t] <=
+            sales[j in prob.sellable_chemicals, t in 1:T] <=
+            prob.demand_max[j, t]
+    )
 
     for i in 1:I, t in 1:T
         technology = prob.technologies[i]
@@ -819,17 +881,26 @@ function build_model(prob::ProcessCapacityExpansionProblem)
     end
     @constraint(model, chemical_balance[j in 1:J, t in 1:T], balance[j, t] == 0)
 
-    @objective(model, Max,
-        sum(prob.discount[t] *
-            (sum(prob.sale_price[j, t] * sales[j, t] for j in prob.sellable_chemicals;
-                 init = AffExpr(0.0)) -
-             sum(prob.purchase_cost[j, t] * purchase[j, t] for j in prob.raw_chemicals;
-                 init = AffExpr(0.0)) -
-             sum(prob.technologies[i].operating_cost * operating_level[i, t] +
-                 prob.technologies[i].fixed_investment * expand[i, t] +
-                 prob.technologies[i].variable_investment * expansion[i, t]
-                 for i in 1:I; init = AffExpr(0.0)))
-            for t in 1:T))
+    @objective(
+        model,
+        Max,
+        sum(
+            prob.discount[t] * (
+                sum(
+                    prob.sale_price[j, t] * sales[j, t] for j in prob.sellable_chemicals;
+                    init=AffExpr(0.0),
+                ) - sum(
+                    prob.purchase_cost[j, t] * purchase[j, t] for j in prob.raw_chemicals;
+                    init=AffExpr(0.0),
+                ) - sum(
+                    prob.technologies[i].operating_cost * operating_level[i, t] +
+                    prob.technologies[i].fixed_investment * expand[i, t] +
+                    prob.technologies[i].variable_investment * expansion[i, t] for i in 1:I;
+                    init=AffExpr(0.0),
+                )
+            ) for t in 1:T
+        )
+    )
 
     return model
 end

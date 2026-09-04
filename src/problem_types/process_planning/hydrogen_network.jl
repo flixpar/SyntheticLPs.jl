@@ -55,8 +55,8 @@ struct RefineryHydrogenPlanningProblem <: ProblemGenerator
     flowsheet::RefineryFlowsheet
     data::ProcessPlanData
     hydrogen::RefineryHydrogenData
-    feasible_witness::Union{Nothing,RefineryHydrogenPlan}
-    infeasibility_certificate::Union{Nothing,RefineryInfeasibilityCertificate}
+    feasible_witness::Union{Nothing, RefineryHydrogenPlan}
+    infeasibility_certificate::Union{Nothing, RefineryInfeasibilityCertificate}
     feasibility_status::FeasibilityStatus
 end
 
@@ -72,30 +72,30 @@ const _PP_HYDROPROCESSING_H2_RANGE = Dict(
 _pp_is_hydroprocessing(key::Symbol) = haskey(_PP_HYDROPROCESSING_H2_RANGE, key)
 
 """Sulfur removed by one kbbl of a unit feed, respecting volume and density."""
-function _pp_sulfur_removal_rate(fs::RefineryFlowsheet, unit::RefineryUnit,
-                                  feed_index::Int)
+function _pp_sulfur_removal_rate(fs::RefineryFlowsheet, unit::RefineryUnit, feed_index::Int)
     _pp_is_hydroprocessing(unit.key) || return 0.0
     input = unit.feeds[feed_index]
-    input_mass_ppm = fs.qualities[input, PP_Q_DENSITY] *
-                     fs.qualities[input, PP_Q_SULFUR]
+    input_mass_ppm = fs.qualities[input, PP_Q_DENSITY] * fs.qualities[input, PP_Q_SULFUR]
     mode = unit.modes[1]
-    output_mass_ppm = sum(mode.yields[feed_index, o] *
-                          fs.qualities[s, PP_Q_DENSITY] *
-                          fs.qualities[s, PP_Q_SULFUR]
-                          for (o, s) in enumerate(unit.outputs))
+    output_mass_ppm = sum(
+        mode.yields[feed_index, o] * fs.qualities[s, PP_Q_DENSITY] * fs.qualities[s, PP_Q_SULFUR]
+        for (o, s) in enumerate(unit.outputs)
+    )
     # One kbbl is 158.987 m^3; with specific gravity as tonne/m^3 and ppm as
     # tonne/10^6 tonne, the result is tonnes of sulfur per kbbl.
     return 158.987e-6 * max(input_mass_ppm - output_mass_ppm, 0.0)
 end
 
-function _pp_hydrogen_extensions(rng::AbstractRNG, fs::RefineryFlowsheet,
-                                 data::ProcessPlanData,
-                                 plan::RefineryOperatingPlan,
-                                 status::FeasibilityStatus,
-                                 unknown_position::Float64=0.5)
+function _pp_hydrogen_extensions(
+    rng::AbstractRNG,
+    fs::RefineryFlowsheet,
+    data::ProcessPlanData,
+    plan::RefineryOperatingPlan,
+    status::FeasibilityStatus,
+    unknown_position::Float64=0.5,
+)
     U, T = n_units(fs), data.n_periods
-    0.0 <= unknown_position <= 1.0 ||
-        throw(ArgumentError("unknown_position must lie in [0, 1]"))
+    0.0 <= unknown_position <= 1.0 || throw(ArgumentError("unknown_position must lie in [0, 1]"))
     unit_h2_rate = Vector{Vector{Float64}}(undef, U)
     sulfur_rate = Vector{Vector{Float64}}(undef, U)
     reformer_yield = zeros(Float64, U)
@@ -109,8 +109,7 @@ function _pp_hydrogen_extensions(rng::AbstractRNG, fs::RefineryFlowsheet,
             for f in eachindex(unit.feeds)
                 sulfur = fs.qualities[unit.feeds[f], PP_Q_SULFUR]
                 severity = clamp(log10(1 + sulfur) / 5, 0.0, 1.0)
-                unit_h2_rate[u][f] = rand(rng, Uniform(low, high)) *
-                                      (0.75 + 0.50 * severity)
+                unit_h2_rate[u][f] = rand(rng, Uniform(low, high)) * (0.75 + 0.50 * severity)
                 sulfur_rate[u][f] = _pp_sulfur_removal_rate(fs, unit, f)
             end
         elseif unit.key == :reformer
@@ -147,68 +146,82 @@ function _pp_hydrogen_extensions(rng::AbstractRNG, fs::RefineryFlowsheet,
     # its sampled feed-specific consumption, and expected reformer by-product.
     # This keeps unknown instances on the physical tonne-H2/kbbl scale instead
     # of accidentally making the H2 system orders of magnitude too small.
-    gross_design_h2 = data.nameplate * sum(
-        _pp_unit_template(fs.units[u].key).capacity_fraction *
-        (isempty(unit_h2_rate[u]) ? 0.0 : sum(unit_h2_rate[u]) /
-                                             length(unit_h2_rate[u]))
-        for u in 1:U)
-    reformer_design_h2 = data.nameplate * sum(
-        _pp_unit_template(fs.units[u].key).capacity_fraction * reformer_yield[u]
-        for u in 1:U)
-    design_h2 = max(gross_design_h2 - reformer_design_h2,
-                    0.05 * data.nameplate, 0.25)
-    design_sulfur = max(data.nameplate * sum(
-        _pp_unit_template(fs.units[u].key).capacity_fraction *
-        (isempty(sulfur_rate[u]) ? 0.0 : sum(sulfur_rate[u]) /
-                                            length(sulfur_rate[u]))
-        for u in 1:U), 0.0005 * data.nameplate, 0.01)
+    gross_design_h2 =
+        data.nameplate * sum(
+            _pp_unit_template(fs.units[u].key).capacity_fraction *
+            (isempty(unit_h2_rate[u]) ? 0.0 : sum(unit_h2_rate[u]) / length(unit_h2_rate[u])) for
+            u in 1:U
+        )
+    reformer_design_h2 =
+        data.nameplate *
+        sum(_pp_unit_template(fs.units[u].key).capacity_fraction * reformer_yield[u] for u in 1:U)
+    design_h2 = max(gross_design_h2 - reformer_design_h2, 0.05 * data.nameplate, 0.25)
+    design_sulfur = max(
+        data.nameplate * sum(
+            _pp_unit_template(fs.units[u].key).capacity_fraction *
+            (isempty(sulfur_rate[u]) ? 0.0 : sum(sulfur_rate[u]) / length(sulfur_rate[u])) for
+            u in 1:U
+        ),
+        0.0005 * data.nameplate,
+        0.01,
+    )
 
     smr_capacity = zeros(Float64, T)
     import_capacity = zeros(Float64, T)
     sru_capacity = zeros(Float64, T)
     for t in 1:T
         if status == feasible
-            smr_capacity[t] = max(design_h2,
-                                  smr[t] * rand(rng, Uniform(1.10, 1.45)))
-            import_capacity[t] = max(0.35 * design_h2,
-                                     imported[t] * rand(rng, Uniform(1.10, 1.60)))
-            sru_capacity[t] = max(design_sulfur,
-                                  sulfur[t] * rand(rng, Uniform(1.10, 1.50)))
+            smr_capacity[t] = max(design_h2, smr[t] * rand(rng, Uniform(1.10, 1.45)))
+            import_capacity[t] = max(0.35 * design_h2, imported[t] * rand(rng, Uniform(1.10, 1.60)))
+            sru_capacity[t] = max(design_sulfur, sulfur[t] * rand(rng, Uniform(1.10, 1.50)))
         else
             scenario = 0.75 + 0.50 * unknown_position
             smr_capacity[t] = design_h2 * rand(rng, Uniform(0.58, 0.88)) * scenario
-            import_capacity[t] = design_h2 * rand(rng, Uniform(0.18, 0.45)) *
-                                 scenario
-            sru_capacity[t] = design_sulfur * rand(rng, Uniform(0.75, 1.25)) *
-                              scenario
+            import_capacity[t] = design_h2 * rand(rng, Uniform(0.18, 0.45)) * scenario
+            sru_capacity[t] = design_sulfur * rand(rng, Uniform(0.75, 1.25)) * scenario
         end
     end
     storage_capacity = max(0.15 * maximum(h2_demand; init=0.0), 0.10)
-    initial_inventory = status == feasible ? 0.0 :
-                        storage_capacity * rand(rng, Uniform(0.0, 0.35))
+    initial_inventory = status == feasible ? 0.0 : storage_capacity * rand(rng, Uniform(0.0, 0.35))
 
     smr_emission_factor = rand(rng, Uniform(8.5, 11.5))
-    carbon = [smr_emission_factor * smr[t] +
-              sum(unit_emission[u] * throughput[u, t] for u in 1:U)
-              for t in 1:T]
-    carbon_cap = [status == feasible ?
-                  carbon[t] * rand(rng, Uniform(1.08, 1.35)) + 1e-4 :
-                  max(0.06 * data.nameplate, carbon[t] *
-                      rand(rng, Uniform(0.75, 1.25))) for t in 1:T]
-    cumulative_cap = status == feasible ?
-                     sum(carbon) * rand(rng, Uniform(1.08, 1.30)) + 1e-4 :
-                     sum(carbon_cap) * (0.76 + 0.28 * unknown_position)
+    carbon = [
+        smr_emission_factor * smr[t] + sum(unit_emission[u] * throughput[u, t] for u in 1:U) for
+        t in 1:T
+    ]
+    carbon_cap = [
+        if status == feasible
+            carbon[t] * rand(rng, Uniform(1.08, 1.35)) + 1e-4
+        else
+            max(0.06 * data.nameplate, carbon[t] * rand(rng, Uniform(0.75, 1.25)))
+        end for t in 1:T
+    ]
+    cumulative_cap = if status == feasible
+        sum(carbon) * rand(rng, Uniform(1.08, 1.30)) + 1e-4
+    else
+        sum(carbon_cap) * (0.76 + 0.28 * unknown_position)
+    end
 
     hdata = RefineryHydrogenData(
-        unit_h2_rate, reformer_yield, sulfur_rate, smr_capacity,
-        import_capacity, storage_capacity, initial_inventory, sru_capacity,
-        smr_emission_factor, unit_emission, carbon_cap, cumulative_cap,
+        unit_h2_rate,
+        reformer_yield,
+        sulfur_rate,
+        smr_capacity,
+        import_capacity,
+        storage_capacity,
+        initial_inventory,
+        sru_capacity,
+        smr_emission_factor,
+        unit_emission,
+        carbon_cap,
+        cumulative_cap,
         [rand(rng, Uniform(1.0, 2.2)) for _ in 1:T],
         [rand(rng, Uniform(2.0, 5.5)) for _ in 1:T],
-        rand(rng, Uniform(0.02, 0.12)), rand(rng, Uniform(0.5, 2.0)),
-        rand(rng, Uniform(0.0, 0.12)))
-    witness = RefineryHydrogenPlan(plan, smr, imported, inventory, vented,
-                                   sulfur, carbon)
+        rand(rng, Uniform(0.02, 0.12)),
+        rand(rng, Uniform(0.5, 2.0)),
+        rand(rng, Uniform(0.0, 0.12)),
+    )
+    witness = RefineryHydrogenPlan(plan, smr, imported, inventory, vented, sulfur, carbon)
     return hdata, witness
 end
 
@@ -226,26 +239,35 @@ one of the base refinery's volume/specification certificates; because the
 extension only adds constraints, that certificate remains valid. Unknown data
 uses independent engineering capacities and carbon limits.
 """
-function RefineryHydrogenPlanningProblem(target_variables::Int,
-                                         feasibility_status::FeasibilityStatus,
-                                         seed::Int)
+function RefineryHydrogenPlanningProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
     target = max(target_variables, 1)
-    _, skeleton, T = _pp_dimensions(rng, target; mode_vars=false,
-                                    minimum_level=2, extra_variables=6,
-                                    compact_hydroprocessing=true)
+    _, skeleton, T = _pp_dimensions(
+        rng,
+        target;
+        mode_vars=false,
+        minimum_level=2,
+        extra_variables=6,
+        compact_hydroprocessing=true,
+    )
     flowsheet = _pp_build_flowsheet(rng, skeleton)
     mode_choice = ones(Int, n_units(flowsheet), T)
-    data, refinery_plan, certificate =
-        _pp_plan_instance(rng, flowsheet, T, feasibility_status, mode_choice;
-                          unknown_position=_pp_seed_position(seed))
-    hydrogen, hydrogen_plan =
-        _pp_hydrogen_extensions(rng, flowsheet, data, refinery_plan,
-                                feasibility_status, _pp_seed_position(seed))
+    data, refinery_plan, certificate = _pp_plan_instance(
+        rng, flowsheet, T, feasibility_status, mode_choice; unknown_position=_pp_seed_position(seed)
+    )
+    hydrogen, hydrogen_plan = _pp_hydrogen_extensions(
+        rng, flowsheet, data, refinery_plan, feasibility_status, _pp_seed_position(seed)
+    )
     problem = RefineryHydrogenPlanningProblem(
-        flowsheet, data, hydrogen,
+        flowsheet,
+        data,
+        hydrogen,
         feasibility_status == feasible ? hydrogen_plan : nothing,
-        certificate, feasibility_status)
+        certificate,
+        feasibility_status,
+    )
     feasibility_status == feasible && @assert refinery_hydrogen_plan_satisfies(problem)
     feasibility_status == infeasible &&
         @assert refinery_certificate_holds(flowsheet, data, certificate)
@@ -253,8 +275,7 @@ function RefineryHydrogenPlanningProblem(target_variables::Int,
 end
 
 """Check the complete planted H2/SRU/CO2 extension without a solver."""
-function refinery_hydrogen_plan_satisfies(prob::RefineryHydrogenPlanningProblem;
-                                          atol::Float64=1e-6)
+function refinery_hydrogen_plan_satisfies(prob::RefineryHydrogenPlanningProblem; atol::Float64=1e-6)
     plan = prob.feasible_witness
     plan === nothing && return false
     fs, data, hd = prob.flowsheet, prob.data, prob.hydrogen
@@ -275,19 +296,19 @@ function refinery_hydrogen_plan_satisfies(prob::RefineryHydrogenPlanningProblem;
             end
         end
         scale = max(1.0, demand, byproduct)
-        abs(previous + plan.smr_h2[t] + plan.imported_h2[t] + byproduct -
-            demand - plan.h2_inventory[t] - plan.vented_h2[t]) <= atol * scale ||
-            return false
+        abs(
+            previous + plan.smr_h2[t] + plan.imported_h2[t] + byproduct - demand -
+            plan.h2_inventory[t] - plan.vented_h2[t],
+        ) <= atol * scale || return false
         plan.smr_h2[t] <= hd.smr_capacity[t] + atol || return false
         plan.imported_h2[t] <= hd.import_capacity[t] + atol || return false
         plan.h2_inventory[t] <= hd.h2_storage_capacity + atol || return false
-        abs(plan.sulfur_recovered[t] - sulfur) <= atol * max(1.0, sulfur) ||
-            return false
+        abs(plan.sulfur_recovered[t] - sulfur) <= atol * max(1.0, sulfur) || return false
         sulfur <= hd.sru_capacity[t] + atol || return false
-        emissions = hd.smr_emission_factor * plan.smr_h2[t] +
-                    sum(hd.unit_emission_rate[u] * throughput[u, t] for u in 1:U)
-        abs(plan.carbon_emissions[t] - emissions) <=
-            atol * max(1.0, emissions) || return false
+        emissions =
+            hd.smr_emission_factor * plan.smr_h2[t] +
+            sum(hd.unit_emission_rate[u] * throughput[u, t] for u in 1:U)
+        abs(plan.carbon_emissions[t] - emissions) <= atol * max(1.0, emissions) || return false
         emissions <= hd.carbon_cap[t] + atol || return false
         previous = plan.h2_inventory[t]
     end
@@ -296,11 +317,13 @@ function refinery_hydrogen_plan_satisfies(prob::RefineryHydrogenPlanningProblem;
 end
 
 function build_model(prob::RefineryHydrogenPlanningProblem)
-    base = RefineryPlanningProblem(prob.flowsheet, prob.data,
-                                   prob.feasible_witness === nothing ? nothing :
-                                   prob.feasible_witness.refinery,
-                                   prob.infeasibility_certificate,
-                                   prob.feasibility_status)
+    base = RefineryPlanningProblem(
+        prob.flowsheet,
+        prob.data,
+        prob.feasible_witness === nothing ? nothing : prob.feasible_witness.refinery,
+        prob.infeasibility_certificate,
+        prob.feasibility_status,
+    )
     model = build_model(base)
     fs, data, hd = prob.flowsheet, prob.data, prob.hydrogen
     U, T = n_units(fs), data.n_periods
@@ -314,31 +337,53 @@ function build_model(prob::RefineryHydrogenPlanningProblem)
     @variable(model, 0 <= sulfur_recovered[t in 1:T] <= hd.sru_capacity[t])
     @variable(model, 0 <= carbon_emissions[t in 1:T] <= hd.carbon_cap[t])
 
-    @expression(model, h2_demand[t in 1:T],
-        sum(hd.unit_h2_rate[u][f] * feed[u][f, t]
-            for u in 1:U for f in eachindex(fs.units[u].feeds)))
-    @expression(model, reformer_h2[t in 1:T],
-        sum(hd.reformer_h2_yield[u] * throughput[u, t] for u in 1:U))
-    @constraint(model, [t in 1:T],
+    @expression(
+        model,
+        h2_demand[t in 1:T],
+        sum(
+            hd.unit_h2_rate[u][f] * feed[u][f, t] for u in 1:U for f in eachindex(fs.units[u].feeds)
+        )
+    )
+    @expression(
+        model, reformer_h2[t in 1:T], sum(hd.reformer_h2_yield[u] * throughput[u, t] for u in 1:U)
+    )
+    @constraint(
+        model,
+        [t in 1:T],
         (t == 1 ? hd.initial_h2_inventory : h2_inventory[t - 1]) +
-        smr_h2[t] + imported_h2[t] + reformer_h2[t] ==
-        h2_demand[t] + h2_inventory[t] + vented_h2[t])
-    @constraint(model, [t in 1:T],
-        sulfur_recovered[t] ==
-        sum(hd.sulfur_removal_rate[u][f] * feed[u][f, t]
-            for u in 1:U for f in eachindex(fs.units[u].feeds)))
-    @constraint(model, [t in 1:T],
-        carbon_emissions[t] == hd.smr_emission_factor * smr_h2[t] +
-        sum(hd.unit_emission_rate[u] * throughput[u, t] for u in 1:U))
+        smr_h2[t] +
+        imported_h2[t] +
+        reformer_h2[t] == h2_demand[t] + h2_inventory[t] + vented_h2[t]
+    )
+    @constraint(
+        model,
+        [t in 1:T],
+        sulfur_recovered[t] == sum(
+            hd.sulfur_removal_rate[u][f] * feed[u][f, t] for u in 1:U for
+            f in eachindex(fs.units[u].feeds)
+        )
+    )
+    @constraint(
+        model,
+        [t in 1:T],
+        carbon_emissions[t] ==
+            hd.smr_emission_factor * smr_h2[t] +
+        sum(hd.unit_emission_rate[u] * throughput[u, t] for u in 1:U)
+    )
     @constraint(model, sum(carbon_emissions) <= hd.cumulative_carbon_cap)
 
     base_objective = objective_function(model)
-    @objective(model, Max, base_objective -
-        sum(hd.smr_cost[t] * smr_h2[t] +
+    @objective(
+        model,
+        Max,
+        base_objective - sum(
+            hd.smr_cost[t] * smr_h2[t] +
             hd.import_cost[t] * imported_h2[t] +
             hd.h2_holding_cost * h2_inventory[t] +
             hd.vent_penalty * vented_h2[t] +
-            hd.carbon_price * carbon_emissions[t] for t in 1:T))
+            hd.carbon_price * carbon_emissions[t] for t in 1:T
+        )
+    )
 
     if prob.feasible_witness !== nothing
         witness = prob.feasible_witness

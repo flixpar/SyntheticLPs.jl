@@ -32,8 +32,9 @@ using Distributions
 # ---------------------------------------------------------------------------
 
 """Quality properties carried by every process stream, in vector order."""
-const PP_QUALITY_NAMES = (:density, :sulfur, :ron, :mon, :rvp, :aromatics,
-                          :cetane, :cold_flow, :viscosity_index)
+const PP_QUALITY_NAMES = (
+    :density, :sulfur, :ron, :mon, :rvp, :aromatics, :cetane, :cold_flow, :viscosity_index
+)
 const PP_N_QUALITIES = length(PP_QUALITY_NAMES)
 
 const PP_Q_DENSITY = 1      # specific gravity at 60F
@@ -64,66 +65,66 @@ _pp_is_weight_basis(q::Int) = q in PP_WEIGHT_BASIS_QUALITIES
 # multiplier on whole-crude sulfur (wt%), converted when the stream is built.
 
 const _PP_CUT_QUALITY = (
-    lpg_cut       = (0.560, 0.010,  94.0, 90.0, 55.0,  0.0,  0.0, -110.0, -25.0),
-    light_naphtha = (0.665, 0.030,  68.0, 66.0, 12.0,  2.0,  0.0, -100.0, -11.0),
-    heavy_naphtha = (0.760, 0.080,  45.0, 43.0,  1.5, 16.0,  0.0,  -90.0,  -6.0),
-    kerosene      = (0.805, 0.200,   0.0,  0.0,  0.1, 18.0, 44.0,  -47.0,   8.0),
-    distillate    = (0.850, 0.550,   0.0,  0.0, 0.05, 25.0, 53.0,   -8.0,  16.0),
-    gasoil        = (0.875, 0.900,   0.0,  0.0, 0.02, 32.0, 48.0,    0.0,  25.0),
-    vgo           = (0.905, 1.400,   0.0,  0.0,  0.0, 40.0,  0.0,   28.0,  35.0),
-    resid         = (0.985, 2.600,   0.0,  0.0,  0.0, 55.0,  0.0,   45.0,  45.0),
+    lpg_cut=(0.560, 0.010, 94.0, 90.0, 55.0, 0.0, 0.0, -110.0, -25.0),
+    light_naphtha=(0.665, 0.030, 68.0, 66.0, 12.0, 2.0, 0.0, -100.0, -11.0),
+    heavy_naphtha=(0.760, 0.080, 45.0, 43.0, 1.5, 16.0, 0.0, -90.0, -6.0),
+    kerosene=(0.805, 0.200, 0.0, 0.0, 0.1, 18.0, 44.0, -47.0, 8.0),
+    distillate=(0.850, 0.550, 0.0, 0.0, 0.05, 25.0, 53.0, -8.0, 16.0),
+    gasoil=(0.875, 0.900, 0.0, 0.0, 0.02, 32.0, 48.0, 0.0, 25.0),
+    vgo=(0.905, 1.400, 0.0, 0.0, 0.0, 40.0, 0.0, 28.0, 35.0),
+    resid=(0.985, 2.600, 0.0, 0.0, 0.0, 55.0, 0.0, 45.0, 45.0),
 )
 
 const _PP_STREAM_QUALITY = (
-    treated_naphtha = (0.760,     0.5,  45.0, 43.0,  1.5, 16.0,  0.0,  -90.0,  -6.0),
-    isomerate       = (0.655,     0.5,  84.0, 82.0, 14.0,  2.0,  0.0,  -85.0, -12.0),
-    reformate_mid   = (0.780,     0.5,  96.0, 86.0,  4.0, 58.0,  0.0,  -60.0,  -6.0),
-    reformate_high  = (0.800,     0.5, 102.0, 90.0,  3.0, 70.0,  0.0,  -55.0,  -5.0),
-    fcc_gasoline    = (0.745,     9.0,  92.0, 80.0,  6.5, 30.0,  0.0,  -60.0,  -8.0),
-    alkylate        = (0.700,     0.5,  95.0, 92.0,  5.5,  0.5,  0.0,  -70.0, -10.0),
-    hc_naphtha      = (0.730,     0.5,  68.0, 66.0,  8.0,  6.0,  0.0,  -85.0,  -9.0),
-    coker_naphtha   = (0.740,  5500.0,  60.0, 58.0,  7.0, 12.0,  0.0,  -80.0,  -8.0),
-    jet_component   = (0.800,     5.0,   0.0,  0.0,  0.1, 17.0, 45.0,  -50.0,   8.0),
-    hc_kero         = (0.795,     3.0,   0.0,  0.0,  0.1, 12.0, 47.0,  -52.0,   7.0),
-    hc_diesel       = (0.833,     3.0,   0.0,  0.0, 0.05, 15.0, 58.0,  -14.0,  14.0),
-    ulsd_component  = (0.838,     8.0,   0.0,  0.0, 0.05, 22.0, 53.5,  -11.0,  16.0),
-    gasoil_treated  = (0.860,   450.0,   0.0,  0.0, 0.03, 28.0, 47.0,   -4.0,  20.0),
-    lco             = (0.945,  3000.0,   0.0,  0.0, 0.02, 70.0, 22.0,  -25.0,  20.0),
-    coker_gasoil    = (0.905, 11000.0,   0.0,  0.0,  0.0, 45.0, 35.0,   20.0,  30.0),
-    treated_vgo     = (0.898,  1500.0,   0.0,  0.0,  0.0, 38.0,  0.0,   26.0,  33.0),
-    treated_resid   = (0.975,  5500.0,   0.0,  0.0,  0.0, 52.0,  0.0,   42.0,  43.0),
-    slurry          = (1.060, 14000.0,   0.0,  0.0,  0.0, 85.0,  0.0,   15.0,  42.0),
-    coke            = (1.100, 25000.0,   0.0,  0.0,  0.0,  0.0,  0.0,    0.0,   0.0),
-    fuel_gas        = (0.300,     5.0,   0.0,  0.0,  0.0,  0.0,  0.0,    0.0,   0.0),
-    lpg             = (0.560,    10.0,  94.0, 90.0, 55.0,  0.0,  0.0, -110.0, -25.0),
-    butane          = (0.585,     0.2,  93.0, 90.0, 52.0,  0.0,  0.0, -120.0, -26.0),
-    ethanol         = (0.794,     0.0, 108.0, 90.0, 18.0,  0.0,  0.0, -114.0, -14.0),
-    mtbe            = (0.745,     0.0, 118.0,101.0,  8.0,  0.0,  0.0, -109.0, -13.0),
+    treated_naphtha=(0.760, 0.5, 45.0, 43.0, 1.5, 16.0, 0.0, -90.0, -6.0),
+    isomerate=(0.655, 0.5, 84.0, 82.0, 14.0, 2.0, 0.0, -85.0, -12.0),
+    reformate_mid=(0.780, 0.5, 96.0, 86.0, 4.0, 58.0, 0.0, -60.0, -6.0),
+    reformate_high=(0.800, 0.5, 102.0, 90.0, 3.0, 70.0, 0.0, -55.0, -5.0),
+    fcc_gasoline=(0.745, 9.0, 92.0, 80.0, 6.5, 30.0, 0.0, -60.0, -8.0),
+    alkylate=(0.700, 0.5, 95.0, 92.0, 5.5, 0.5, 0.0, -70.0, -10.0),
+    hc_naphtha=(0.730, 0.5, 68.0, 66.0, 8.0, 6.0, 0.0, -85.0, -9.0),
+    coker_naphtha=(0.740, 5500.0, 60.0, 58.0, 7.0, 12.0, 0.0, -80.0, -8.0),
+    jet_component=(0.800, 5.0, 0.0, 0.0, 0.1, 17.0, 45.0, -50.0, 8.0),
+    hc_kero=(0.795, 3.0, 0.0, 0.0, 0.1, 12.0, 47.0, -52.0, 7.0),
+    hc_diesel=(0.833, 3.0, 0.0, 0.0, 0.05, 15.0, 58.0, -14.0, 14.0),
+    ulsd_component=(0.838, 8.0, 0.0, 0.0, 0.05, 22.0, 53.5, -11.0, 16.0),
+    gasoil_treated=(0.860, 450.0, 0.0, 0.0, 0.03, 28.0, 47.0, -4.0, 20.0),
+    lco=(0.945, 3000.0, 0.0, 0.0, 0.02, 70.0, 22.0, -25.0, 20.0),
+    coker_gasoil=(0.905, 11000.0, 0.0, 0.0, 0.0, 45.0, 35.0, 20.0, 30.0),
+    treated_vgo=(0.898, 1500.0, 0.0, 0.0, 0.0, 38.0, 0.0, 26.0, 33.0),
+    treated_resid=(0.975, 5500.0, 0.0, 0.0, 0.0, 52.0, 0.0, 42.0, 43.0),
+    slurry=(1.060, 14000.0, 0.0, 0.0, 0.0, 85.0, 0.0, 15.0, 42.0),
+    coke=(1.100, 25000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+    fuel_gas=(0.300, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+    lpg=(0.560, 10.0, 94.0, 90.0, 55.0, 0.0, 0.0, -110.0, -25.0),
+    butane=(0.585, 0.2, 93.0, 90.0, 52.0, 0.0, 0.0, -120.0, -26.0),
+    ethanol=(0.794, 0.0, 108.0, 90.0, 18.0, 0.0, 0.0, -114.0, -14.0),
+    mtbe=(0.745, 0.0, 118.0, 101.0, 8.0, 0.0, 0.0, -109.0, -13.0),
 )
 
 """Crude cuts in boiling order; a reduced slate lumps cuts into a neighbour."""
-const _PP_ALL_CUTS = (:lpg_cut, :light_naphtha, :heavy_naphtha, :kerosene,
-                      :distillate, :gasoil, :vgo, :resid)
+const _PP_ALL_CUTS = (
+    :lpg_cut, :light_naphtha, :heavy_naphtha, :kerosene, :distillate, :gasoil, :vgo, :resid
+)
 
 """Cut slates, coarsest first. A coarse slate is a smaller assay, not a different crude."""
 const _PP_CUT_SLATES = (
     [:light_naphtha, :distillate, :resid],
     [:light_naphtha, :kerosene, :distillate, :resid],
     [:light_naphtha, :heavy_naphtha, :kerosene, :distillate, :gasoil, :resid],
-    [:lpg_cut, :light_naphtha, :heavy_naphtha, :kerosene, :distillate, :gasoil,
-     :vgo, :resid],
+    [:lpg_cut, :light_naphtha, :heavy_naphtha, :kerosene, :distillate, :gasoil, :vgo, :resid],
 )
 
 """Where a cut's yield goes when the slate does not carry that cut."""
 const _PP_CUT_LUMP = (
-    lpg_cut = :light_naphtha,
-    light_naphtha = :light_naphtha,
-    heavy_naphtha = :light_naphtha,
-    kerosene = :distillate,
-    distillate = :distillate,
-    gasoil = :distillate,
-    vgo = :resid,
-    resid = :resid,
+    lpg_cut=:light_naphtha,
+    light_naphtha=:light_naphtha,
+    heavy_naphtha=:light_naphtha,
+    kerosene=:distillate,
+    distillate=:distillate,
+    gasoil=:distillate,
+    vgo=:resid,
+    resid=:resid,
 )
 
 """
@@ -131,11 +132,11 @@ Crude archetypes: `(name, API gravity, sulfur wt%, volumetric cut yields)`.
 Yields are ordered as `_PP_ALL_CUTS` and sum to one.
 """
 const _PP_CRUDE_ARCHETYPES = (
-    (:condensate,   50.0, 0.05, (0.060, 0.230, 0.300, 0.180, 0.130, 0.050, 0.045, 0.005)),
-    (:light_sweet,  39.0, 0.25, (0.030, 0.100, 0.170, 0.140, 0.150, 0.090, 0.230, 0.090)),
-    (:medium_sour,  32.0, 1.60, (0.022, 0.070, 0.135, 0.125, 0.145, 0.093, 0.250, 0.160)),
-    (:heavy_sour,   24.0, 2.90, (0.015, 0.045, 0.095, 0.095, 0.125, 0.085, 0.250, 0.290)),
-    (:extra_heavy,  18.0, 3.60, (0.010, 0.030, 0.070, 0.080, 0.110, 0.080, 0.240, 0.380)),
+    (:condensate, 50.0, 0.05, (0.060, 0.230, 0.300, 0.180, 0.130, 0.050, 0.045, 0.005)),
+    (:light_sweet, 39.0, 0.25, (0.030, 0.100, 0.170, 0.140, 0.150, 0.090, 0.230, 0.090)),
+    (:medium_sour, 32.0, 1.60, (0.022, 0.070, 0.135, 0.125, 0.145, 0.093, 0.250, 0.160)),
+    (:heavy_sour, 24.0, 2.90, (0.015, 0.045, 0.095, 0.095, 0.125, 0.085, 0.250, 0.290)),
+    (:extra_heavy, 18.0, 3.60, (0.010, 0.030, 0.070, 0.080, 0.110, 0.080, 0.240, 0.380)),
 )
 
 # ---------------------------------------------------------------------------
@@ -145,7 +146,7 @@ const _PP_CRUDE_ARCHETYPES = (
 """One operating mode of a process unit: an output slate, a capacity de-rate, and a cost factor."""
 struct PPModeTemplate
     name::Symbol
-    yields::Vector{Pair{Symbol,Float64}}
+    yields::Vector{Pair{Symbol, Float64}}
     capacity_factor::Float64
     cost_factor::Float64
 end
@@ -168,74 +169,211 @@ struct PPUnitTemplate
 end
 
 const _PP_UNIT_TEMPLATES = PPUnitTemplate[
-    PPUnitTemplate(:naphtha_ht, 2, [:heavy_naphtha, :coker_naphtha],
+    PPUnitTemplate(
+        :naphtha_ht,
+        2,
+        [:heavy_naphtha, :coker_naphtha],
         [PPModeTemplate(:standard, [:treated_naphtha => 0.985, :fuel_gas => 0.015], 1.0, 1.0)],
-        0.20, 0.55),
-    PPUnitTemplate(:isomerization, 1, [:light_naphtha],
+        0.20,
+        0.55,
+    ),
+    PPUnitTemplate(
+        :isomerization,
+        1,
+        [:light_naphtha],
         [PPModeTemplate(:standard, [:isomerate => 0.970, :fuel_gas => 0.030], 1.0, 1.0)],
-        0.08, 1.10),
-    PPUnitTemplate(:kero_ht, 1, [:kerosene],
+        0.08,
+        1.10,
+    ),
+    PPUnitTemplate(
+        :kero_ht,
+        1,
+        [:kerosene],
         [PPModeTemplate(:standard, [:jet_component => 0.995, :fuel_gas => 0.005], 1.0, 1.0)],
-        0.14, 0.90),
-    PPUnitTemplate(:vgo_ht, 1, [:vgo],
+        0.14,
+        0.90,
+    ),
+    PPUnitTemplate(
+        :vgo_ht,
+        1,
+        [:vgo],
         [PPModeTemplate(:standard, [:treated_vgo => 0.990, :fuel_gas => 0.010], 1.0, 1.0)],
-        0.22, 1.40),
-    PPUnitTemplate(:resid_ht, 1, [:resid],
+        0.22,
+        1.40,
+    ),
+    PPUnitTemplate(
+        :resid_ht,
+        1,
+        [:resid],
         [PPModeTemplate(:standard, [:treated_resid => 0.980, :fuel_gas => 0.020], 1.0, 1.0)],
-        0.12, 2.20),
-    PPUnitTemplate(:coker, 1, [:resid],
-        [PPModeTemplate(:fuel_grade,
-            [:coker_naphtha => 0.140, :coker_gasoil => 0.500, :coke => 0.200,
-             :lpg => 0.050, :fuel_gas => 0.060], 1.0, 1.0),
-         PPModeTemplate(:anode_grade,
-            [:coker_naphtha => 0.120, :coker_gasoil => 0.470, :coke => 0.250,
-             :lpg => 0.040, :fuel_gas => 0.060], 0.92, 1.08)],
-        0.16, 3.90),
-    PPUnitTemplate(:reformer, 3, [:treated_naphtha],
-        [PPModeTemplate(:mid_severity,
-            [:reformate_mid => 0.845, :lpg => 0.085, :fuel_gas => 0.070], 1.0, 1.0),
-         PPModeTemplate(:high_severity,
-            [:reformate_high => 0.780, :lpg => 0.130, :fuel_gas => 0.090], 0.95, 1.15)],
-        0.18, 2.00),
-    PPUnitTemplate(:fcc, 2, [:vgo, :treated_vgo, :coker_gasoil],
-        [PPModeTemplate(:max_gasoline,
-            [:fcc_gasoline => 0.570, :lco => 0.160, :slurry => 0.070,
-             :lpg => 0.240, :fuel_gas => 0.040], 1.0, 1.0),
-         PPModeTemplate(:max_distillate,
-            [:fcc_gasoline => 0.440, :lco => 0.300, :slurry => 0.090,
-             :lpg => 0.170, :fuel_gas => 0.035], 0.97, 0.98),
-         PPModeTemplate(:max_olefins,
-            [:fcc_gasoline => 0.470, :lco => 0.150, :slurry => 0.070,
-             :lpg => 0.330, :fuel_gas => 0.060], 0.93, 1.12)],
-        0.32, 3.40),
-    PPUnitTemplate(:hydrocracker, 2, [:vgo, :treated_vgo, :coker_gasoil],
-        [PPModeTemplate(:max_diesel,
-            [:hc_naphtha => 0.150, :hc_kero => 0.200, :hc_diesel => 0.700,
-             :lpg => 0.050], 1.0, 1.0),
-         PPModeTemplate(:max_jet,
-            [:hc_naphtha => 0.170, :hc_kero => 0.450, :hc_diesel => 0.420,
-             :lpg => 0.060], 0.98, 1.05),
-         PPModeTemplate(:max_naphtha,
-            [:hc_naphtha => 0.550, :hc_kero => 0.250, :hc_diesel => 0.220,
-             :lpg => 0.120], 0.94, 1.10)],
-        0.18, 4.80),
-    PPUnitTemplate(:diesel_ht, 3, [:distillate, :gasoil, :lco, :coker_gasoil],
-        [PPModeTemplate(:ulsd, [:ulsd_component => 0.980, :fuel_gas => 0.020], 1.0, 1.0),
-         PPModeTemplate(:mild, [:gasoil_treated => 0.990, :fuel_gas => 0.010], 1.12, 0.72)],
-        0.30, 1.60),
-    PPUnitTemplate(:alkylation, 4, [:lpg],
+        0.12,
+        2.20,
+    ),
+    PPUnitTemplate(
+        :coker,
+        1,
+        [:resid],
+        [
+            PPModeTemplate(
+                :fuel_grade,
+                [
+                    :coker_naphtha => 0.140,
+                    :coker_gasoil => 0.500,
+                    :coke => 0.200,
+                    :lpg => 0.050,
+                    :fuel_gas => 0.060,
+                ],
+                1.0,
+                1.0,
+            ),
+            PPModeTemplate(
+                :anode_grade,
+                [
+                    :coker_naphtha => 0.120,
+                    :coker_gasoil => 0.470,
+                    :coke => 0.250,
+                    :lpg => 0.040,
+                    :fuel_gas => 0.060,
+                ],
+                0.92,
+                1.08,
+            ),
+        ],
+        0.16,
+        3.90,
+    ),
+    PPUnitTemplate(
+        :reformer,
+        3,
+        [:treated_naphtha],
+        [
+            PPModeTemplate(
+                :mid_severity,
+                [:reformate_mid => 0.845, :lpg => 0.085, :fuel_gas => 0.070],
+                1.0,
+                1.0,
+            ),
+            PPModeTemplate(
+                :high_severity,
+                [:reformate_high => 0.780, :lpg => 0.130, :fuel_gas => 0.090],
+                0.95,
+                1.15,
+            ),
+        ],
+        0.18,
+        2.00,
+    ),
+    PPUnitTemplate(
+        :fcc,
+        2,
+        [:vgo, :treated_vgo, :coker_gasoil],
+        [
+            PPModeTemplate(
+                :max_gasoline,
+                [
+                    :fcc_gasoline => 0.570,
+                    :lco => 0.160,
+                    :slurry => 0.070,
+                    :lpg => 0.240,
+                    :fuel_gas => 0.040,
+                ],
+                1.0,
+                1.0,
+            ),
+            PPModeTemplate(
+                :max_distillate,
+                [
+                    :fcc_gasoline => 0.440,
+                    :lco => 0.300,
+                    :slurry => 0.090,
+                    :lpg => 0.170,
+                    :fuel_gas => 0.035,
+                ],
+                0.97,
+                0.98,
+            ),
+            PPModeTemplate(
+                :max_olefins,
+                [
+                    :fcc_gasoline => 0.470,
+                    :lco => 0.150,
+                    :slurry => 0.070,
+                    :lpg => 0.330,
+                    :fuel_gas => 0.060,
+                ],
+                0.93,
+                1.12,
+            ),
+        ],
+        0.32,
+        3.40,
+    ),
+    PPUnitTemplate(
+        :hydrocracker,
+        2,
+        [:vgo, :treated_vgo, :coker_gasoil],
+        [
+            PPModeTemplate(
+                :max_diesel,
+                [:hc_naphtha => 0.150, :hc_kero => 0.200, :hc_diesel => 0.700, :lpg => 0.050],
+                1.0,
+                1.0,
+            ),
+            PPModeTemplate(
+                :max_jet,
+                [:hc_naphtha => 0.170, :hc_kero => 0.450, :hc_diesel => 0.420, :lpg => 0.060],
+                0.98,
+                1.05,
+            ),
+            PPModeTemplate(
+                :max_naphtha,
+                [:hc_naphtha => 0.550, :hc_kero => 0.250, :hc_diesel => 0.220, :lpg => 0.120],
+                0.94,
+                1.10,
+            ),
+        ],
+        0.18,
+        4.80,
+    ),
+    PPUnitTemplate(
+        :diesel_ht,
+        3,
+        [:distillate, :gasoil, :lco, :coker_gasoil],
+        [
+            PPModeTemplate(:ulsd, [:ulsd_component => 0.980, :fuel_gas => 0.020], 1.0, 1.0),
+            PPModeTemplate(:mild, [:gasoil_treated => 0.990, :fuel_gas => 0.010], 1.12, 0.72),
+        ],
+        0.30,
+        1.60,
+    ),
+    PPUnitTemplate(
+        :alkylation,
+        4,
+        [:lpg],
         [PPModeTemplate(:standard, [:alkylate => 0.620, :fuel_gas => 0.050], 1.0, 1.0)],
-        0.07, 5.50),
+        0.07,
+        5.50,
+    ),
 ]
 
 """Units a level adds on top of a bare topping refinery."""
 const _PP_LEVEL_UNITS = (
     Symbol[],
     [:naphtha_ht, :reformer, :kero_ht, :diesel_ht],
-    [:naphtha_ht, :reformer, :kero_ht, :diesel_ht, :isomerization, :vgo_ht, :fcc,
-     :alkylation],
-    [:naphtha_ht, :reformer, :kero_ht, :diesel_ht, :isomerization, :vgo_ht, :fcc,
-     :alkylation, :coker, :hydrocracker, :resid_ht],
+    [:naphtha_ht, :reformer, :kero_ht, :diesel_ht, :isomerization, :vgo_ht, :fcc, :alkylation],
+    [
+        :naphtha_ht,
+        :reformer,
+        :kero_ht,
+        :diesel_ht,
+        :isomerization,
+        :vgo_ht,
+        :fcc,
+        :alkylation,
+        :coker,
+        :hydrocracker,
+        :resid_ht,
+    ],
 )
 
 """
@@ -246,8 +384,9 @@ stating a turndown for it needs a run indicator (see `mode_switching`).
 const _PP_CONTINUOUS_UNITS = (:naphtha_ht, :kero_ht, :vgo_ht, :diesel_ht, :resid_ht)
 
 """Units that may be dropped from a level without leaving an implausible refinery."""
-const _PP_OPTIONAL_UNITS = (:isomerization, :vgo_ht, :alkylation, :resid_ht,
-                            :hydrocracker, :kero_ht)
+const _PP_OPTIONAL_UNITS = (
+    :isomerization, :vgo_ht, :alkylation, :resid_ht, :hydrocracker, :kero_ht
+)
 
 # ---------------------------------------------------------------------------
 # Finished product catalog
@@ -260,70 +399,126 @@ reference price (\$/bbl) and the share of refinery output it typically takes.
 struct PPProductTemplate
     key::Symbol
     component_classes::Vector{Symbol}
-    spec_min::Vector{Pair{Int,Float64}}
-    spec_max::Vector{Pair{Int,Float64}}
+    spec_min::Vector{Pair{Int, Float64}}
+    spec_max::Vector{Pair{Int, Float64}}
     price::Float64
     demand_share::Float64
 end
 
 const _PP_PRODUCT_TEMPLATES = PPProductTemplate[
-    PPProductTemplate(:regular_gasoline,
-        [:light_naphtha, :isomerate, :reformate_mid, :reformate_high,
-         :fcc_gasoline, :alkylate, :hc_naphtha, :butane, :ethanol, :mtbe],
+    PPProductTemplate(
+        :regular_gasoline,
+        [
+            :light_naphtha,
+            :isomerate,
+            :reformate_mid,
+            :reformate_high,
+            :fcc_gasoline,
+            :alkylate,
+            :hc_naphtha,
+            :butane,
+            :ethanol,
+            :mtbe,
+        ],
         [PP_Q_RON => 91.0, PP_Q_MON => 82.5, PP_Q_DENSITY => 0.720],
-        [PP_Q_RVP => 9.0, PP_Q_SULFUR => 10.0, PP_Q_AROMATICS => 35.0,
-         PP_Q_DENSITY => 0.775],
-         95.0, 0.28),
-    PPProductTemplate(:premium_gasoline,
-        [:light_naphtha, :isomerate, :reformate_mid, :reformate_high,
-         :fcc_gasoline, :alkylate, :hc_naphtha, :butane, :ethanol, :mtbe],
+        [PP_Q_RVP => 9.0, PP_Q_SULFUR => 10.0, PP_Q_AROMATICS => 35.0, PP_Q_DENSITY => 0.775],
+        95.0,
+        0.28,
+    ),
+    PPProductTemplate(
+        :premium_gasoline,
+        [
+            :light_naphtha,
+            :isomerate,
+            :reformate_mid,
+            :reformate_high,
+            :fcc_gasoline,
+            :alkylate,
+            :hc_naphtha,
+            :butane,
+            :ethanol,
+            :mtbe,
+        ],
         [PP_Q_RON => 95.0, PP_Q_MON => 85.0, PP_Q_DENSITY => 0.720],
-        [PP_Q_RVP => 9.0, PP_Q_SULFUR => 10.0, PP_Q_AROMATICS => 35.0,
-         PP_Q_DENSITY => 0.775],
-        105.0, 0.09),
-    PPProductTemplate(:jet_a1,
+        [PP_Q_RVP => 9.0, PP_Q_SULFUR => 10.0, PP_Q_AROMATICS => 35.0, PP_Q_DENSITY => 0.775],
+        105.0,
+        0.09,
+    ),
+    PPProductTemplate(
+        :jet_a1,
         [:kerosene, :jet_component, :hc_kero],
         [PP_Q_DENSITY => 0.775],
-        [PP_Q_SULFUR => 3000.0, PP_Q_AROMATICS => 25.0, PP_Q_COLD_FLOW => -47.0,
-         PP_Q_DENSITY => 0.840],
-        100.0, 0.11),
-    PPProductTemplate(:ulsd,
+        [
+            PP_Q_SULFUR => 3000.0,
+            PP_Q_AROMATICS => 25.0,
+            PP_Q_COLD_FLOW => -47.0,
+            PP_Q_DENSITY => 0.840,
+        ],
+        100.0,
+        0.11,
+    ),
+    PPProductTemplate(
+        :ulsd,
         [:ulsd_component, :hc_diesel, :hc_kero, :jet_component],
         [PP_Q_CETANE => 51.0, PP_Q_DENSITY => 0.820],
         [PP_Q_SULFUR => 10.0, PP_Q_DENSITY => 0.845, PP_Q_COLD_FLOW => -5.0],
-        102.0, 0.27),
-    PPProductTemplate(:heating_gasoil,
-        [:distillate, :gasoil, :kerosene, :ulsd_component, :gasoil_treated,
-         :hc_diesel, :lco],
+        102.0,
+        0.27,
+    ),
+    PPProductTemplate(
+        :heating_gasoil,
+        [:distillate, :gasoil, :kerosene, :ulsd_component, :gasoil_treated, :hc_diesel, :lco],
         [PP_Q_CETANE => 40.0],
         [PP_Q_SULFUR => 1000.0, PP_Q_DENSITY => 0.900],
-        90.0, 0.08),
-    PPProductTemplate(:fuel_oil,
-        [:resid, :treated_resid, :slurry, :lco, :gasoil, :coker_gasoil,
-         :distillate],
-        Pair{Int,Float64}[],
+        90.0,
+        0.08,
+    ),
+    PPProductTemplate(
+        :fuel_oil,
+        [:resid, :treated_resid, :slurry, :lco, :gasoil, :coker_gasoil, :distillate],
+        Pair{Int, Float64}[],
         [PP_Q_SULFUR => 5000.0, PP_Q_DENSITY => 0.991, PP_Q_VISCOSITY => 36.9],
-        58.0, 0.12),
-    PPProductTemplate(:lpg_product,
-        [:lpg_cut, :lpg],
-        Pair{Int,Float64}[],
-        [PP_Q_SULFUR => 200.0],
-        45.0, 0.03),
-    PPProductTemplate(:petcoke,
-        [:coke],
-        Pair{Int,Float64}[],
-        [PP_Q_SULFUR => 40000.0],
-        10.0, 0.02),
+        58.0,
+        0.12,
+    ),
+    PPProductTemplate(
+        :lpg_product, [:lpg_cut, :lpg], Pair{Int, Float64}[], [PP_Q_SULFUR => 200.0], 45.0, 0.03
+    ),
+    PPProductTemplate(
+        :petcoke, [:coke], Pair{Int, Float64}[], [PP_Q_SULFUR => 40000.0], 10.0, 0.02
+    ),
 ]
 
 const _PP_LEVEL_PRODUCTS = (
     [:regular_gasoline, :heating_gasoil, :fuel_oil],
-    [:regular_gasoline, :premium_gasoline, :jet_a1, :ulsd, :heating_gasoil,
-     :fuel_oil, :lpg_product],
-    [:regular_gasoline, :premium_gasoline, :jet_a1, :ulsd, :heating_gasoil,
-     :fuel_oil, :lpg_product],
-    [:regular_gasoline, :premium_gasoline, :jet_a1, :ulsd, :heating_gasoil,
-     :fuel_oil, :lpg_product, :petcoke],
+    [
+        :regular_gasoline,
+        :premium_gasoline,
+        :jet_a1,
+        :ulsd,
+        :heating_gasoil,
+        :fuel_oil,
+        :lpg_product,
+    ],
+    [
+        :regular_gasoline,
+        :premium_gasoline,
+        :jet_a1,
+        :ulsd,
+        :heating_gasoil,
+        :fuel_oil,
+        :lpg_product,
+    ],
+    [
+        :regular_gasoline,
+        :premium_gasoline,
+        :jet_a1,
+        :ulsd,
+        :heating_gasoil,
+        :fuel_oil,
+        :lpg_product,
+        :petcoke,
+    ],
 )
 
 """Purchased blendstocks, with purchase cost in \$/bbl."""
@@ -335,9 +530,7 @@ Spot value in \$/bbl of the streams that trade well below finished-product value
 (refinery fuel, LPG, petcoke, bunker cutter stock). Every other stream is priced
 at a discount to the cheapest grade it could have gone into.
 """
-const _PP_SPOT_PRICE = (
-    fuel_gas = 22.0, lpg = 46.0, lpg_cut = 46.0, coke = 11.0, slurry = 38.0,
-)
+const _PP_SPOT_PRICE = (fuel_gas=22.0, lpg=46.0, lpg_cut=46.0, coke=11.0, slurry=38.0)
 
 """Classes with no tankage in a planning model (gas and solids)."""
 const _PP_NON_STORABLE = (:fuel_gas, :coke)
@@ -397,7 +590,7 @@ struct PPSkeleton
     unit_modes::Vector{Vector{Symbol}}
     unit_feeds::Vector{Vector{Int}}
     unit_outputs::Vector{Vector{Int}}
-    unit_mode_yields::Vector{Vector{Vector{Pair{Int,Float64}}}}
+    unit_mode_yields::Vector{Vector{Vector{Pair{Int, Float64}}}}
     product_keys::Vector{Symbol}
     product_components::Vector{Vector{Int}}
     storable::Vector{Int}
@@ -422,8 +615,7 @@ With `single_mode=true` each unit is fixed to one randomly chosen operating mode
 which is what makes the `refinery` variant a pure LP: only that mode's product
 streams are instantiated.
 """
-function _pp_structure(rng::AbstractRNG, target::Int, level::Int;
-                       single_mode::Bool=false)
+function _pp_structure(rng::AbstractRNG, target::Int, level::Int; single_mode::Bool=false)
     scale = log10(max(target, 10))
     slate_low = target < 90 ? 1 : (target < 200 ? 2 : (target < 600 ? 3 : 4))
     slate_high = target < 200 ? 3 : 4
@@ -440,9 +632,14 @@ function _pp_structure(rng::AbstractRNG, target::Int, level::Int;
         count = key in (:fcc, :diesel_ht, :naphtha_ht) ? trains : 1
         for _ in 1:count
             push!(unit_keys, key)
-            push!(unit_modes, single_mode ?
-                  [template.modes[rand(rng, 1:length(template.modes))].name] :
-                  [m.name for m in template.modes])
+            push!(
+                unit_modes,
+                if single_mode
+                    [template.modes[rand(rng, 1:length(template.modes))].name]
+                else
+                    [m.name for m in template.modes]
+                end,
+            )
         end
     end
 
@@ -450,8 +647,7 @@ function _pp_structure(rng::AbstractRNG, target::Int, level::Int;
     product_keys = Symbol[]
     # A very small request cannot carry a full grade slate; keep the two largest
     # pools (a gasoline and a distillate) and drop the rest.
-    slate = target < 90 ? _PP_LEVEL_PRODUCTS[level][1:min(2, end)] :
-            _PP_LEVEL_PRODUCTS[level]
+    slate = target < 90 ? _PP_LEVEL_PRODUCTS[level][1:min(2, end)] : _PP_LEVEL_PRODUCTS[level]
     for key in slate
         template = _pp_product_template(key)
         grades = 1 + (rand(rng) < 0.6 ? rand(rng, 0:grade_extra) : 0)
@@ -472,8 +668,7 @@ function _pp_structure(rng::AbstractRNG, target::Int, level::Int;
         push!(purchase_classes, :butane)
     end
 
-    return PPStructure(level, cut_classes, unit_keys, unit_modes, product_keys,
-                       purchase_classes)
+    return PPStructure(level, cut_classes, unit_keys, unit_modes, product_keys, purchase_classes)
 end
 
 """
@@ -539,7 +734,7 @@ function _pp_realize(structure::PPStructure, n_crudes::Int)
         cut_stream[c, k] = length(stream_classes)
     end
 
-    class_index = Dict{Symbol,Int}()
+    class_index = Dict{Symbol, Int}()
     # A stream's stage is the *latest* stage that can make it, so the forward
     # plan only allocates it once every producer has run. The unit catalog keeps
     # every feed strictly below its consumer's stage under this rule, which is
@@ -558,15 +753,15 @@ function _pp_realize(structure::PPStructure, n_crudes::Int)
     end
 
     purchasable = [_stream_for_class(cls, 0) for cls in structure.purchase_classes]
-    unit_mode_yields = Vector{Vector{Pair{Int,Float64}}}[]
+    unit_mode_yields = Vector{Vector{Pair{Int, Float64}}}[]
     unit_outputs = Vector{Int}[]
     for i in eachindex(unit_keys)
         template = _pp_unit_template(unit_keys[i])
-        mode_yields = Vector{Pair{Int,Float64}}[]
+        mode_yields = Vector{Pair{Int, Float64}}[]
         outputs = Int[]
         for mode_name in unit_modes[i]
             mode = template.modes[findfirst(x -> x.name == mode_name, template.modes)]
-            pairs = Pair{Int,Float64}[]
+            pairs = Pair{Int, Float64}[]
             for (cls, y) in mode.yields
                 s = _stream_for_class(cls, template.stage)
                 push!(pairs, s => y)
@@ -579,7 +774,7 @@ function _pp_realize(structure::PPStructure, n_crudes::Int)
     end
 
     # Feed sets: every instantiated stream of an admissible class made earlier.
-    class_members = Dict{Symbol,Vector{Int}}()
+    class_members = Dict{Symbol, Vector{Int}}()
     for (s, class) in enumerate(stream_classes)
         push!(get!(class_members, class, Int[]), s)
     end
@@ -606,8 +801,7 @@ function _pp_realize(structure::PPStructure, n_crudes::Int)
         push!(product_components, sort!(comps))
     end
 
-    storable = [s for s in eachindex(stream_classes)
-                if !(stream_classes[s] in _PP_NON_STORABLE)]
+    storable = [s for s in eachindex(stream_classes) if !(stream_classes[s] in _PP_NON_STORABLE)]
 
     # Outside markets exist for bulk cuts and refinery by-products, but not for
     # every upgraded blend component.  Giving reformate, alkylate, hydrotreated
@@ -615,10 +809,21 @@ function _pp_realize(structure::PPStructure, n_crudes::Int)
     # choices artificially easy.  A stream with no process or blend sink still
     # receives a disposal/merchant outlet so the generated graph has no dead
     # nodes; purchased blendstocks are excluded to prevent buy-and-resell loops.
-    merchant_classes = Set((:fuel_gas, :lpg, :lpg_cut, :coke, :slurry,
-                            :light_naphtha, :heavy_naphtha, :kerosene,
-                            :distillate, :gasoil, :vgo, :resid,
-                            :coker_gasoil))
+    merchant_classes = Set((
+        :fuel_gas,
+        :lpg,
+        :lpg_cut,
+        :coke,
+        :slurry,
+        :light_naphtha,
+        :heavy_naphtha,
+        :kerosene,
+        :distillate,
+        :gasoil,
+        :vgo,
+        :resid,
+        :coker_gasoil,
+    ))
     downstream = falses(length(stream_classes))
     for feeds in unit_feeds, s in feeds
         downstream[s] = true
@@ -626,15 +831,30 @@ function _pp_realize(structure::PPStructure, n_crudes::Int)
     for components in product_components, s in components
         downstream[s] = true
     end
-    spot = [s for s in eachindex(stream_classes)
-            if !(s in purchasable) &&
-               (stream_classes[s] in merchant_classes || !downstream[s])]
+    spot = [
+        s for s in eachindex(stream_classes) if
+        !(s in purchasable) && (stream_classes[s] in merchant_classes || !downstream[s])
+    ]
 
-    return PPSkeleton(n_crudes, cut_classes, cut_stream, stream_classes,
-                      stream_crude, stream_stage, unit_keys, unit_stage,
-                      unit_modes, unit_feeds, unit_outputs, unit_mode_yields,
-                      product_keys, product_components, storable, purchasable,
-                      spot)
+    return PPSkeleton(
+        n_crudes,
+        cut_classes,
+        cut_stream,
+        stream_classes,
+        stream_crude,
+        stream_stage,
+        unit_keys,
+        unit_stage,
+        unit_modes,
+        unit_feeds,
+        unit_outputs,
+        unit_mode_yields,
+        product_keys,
+        product_components,
+        storable,
+        purchasable,
+        spot,
+    )
 end
 
 """
@@ -647,8 +867,7 @@ per admissible feed stream plus its throughput. With `mode_vars=true` (the
 `mode_switching` MILP) those are replicated per operating mode and each mode also
 carries a run indicator and a start-up indicator.
 """
-function _pp_variables_per_period(sk::PPSkeleton; mode_vars::Bool,
-                                  extra_variables::Int=0)
+function _pp_variables_per_period(sk::PPSkeleton; mode_vars::Bool, extra_variables::Int=0)
     total = 3 * sk.n_crudes + extra_variables
     for i in 1:n_units(sk)
         feeds = length(sk.unit_feeds[i])
@@ -684,7 +903,14 @@ to the target: measured over 1000 seeds per target, the worst relative error
 across the three callers rises to 16% just above the 200 threshold and is under
 5% from 400 variables up, against the 20% the category contracts for.
 """
-_pp_level_floor(target::Int) = target < 200 ? 1 : target < 900 ? 2 : 3
+_pp_level_floor(target::Int) =
+    if target < 200
+        1
+    elseif target < 900
+        2
+    else
+        3
+    end
 
 """
     _pp_dimensions(rng, target; mode_vars, minimum_level=1,
@@ -709,16 +935,21 @@ score, which cannot carry it: see the note there.
 for small mode/H2 requests. It preserves the defining physical feature without
 forcing the much larger seven-product hydroskimming configuration.
 """
-function _pp_dimensions(rng::AbstractRNG, target::Int; mode_vars::Bool,
-                        minimum_level::Int=1, extra_variables::Int=0,
-                        compact_hydroprocessing::Bool=false)
+function _pp_dimensions(
+    rng::AbstractRNG,
+    target::Int;
+    mode_vars::Bool,
+    minimum_level::Int=1,
+    extra_variables::Int=0,
+    compact_hydroprocessing::Bool=false,
+)
     horizon_pref = clamp(round(Int, 3.0 * log10(max(target, 10))), 4, 26)
     best_structure = nothing
     best_crudes, best_periods = 1, 2
     best_score = (Inf, Inf)
     1 <= minimum_level <= length(_PP_LEVEL_UNITS) ||
         throw(ArgumentError("minimum_level must name a refinery complexity level"))
-    candidates = Tuple{PPStructure,Int}[]
+    candidates = Tuple{PPStructure, Int}[]
     # The ordinary hydroskimming configuration has four conversion units and
     # seven products. At very small targets that alone is too large, but falling
     # back to a topping refinery would make the mode and hydrogen variants
@@ -727,24 +958,29 @@ function _pp_dimensions(rng::AbstractRNG, target::Int; mode_vars::Bool,
     # while retaining enough room for a multi-period horizon.
     if compact_hydroprocessing && target <= 160
         modes = mode_vars ? [:ulsd, :mild] : [:ulsd]
-        push!(candidates,
-              (PPStructure(2, copy(_PP_CUT_SLATES[1]), [:diesel_ht],
-                           [modes], [:heating_gasoil], Symbol[]), 2))
+        push!(
+            candidates,
+            (
+                PPStructure(
+                    2, copy(_PP_CUT_SLATES[1]), [:diesel_ht], [modes], [:heating_gasoil], Symbol[]
+                ),
+                2,
+            ),
+        )
     end
     for level in max(minimum_level, _pp_level_floor(target)):length(_PP_LEVEL_UNITS)
-        push!(candidates,
-              (_pp_structure(rng, target, level; single_mode=!mode_vars), level))
+        push!(candidates, (_pp_structure(rng, target, level; single_mode=(!mode_vars)), level))
     end
     for (structure, level) in candidates
         # The per-period count is exactly affine in the crude count for a fixed
         # structure, so two probes pin it down and the crude count needed for a
         # given horizon follows in closed form.
-        v2 = _pp_variables_per_period(_pp_realize(structure, 2);
-                                      mode_vars=mode_vars,
-                                      extra_variables=extra_variables)
-        v3 = _pp_variables_per_period(_pp_realize(structure, 3);
-                                      mode_vars=mode_vars,
-                                      extra_variables=extra_variables)
+        v2 = _pp_variables_per_period(
+            _pp_realize(structure, 2); mode_vars=mode_vars, extra_variables=extra_variables
+        )
+        v3 = _pp_variables_per_period(
+            _pp_realize(structure, 3); mode_vars=mode_vars, extra_variables=extra_variables
+        )
         slope = max(v3 - v2, 1)
         intercept = v2 - 2 * slope
         # Keep the horizon genuinely multi-period: search from four periods
@@ -754,13 +990,14 @@ function _pp_dimensions(rng::AbstractRNG, target::Int; mode_vars::Bool,
         shortest = min(4, longest)
         for T in shortest:52
             c_star = (target / T - intercept) / slope
-            for C in unique(clamp.(round.(Int, [c_star - 1, c_star, c_star + 1]),
-                                   1, 4000))
+            for C in unique(clamp.(round.(Int, [c_star - 1, c_star, c_star + 1]), 1, 4000))
                 total = (slope * C + intercept) * T
                 err = abs(total - target) / target
-                shape = abs(T - horizon_pref) / 26 + abs(log(C / 6)) / 6 +
-                        0.15 * (length(_PP_LEVEL_UNITS) - level)
-                score = (round(err, digits=3), shape)
+                shape =
+                    abs(T - horizon_pref) / 26 +
+                    abs(log(C / 6)) / 6 +
+                    0.15 * (length(_PP_LEVEL_UNITS) - level)
+                score = (round(err; digits=3), shape)
                 if score < best_score
                     best_score = score
                     best_structure = structure
@@ -850,8 +1087,8 @@ function _pp_build_flowsheet(rng::AbstractRNG, sk::PPSkeleton)
 
     archetype_index = Vector{Int}(undef, C)
     for c in 1:C
-        archetype_index[c] = c <= length(_PP_CRUDE_ARCHETYPES) ?
-                             c : rand(rng, 1:length(_PP_CRUDE_ARCHETYPES))
+        archetype_index[c] =
+            c <= length(_PP_CRUDE_ARCHETYPES) ? c : rand(rng, 1:length(_PP_CRUDE_ARCHETYPES))
     end
     C > 1 && shuffle!(rng, archetype_index)
 
@@ -862,9 +1099,8 @@ function _pp_build_flowsheet(rng::AbstractRNG, sk::PPSkeleton)
     for c in 1:C
         name, api, sulfur, yields = _PP_CRUDE_ARCHETYPES[archetype_index[c]]
         crude_names[c] = Symbol(name, :_, c)
-        crude_api[c] = round(api * rand(rng, Uniform(0.94, 1.06)), digits=1)
-        crude_sulfur[c] = round(max(0.01, sulfur * rand(rng, Uniform(0.75, 1.30))),
-                                digits=3)
+        crude_api[c] = round(api * rand(rng, Uniform(0.94, 1.06)); digits=1)
+        crude_sulfur[c] = round(max(0.01, sulfur * rand(rng, Uniform(0.75, 1.30))); digits=3)
         # Lump the full assay onto the instance's cut slate, then perturb. A cut
         # the slate carries keeps its own yield; one it does not is folded into
         # its neighbour (light ends into light naphtha, gas oil into distillate,
@@ -881,8 +1117,7 @@ function _pp_build_flowsheet(rng::AbstractRNG, sk::PPSkeleton)
             idx === nothing && (idx = n_cuts)
             lumped[idx] += yields[k]
         end
-        noisy = [max(1e-3, lumped[k] * rand(rng, Uniform(0.88, 1.12)))
-                 for k in 1:n_cuts]
+        noisy = [max(1e-3, lumped[k] * rand(rng, Uniform(0.88, 1.12))) for k in 1:n_cuts]
         cut_yields[c, :] .= noisy ./ sum(noisy)
     end
 
@@ -925,14 +1160,13 @@ function _pp_build_flowsheet(rng::AbstractRNG, sk::PPSkeleton)
     end
 
     units = RefineryUnit[]
-    train_count = Dict{Symbol,Int}()
+    train_count = Dict{Symbol, Int}()
     for i in eachindex(sk.unit_keys)
         key = sk.unit_keys[i]
         template = _pp_unit_template(key)
         train = get(train_count, key, 0) + 1
         train_count[key] = train
-        name = train == 1 && count(==(key), sk.unit_keys) == 1 ? key :
-               Symbol(key, :_, train)
+        name = train == 1 && count(==(key), sk.unit_keys) == 1 ? key : Symbol(key, :_, train)
         feeds = sk.unit_feeds[i]
         outputs = sk.unit_outputs[i]
         modes = RefineryUnitMode[]
@@ -949,29 +1183,38 @@ function _pp_build_flowsheet(rng::AbstractRNG, sk::PPSkeleton)
                 # total volumetric yield is preserved.
                 density = qualities[stream, PP_Q_DENSITY]
                 tilt = clamp(1.0 + (0.90 - density) * 0.35, 0.90, 1.10)
-                row = [base[o] * (o <= length(outputs) ÷ 2 ? tilt : 2.0 - tilt) *
-                       rand(rng, Uniform(0.96, 1.04)) for o in eachindex(outputs)]
+                row = [
+                    base[o] *
+                    (o <= length(outputs) ÷ 2 ? tilt : 2.0 - tilt) *
+                    rand(rng, Uniform(0.96, 1.04)) for o in eachindex(outputs)
+                ]
                 scale = total / max(sum(row), 1e-9)
                 yields[f, :] .= row .* scale
             end
-            push!(modes, RefineryUnitMode(mode_name, yields, mode.capacity_factor,
-                                          round(template.operating_cost *
-                                                mode.cost_factor *
-                                                rand(rng, Uniform(0.85, 1.15)),
-                                                digits=3)))
+            push!(
+                modes,
+                RefineryUnitMode(
+                    mode_name,
+                    yields,
+                    mode.capacity_factor,
+                    round(
+                        template.operating_cost * mode.cost_factor * rand(rng, Uniform(0.85, 1.15));
+                        digits=3,
+                    ),
+                ),
+            )
         end
         push!(units, RefineryUnit(name, key, template.stage, feeds, outputs, modes))
     end
 
     products = RefineryProduct[]
-    grade_count = Dict{Symbol,Int}()
+    grade_count = Dict{Symbol, Int}()
     for i in eachindex(sk.product_keys)
         key = sk.product_keys[i]
         template = _pp_product_template(key)
         grade = get(grade_count, key, 0) + 1
         grade_count[key] = grade
-        name = grade == 1 && count(==(key), sk.product_keys) == 1 ? key :
-               Symbol(key, :_, grade)
+        name = grade == 1 && count(==(key), sk.product_keys) == 1 ? key : Symbol(key, :_, grade)
         spec_min = fill(-Inf, PP_N_QUALITIES)
         spec_max = fill(Inf, PP_N_QUALITIES)
         for (q, bound) in template.spec_min
@@ -987,15 +1230,28 @@ function _pp_build_flowsheet(rng::AbstractRNG, sk::PPSkeleton)
                 isfinite(spec_max[q]) && (spec_max[q] *= 1.0 - 0.01 * (grade - 1))
             end
         end
-        push!(products, RefineryProduct(name, key, sk.product_components[i],
-                                        spec_min, spec_max))
+        push!(products, RefineryProduct(name, key, sk.product_components[i], spec_min, spec_max))
     end
 
-    return RefineryFlowsheet(C, crude_names, crude_api, crude_sulfur, cuts,
-                             cut_yields, sk.cut_stream, stream_names,
-                             sk.stream_classes, sk.stream_crude, sk.stream_stage,
-                             qualities, units, products, sk.storable,
-                             sk.purchasable, sk.spot)
+    return RefineryFlowsheet(
+        C,
+        crude_names,
+        crude_api,
+        crude_sulfur,
+        cuts,
+        cut_yields,
+        sk.cut_stream,
+        stream_names,
+        sk.stream_classes,
+        sk.stream_crude,
+        sk.stream_stage,
+        qualities,
+        units,
+        products,
+        sk.storable,
+        sk.purchasable,
+        sk.spot,
+    )
 end
 
 # ---------------------------------------------------------------------------
@@ -1126,17 +1382,21 @@ function _pp_yield_potential(fs::RefineryFlowsheet)
             for (f, s) in enumerate(unit.feeds)
                 value = 0.0
                 for mode in unit.modes
-                    mode_value = sum(mode.yields[f, o] * potential[unit.outputs[o]]
-                                     for o in eachindex(unit.outputs))
+                    mode_value = sum(
+                        mode.yields[f, o] * potential[unit.outputs[o]] for
+                        o in eachindex(unit.outputs)
+                    )
                     value = max(value, mode_value)
                 end
                 potential[s] = max(potential[s], value)
             end
         end
     end
-    crude_potential = [sum(fs.cut_yields[c, k] * potential[fs.cut_stream[c, k]]
-                           for k in eachindex(fs.cut_classes))
-                       for c in 1:fs.n_crudes]
+    crude_potential = [
+        sum(
+            fs.cut_yields[c, k] * potential[fs.cut_stream[c, k]] for k in eachindex(fs.cut_classes)
+        ) for c in 1:fs.n_crudes
+    ]
     return potential, crude_potential
 end
 
@@ -1150,9 +1410,11 @@ blendstock, and of everything already in the tanks when the horizon opens.
 """
 function _pp_production_bound(fs::RefineryFlowsheet, data::ProcessPlanData)
     potential, crude_potential = _pp_yield_potential(fs)
-    supply = sum(crude_potential[c] * (sum(view(data.crude_availability, c, :)) +
-                                       data.crude_initial_inventory[c])
-                 for c in 1:fs.n_crudes)
+    supply = sum(
+        crude_potential[c] *
+        (sum(view(data.crude_availability, c, :)) + data.crude_initial_inventory[c]) for
+        c in 1:fs.n_crudes
+    )
     charge = maximum(crude_potential) * sum(data.cdu_capacity)
     bound = min(supply, charge)
     for s in fs.purchasable
@@ -1183,11 +1445,16 @@ rather than approximately. The result is a feasible point for any capacity, tank
 availability and demand window at least as wide as the plan's own usage, provided
 the opening inventories are the ones passed in here.
 """
-function _pp_operating_plan(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
-                            charge::Vector{Float64}, mode_choice::Matrix{Int},
-                            crude_opening::Vector{Float64},
-                            stream_opening::Vector{Float64},
-                            product_opening::Vector{Float64})
+function _pp_operating_plan(
+    rng::AbstractRNG,
+    fs::RefineryFlowsheet,
+    T::Int,
+    charge::Vector{Float64},
+    mode_choice::Matrix{Int},
+    crude_opening::Vector{Float64},
+    stream_opening::Vector{Float64},
+    product_opening::Vector{Float64},
+)
     C = fs.n_crudes
     S = n_streams(fs)
     U = n_units(fs)
@@ -1195,31 +1462,33 @@ function _pp_operating_plan(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
 
     share = rand(rng, Dirichlet(fill(2.5, C)))
     crude_hold = [rand(rng, Uniform(0.02, 0.22)) for _ in 1:C]
-    stream_hold = [fs.stream_classes[s] in _PP_NON_STORABLE ? 0.0 :
-                   rand(rng, Uniform(0.0, 0.14)) for s in 1:S]
+    stream_hold = [
+        fs.stream_classes[s] in _PP_NON_STORABLE ? 0.0 : rand(rng, Uniform(0.0, 0.14)) for s in 1:S
+    ]
     product_hold = [rand(rng, Uniform(0.0, 0.18)) for _ in 1:P]
     purchase_rate = Dict(s => rand(rng, Uniform(0.004, 0.030)) for s in fs.purchasable)
 
     # Sinks of each stream, in a fixed order: units, then products, then spot.
-    unit_sinks = [Tuple{Int,Int}[] for _ in 1:S]
+    unit_sinks = [Tuple{Int, Int}[] for _ in 1:S]
     for u in 1:U, (f, s) in enumerate(fs.units[u].feeds)
         push!(unit_sinks[s], (u, f))
     end
-    product_sinks = [Tuple{Int,Int}[] for _ in 1:S]
+    product_sinks = [Tuple{Int, Int}[] for _ in 1:S]
     for p in 1:P, (b, s) in enumerate(fs.products[p].components)
         push!(product_sinks[s], (p, b))
     end
     weights = Vector{Vector{Float64}}(undef, S)
     for s in 1:S
-        n_sink = length(unit_sinks[s]) + length(product_sinks[s]) +
-                 (s in fs.spot ? 1 : 0)
+        n_sink = length(unit_sinks[s]) + length(product_sinks[s]) + (s in fs.spot ? 1 : 0)
         if n_sink == 0
             weights[s] = Float64[]
             continue
         end
-        alpha = vcat(fill(3.0, length(unit_sinks[s])),
-                     fill(1.6, length(product_sinks[s])),
-                     s in fs.spot ? [0.7] : Float64[])
+        alpha = vcat(
+            fill(3.0, length(unit_sinks[s])),
+            fill(1.6, length(product_sinks[s])),
+            s in fs.spot ? [0.7] : Float64[],
+        )
         weights[s] = rand(rng, Dirichlet(alpha))
     end
 
@@ -1236,13 +1505,14 @@ function _pp_operating_plan(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
 
     # Walk every stage from the crude cuts up, so a stream is allocated only
     # after all of its producers have run and each unit sees its complete feed.
-    max_stage = max(maximum(fs.stream_stage),
-                    U == 0 ? 0 : maximum(fs.units[u].stage for u in 1:U))
+    max_stage = max(maximum(fs.stream_stage), U == 0 ? 0 : maximum(fs.units[u].stage for u in 1:U))
     stages = 0:max_stage
-    streams_by_stage = Dict(stage => [s for s in 1:S if fs.stream_stage[s] == stage]
-                            for stage in stages)
-    units_by_stage = Dict(stage => [u for u in 1:U if fs.units[u].stage == stage]
-                          for stage in stages)
+    streams_by_stage = Dict(
+        stage => [s for s in 1:S if fs.stream_stage[s] == stage] for stage in stages
+    )
+    units_by_stage = Dict(
+        stage => [u for u in 1:U if fs.units[u].stage == stage] for stage in stages
+    )
 
     production = zeros(Float64, S)
     for t in 1:T
@@ -1274,8 +1544,7 @@ function _pp_operating_plan(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
                 held = stream_hold[s] * available
                 stream_inventory[s, t] = held
                 remaining = available - held
-                sinks = length(unit_sinks[s]) + length(product_sinks[s]) +
-                        (s in fs.spot ? 1 : 0)
+                sinks = length(unit_sinks[s]) + length(product_sinks[s]) + (s in fs.spot ? 1 : 0)
                 if sinks == 0
                     # Nothing can take this stream: bank it instead of losing it.
                     stream_inventory[s, t] = available
@@ -1285,15 +1554,13 @@ function _pp_operating_plan(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
                 index = 0
                 for (u, f) in unit_sinks[s]
                     index += 1
-                    amount = index == sinks ? remaining - assigned :
-                             weights[s][index] * remaining
+                    amount = index == sinks ? remaining - assigned : weights[s][index] * remaining
                     unit_feed[u][f, t] = amount
                     assigned += amount
                 end
                 for (p, b) in product_sinks[s]
                     index += 1
-                    amount = index == sinks ? remaining - assigned :
-                             weights[s][index] * remaining
+                    amount = index == sinks ? remaining - assigned : weights[s][index] * remaining
                     blend[p][b, t] = amount
                     assigned += amount
                 end
@@ -1323,10 +1590,19 @@ function _pp_operating_plan(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
         end
     end
 
-    return RefineryOperatingPlan(crude_buy, crude_run, crude_inventory,
-                                 mode_choice, unit_feed, blend,
-                                 stream_inventory, stream_purchase, stream_spot,
-                                 product_sales, product_inventory)
+    return RefineryOperatingPlan(
+        crude_buy,
+        crude_run,
+        crude_inventory,
+        mode_choice,
+        unit_feed,
+        blend,
+        stream_inventory,
+        stream_purchase,
+        stream_spot,
+        product_sales,
+        product_inventory,
+    )
 end
 
 """Throughput of every unit in every period under `plan`."""
@@ -1347,34 +1623,42 @@ Quality vector of one blend. Most volumetric properties are volume-weighted;
 RVP uses the Chevron vapour-pressure blending index (`RVP^1.25`), and sulfur is
 mass-weighted, matching the density factor the model puts on that row.
 """
-function _pp_blend_quality(fs::RefineryFlowsheet, product::RefineryProduct,
-                           volumes::AbstractVector{<:Real})
+function _pp_blend_quality(
+    fs::RefineryFlowsheet, product::RefineryProduct, volumes::AbstractVector{<:Real}
+)
     total = sum(volumes)
     quality = zeros(Float64, PP_N_QUALITIES)
     total <= 0.0 && return quality
-    mass = sum(fs.qualities[s, PP_Q_DENSITY] * volumes[b]
-               for (b, s) in enumerate(product.components))
+    mass = sum(
+        fs.qualities[s, PP_Q_DENSITY] * volumes[b] for (b, s) in enumerate(product.components)
+    )
     for q in 1:PP_N_QUALITIES
         if _pp_is_weight_basis(q)
             mass <= 0.0 && continue
-            quality[q] = sum(fs.qualities[s, PP_Q_DENSITY] * fs.qualities[s, q] *
-                             volumes[b] for (b, s) in enumerate(product.components)) /
-                         mass
+            quality[q] =
+                sum(
+                    fs.qualities[s, PP_Q_DENSITY] * fs.qualities[s, q] * volumes[b] for
+                    (b, s) in enumerate(product.components)
+                ) / mass
         elseif q == PP_Q_RVP
-            quality[q] = (sum(fs.qualities[s, q]^1.25 * volumes[b]
-                              for (b, s) in enumerate(product.components)) /
-                          total)^(1 / 1.25)
+            quality[q] =
+                (
+                    sum(
+                        fs.qualities[s, q]^1.25 * volumes[b] for
+                        (b, s) in enumerate(product.components)
+                    ) / total
+                )^(1 / 1.25)
         else
-            quality[q] = sum(fs.qualities[s, q] * volumes[b]
-                             for (b, s) in enumerate(product.components)) / total
+            quality[q] =
+                sum(fs.qualities[s, q] * volumes[b] for (b, s) in enumerate(product.components)) /
+                total
         end
     end
     return quality
 end
 
 """Ethanol volume and total gasoline blend volume in one period of a plan."""
-function _pp_renewable_gasoline_volume(fs::RefineryFlowsheet,
-                                       plan::RefineryOperatingPlan, t::Int)
+function _pp_renewable_gasoline_volume(fs::RefineryFlowsheet, plan::RefineryOperatingPlan, t::Int)
     renewable = 0.0
     gasoline = 0.0
     for (p, product) in enumerate(fs.products)
@@ -1401,8 +1685,9 @@ balances, tank capacities, unit capacities and turndown, purchase and spot
 limits, product balances and tanks, the demand window, and every blend
 specification.
 """
-function refinery_plan_satisfies(fs::RefineryFlowsheet, data::ProcessPlanData,
-                                 plan::RefineryOperatingPlan; atol::Float64=1e-6)
+function refinery_plan_satisfies(
+    fs::RefineryFlowsheet, data::ProcessPlanData, plan::RefineryOperatingPlan; atol::Float64=1e-6
+)
     C = fs.n_crudes
     S = n_streams(fs)
     U = n_units(fs)
@@ -1426,9 +1711,9 @@ function refinery_plan_satisfies(fs::RefineryFlowsheet, data::ProcessPlanData,
 
     # Stream incidence, so each balance row is assembled in time proportional to
     # the number of nonzeros it actually has.
-    producers = [Tuple{Int,Int}[] for _ in 1:S]
-    consumers = [Tuple{Int,Int}[] for _ in 1:S]
-    blenders = [Tuple{Int,Int}[] for _ in 1:S]
+    producers = [Tuple{Int, Int}[] for _ in 1:S]
+    consumers = [Tuple{Int, Int}[] for _ in 1:S]
+    blenders = [Tuple{Int, Int}[] for _ in 1:S]
     for u in 1:U
         for (o, s) in enumerate(fs.units[u].outputs)
             push!(producers[s], (u, o))
@@ -1451,23 +1736,21 @@ function refinery_plan_satisfies(fs::RefineryFlowsheet, data::ProcessPlanData,
     for t in 1:T
         fill!(production, 0.0)
         for c in 1:C
-            previous = t == 1 ? data.crude_initial_inventory[c] :
-                       plan.crude_inventory[c, t - 1]
-            abs(previous + plan.crude_buy[c, t] - plan.crude_run[c, t] -
-                plan.crude_inventory[c, t]) <= tol || return false
+            previous = t == 1 ? data.crude_initial_inventory[c] : plan.crude_inventory[c, t - 1]
+            abs(
+                previous + plan.crude_buy[c, t] - plan.crude_run[c, t] - plan.crude_inventory[c, t]
+            ) <= tol || return false
             plan.crude_buy[c, t] <= data.crude_availability[c, t] + tol || return false
-            plan.crude_inventory[c, t] <= data.crude_tank_capacity[c] + tol ||
-                return false
+            plan.crude_inventory[c, t] <= data.crude_tank_capacity[c] + tol || return false
             for k in eachindex(fs.cut_classes)
-                production[fs.cut_stream[c, k]] +=
-                    fs.cut_yields[c, k] * plan.crude_run[c, t]
+                production[fs.cut_stream[c, k]] += fs.cut_yields[c, k] * plan.crude_run[c, t]
             end
         end
         charge = sum(view(plan.crude_run, :, t))
         charge <= data.cdu_capacity[t] + tol || return false
         charge + tol >= data.cdu_min_throughput[t] || return false
-        sum((fs.crude_sulfur[c] - data.cdu_sulfur_limit) * plan.crude_run[c, t]
-            for c in 1:C) <= tol || return false
+        sum((fs.crude_sulfur[c] - data.cdu_sulfur_limit) * plan.crude_run[c, t] for c in 1:C) <=
+        tol || return false
 
         for u in 1:U
             unit = fs.units[u]
@@ -1475,8 +1758,7 @@ function refinery_plan_satisfies(fs::RefineryFlowsheet, data::ProcessPlanData,
             1 <= mode_index <= length(unit.modes) || return false
             mode = unit.modes[mode_index]
             throughput = sum(view(plan.unit_feed[u], :, t))
-            throughput <= data.unit_capacity[u, t] * mode.capacity_factor + tol ||
-                return false
+            throughput <= data.unit_capacity[u, t] * mode.capacity_factor + tol || return false
             throughput + tol >= data.unit_min_throughput[u, t] || return false
             for f in eachindex(unit.feeds)
                 flow = plan.unit_feed[u][f, t]
@@ -1495,15 +1777,13 @@ function refinery_plan_satisfies(fs::RefineryFlowsheet, data::ProcessPlanData,
             for (p, b) in blenders[s]
                 consumed += plan.blend[p][b, t]
             end
-            previous = t == 1 ? data.stream_initial_inventory[s] :
-                       plan.stream_inventory[s, t - 1]
-            balance = production[s] + plan.stream_purchase[s, t] + previous -
-                      consumed - plan.stream_spot[s, t] - plan.stream_inventory[s, t]
+            previous = t == 1 ? data.stream_initial_inventory[s] : plan.stream_inventory[s, t - 1]
+            balance =
+                production[s] + plan.stream_purchase[s, t] + previous - consumed -
+                plan.stream_spot[s, t] - plan.stream_inventory[s, t]
             abs(balance) <= tol || return false
-            plan.stream_inventory[s, t] <= data.stream_tank_capacity[s] + tol ||
-                return false
-            plan.stream_purchase[s, t] <= data.stream_purchase_limit[s] + tol ||
-                return false
+            plan.stream_inventory[s, t] <= data.stream_tank_capacity[s] + tol || return false
+            plan.stream_purchase[s, t] <= data.stream_purchase_limit[s] + tol || return false
             plan.stream_spot[s, t] <= data.stream_spot_limit[s] + tol || return false
             is_purchasable[s] || plan.stream_purchase[s, t] <= tol || return false
             is_spot[s] || plan.stream_spot[s, t] <= tol || return false
@@ -1513,21 +1793,18 @@ function refinery_plan_satisfies(fs::RefineryFlowsheet, data::ProcessPlanData,
         for p in 1:P
             product = fs.products[p]
             made = sum(view(plan.blend[p], :, t))
-            previous = t == 1 ? data.product_initial_inventory[p] :
-                       plan.product_inventory[p, t - 1]
-            abs(previous + made - plan.product_sales[p, t] -
-                plan.product_inventory[p, t]) <= tol || return false
+            previous = t == 1 ? data.product_initial_inventory[p] : plan.product_inventory[p, t - 1]
+            abs(previous + made - plan.product_sales[p, t] - plan.product_inventory[p, t]) <= tol ||
+                return false
             plan.product_sales[p, t] + tol >= data.demand_min[p, t] || return false
             plan.product_sales[p, t] <= data.demand_max[p, t] + tol || return false
-            plan.product_inventory[p, t] <= data.product_tank_capacity[p] + tol ||
-                return false
+            plan.product_inventory[p, t] <= data.product_tank_capacity[p] + tol || return false
             made <= tol && continue
             quality = _pp_blend_quality(fs, product, view(plan.blend[p], :, t))
             for q in 1:PP_N_QUALITIES
                 row_tol = atol * max(1.0, abs(quality[q])) * max(1.0, made)
                 if isfinite(product.spec_min[q])
-                    (quality[q] - product.spec_min[q]) * made + row_tol >= 0 ||
-                        return false
+                    (quality[q] - product.spec_min[q]) * made + row_tol >= 0 || return false
                 end
                 if isfinite(product.spec_max[q])
                     (quality[q] - product.spec_max[q]) * made <= row_tol || return false
@@ -1538,12 +1815,10 @@ function refinery_plan_satisfies(fs::RefineryFlowsheet, data::ProcessPlanData,
     renewable = 0.0
     gasoline = 0.0
     for t in 1:T
-        period_renewable, period_gasoline =
-            _pp_renewable_gasoline_volume(fs, plan, t)
+        period_renewable, period_gasoline = _pp_renewable_gasoline_volume(fs, plan, t)
         renewable += period_renewable
         gasoline += period_gasoline
-        period_renewable <= data.renewable_max_fraction * period_gasoline + tol ||
-            return false
+        period_renewable <= data.renewable_max_fraction * period_gasoline + tol || return false
     end
     renewable + tol >= data.renewable_min_fraction * gasoline || return false
     return true
@@ -1555,18 +1830,19 @@ end
 Recompute a stored infeasibility certificate from the instance data and check
 that it still refutes the instance. No optimization solver is used.
 """
-function refinery_certificate_holds(fs::RefineryFlowsheet, data::ProcessPlanData,
-                                    certificate::RefineryInfeasibilityCertificate;
-                                    atol::Float64=1e-6)
+function refinery_certificate_holds(
+    fs::RefineryFlowsheet,
+    data::ProcessPlanData,
+    certificate::RefineryInfeasibilityCertificate;
+    atol::Float64=1e-6,
+)
     if certificate.kind == refinery_contract_above_conversion_bound
         certificate.product == 0 || return false
         achievable = _pp_production_bound(fs, data)
         required = sum(data.demand_min)
         scale = max(1.0, abs(achievable), abs(required))
-        isapprox(certificate.achievable, achievable; rtol=1e-9, atol=atol * scale) ||
-            return false
-        isapprox(certificate.required, required; rtol=1e-9, atol=atol * scale) ||
-            return false
+        isapprox(certificate.achievable, achievable; rtol=1e-9, atol=atol * scale) || return false
+        isapprox(certificate.required, required; rtol=1e-9, atol=atol * scale) || return false
         return achievable + atol * scale < required
     end
 
@@ -1575,16 +1851,16 @@ function refinery_certificate_holds(fs::RefineryFlowsheet, data::ProcessPlanData
     1 <= p <= n_products(fs) || return false
     1 <= q <= PP_N_QUALITIES || return false
     product = fs.products[p]
-    bound = certificate.is_maximum_specification ? product.spec_max[q] :
-            product.spec_min[q]
+    bound = certificate.is_maximum_specification ? product.spec_max[q] : product.spec_min[q]
     isfinite(bound) || return false
-    isapprox(certificate.required, bound; rtol=1e-9,
-             atol=atol * max(1.0, abs(bound))) || return false
+    isapprox(certificate.required, bound; rtol=1e-9, atol=atol * max(1.0, abs(bound))) ||
+        return false
 
     values = [fs.qualities[s, q] for s in product.components]
     achievable = certificate.is_maximum_specification ? minimum(values) : maximum(values)
-    isapprox(certificate.achievable, achievable; rtol=1e-9,
-             atol=atol * max(1.0, abs(achievable))) || return false
+    isapprox(
+        certificate.achievable, achievable; rtol=1e-9, atol=atol * max(1.0, abs(achievable))
+    ) || return false
     margin = atol * max(1.0, abs(achievable), abs(bound))
     if certificate.is_maximum_specification
         # Every component sits above the cap, so the row forces the blend to zero.
@@ -1610,10 +1886,15 @@ annual seasonal swing. Used for crude and product prices, product demand and
 crude-unit utilisation, so a horizon has the shape planners actually optimize
 against (a gasoline summer, a distillate winter, drifting crude).
 """
-function _pp_market_path(rng::AbstractRNG, T::Int, base::Real;
-                         volatility::Float64=0.05, seasonality::Float64=0.0,
-                         phase::Float64=0.0,
-                         period_days::Float64=365.25 / max(T, 2))
+function _pp_market_path(
+    rng::AbstractRNG,
+    T::Int,
+    base::Real;
+    volatility::Float64=0.05,
+    seasonality::Float64=0.0,
+    phase::Float64=0.0,
+    period_days::Float64=365.25 / max(T, 2),
+)
     path = Vector{Float64}(undef, T)
     shock = 0.0
     for t in 1:T
@@ -1631,8 +1912,7 @@ function _pp_stream_production(fs::RefineryFlowsheet, plan::RefineryOperatingPla
     production = zeros(Float64, S, T)
     for t in 1:T
         for c in 1:fs.n_crudes, k in eachindex(fs.cut_classes)
-            production[fs.cut_stream[c, k], t] +=
-                fs.cut_yields[c, k] * plan.crude_run[c, t]
+            production[fs.cut_stream[c, k], t] += fs.cut_yields[c, k] * plan.crude_run[c, t]
         end
         for u in 1:n_units(fs)
             unit = fs.units[u]
@@ -1666,13 +1946,14 @@ coefficients of that row one-signed and blend volumes nonnegative, the row pins
 the whole blend at zero for every period, so a positive contract cannot be met.
 Returns the certificate, or `nothing` when no product carries a usable spec.
 """
-function _pp_impossible_specification!(rng::AbstractRNG, fs::RefineryFlowsheet,
-                                       data::ProcessPlanData, nameplate::Float64)
+function _pp_impossible_specification!(
+    rng::AbstractRNG, fs::RefineryFlowsheet, data::ProcessPlanData, nameplate::Float64
+)
     P = n_products(fs)
     P == 0 && return nothing
     for p in randperm(rng, P)
         product = fs.products[p]
-        candidates = Tuple{Int,Bool}[]
+        candidates = Tuple{Int, Bool}[]
         for q in 1:PP_N_QUALITIES
             values = [fs.qualities[s, q] for s in product.components]
             if isfinite(product.spec_max[q]) && minimum(values) > 1e-9
@@ -1705,12 +1986,11 @@ function _pp_impossible_specification!(rng::AbstractRNG, fs::RefineryFlowsheet,
         floor_demand = 0.01 * nameplate
         for t in 1:data.n_periods
             data.demand_min[p, t] = max(data.demand_min[p, t], floor_demand)
-            data.demand_max[p, t] = max(data.demand_max[p, t],
-                                        data.demand_min[p, t] * 1.05)
+            data.demand_max[p, t] = max(data.demand_max[p, t], data.demand_min[p, t] * 1.05)
         end
         return RefineryInfeasibilityCertificate(
-            refinery_specification_outside_component_range, p, q, is_max,
-            achievable, bound)
+            refinery_specification_outside_component_range, p, q, is_max, achievable, bound
+        )
     end
     return nothing
 end
@@ -1721,8 +2001,7 @@ end
 Raise the contracted volumes until they exceed everything the refinery could
 possibly make over the horizon, and return the matching aggregate certificate.
 """
-function _pp_starve_contracts!(rng::AbstractRNG, fs::RefineryFlowsheet,
-                               data::ProcessPlanData)
+function _pp_starve_contracts!(rng::AbstractRNG, fs::RefineryFlowsheet, data::ProcessPlanData)
     bound = _pp_production_bound(fs, data)
     required = sum(data.demand_min)
     wanted = bound * rand(rng, Uniform(1.10, 1.45))
@@ -1735,12 +2014,11 @@ function _pp_starve_contracts!(rng::AbstractRNG, fs::RefineryFlowsheet,
         data.demand_min .*= wanted / required
     end
     for p in 1:P, t in 1:T
-        data.demand_max[p, t] = max(data.demand_max[p, t],
-                                    data.demand_min[p, t] * 1.05)
+        data.demand_max[p, t] = max(data.demand_max[p, t], data.demand_min[p, t] * 1.05)
     end
     return RefineryInfeasibilityCertificate(
-        refinery_contract_above_conversion_bound, 0, 0, false, bound,
-        sum(data.demand_min))
+        refinery_contract_above_conversion_bound, 0, 0, false, bound, sum(data.demand_min)
+    )
 end
 
 """
@@ -1769,16 +2047,20 @@ inventory build), and the instance data is then placed around it:
   contracts beyond the conversion bound, or a specification outside the range of
   every admissible component.
 """
-function _pp_plan_instance(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
-                           status::FeasibilityStatus, mode_choice::Matrix{Int};
-                           conditional_rates::Bool=false,
-                           unknown_position::Float64=0.5)
+function _pp_plan_instance(
+    rng::AbstractRNG,
+    fs::RefineryFlowsheet,
+    T::Int,
+    status::FeasibilityStatus,
+    mode_choice::Matrix{Int};
+    conditional_rates::Bool=false,
+    unknown_position::Float64=0.5,
+)
     C = fs.n_crudes
     S = n_streams(fs)
     U = n_units(fs)
     P = n_products(fs)
-    0.0 <= unknown_position <= 1.0 ||
-        throw(ArgumentError("unknown_position must lie in [0, 1]"))
+    0.0 <= unknown_position <= 1.0 || throw(ArgumentError("unknown_position must lie in [0, 1]"))
     market_position = status == unknown ? unknown_position : 0.5
     supply_factor = 0.78 + 0.52 * market_position
     demand_factor = 1.22 - 0.52 * market_position
@@ -1786,28 +2068,38 @@ function _pp_plan_instance(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
     period_days = rand(rng, [7.0, 14.0, 30.0])
     calendar_phase = rand(rng, Uniform(0.0, 2pi))
     nameplate = rand(rng, Uniform(60.0, 380.0)) * period_days   # kbbl per period
-    utilisation = _pp_market_path(rng, T, rand(rng, Uniform(0.84, 0.97));
-                                  volatility=0.03, seasonality=0.04,
-                                  phase=calendar_phase,
-                                  period_days=period_days)
+    utilisation = _pp_market_path(
+        rng,
+        T,
+        rand(rng, Uniform(0.84, 0.97));
+        volatility=0.03,
+        seasonality=0.04,
+        phase=calendar_phase,
+        period_days=period_days,
+    )
     charge = [nameplate * clamp(utilisation[t], 0.45, 1.0) for t in 1:T]
 
     # Opening inventories are drawn from the scale of a zero-stock probe run, and
     # the plan is then replayed against them.
     zeros_c, zeros_s, zeros_p = zeros(C), zeros(S), zeros(P)
-    probe = _pp_operating_plan(rng, fs, T, charge, mode_choice, zeros_c, zeros_s,
-                               zeros_p)
+    probe = _pp_operating_plan(rng, fs, T, charge, mode_choice, zeros_c, zeros_s, zeros_p)
     probe_production = _pp_stream_production(fs, probe)
     is_storable = falses(S)
     is_storable[fs.storable] .= true
     crude_opening = [charge[1] / C * rand(rng, Uniform(0.0, 0.35)) for _ in 1:C]
-    stream_opening = [is_storable[s] ?
-                      maximum(view(probe_production, s, :)) *
-                      rand(rng, Uniform(0.0, 0.30)) : 0.0 for s in 1:S]
-    product_opening = [maximum(view(probe.product_sales, p, :)) *
-                       rand(rng, Uniform(0.0, 0.25)) for p in 1:P]
-    plan = _pp_operating_plan(rng, fs, T, charge, mode_choice, crude_opening,
-                              stream_opening, product_opening)
+    stream_opening = [
+        if is_storable[s]
+            maximum(view(probe_production, s, :)) * rand(rng, Uniform(0.0, 0.30))
+        else
+            0.0
+        end for s in 1:S
+    ]
+    product_opening = [
+        maximum(view(probe.product_sales, p, :)) * rand(rng, Uniform(0.0, 0.25)) for p in 1:P
+    ]
+    plan = _pp_operating_plan(
+        rng, fs, T, charge, mode_choice, crude_opening, stream_opening, product_opening
+    )
 
     throughput = _pp_plan_throughput(fs, plan)
     production = _pp_stream_production(fs, plan)
@@ -1817,35 +2109,34 @@ function _pp_plan_instance(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
     crude_price = zeros(Float64, C, T)
     crude_availability = zeros(Float64, C, T)
     crude_tank_capacity = zeros(Float64, C)
-    energy_factor = _pp_market_path(rng, T, 1.0; volatility=0.035,
-                                    period_days=period_days)
+    energy_factor = _pp_market_path(rng, T, 1.0; volatility=0.035, period_days=period_days)
     for c in 1:C
         # Crude is priced off a marker at 38 API and 0.4 wt% sulfur, with the
         # usual light/heavy and sweet/sour differentials: roughly \$0.35 a barrel
         # per API degree and \$3.5 per wt% of sulfur, which puts an extra-heavy
         # sour crude some \$20 below a condensate rather than \$45 below it.
-        base = 80.0 + 0.35 * (fs.crude_api[c] - 38.0) -
-               3.5 * (fs.crude_sulfur[c] - 0.4)
-        idiosyncratic = _pp_market_path(rng, T, 1.0; volatility=0.012,
-                                        period_days=period_days)
-        crude_price[c, :] .= base * rand(rng, Uniform(0.95, 1.06)) .* energy_factor .*
-                             idiosyncratic
+        base = 80.0 + 0.35 * (fs.crude_api[c] - 38.0) - 3.5 * (fs.crude_sulfur[c] - 0.4)
+        idiosyncratic = _pp_market_path(rng, T, 1.0; volatility=0.012, period_days=period_days)
+        crude_price[c, :] .= base * rand(rng, Uniform(0.95, 1.06)) .* energy_factor .* idiosyncratic
         # Term cargoes are sized against the whole charge, not per crude, so a
         # long crude menu does not silently multiply the supply available.
         cargo = nameplate * rand(rng, Uniform(0.55, 1.70)) / C
         for t in 1:T
             offered = cargo * rand(rng, Uniform(0.85, 1.20))
             !planned && (offered *= supply_factor)
-            crude_availability[c, t] = planned ?
-                max(offered, plan.crude_buy[c, t] * rand(rng, Uniform(1.05, 1.45))) :
+            crude_availability[c, t] = if planned
+                max(offered, plan.crude_buy[c, t] * rand(rng, Uniform(1.05, 1.45)))
+            else
                 offered
+            end
         end
         peak = maximum(view(plan.crude_inventory, c, :))
         design = nameplate * rand(rng, Uniform(0.08, 0.35))
-        crude_tank_capacity[c] = planned ?
-            max(design, peak * rand(rng, Uniform(1.10, 1.60)),
-                crude_opening[c] * 1.05) :
+        crude_tank_capacity[c] = if planned
+            max(design, peak * rand(rng, Uniform(1.10, 1.60)), crude_opening[c] * 1.05)
+        else
             max(design, crude_opening[c] * 1.05)
+        end
     end
 
     # --- crude unit and conversion capacity ------------------------------
@@ -1853,12 +2144,12 @@ function _pp_plan_instance(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
     cdu_min_throughput = Vector{Float64}(undef, T)
     design_cdu = nameplate * rand(rng, Uniform(0.98, 1.08))
     for t in 1:T
-        cdu_capacity[t] = planned ?
-            max(design_cdu, charge[t] * rand(rng, Uniform(1.02, 1.20))) :
-            design_cdu * rand(rng, Uniform(0.90, 1.05)) *
-            (0.88 + 0.22 * market_position)
-        cdu_min_throughput[t] = min(charge[t] * rand(rng, Uniform(0.0, 0.75)),
-                                    cdu_capacity[t])
+        cdu_capacity[t] = if planned
+            max(design_cdu, charge[t] * rand(rng, Uniform(1.02, 1.20)))
+        else
+            design_cdu * rand(rng, Uniform(0.90, 1.05)) * (0.88 + 0.22 * market_position)
+        end
+        cdu_min_throughput[t] = min(charge[t] * rand(rng, Uniform(0.0, 0.75)), cdu_capacity[t])
     end
 
     unit_capacity = zeros(Float64, U, T)
@@ -1866,34 +2157,39 @@ function _pp_plan_instance(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
     unit_switch_cost = zeros(Float64, U)
     for u in 1:U
         template = _pp_unit_template(fs.units[u].key)
-        design = nameplate * template.capacity_fraction *
-                 rand(rng, Uniform(0.85, 1.20))
-        unit_switch_cost[u] = round(rand(rng, Uniform(40.0, 400.0)), digits=1)
+        design = nameplate * template.capacity_fraction * rand(rng, Uniform(0.85, 1.20))
+        unit_switch_cost[u] = round(rand(rng, Uniform(40.0, 400.0)); digits=1)
         # A turndown row on a unit that can be idled needs an on/off decision to
         # gate it, which a pure LP cannot express. With run indicators available
         # (`conditional_rates`) every unit can therefore carry a minimum rate;
         # without them, only the primary treating units, which run whenever the
         # crude unit does.
         eligible = conditional_rates || fs.units[u].key in _PP_CONTINUOUS_UNITS
-        turndown = eligible && rand(rng) < (conditional_rates ? 0.75 : 0.6) ?
-                   rand(rng, Uniform(0.10, 0.45)) : 0.0
+        turndown = if eligible && rand(rng) < (conditional_rates ? 0.75 : 0.6)
+            rand(rng, Uniform(0.10, 0.45))
+        else
+            0.0
+        end
         availability = ones(Float64, T)
         if T >= 4 && rand(rng) < 0.45
             outage_length = rand(rng, 1:min(3, T - 2))
             outage_start = rand(rng, 2:(T - outage_length))
-            availability[outage_start:(outage_start + outage_length - 1)] .=
-                rand(rng, Uniform(0.35, 0.70))
+            availability[outage_start:(outage_start + outage_length - 1)] .= rand(
+                rng, Uniform(0.35, 0.70)
+            )
         end
         for t in 1:T
             factor = fs.units[u].modes[mode_choice[u, t]].capacity_factor
             required = throughput[u, t] / factor
             available_design = design * availability[t]
-            unit_capacity[u, t] = planned ?
-                max(available_design, required * rand(rng, Uniform(1.05, 1.40))) :
-                available_design * rand(rng, Uniform(0.88, 1.15)) *
-                (0.82 + 0.38 * market_position)
-            unit_min_throughput[u, t] =
-                min(throughput[u, t] * turndown, unit_capacity[u, t] * factor * 0.9)
+            unit_capacity[u, t] = if planned
+                max(available_design, required * rand(rng, Uniform(1.05, 1.40)))
+            else
+                available_design * rand(rng, Uniform(0.88, 1.15)) * (0.82 + 0.38 * market_position)
+            end
+            unit_min_throughput[u, t] = min(
+                throughput[u, t] * turndown, unit_capacity[u, t] * factor * 0.9
+            )
         end
     end
 
@@ -1915,8 +2211,7 @@ function _pp_plan_instance(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
             unit_min_throughput[u, t] <= 0.0 && continue
             unit = fs.units[u]
             for (o, out) in enumerate(unit.outputs)
-                best = maximum(mode.yields[f, o] for mode in unit.modes,
-                               f in eachindex(unit.feeds))
+                best = maximum(mode.yields[f, o] for mode in unit.modes, f in eachindex(unit.feeds))
                 period_forced[out] += best * unit_min_throughput[u, t]
             end
         end
@@ -1925,10 +2220,12 @@ function _pp_plan_instance(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
         end
     end
 
-    charge_sulfur = maximum(sum(fs.crude_sulfur[c] * plan.crude_run[c, t]
-                                for c in 1:C) / max(charge[t], 1e-9) for t in 1:T)
-    cdu_sulfur_limit = planned ? charge_sulfur * rand(rng, Uniform(1.02, 1.20)) :
-                       rand(rng, Uniform(1.4, 3.2))
+    charge_sulfur = maximum(
+        sum(fs.crude_sulfur[c] * plan.crude_run[c, t] for c in 1:C) / max(charge[t], 1e-9) for
+        t in 1:T
+    )
+    cdu_sulfur_limit =
+        planned ? charge_sulfur * rand(rng, Uniform(1.02, 1.20)) : rand(rng, Uniform(1.4, 3.2))
 
     # --- intermediate tanks, purchases and spot sales --------------------
     stream_tank_capacity = zeros(Float64, S)
@@ -1943,28 +2240,32 @@ function _pp_plan_instance(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
         if is_storable[s]
             peak = maximum(view(plan.stream_inventory, s, :))
             design = max(typical, 0.002 * nameplate) * rand(rng, Uniform(0.25, 1.30))
-            stream_tank_capacity[s] = planned ?
-                max(design, peak * rand(rng, Uniform(1.15, 1.70)),
-                    stream_opening[s] * 1.05) :
+            stream_tank_capacity[s] = if planned
+                max(design, peak * rand(rng, Uniform(1.15, 1.70)), stream_opening[s] * 1.05)
+            else
                 max(design, stream_opening[s] * 1.05)
-            stream_holding_cost[s] = round(rand(rng, Uniform(0.10, 0.85)), digits=3)
+            end
+            stream_holding_cost[s] = round(rand(rng, Uniform(0.10, 0.85)); digits=3)
         end
         if s in fs.purchasable
             class = fs.stream_classes[s]
             index = findfirst(==(class), _PP_PURCHASE_CLASSES)
             base = index === nothing ? 60.0 : _PP_PURCHASE_COST[index]
             stream_purchase_cost[s, :] .=
-                base * rand(rng, Uniform(0.92, 1.10)) .* energy_factor .*
-                _pp_market_path(rng, T, 1.0; volatility=0.02,
-                                seasonality=0.03,
-                                phase=calendar_phase,
-                                period_days=period_days)
+                base * rand(rng, Uniform(0.92, 1.10)) .* energy_factor .* _pp_market_path(
+                    rng,
+                    T,
+                    1.0;
+                    volatility=0.02,
+                    seasonality=0.03,
+                    phase=calendar_phase,
+                    period_days=period_days,
+                )
             offered = nameplate * rand(rng, Uniform(0.01, 0.06))
             !planned && (offered *= 0.80 + 0.45 * market_position)
             planned_purchase = maximum(view(plan.stream_purchase, s, :))
-            stream_purchase_limit[s] = planned ?
-                max(offered, planned_purchase * rand(rng, Uniform(1.10, 1.80))) :
-                offered
+            stream_purchase_limit[s] =
+                planned ? max(offered, planned_purchase * rand(rng, Uniform(1.10, 1.80))) : offered
         end
         if s in fs.spot
             offered = max(typical, 0.002 * nameplate) * rand(rng, Uniform(0.35, 1.20))
@@ -1974,10 +2275,11 @@ function _pp_plan_instance(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
             fs.stream_classes[s] in (:fuel_gas, :coke, :lpg, :lpg_cut, :slurry) &&
                 (offered *= rand(rng, Uniform(1.6, 3.5)))
             planned_spot = maximum(view(plan.stream_spot, s, :))
-            stream_spot_limit[s] = max(offered, 1.05 * forced[s],
-                                       planned ?
-                                       planned_spot * rand(rng, Uniform(1.05, 1.60)) :
-                                       0.0)
+            stream_spot_limit[s] = max(
+                offered,
+                1.05 * forced[s],
+                planned ? planned_spot * rand(rng, Uniform(1.05, 1.60)) : 0.0,
+            )
         end
     end
 
@@ -1992,33 +2294,40 @@ function _pp_plan_instance(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
         template = _pp_product_template(fs.products[p].key)
         phase = calendar_phase + _pp_demand_phase(fs.products[p].key)
         product_price[p, :] .=
-            template.price * rand(rng, Uniform(0.94, 1.08)) .* energy_factor .*
-            _pp_market_path(rng, T, 1.0; volatility=0.025,
-                            seasonality=0.05, phase=phase,
-                            period_days=period_days)
-        market = _pp_market_path(rng, T, 1.0; volatility=0.06, seasonality=0.12,
-                                 phase=phase, period_days=period_days)
-        product_holding_cost[p] = round(rand(rng, Uniform(0.15, 1.00)), digits=3)
+            template.price * rand(rng, Uniform(0.94, 1.08)) .* energy_factor .* _pp_market_path(
+                rng,
+                T,
+                1.0;
+                volatility=0.025,
+                seasonality=0.05,
+                phase=phase,
+                period_days=period_days,
+            )
+        market = _pp_market_path(
+            rng, T, 1.0; volatility=0.06, seasonality=0.12, phase=phase, period_days=period_days
+        )
+        product_holding_cost[p] = round(rand(rng, Uniform(0.15, 1.00)); digits=3)
         peak = maximum(view(plan.product_inventory, p, :))
-        design = maximum(view(plan.product_sales, p, :)) *
-                 rand(rng, Uniform(0.15, 0.60))
-        product_tank_capacity[p] = planned ?
-            max(design, peak * rand(rng, Uniform(1.15, 1.80)),
-                product_opening[p] * 1.05) :
+        design = maximum(view(plan.product_sales, p, :)) * rand(rng, Uniform(0.15, 0.60))
+        product_tank_capacity[p] = if planned
+            max(design, peak * rand(rng, Uniform(1.15, 1.80)), product_opening[p] * 1.05)
+        else
             max(design, product_opening[p] * 1.05)
+        end
         contract = rand(rng, Uniform(0.45, 0.90))
         for t in 1:T
             sales = plan.product_sales[p, t]
             if planned
                 demand_min[p, t] = sales * contract * min(market[t], 1.0)
-                demand_max[p, t] = max(sales * rand(rng, Uniform(1.05, 1.60)),
-                                       demand_min[p, t] * 1.05)
+                demand_max[p, t] = max(
+                    sales * rand(rng, Uniform(1.05, 1.60)), demand_min[p, t] * 1.05
+                )
             else
-                demand_min[p, t] = sales * market[t] *
-                                   rand(rng, Uniform(0.70, 1.40)) * demand_factor
-                demand_max[p, t] = max(sales * market[t] *
-                                       rand(rng, Uniform(1.00, 1.70)),
-                                       demand_min[p, t] * 1.05)
+                demand_min[p, t] =
+                    sales * market[t] * rand(rng, Uniform(0.70, 1.40)) * demand_factor
+                demand_max[p, t] = max(
+                    sales * market[t] * rand(rng, Uniform(1.00, 1.70)), demand_min[p, t] * 1.05
+                )
             end
         end
     end
@@ -2044,7 +2353,7 @@ function _pp_plan_instance(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
         else
             45.0
         end
-        stream_spot_price[s] = round(base * rand(rng, Uniform(0.90, 1.10)), digits=2)
+        stream_spot_price[s] = round(base * rand(rng, Uniform(0.90, 1.10)); digits=2)
     end
 
     renewable_total = 0.0
@@ -2055,8 +2364,7 @@ function _pp_plan_instance(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
         renewable_total += renewable
         gasoline_total += gasoline
         gasoline > 0 &&
-            (maximum_period_fraction = max(maximum_period_fraction,
-                                           renewable / gasoline))
+            (maximum_period_fraction = max(maximum_period_fraction, renewable / gasoline))
     end
     has_ethanol = any(==(:ethanol), fs.stream_classes)
     observed_fraction = gasoline_total > 0 ? renewable_total / gasoline_total : 0.0
@@ -2072,36 +2380,51 @@ function _pp_plan_instance(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
     elseif planned
         max(0.15, 1.05 * maximum_period_fraction)
     else
-        rand(rng, Uniform(0.12, 0.18)) *
-        (0.90 + 0.40 * market_position)
+        rand(rng, Uniform(0.12, 0.18)) * (0.90 + 0.40 * market_position)
     end
-    renewable_min_fraction = min(renewable_min_fraction,
-                                  0.95 * renewable_max_fraction)
+    renewable_min_fraction = min(renewable_min_fraction, 0.95 * renewable_max_fraction)
 
-    data = ProcessPlanData(T, period_days, nameplate, crude_price,
-                           crude_availability, crude_tank_capacity, crude_opening,
-                           cdu_capacity, cdu_min_throughput, cdu_sulfur_limit,
-                           unit_capacity, unit_min_throughput, unit_switch_cost,
-                           stream_tank_capacity, stream_initial_inventory,
-                           stream_purchase_limit, stream_purchase_cost,
-                           stream_spot_limit, stream_spot_price,
-                           stream_holding_cost, product_price, demand_min,
-                           demand_max, product_tank_capacity,
-                           product_initial_inventory, product_holding_cost,
-                           renewable_min_fraction, renewable_max_fraction)
+    data = ProcessPlanData(
+        T,
+        period_days,
+        nameplate,
+        crude_price,
+        crude_availability,
+        crude_tank_capacity,
+        crude_opening,
+        cdu_capacity,
+        cdu_min_throughput,
+        cdu_sulfur_limit,
+        unit_capacity,
+        unit_min_throughput,
+        unit_switch_cost,
+        stream_tank_capacity,
+        stream_initial_inventory,
+        stream_purchase_limit,
+        stream_purchase_cost,
+        stream_spot_limit,
+        stream_spot_price,
+        stream_holding_cost,
+        product_price,
+        demand_min,
+        demand_max,
+        product_tank_capacity,
+        product_initial_inventory,
+        product_holding_cost,
+        renewable_min_fraction,
+        renewable_max_fraction,
+    )
 
     certificate = nothing
     if status == feasible
         _pp_settle_specifications!(rng, fs, plan; slack_low=0.005, slack_high=0.05)
     else
         slack_low = status == unknown ? -0.04 + 0.06 * market_position : -0.03
-        _pp_settle_specifications!(rng, fs, plan; slack_low=slack_low,
-                                   slack_high=0.06)
+        _pp_settle_specifications!(rng, fs, plan; slack_low=slack_low, slack_high=0.06)
     end
     if status == infeasible
-        certificate = rand(rng) < 0.5 ?
-                      _pp_impossible_specification!(rng, fs, data, nameplate) :
-                      nothing
+        certificate =
+            rand(rng) < 0.5 ? _pp_impossible_specification!(rng, fs, data, nameplate) : nothing
         certificate === nothing && (certificate = _pp_starve_contracts!(rng, fs, data))
     end
     return data, plan, certificate
@@ -2124,9 +2447,13 @@ the edge of what the configuration supports, sometimes just inside it and
 sometimes just outside — and the solver can blend more sharply than the plan's
 fixed routing does, so which way it falls is genuinely open.
 """
-function _pp_settle_specifications!(rng::AbstractRNG, fs::RefineryFlowsheet,
-                                    plan::RefineryOperatingPlan;
-                                    slack_low::Float64, slack_high::Float64)
+function _pp_settle_specifications!(
+    rng::AbstractRNG,
+    fs::RefineryFlowsheet,
+    plan::RefineryOperatingPlan;
+    slack_low::Float64,
+    slack_high::Float64,
+)
     T = size(plan.crude_run, 2)
     for (p, product) in enumerate(fs.products)
         achieved_min = fill(Inf, PP_N_QUALITIES)
@@ -2152,16 +2479,16 @@ function _pp_settle_specifications!(rng::AbstractRNG, fs::RefineryFlowsheet,
             if isfinite(product.spec_min[q]) && product.spec_min[q] > achieved_min[q]
                 slack = rand(rng, Uniform(slack_low, slack_high))
                 candidate = achieved_min[q] - slack * max(abs(achieved_min[q]), 1.0)
-                product.spec_min[q] = min(candidate,
-                                          reachable_high -
-                                          0.005 * max(abs(reachable_high), 1.0))
+                product.spec_min[q] = min(
+                    candidate, reachable_high - 0.005 * max(abs(reachable_high), 1.0)
+                )
             end
             if isfinite(product.spec_max[q]) && product.spec_max[q] < achieved_max[q]
                 slack = rand(rng, Uniform(slack_low, slack_high))
                 candidate = achieved_max[q] + slack * max(abs(achieved_max[q]), 1.0)
-                product.spec_max[q] = max(candidate,
-                                          reachable_low +
-                                          0.005 * max(abs(reachable_low), 1.0))
+                product.spec_max[q] = max(
+                    candidate, reachable_low + 0.005 * max(abs(reachable_low), 1.0)
+                )
             end
             # A negative slack applied to a narrow published window (ULSD density
             # is the tight one) can push the two ends past each other, leaving a
@@ -2169,8 +2496,9 @@ function _pp_settle_specifications!(rng::AbstractRNG, fs::RefineryFlowsheet,
             # requested-infeasible branch's business, not a side effect of
             # stating a specification, so reopen the window around the quality
             # the recipe actually reaches.
-            if isfinite(product.spec_min[q]) && isfinite(product.spec_max[q]) &&
-               product.spec_min[q] > product.spec_max[q]
+            if isfinite(product.spec_min[q]) &&
+                isfinite(product.spec_max[q]) &&
+                product.spec_min[q] > product.spec_max[q]
                 product.spec_min[q] = min(product.spec_min[q], achieved_min[q])
                 product.spec_max[q] = max(product.spec_max[q], achieved_max[q])
             end

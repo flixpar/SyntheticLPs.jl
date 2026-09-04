@@ -40,8 +40,8 @@ the same flowsheet with the mode decision left to the solver.
 struct RefineryPlanningProblem <: ProblemGenerator
     flowsheet::RefineryFlowsheet
     data::ProcessPlanData
-    feasible_witness::Union{Nothing,RefineryOperatingPlan}
-    infeasibility_certificate::Union{Nothing,RefineryInfeasibilityCertificate}
+    feasible_witness::Union{Nothing, RefineryOperatingPlan}
+    infeasibility_certificate::Union{Nothing, RefineryInfeasibilityCertificate}
     feasibility_status::FeasibilityStatus
 end
 
@@ -82,9 +82,9 @@ one a cracking or full conversion refinery with parallel trains and many grades.
   units and the specifications can serve all the contracts together is genuinely
   open.
 """
-function RefineryPlanningProblem(target_variables::Int,
-                                 feasibility_status::FeasibilityStatus,
-                                 seed::Int)
+function RefineryPlanningProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
     target = max(target_variables, 1)
 
@@ -92,14 +92,22 @@ function RefineryPlanningProblem(target_variables::Int,
     flowsheet = _pp_build_flowsheet(rng, skeleton)
     mode_choice = ones(Int, n_units(flowsheet), n_periods)
 
-    data, plan, certificate = _pp_plan_instance(rng, flowsheet, n_periods,
-                                                feasibility_status, mode_choice;
-                                                unknown_position=
-                                                _pp_seed_position(seed))
+    data, plan, certificate = _pp_plan_instance(
+        rng,
+        flowsheet,
+        n_periods,
+        feasibility_status,
+        mode_choice;
+        unknown_position=_pp_seed_position(seed),
+    )
 
     problem = RefineryPlanningProblem(
-        flowsheet, data, feasibility_status == feasible ? plan : nothing,
-        certificate, feasibility_status)
+        flowsheet,
+        data,
+        feasibility_status == feasible ? plan : nothing,
+        certificate,
+        feasibility_status,
+    )
 
     if feasibility_status == feasible
         @assert refinery_plan_satisfies(flowsheet, data, plan)
@@ -124,29 +132,32 @@ the right-hand side is zero — but the properties span very different units
 quality row on the same scale keeps the constraint matrix from spanning seven
 orders of magnitude.
 """
-function _pp_add_blend_specifications!(model::Model, fs::RefineryFlowsheet,
-                                       blend::Vector{<:AbstractArray}, T::Int)
+function _pp_add_blend_specifications!(
+    model::Model, fs::RefineryFlowsheet, blend::Vector{<:AbstractArray}, T::Int
+)
     for (p, product) in enumerate(fs.products)
         for q in 1:PP_N_QUALITIES
-            weight = _pp_is_weight_basis(q) ?
-                     [fs.qualities[s, PP_Q_DENSITY] for s in product.components] :
-                     ones(Float64, length(product.components))
-            for (bound, sense) in ((product.spec_min[q], :min),
-                                   (product.spec_max[q], :max))
+            weight = if _pp_is_weight_basis(q)
+                [fs.qualities[s, PP_Q_DENSITY] for s in product.components]
+            else
+                ones(Float64, length(product.components))
+            end
+            for (bound, sense) in ((product.spec_min[q], :min), (product.spec_max[q], :max))
                 isfinite(bound) || continue
                 indexed_bound = q == PP_Q_RVP ? bound^1.25 : bound
-                coefficient = [weight[b] *
-                               ((q == PP_Q_RVP ? fs.qualities[s, q]^1.25 :
-                                                    fs.qualities[s, q]) -
-                                indexed_bound)
-                               for (b, s) in enumerate(product.components)]
+                coefficient = [
+                    weight[b] * (
+                        (q == PP_Q_RVP ? fs.qualities[s, q]^1.25 : fs.qualities[s, q]) -
+                        indexed_bound
+                    ) for (b, s) in enumerate(product.components)
+                ]
                 largest = maximum(abs, coefficient)
                 largest > 0 && (coefficient ./= largest)
                 for t in 1:T
-                    row = sum(coefficient[b] * blend[p][b, t]
-                              for b in eachindex(product.components))
-                    sense == :min ? @constraint(model, row >= 0) :
-                                    @constraint(model, row <= 0)
+                    row = sum(
+                        coefficient[b] * blend[p][b, t] for b in eachindex(product.components)
+                    )
+                    sense == :min ? @constraint(model, row >= 0) : @constraint(model, row <= 0)
                 end
             end
         end
@@ -161,28 +172,36 @@ Add a horizon renewable-fuel obligation and a per-period gasoline blend wall
 when ethanol is present in the generated flowsheet. Both constraints are linear
 because ethanol remains a segregated purchased component.
 """
-function _pp_add_renewable_blending!(model::Model, fs::RefineryFlowsheet,
-                                     data::ProcessPlanData,
-                                     blend::Vector{<:AbstractArray}, T::Int)
-    gasoline_products = [p for p in eachindex(fs.products)
-                         if fs.products[p].key in
-                            (:regular_gasoline, :premium_gasoline)]
+function _pp_add_renewable_blending!(
+    model::Model,
+    fs::RefineryFlowsheet,
+    data::ProcessPlanData,
+    blend::Vector{<:AbstractArray},
+    T::Int,
+)
+    gasoline_products = [
+        p for
+        p in eachindex(fs.products) if fs.products[p].key in (:regular_gasoline, :premium_gasoline)
+    ]
     isempty(gasoline_products) && return nothing
 
-    gasoline = [sum(blend[p][b, t]
-                    for p in gasoline_products
-                    for b in eachindex(fs.products[p].components)) for t in 1:T]
-    renewable = [sum(blend[p][b, t]
-                     for p in gasoline_products
-                     for (b, s) in enumerate(fs.products[p].components)
-                     if fs.stream_classes[s] == :ethanol; init=0.0) for t in 1:T]
+    gasoline = [
+        sum(
+            blend[p][b, t] for p in gasoline_products for b in eachindex(fs.products[p].components)
+        ) for t in 1:T
+    ]
+    renewable = [
+        sum(
+            blend[p][b, t] for p in gasoline_products for
+            (b, s) in enumerate(fs.products[p].components) if fs.stream_classes[s] == :ethanol;
+            init=0.0,
+        ) for t in 1:T
+    ]
     if data.renewable_min_fraction > 0
-        @constraint(model,
-            sum(renewable) >= data.renewable_min_fraction * sum(gasoline))
+        @constraint(model, sum(renewable) >= data.renewable_min_fraction * sum(gasoline))
     end
     if data.renewable_max_fraction < 1
-        @constraint(model, [t in 1:T],
-            renewable[t] <= data.renewable_max_fraction * gasoline[t])
+        @constraint(model, [t in 1:T], renewable[t] <= data.renewable_max_fraction * gasoline[t])
     end
     return nothing
 end
@@ -216,37 +235,44 @@ function build_model(prob::RefineryPlanningProblem)
 
     model = Model()
 
-    @variable(model, 0 <= crude_buy[c in 1:C, t in 1:T] <=
-                     data.crude_availability[c, t])
+    @variable(model, 0 <= crude_buy[c in 1:C, t in 1:T] <= data.crude_availability[c, t])
     # Implied but stated: no single crude can be charged beyond the crude unit's
     # capacity, no feed beyond its unit's, and nothing can be blended into a grade
     # beyond what that grade can sell or store. The bounds cut nothing off, and a
     # simplex given them does not have to discover them.
     @variable(model, 0 <= crude_run[c in 1:C, t in 1:T] <= data.cdu_capacity[t])
-    @variable(model, 0 <= crude_inventory[c in 1:C, t in 1:T] <=
-                     data.crude_tank_capacity[c])
-    @variable(model, 0 <= throughput[u in 1:U, t in 1:T] <=
-                     data.unit_capacity[u, t] * fs.units[u].modes[1].capacity_factor)
-    @variable(model, 0 <= stream_inventory[s in fs.storable, t in 1:T] <=
-                     data.stream_tank_capacity[s])
-    @variable(model, 0 <= purchase[s in fs.purchasable, t in 1:T] <=
-                     data.stream_purchase_limit[s])
-    @variable(model, 0 <= spot_sale[s in fs.spot, t in 1:T] <=
-                     data.stream_spot_limit[s])
-    @variable(model, data.demand_min[p, t] <= sales[p in 1:P, t in 1:T] <=
-                     data.demand_max[p, t])
-    @variable(model, 0 <= product_inventory[p in 1:P, t in 1:T] <=
-                     data.product_tank_capacity[p])
-    feed = [@variable(model, [f in 1:length(fs.units[u].feeds), t in 1:T],
-                      lower_bound = 0,
-                      upper_bound = data.unit_capacity[u, t] *
-                                    fs.units[u].modes[1].capacity_factor,
-                      base_name = "feed_$(fs.units[u].name)") for u in 1:U]
-    blend = [@variable(model, [b in 1:length(fs.products[p].components), t in 1:T],
-                       lower_bound = 0,
-                       upper_bound = data.demand_max[p, t] +
-                                     data.product_tank_capacity[p],
-                       base_name = "blend_$(fs.products[p].name)") for p in 1:P]
+    @variable(model, 0 <= crude_inventory[c in 1:C, t in 1:T] <= data.crude_tank_capacity[c])
+    @variable(
+        model,
+        0 <=
+            throughput[u in 1:U, t in 1:T] <=
+            data.unit_capacity[u, t] * fs.units[u].modes[1].capacity_factor
+    )
+    @variable(
+        model, 0 <= stream_inventory[s in fs.storable, t in 1:T] <= data.stream_tank_capacity[s]
+    )
+    @variable(model, 0 <= purchase[s in fs.purchasable, t in 1:T] <= data.stream_purchase_limit[s])
+    @variable(model, 0 <= spot_sale[s in fs.spot, t in 1:T] <= data.stream_spot_limit[s])
+    @variable(model, data.demand_min[p, t] <= sales[p in 1:P, t in 1:T] <= data.demand_max[p, t])
+    @variable(model, 0 <= product_inventory[p in 1:P, t in 1:T] <= data.product_tank_capacity[p])
+    feed = [
+        @variable(
+            model,
+            [f in 1:length(fs.units[u].feeds), t in 1:T],
+            lower_bound = 0,
+            upper_bound = data.unit_capacity[u, t] * fs.units[u].modes[1].capacity_factor,
+            base_name = "feed_$(fs.units[u].name)"
+        ) for u in 1:U
+    ]
+    blend = [
+        @variable(
+            model,
+            [b in 1:length(fs.products[p].components), t in 1:T],
+            lower_bound = 0,
+            upper_bound = data.demand_max[p, t] + data.product_tank_capacity[p],
+            base_name = "blend_$(fs.products[p].name)"
+        ) for p in 1:P
+    ]
     # Extension variants (notably `hydrogen_network`) need the physically
     # resolved feeds and blends. Register these anonymous ragged containers in
     # the model dictionary without changing the public variable names.
@@ -256,18 +282,18 @@ function build_model(prob::RefineryPlanningProblem)
     # Crude tanks, crude-unit capacity and charge quality.
     for t in 1:T
         for c in 1:C
-            previous = t == 1 ? data.crude_initial_inventory[c] :
-                       crude_inventory[c, t - 1]
-            @constraint(model, previous + crude_buy[c, t] ==
-                               crude_run[c, t] + crude_inventory[c, t])
+            previous = t == 1 ? data.crude_initial_inventory[c] : crude_inventory[c, t - 1]
+            @constraint(
+                model, previous + crude_buy[c, t] == crude_run[c, t] + crude_inventory[c, t]
+            )
         end
         @constraint(model, sum(crude_run[c, t] for c in 1:C) <= data.cdu_capacity[t])
         data.cdu_min_throughput[t] > 0 &&
-            @constraint(model, sum(crude_run[c, t] for c in 1:C) >=
-                               data.cdu_min_throughput[t])
-        @constraint(model,
-            sum((fs.crude_sulfur[c] - data.cdu_sulfur_limit) * crude_run[c, t]
-                for c in 1:C) <= 0)
+            @constraint(model, sum(crude_run[c, t] for c in 1:C) >= data.cdu_min_throughput[t])
+        @constraint(
+            model,
+            sum((fs.crude_sulfur[c] - data.cdu_sulfur_limit) * crude_run[c, t] for c in 1:C) <= 0
+        )
     end
 
     # Stream balances, assembled term by term.
@@ -296,8 +322,9 @@ function build_model(prob::RefineryPlanningProblem)
             end
         end
         for t in 1:T
-            @constraint(model, throughput[u, t] ==
-                               sum(feed[u][f, t] for f in eachindex(unit.feeds)))
+            @constraint(
+                model, throughput[u, t] == sum(feed[u][f, t] for f in eachindex(unit.feeds))
+            )
             data.unit_min_throughput[u, t] > 0 &&
                 @constraint(model, throughput[u, t] >= data.unit_min_throughput[u, t])
         end
@@ -322,28 +349,27 @@ function build_model(prob::RefineryPlanningProblem)
 
     # Finished-product balances and blend specifications.
     for p in 1:P, t in 1:T
-        previous = t == 1 ? data.product_initial_inventory[p] :
-                   product_inventory[p, t - 1]
-        @constraint(model,
-            previous + sum(blend[p][b, t]
-                           for b in eachindex(fs.products[p].components)) ==
-            sales[p, t] + product_inventory[p, t])
+        previous = t == 1 ? data.product_initial_inventory[p] : product_inventory[p, t - 1]
+        @constraint(
+            model,
+            previous + sum(blend[p][b, t] for b in eachindex(fs.products[p].components)) ==
+                sales[p, t] + product_inventory[p, t]
+        )
     end
     _pp_add_blend_specifications!(model, fs, blend, T)
     _pp_add_renewable_blending!(model, fs, data, blend, T)
 
-    @objective(model, Max,
+    @objective(
+        model,
+        Max,
         sum(data.product_price[p, t] * sales[p, t] for p in 1:P, t in 1:T) +
         sum(data.stream_spot_price[s] * spot_sale[s, t] for s in fs.spot, t in 1:T) -
         sum(data.crude_price[c, t] * crude_buy[c, t] for c in 1:C, t in 1:T) -
-        sum(data.stream_purchase_cost[s, t] * purchase[s, t]
-            for s in fs.purchasable, t in 1:T) -
-        sum(fs.units[u].modes[1].operating_cost * throughput[u, t]
-            for u in 1:U, t in 1:T) -
-        sum(data.stream_holding_cost[s] * stream_inventory[s, t]
-            for s in fs.storable, t in 1:T) -
-        sum(data.product_holding_cost[p] * product_inventory[p, t]
-            for p in 1:P, t in 1:T))
+        sum(data.stream_purchase_cost[s, t] * purchase[s, t] for s in fs.purchasable, t in 1:T) -
+        sum(fs.units[u].modes[1].operating_cost * throughput[u, t] for u in 1:U, t in 1:T) -
+        sum(data.stream_holding_cost[s] * stream_inventory[s, t] for s in fs.storable, t in 1:T) -
+            sum(data.product_holding_cost[p] * product_inventory[p, t] for p in 1:P, t in 1:T)
+    )
 
     return model
 end
@@ -354,6 +380,6 @@ register_variant(
     RefineryPlanningProblem,
     "Multi-period refinery production planning: crude purchase and charge, " *
     "assay-driven distillation cuts, fixed-yield conversion units, intermediate " *
-    "tankage, and component blending into specification-constrained grades",
+    "tankage, and component blending into specification-constrained grades";
     default=true,
 )

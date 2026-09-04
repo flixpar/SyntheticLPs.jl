@@ -46,15 +46,15 @@ struct RefineryModeSwitchingProblem <: ProblemGenerator
     data::ProcessPlanData
     initial_mode::Vector{Int}
     minimum_run::Vector{Int}
-    feasible_witness::Union{Nothing,RefineryOperatingPlan}
-    infeasibility_certificate::Union{Nothing,RefineryInfeasibilityCertificate}
+    feasible_witness::Union{Nothing, RefineryOperatingPlan}
+    infeasibility_certificate::Union{Nothing, RefineryInfeasibilityCertificate}
     feasibility_status::FeasibilityStatus
 end
 
 """Check minimum-run and horizon-end rules for a planted mode schedule."""
-function _pp_mode_schedule_satisfies(mode_choice::Matrix{Int},
-                                     initial_mode::Vector{Int},
-                                     minimum_run::Vector{Int})
+function _pp_mode_schedule_satisfies(
+    mode_choice::Matrix{Int}, initial_mode::Vector{Int}, minimum_run::Vector{Int}
+)
     U, T = size(mode_choice)
     for u in 1:U
         L = minimum_run[u]
@@ -62,8 +62,7 @@ function _pp_mode_schedule_satisfies(mode_choice::Matrix{Int},
             previous = t == 1 ? initial_mode[u] : mode_choice[u, t - 1]
             mode_choice[u, t] == previous && continue
             t + L - 1 <= T || return false
-            all(mode_choice[u, k] == mode_choice[u, t]
-                for k in t:(t + L - 1)) || return false
+            all(mode_choice[u, k] == mode_choice[u, t] for k in t:(t + L - 1)) || return false
         end
     end
     return true
@@ -77,8 +76,9 @@ block and, when the horizon permits, its second for the remainder — a cracker
 swinging from gasoline to distillate as the season turns. Both blocks respect
 the unit's minimum run, and units with one mode simply run it.
 """
-function _pp_campaign_modes(rng::AbstractRNG, fs::RefineryFlowsheet, T::Int,
-                            minimum_run::Vector{Int})
+function _pp_campaign_modes(
+    rng::AbstractRNG, fs::RefineryFlowsheet, T::Int, minimum_run::Vector{Int}
+)
     U = n_units(fs)
     modes = ones(Int, U, T)
     for u in 1:U
@@ -127,38 +127,49 @@ horizon.
   and a market view rather than reconciled with the plan, leaving feasibility
   genuinely open.
 """
-function RefineryModeSwitchingProblem(target_variables::Int,
-                                      feasibility_status::FeasibilityStatus,
-                                      seed::Int)
+function RefineryModeSwitchingProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
     target = max(target_variables, 1)
 
     # A mode-switching request must contain a conversion unit.  Without this
     # floor, small or unlucky topping-refinery samples silently degenerate into
     # pure LPs despite the variant's contract.
-    _, skeleton, n_periods = _pp_dimensions(rng, target; mode_vars=true,
-                                            minimum_level=2,
-                                            compact_hydroprocessing=true)
+    _, skeleton, n_periods = _pp_dimensions(
+        rng, target; mode_vars=true, minimum_level=2, compact_hydroprocessing=true
+    )
     flowsheet = _pp_build_flowsheet(rng, skeleton)
-    minimum_run = [length(unit.modes) > 1 ? min(rand(rng, 2:4), n_periods) : 1
-                   for unit in flowsheet.units]
+    minimum_run = [
+        length(unit.modes) > 1 ? min(rand(rng, 2:4), n_periods) : 1 for unit in flowsheet.units
+    ]
     mode_choice = _pp_campaign_modes(rng, flowsheet, n_periods, minimum_run)
 
-    data, plan, certificate = _pp_plan_instance(rng, flowsheet, n_periods,
-                                                feasibility_status, mode_choice;
-                                                conditional_rates=true,
-                                                unknown_position=
-                                                _pp_seed_position(seed))
+    data, plan, certificate = _pp_plan_instance(
+        rng,
+        flowsheet,
+        n_periods,
+        feasibility_status,
+        mode_choice;
+        conditional_rates=true,
+        unknown_position=_pp_seed_position(seed),
+    )
 
     # What the units were running when the horizon opened; a unit that was down
     # is recorded as mode 0 and pays a changeover to start.
-    initial_mode = [rand(rng) < 0.85 ? rand(rng, 1:length(unit.modes)) : 0
-                    for unit in flowsheet.units]
+    initial_mode = [
+        rand(rng) < 0.85 ? rand(rng, 1:length(unit.modes)) : 0 for unit in flowsheet.units
+    ]
 
     problem = RefineryModeSwitchingProblem(
-        flowsheet, data, initial_mode, minimum_run,
-        feasibility_status == feasible ? plan : nothing, certificate,
-        feasibility_status)
+        flowsheet,
+        data,
+        initial_mode,
+        minimum_run,
+        feasibility_status == feasible ? plan : nothing,
+        certificate,
+        feasibility_status,
+    )
 
     if feasibility_status == feasible
         @assert refinery_plan_satisfies(flowsheet, data, plan)
@@ -201,44 +212,56 @@ function build_model(prob::RefineryModeSwitchingProblem)
 
     model = Model()
 
-    @variable(model, 0 <= crude_buy[c in 1:C, t in 1:T] <=
-                     data.crude_availability[c, t])
+    @variable(model, 0 <= crude_buy[c in 1:C, t in 1:T] <= data.crude_availability[c, t])
     # Implied but stated: no single crude can be charged beyond the crude unit's
     # capacity, no feed beyond its unit's, and nothing can be blended into a grade
     # beyond what that grade can sell or store. The bounds cut nothing off, and a
     # simplex given them does not have to discover them.
     @variable(model, 0 <= crude_run[c in 1:C, t in 1:T] <= data.cdu_capacity[t])
-    @variable(model, 0 <= crude_inventory[c in 1:C, t in 1:T] <=
-                     data.crude_tank_capacity[c])
-    @variable(model, 0 <= stream_inventory[s in fs.storable, t in 1:T] <=
-                     data.stream_tank_capacity[s])
-    @variable(model, 0 <= purchase[s in fs.purchasable, t in 1:T] <=
-                     data.stream_purchase_limit[s])
-    @variable(model, 0 <= spot_sale[s in fs.spot, t in 1:T] <=
-                     data.stream_spot_limit[s])
-    @variable(model, data.demand_min[p, t] <= sales[p in 1:P, t in 1:T] <=
-                     data.demand_max[p, t])
-    @variable(model, 0 <= product_inventory[p in 1:P, t in 1:T] <=
-                     data.product_tank_capacity[p])
-    feed = [@variable(model, [f in 1:length(fs.units[u].feeds),
-                              m in 1:length(fs.units[u].modes), t in 1:T],
-                      lower_bound = 0,
-                      upper_bound = data.unit_capacity[u, t] *
-                                    fs.units[u].modes[m].capacity_factor,
-                      base_name = "feed_$(fs.units[u].name)") for u in 1:U]
-    throughput = [@variable(model, [1:length(fs.units[u].modes), 1:T],
-                            lower_bound = 0,
-                            base_name = "throughput_$(fs.units[u].name)")
-                  for u in 1:U]
-    run_mode = [@variable(model, [1:length(fs.units[u].modes), 1:T], Bin,
-                          base_name = "run_$(fs.units[u].name)") for u in 1:U]
-    switch = [@variable(model, [1:length(fs.units[u].modes), 1:T], Bin,
-                        base_name = "switch_$(fs.units[u].name)") for u in 1:U]
-    blend = [@variable(model, [b in 1:length(fs.products[p].components), t in 1:T],
-                       lower_bound = 0,
-                       upper_bound = data.demand_max[p, t] +
-                                     data.product_tank_capacity[p],
-                       base_name = "blend_$(fs.products[p].name)") for p in 1:P]
+    @variable(model, 0 <= crude_inventory[c in 1:C, t in 1:T] <= data.crude_tank_capacity[c])
+    @variable(
+        model, 0 <= stream_inventory[s in fs.storable, t in 1:T] <= data.stream_tank_capacity[s]
+    )
+    @variable(model, 0 <= purchase[s in fs.purchasable, t in 1:T] <= data.stream_purchase_limit[s])
+    @variable(model, 0 <= spot_sale[s in fs.spot, t in 1:T] <= data.stream_spot_limit[s])
+    @variable(model, data.demand_min[p, t] <= sales[p in 1:P, t in 1:T] <= data.demand_max[p, t])
+    @variable(model, 0 <= product_inventory[p in 1:P, t in 1:T] <= data.product_tank_capacity[p])
+    feed = [
+        @variable(
+            model,
+            [f in 1:length(fs.units[u].feeds), m in 1:length(fs.units[u].modes), t in 1:T],
+            lower_bound = 0,
+            upper_bound = data.unit_capacity[u, t] * fs.units[u].modes[m].capacity_factor,
+            base_name = "feed_$(fs.units[u].name)"
+        ) for u in 1:U
+    ]
+    throughput = [
+        @variable(
+            model,
+            [1:length(fs.units[u].modes), 1:T],
+            lower_bound = 0,
+            base_name = "throughput_$(fs.units[u].name)"
+        ) for u in 1:U
+    ]
+    run_mode = [
+        @variable(
+            model, [1:length(fs.units[u].modes), 1:T], Bin, base_name = "run_$(fs.units[u].name)"
+        ) for u in 1:U
+    ]
+    switch = [
+        @variable(
+            model, [1:length(fs.units[u].modes), 1:T], Bin, base_name = "switch_$(fs.units[u].name)"
+        ) for u in 1:U
+    ]
+    blend = [
+        @variable(
+            model,
+            [b in 1:length(fs.products[p].components), t in 1:T],
+            lower_bound = 0,
+            upper_bound = data.demand_max[p, t] + data.product_tank_capacity[p],
+            base_name = "blend_$(fs.products[p].name)"
+        ) for p in 1:P
+    ]
     model[:unit_feed] = feed
     model[:blend_flow] = blend
     model[:mode_throughput] = throughput
@@ -247,18 +270,18 @@ function build_model(prob::RefineryModeSwitchingProblem)
 
     for t in 1:T
         for c in 1:C
-            previous = t == 1 ? data.crude_initial_inventory[c] :
-                       crude_inventory[c, t - 1]
-            @constraint(model, previous + crude_buy[c, t] ==
-                               crude_run[c, t] + crude_inventory[c, t])
+            previous = t == 1 ? data.crude_initial_inventory[c] : crude_inventory[c, t - 1]
+            @constraint(
+                model, previous + crude_buy[c, t] == crude_run[c, t] + crude_inventory[c, t]
+            )
         end
         @constraint(model, sum(crude_run[c, t] for c in 1:C) <= data.cdu_capacity[t])
         data.cdu_min_throughput[t] > 0 &&
-            @constraint(model, sum(crude_run[c, t] for c in 1:C) >=
-                               data.cdu_min_throughput[t])
-        @constraint(model,
-            sum((fs.crude_sulfur[c] - data.cdu_sulfur_limit) * crude_run[c, t]
-                for c in 1:C) <= 0)
+            @constraint(model, sum(crude_run[c, t] for c in 1:C) >= data.cdu_min_throughput[t])
+        @constraint(
+            model,
+            sum((fs.crude_sulfur[c] - data.cdu_sulfur_limit) * crude_run[c, t] for c in 1:C) <= 0
+        )
     end
 
     balance = Matrix{AffExpr}(undef, S, T)
@@ -288,27 +311,29 @@ function build_model(prob::RefineryModeSwitchingProblem)
                 end
             end
             for t in 1:T
-                @constraint(model, throughput[u][m, t] ==
-                                   sum(feed[u][f, m, t]
-                                       for f in eachindex(unit.feeds)))
-                @constraint(model, throughput[u][m, t] <=
-                                   data.unit_capacity[u, t] * mode.capacity_factor *
-                                   run_mode[u][m, t])
-                data.unit_min_throughput[u, t] > 0 &&
-                    @constraint(model, throughput[u][m, t] >=
-                                       data.unit_min_throughput[u, t] *
-                                       run_mode[u][m, t])
-                previous = t == 1 ? (prob.initial_mode[u] == m ? 1 : 0) :
-                           run_mode[u][m, t - 1]
+                @constraint(
+                    model,
+                    throughput[u][m, t] == sum(feed[u][f, m, t] for f in eachindex(unit.feeds))
+                )
+                @constraint(
+                    model,
+                    throughput[u][m, t] <=
+                        data.unit_capacity[u, t] * mode.capacity_factor * run_mode[u][m, t]
+                )
+                data.unit_min_throughput[u, t] > 0 && @constraint(
+                    model,
+                    throughput[u][m, t] >= data.unit_min_throughput[u, t] * run_mode[u][m, t]
+                )
+                previous = t == 1 ? (prob.initial_mode[u] == m ? 1 : 0) : run_mode[u][m, t - 1]
                 @constraint(model, switch[u][m, t] >= run_mode[u][m, t] - previous)
                 @constraint(model, switch[u][m, t] <= run_mode[u][m, t])
                 @constraint(model, switch[u][m, t] <= 1 - previous)
             end
             L = prob.minimum_run[u]
             for t in 1:max(T - L + 1, 0)
-                @constraint(model,
-                    sum(run_mode[u][m, k] for k in t:(t + L - 1)) >=
-                    L * switch[u][m, t])
+                @constraint(
+                    model, sum(run_mode[u][m, k] for k in t:(t + L - 1)) >= L * switch[u][m, t]
+                )
             end
             for t in max(T - L + 2, 1):T
                 @constraint(model, switch[u][m, t] == 0)
@@ -337,29 +362,31 @@ function build_model(prob::RefineryModeSwitchingProblem)
     @constraint(model, stream_balance[s in 1:S, t in 1:T], balance[s, t] == 0)
 
     for p in 1:P, t in 1:T
-        previous = t == 1 ? data.product_initial_inventory[p] :
-                   product_inventory[p, t - 1]
-        @constraint(model,
-            previous + sum(blend[p][b, t]
-                           for b in eachindex(fs.products[p].components)) ==
-            sales[p, t] + product_inventory[p, t])
+        previous = t == 1 ? data.product_initial_inventory[p] : product_inventory[p, t - 1]
+        @constraint(
+            model,
+            previous + sum(blend[p][b, t] for b in eachindex(fs.products[p].components)) ==
+                sales[p, t] + product_inventory[p, t]
+        )
     end
     _pp_add_blend_specifications!(model, fs, blend, T)
     _pp_add_renewable_blending!(model, fs, data, blend, T)
 
-    @objective(model, Max,
+    @objective(
+        model,
+        Max,
         sum(data.product_price[p, t] * sales[p, t] for p in 1:P, t in 1:T) +
         sum(data.stream_spot_price[s] * spot_sale[s, t] for s in fs.spot, t in 1:T) -
         sum(data.crude_price[c, t] * crude_buy[c, t] for c in 1:C, t in 1:T) -
-        sum(data.stream_purchase_cost[s, t] * purchase[s, t]
-            for s in fs.purchasable, t in 1:T) -
-        sum(fs.units[u].modes[m].operating_cost * throughput[u][m, t] +
-            data.unit_switch_cost[u] * switch[u][m, t]
-            for u in 1:U for m in 1:length(fs.units[u].modes) for t in 1:T) -
-        sum(data.stream_holding_cost[s] * stream_inventory[s, t]
-            for s in fs.storable, t in 1:T) -
-        sum(data.product_holding_cost[p] * product_inventory[p, t]
-            for p in 1:P, t in 1:T))
+        sum(data.stream_purchase_cost[s, t] * purchase[s, t] for s in fs.purchasable, t in 1:T) -
+        sum(
+            fs.units[u].modes[m].operating_cost * throughput[u][m, t] +
+            data.unit_switch_cost[u] * switch[u][m, t] for u in 1:U for
+            m in 1:length(fs.units[u].modes) for t in 1:T
+        ) -
+        sum(data.stream_holding_cost[s] * stream_inventory[s, t] for s in fs.storable, t in 1:T) -
+            sum(data.product_holding_cost[p] * product_inventory[p, t] for p in 1:P, t in 1:T)
+    )
 
     return model
 end

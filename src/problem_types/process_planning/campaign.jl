@@ -27,7 +27,7 @@ struct CampaignScheduleWitness
     rate::Matrix{Float64}        # [task, period]
     active::Matrix{Float64}      # [campaign task, period], y in {0,1}
     starts::Matrix{Float64}      # [campaign task, period]
-    purchase::Array{Float64,3}   # [raw material, tier, period]
+    purchase::Array{Float64, 3}   # [raw material, tier, period]
     inventory::Matrix{Float64}   # [material, period]
     sales::Matrix{Float64}       # [final material, period]
 end
@@ -120,8 +120,8 @@ struct CampaignPlanningProblem <: ProblemGenerator
     material_kind::Vector{Symbol}   # :raw, :inter, or :final
     task_names::Vector{Symbol}
     task_unit::Vector{Int}
-    task_inputs::Vector{Vector{Tuple{Int,Float64}}}
-    task_outputs::Vector{Vector{Tuple{Int,Float64}}}
+    task_inputs::Vector{Vector{Tuple{Int, Float64}}}
+    task_outputs::Vector{Vector{Tuple{Int, Float64}}}
     task_cost::Vector{Float64}
     unit_names::Vector{Symbol}
     unit_capacity::Matrix{Float64}  # [unit, period], turnaround-adjusted
@@ -138,16 +138,14 @@ struct CampaignPlanningProblem <: ProblemGenerator
     initial_inventory::Vector{Float64}
     holding_cost::Vector{Float64}
     changeover_cost::Float64
-    feasible_witness::Union{Nothing,CampaignScheduleWitness}
-    infeasibility_certificate::Union{Nothing,CampaignCapacityCertificate}
-    market_scenario::Union{Nothing,CampaignMarketScenario}
+    feasible_witness::Union{Nothing, CampaignScheduleWitness}
+    infeasibility_certificate::Union{Nothing, CampaignCapacityCertificate}
+    market_scenario::Union{Nothing, CampaignMarketScenario}
     feasibility_status::FeasibilityStatus
 end
 
-_cp_variable_count(n_tasks, n_campaign_tasks, n_raws, n_tiers, n_materials,
-                   n_finals, n_periods) =
-    n_periods * (n_tasks + 2 * n_campaign_tasks + n_raws * n_tiers +
-                 n_materials + n_finals)
+_cp_variable_count(n_tasks, n_campaign_tasks, n_raws, n_tiers, n_materials, n_finals, n_periods) =
+    n_periods * (n_tasks + 2 * n_campaign_tasks + n_raws * n_tiers + n_materials + n_finals)
 
 # Chain library. Each chain: materials with kinds, tasks as
 # (name, unit, inputs, outputs, variable cost per tonne of throughput),
@@ -155,10 +153,10 @@ _cp_variable_count(n_tasks, n_campaign_tasks, n_raws, n_tiers, n_materials,
 # output coefficients are mass ratios per unit of task throughput with
 # realistic yields; shared raw materials (ethylene, propylene, natural gas)
 # let chains in one complex draw on common feed markets.
-const _CP_CHAINS = Dict{Symbol,Any}()
+const _CP_CHAINS = Dict{Symbol, Any}()
 
 _cp_register_chain(name::Symbol, materials, kinds, tasks) =
-    (_CP_CHAINS[name] = (materials = materials, kinds = kinds, tasks = tasks))
+    (_CP_CHAINS[name] = (materials=materials, kinds=kinds, tasks=tasks))
 
 let
     # LDPE tolling plant: the minimal complex.
@@ -177,8 +175,7 @@ let
         [:ETH, :CL, :EDC, :VCM, :PVCP, :PVCF, :PVCB],
         [:raw, :raw, :inter, :inter, :final, :final, :final],
         [
-            (:chlorinate, :CHLOR, [Pair(:ETH, 0.29), Pair(:CL, 0.73)],
-             [Pair(:EDC, 0.985)], 42.0),
+            (:chlorinate, :CHLOR, [Pair(:ETH, 0.29), Pair(:CL, 0.73)], [Pair(:EDC, 0.985)], 42.0),
             (:edc_crack, :CRACK, [Pair(:EDC, 1.00)], [Pair(:VCM, 0.970)], 58.0),
             (:pvc_pipe, :PVCTRAIN, [Pair(:VCM, 1.005)], [Pair(:PVCP, 0.995)], 72.0),
             (:pvc_film, :PVCTRAIN, [Pair(:VCM, 1.005)], [Pair(:PVCF, 0.995)], 74.0),
@@ -192,12 +189,15 @@ let
         [:BNZ, :PRP, :CUM, :PHL, :ACT, :BPA, :UFR, :NOV],
         [:raw, :raw, :inter, :final, :final, :final, :final, :final],
         [
-            (:cumene, :ALK, [Pair(:BNZ, 0.66), Pair(:PRP, 0.36)],
-             [Pair(:CUM, 0.980)], 38.0),
-            (:cumene_oxidation, :OXID, [Pair(:CUM, 1.00)],
-             [Pair(:PHL, 0.930), Pair(:ACT, 0.600)], 85.0),
-            (:bisphenol, :BPAU, [Pair(:PHL, 0.77), Pair(:ACT, 0.28)],
-             [Pair(:BPA, 0.960)], 95.0),
+            (:cumene, :ALK, [Pair(:BNZ, 0.66), Pair(:PRP, 0.36)], [Pair(:CUM, 0.980)], 38.0),
+            (
+                :cumene_oxidation,
+                :OXID,
+                [Pair(:CUM, 1.00)],
+                [Pair(:PHL, 0.930), Pair(:ACT, 0.600)],
+                85.0,
+            ),
+            (:bisphenol, :BPAU, [Pair(:PHL, 0.77), Pair(:ACT, 0.28)], [Pair(:BPA, 0.960)], 95.0),
             (:resole, :RESINTRAIN, [Pair(:PHL, 1.05)], [Pair(:UFR, 0.975)], 88.0),
             (:novolac, :RESINTRAIN, [Pair(:PHL, 1.00)], [Pair(:NOV, 0.970)], 92.0),
         ],
@@ -210,10 +210,20 @@ let
         [
             (:ld2_film, :LDTRAIN2, [Pair(:ETH, 1.015)], [Pair(:LDPF2, 0.990)], 95.0),
             (:ld2_coating, :LDTRAIN2, [Pair(:ETH, 1.015)], [Pair(:LDPC2, 0.990)], 105.0),
-            (:lld_film, :LLDTRAIN, [Pair(:ETH, 0.96), Pair(:BUT, 0.05)],
-             [Pair(:LLPF, 0.990)], 102.0),
-            (:lld_pipe, :LLDTRAIN, [Pair(:ETH, 0.96), Pair(:BUT, 0.05)],
-             [Pair(:LLPP, 0.990)], 104.0),
+            (
+                :lld_film,
+                :LLDTRAIN,
+                [Pair(:ETH, 0.96), Pair(:BUT, 0.05)],
+                [Pair(:LLPF, 0.990)],
+                102.0,
+            ),
+            (
+                :lld_pipe,
+                :LLDTRAIN,
+                [Pair(:ETH, 0.96), Pair(:BUT, 0.05)],
+                [Pair(:LLPP, 0.990)],
+                104.0,
+            ),
             (:pp_injection, :PPTRAIN, [Pair(:PRP, 1.010)], [Pair(:PPI, 0.990)], 88.0),
             (:pp_fiber, :PPTRAIN, [Pair(:PRP, 1.010)], [Pair(:PPF, 0.990)], 90.0),
         ],
@@ -225,10 +235,20 @@ let
         [:raw, :raw, :inter, :final, :final],
         [
             (:px_oxidation, :PTAU, [Pair(:PX, 0.660)], [Pair(:PTA, 0.980)], 62.0),
-            (:pet_bottle, :PETTRAIN, [Pair(:PTA, 0.86), Pair(:MEG, 0.33)],
-             [Pair(:PETB, 0.990)], 78.0),
-            (:pet_fiber, :PETTRAIN, [Pair(:PTA, 0.86), Pair(:MEG, 0.33)],
-             [Pair(:PETF, 0.988)], 80.0),
+            (
+                :pet_bottle,
+                :PETTRAIN,
+                [Pair(:PTA, 0.86), Pair(:MEG, 0.33)],
+                [Pair(:PETB, 0.990)],
+                78.0,
+            ),
+            (
+                :pet_fiber,
+                :PETTRAIN,
+                [Pair(:PTA, 0.86), Pair(:MEG, 0.33)],
+                [Pair(:PETF, 0.988)],
+                80.0,
+            ),
         ],
     )
     # C1 chemistry: natural gas to methanol, acetic acid, vinyl acetate, and
@@ -239,10 +259,14 @@ let
         [:raw, :raw, :raw, :final, :final, :final, :final, :final],
         [
             (:methanol, :MEOHU, [Pair(:NG, 0.780)], [Pair(:MEOH, 0.950)], 55.0),
-            (:carbonylation, :ACETU, [Pair(:MEOH, 0.54), Pair(:CO, 0.42)],
-             [Pair(:AA, 0.950)], 48.0),
-            (:vinylation, :VAMU, [Pair(:AA, 0.62), Pair(:ETH, 0.35)],
-             [Pair(:VAM, 0.950)], 60.0),
+            (
+                :carbonylation,
+                :ACETU,
+                [Pair(:MEOH, 0.54), Pair(:CO, 0.42)],
+                [Pair(:AA, 0.950)],
+                48.0,
+            ),
+            (:vinylation, :VAMU, [Pair(:AA, 0.62), Pair(:ETH, 0.35)], [Pair(:VAM, 0.950)], 60.0),
             (:pvoh_fine, :POHTRAIN, [Pair(:VAM, 1.00)], [Pair(:POHF, 0.940)], 110.0),
             (:pvoh_coarse, :POHTRAIN, [Pair(:VAM, 1.00)], [Pair(:POHC, 0.945)], 105.0),
         ],
@@ -255,8 +279,7 @@ let
         [
             (:ammonia, :AMMU, [Pair(:NG, 0.620)], [Pair(:NH3, 0.950)], 60.0),
             (:urea, :UREAU, [Pair(:NH3, 0.570)], [Pair(:UREA, 0.990)], 32.0),
-            (:uan_blend, :UANU, [Pair(:UREA, 0.36), Pair(:NH3, 0.28)],
-             [Pair(:UAN, 0.980)], 18.0),
+            (:uan_blend, :UANU, [Pair(:UREA, 0.36), Pair(:NH3, 0.28)], [Pair(:UAN, 0.980)], 18.0),
             (:ammonium_nitrate, :ANU, [Pair(:NH3, 0.430)], [Pair(:AN, 0.960)], 45.0),
         ],
     )
@@ -264,32 +287,80 @@ end
 
 # Base raw-material and product prices ($/t) and demand-seasonality class.
 const _CP_RAW_PRICE = Dict(
-    :ETH => 1050.0, :PRP => 950.0, :BUT => 1100.0, :BNZ => 1000.0,
-    :PX => 1050.0, :MEG => 800.0, :NG => 420.0, :CO => 300.0, :CL => 320.0,
+    :ETH => 1050.0,
+    :PRP => 950.0,
+    :BUT => 1100.0,
+    :BNZ => 1000.0,
+    :PX => 1050.0,
+    :MEG => 800.0,
+    :NG => 420.0,
+    :CO => 300.0,
+    :CL => 320.0,
 )
 const _CP_PRODUCT_PRICE = Dict(
-    :LDPF => 1250.0, :LDPC => 1280.0, :LDPF2 => 1250.0, :LDPC2 => 1280.0,
-    :LLPF => 1270.0, :LLPP => 1290.0, :PPI => 1150.0, :PPF => 1170.0,
-    :PVCP => 950.0, :PVCF => 970.0, :PVCB => 990.0,
-    :PHL => 1250.0, :ACT => 850.0, :BPA => 1900.0, :UFR => 1450.0,
-    :NOV => 1480.0, :PTA => 880.0, :PETB => 1050.0, :PETF => 1020.0,
-    :MEOH => 330.0, :AA => 650.0, :VAM => 1050.0, :POHF => 2100.0,
-    :POHC => 2050.0, :UREA => 360.0, :UAN => 330.0, :AN => 400.0,
+    :LDPF => 1250.0,
+    :LDPC => 1280.0,
+    :LDPF2 => 1250.0,
+    :LDPC2 => 1280.0,
+    :LLPF => 1270.0,
+    :LLPP => 1290.0,
+    :PPI => 1150.0,
+    :PPF => 1170.0,
+    :PVCP => 950.0,
+    :PVCF => 970.0,
+    :PVCB => 990.0,
+    :PHL => 1250.0,
+    :ACT => 850.0,
+    :BPA => 1900.0,
+    :UFR => 1450.0,
+    :NOV => 1480.0,
+    :PTA => 880.0,
+    :PETB => 1050.0,
+    :PETF => 1020.0,
+    :MEOH => 330.0,
+    :AA => 650.0,
+    :VAM => 1050.0,
+    :POHF => 2100.0,
+    :POHC => 2050.0,
+    :UREA => 360.0,
+    :UAN => 330.0,
+    :AN => 400.0,
 )
 const _CP_SEASON = Dict(
-    :LDPF => :construction, :LDPC => :construction, :LDPF2 => :construction,
-    :LDPC2 => :construction, :LLPF => :construction, :LLPP => :construction,
-    :PPI => :construction, :PPF => :construction,
-    :PVCP => :construction, :PVCF => :construction, :PVCB => :construction,
-    :PHL => :flat, :ACT => :flat, :BPA => :flat, :UFR => :flat,
-    :NOV => :flat, :PTA => :flat,
-    :PETB => :summer, :PETF => :summer,
-    :MEOH => :flat, :AA => :flat, :VAM => :flat, :POHF => :winter,
-    :POHC => :winter, :UREA => :spring, :UAN => :spring, :AN => :spring,
+    :LDPF => :construction,
+    :LDPC => :construction,
+    :LDPF2 => :construction,
+    :LDPC2 => :construction,
+    :LLPF => :construction,
+    :LLPP => :construction,
+    :PPI => :construction,
+    :PPF => :construction,
+    :PVCP => :construction,
+    :PVCF => :construction,
+    :PVCB => :construction,
+    :PHL => :flat,
+    :ACT => :flat,
+    :BPA => :flat,
+    :UFR => :flat,
+    :NOV => :flat,
+    :PTA => :flat,
+    :PETB => :summer,
+    :PETF => :summer,
+    :MEOH => :flat,
+    :AA => :flat,
+    :VAM => :flat,
+    :POHF => :winter,
+    :POHC => :winter,
+    :UREA => :spring,
+    :UAN => :spring,
+    :AN => :spring,
 )
 const _CP_SEASON_SHAPE = Dict(
-    :construction => (0.12, 0.22), :summer => (0.08, 0.15),
-    :winter => (0.10, 0.20), :spring => (0.15, 0.30), :flat => (0.02, 0.05),
+    :construction => (0.12, 0.22),
+    :summer => (0.08, 0.15),
+    :winter => (0.10, 0.20),
+    :spring => (0.15, 0.30),
+    :flat => (0.02, 0.05),
 )
 
 """
@@ -302,13 +373,13 @@ function _cp_assemble_complex(chain_names::Vector{Symbol})
     material_kind = Symbol[]
     task_names = Symbol[]
     task_unit = Int[]
-    task_inputs = Vector{Tuple{Int,Float64}}[]
-    task_outputs = Vector{Tuple{Int,Float64}}[]
+    task_inputs = Vector{Tuple{Int, Float64}}[]
+    task_outputs = Vector{Tuple{Int, Float64}}[]
     task_cost = Float64[]
     unit_names = Symbol[]
     for chain in chain_names
         spec = _CP_CHAINS[chain]
-        index = Dict{Symbol,Int}()
+        index = Dict{Symbol, Int}()
         for (m, material) in enumerate(spec.materials)
             existing = findfirst(==(material), material_names)
             if existing === nothing
@@ -325,20 +396,18 @@ function _cp_assemble_complex(chain_names::Vector{Symbol})
             u === nothing && (u = length(push!(unit_names, uname)))
             push!(task_names, tname)
             push!(task_unit, u)
-            push!(task_inputs,
-                  [(index[m], c) for (m, c) in inputs])
-            push!(task_outputs,
-                  [(index[m], c) for (m, c) in outputs])
+            push!(task_inputs, [(index[m], c) for (m, c) in inputs])
+            push!(task_outputs, [(index[m], c) for (m, c) in outputs])
             push!(task_cost, cost)
         end
     end
     campaign_unit = [count(==(u), task_unit) > 1 for u in 1:length(unit_names)]
-    return material_names, material_kind, task_names, task_unit, task_inputs,
-           task_outputs, task_cost, unit_names, campaign_unit
+    return material_names,
+    material_kind, task_names, task_unit, task_inputs, task_outputs, task_cost, unit_names,
+    campaign_unit
 end
 
-_cp_chain_order = [:ldpe, :vinyls, :aromatics, :polyolefins, :polyester, :c1,
-                   :nitrogen]
+_cp_chain_order = [:ldpe, :vinyls, :aromatics, :polyolefins, :polyester, :c1, :nitrogen]
 
 """
 Choose chains, tier count, and horizon from a variable target. Chain
@@ -347,13 +416,14 @@ variable count with the horizon solved in closed form and scanned; the
 minimal LDPE plant is always offered so small targets stay reachable.
 """
 function _cp_choose_dimensions(rng::AbstractRNG, target_variables::Int)
-    target_variables <= MAX_CAMPAIGN_PLANNING_VARIABLES ||
-        throw(ArgumentError(
+    target_variables <= MAX_CAMPAIGN_PLANNING_VARIABLES || throw(
+        ArgumentError(
             "process_planning/campaign supports target_variables <= " *
             "$(MAX_CAMPAIGN_PLANNING_VARIABLES); requested $target_variables. " *
             "The seven-chain complex over weekly periods tops out near this, " *
             "so a larger target cannot be produced honestly.",
-        ))
+        ),
+    )
     target = max(target_variables, 1)
 
     best = nothing
@@ -371,30 +441,51 @@ function _cp_choose_dimensions(rng::AbstractRNG, target_variables::Int)
             chains = copy(_cp_chain_order)
             n_tiers = 3
         else
-            max_chains = target < 150 ? 2 : target < 600 ? 3 :
-                         target < 2500 ? 4 : target < 8000 ? 5 : 7
-            n_chains = clamp(round(Int, 1 + (max_chains - 1) *
-                                   rand(rng, Uniform(0.35, 1.0))), 1, max_chains)
+            max_chains = if target < 150
+                2
+            elseif target < 600
+                3
+            elseif target < 2500
+                4
+            elseif target < 8000
+                5
+            else
+                7
+            end
+            n_chains = clamp(
+                round(Int, 1 + (max_chains - 1) * rand(rng, Uniform(0.35, 1.0))), 1, max_chains
+            )
             pool = collect(_cp_chain_order)
             shuffle!(rng, pool)
             chains = pool[1:n_chains]
-            n_tiers = target < 90 ? 1 : rand(rng) < 0.4 ? 2 : 3
+            n_tiers = if target < 90
+                1
+            elseif rand(rng) < 0.4
+                2
+            else
+                3
+            end
         end
-        material_names, material_kind, task_names, task_unit, task_inputs,
-        task_outputs, task_cost, unit_names, campaign_unit =
-            _cp_assemble_complex(chains)
+        material_names, material_kind, task_names, task_unit, task_inputs, task_outputs, task_cost, unit_names, campaign_unit = _cp_assemble_complex(
+            chains
+        )
         n_raws = count(==(:raw), material_kind)
         n_finals = count(==(:final), material_kind)
-        n_campaign = count(task_unit[t] in
-                           findall(campaign_unit) for t in eachindex(task_unit))
-        per_period = _cp_variable_count(length(task_names), n_campaign, n_raws,
-                                        n_tiers, length(material_names),
-                                        n_finals, 1)
+        n_campaign = count(task_unit[t] in findall(campaign_unit) for t in eachindex(task_unit))
+        per_period = _cp_variable_count(
+            length(task_names), n_campaign, n_raws, n_tiers, length(material_names), n_finals, 1
+        )
         t_star = clamp(round(Int, target / per_period), 3, 126)
         for n_periods in max(3, t_star - 2):min(126, t_star + 2)
-            size = _cp_variable_count(length(task_names), n_campaign, n_raws,
-                                      n_tiers, length(material_names),
-                                      n_finals, n_periods)
+            size = _cp_variable_count(
+                length(task_names),
+                n_campaign,
+                n_raws,
+                n_tiers,
+                length(material_names),
+                n_finals,
+                n_periods,
+            )
             error = abs(size - target) / target
             shape = abs(log(n_periods / clamp(4 * sqrt(target / 200), 3, 52)))
             score = (error, shape, rand(rng))
@@ -413,33 +504,40 @@ the horizon with a positive floor, following the material's demand class
 (construction polymers, spring fertilisers, summer beverage packaging,
 winter adhesives).
 """
-function _cp_demand_deviation(rng::AbstractRNG, finals::Vector{Int},
-                              material_names::Vector{Symbol}, n_periods::Int)
+function _cp_demand_deviation(
+    rng::AbstractRNG, finals::Vector{Int}, material_names::Vector{Symbol}, n_periods::Int
+)
     calendar_phase = rand(rng, Uniform(0.0, 2pi))
     delta = ones(Float64, length(finals), n_periods)
     for (i, m) in enumerate(finals)
         amp = rand(rng, Uniform(_CP_SEASON_SHAPE[_CP_SEASON[material_names[m]]]...))
         cls = _CP_SEASON[material_names[m]]
-        offset = cls == :winter ? Float64(pi) :
-                 cls == :spring ? -Float64(pi) / 2 :
-                 cls == :construction ? 0.35 : 0.0
+        offset = if cls == :winter
+            Float64(pi)
+        elseif cls == :spring
+            -Float64(pi) / 2
+        elseif cls == :construction
+            0.35
+        else
+            0.0
+        end
         delta[i, :] .= _pp_seasonal_deviation(
-            rng, amp, calendar_phase + offset, n_periods; period_days=7.0)
+            rng, amp, calendar_phase + offset, n_periods; period_days=7.0
+        )
     end
     return delta
 end
 
 function CampaignPlanningProblem(
-    target_variables::Int,
-    feasibility_status::FeasibilityStatus,
-    seed::Int,
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
     target = max(target_variables, 1)
     chains, n_tiers, n_periods = _cp_choose_dimensions(rng, target)
     T = n_periods
-    material_names, material_kind, task_names, task_unit, task_inputs,
-    task_outputs, task_cost, unit_names, campaign_unit = _cp_assemble_complex(chains)
+    material_names, material_kind, task_names, task_unit, task_inputs, task_outputs, task_cost, unit_names, campaign_unit = _cp_assemble_complex(
+        chains
+    )
     M = length(material_names)
     NT = length(task_names)
     U = length(unit_names)
@@ -459,7 +557,7 @@ function CampaignPlanningProblem(
         train_tasks = shuffle!(rng, [t for t in 1:NT if task_unit[t] == u])
         slack = max(0, T ÷ max(1, length(train_tasks)) - campaign_length)
         cursor = 1
-        blocks = Vector{Pair{Int,UnitRange{Int}}}()
+        blocks = Vector{Pair{Int, UnitRange{Int}}}()
         for task in train_tasks
             length_blk = campaign_length + rand(rng, 0:slack)
             cursor + length_blk - 1 > T && break
@@ -474,8 +572,7 @@ function CampaignPlanningProblem(
     end
     starts = zeros(Float64, cT, T)
     for i in 1:cT, t in 1:T
-        starts[i, t] = t == 1 ? active[i, 1] :
-                       max(0.0, active[i, t] - active[i, t - 1])
+        starts[i, t] = t == 1 ? active[i, 1] : max(0.0, active[i, t] - active[i, t - 1])
     end
 
     # Turnaround windows on single-task units whose rates are driven by
@@ -483,10 +580,19 @@ function CampaignPlanningProblem(
     # raw materials. Trains keep flat capacity so campaign blocks stay
     # valid, and inter-fed units track upstream production exactly.
     turnaround = ones(Float64, U, T)
-    flexible = [u for u in 1:U if !campaign_unit[u] && all(
-        material_kind[mm] == :raw
-        for t in 1:NT if task_unit[t] == u for (mm, _) in task_inputs[t])]
-    for _ in 1:(rand(rng) < 0.45 ? 0 : rand(rng) < 0.75 ? 1 : 2)
+    flexible = [
+        u for u in 1:U if !campaign_unit[u] && all(
+            material_kind[mm] == :raw for t in 1:NT if task_unit[t] == u for
+            (mm, _) in task_inputs[t]
+        )
+    ]
+    for _ in 1:(if rand(rng) < 0.45
+            0
+        elseif rand(rng) < 0.75
+            1
+        else
+            2
+        end)
         isempty(flexible) && break
         u = rand(rng, flexible)
         start = rand(rng, 1:T)
@@ -499,12 +605,12 @@ function CampaignPlanningProblem(
     # its whole share through whichever grade is active. The last internal
     # consumer absorbs the remainder unless the material is also sold
     # merchant, in which case the remainder is the sales plan.
-    downstream = Dict{Int,Vector{Int}}()
+    downstream = Dict{Int, Vector{Int}}()
     for t in 1:NT, (m, _) in task_inputs[t]
         push!(get!(downstream, m, Int[]), t)
     end
-    allocated = Dict{Tuple{Int,Int},Float64}()  # (material, unit) => share
-    merchant_share = Dict{Int,Float64}()
+    allocated = Dict{Tuple{Int, Int}, Float64}()  # (material, unit) => share
+    merchant_share = Dict{Int, Float64}()
     for m in 1:M
         haskey(downstream, m) || continue
         consumer_units = unique(task_unit[t] for t in downstream[m])
@@ -533,9 +639,10 @@ function CampaignPlanningProblem(
     for t in 1:NT
         base = unit_base[task_unit[t]]
         for τ in 1:T
-            nominal[t, τ] = base * (1 + 0.05 * sin(2π * τ / T +
-                               unit_phase[task_unit[t]])) *
-                            rand(rng, Uniform(0.97, 1.03))
+            nominal[t, τ] =
+                base *
+                (1 + 0.05 * sin(2π * τ / T + unit_phase[task_unit[t]])) *
+                rand(rng, Uniform(0.97, 1.03))
         end
     end
     production = zeros(Float64, M, T)
@@ -543,8 +650,7 @@ function CampaignPlanningProblem(
     rate = zeros(Float64, NT, T)
     for t in 1:NT
         u = task_unit[t]
-        inter_inputs = [(m, c) for (m, c) in task_inputs[t]
-                        if material_kind[m] == :inter]
+        inter_inputs = [(m, c) for (m, c) in task_inputs[t] if material_kind[m] == :inter]
         for τ in 1:T
             if campaign_unit[u]
                 i = campaign_index[t]
@@ -561,8 +667,7 @@ function CampaignPlanningProblem(
                 m, c = inter_inputs[1]
                 rate[t, τ] = allocated[(m, u)] * production[m, τ] / c
             else
-                rate[t, τ] = nominal[t, τ] * rand(rng, Uniform(0.6, 0.85)) *
-                             turnaround[u, τ]
+                rate[t, τ] = nominal[t, τ] * rand(rng, Uniform(0.6, 0.85)) * turnaround[u, τ]
             end
         end
         for (m, c) in task_inputs[t], τ in 1:T
@@ -585,8 +690,7 @@ function CampaignPlanningProblem(
             # The per-period utilisation draws spread by up to 0.85/0.6 =
             # 1.42x, beyond any headroom, so the planned load itself is a
             # floor on capacity: the witness must clear every capacity row.
-            unit_capacity[u, τ] = max(load[τ] * 1.02,
-                                      peak * headroom * turnaround[u, τ])
+            unit_capacity[u, τ] = max(load[τ] * 1.02, peak * headroom * turnaround[u, τ])
         end
     end
     min_rate_fraction = [rand(rng, Uniform(0.12, 0.30)) for _ in 1:cT]
@@ -599,11 +703,9 @@ function CampaignPlanningProblem(
     for (i, t) in enumerate(campaign_tasks)
         lo = Inf
         for τ in 1:T
-            active[i, τ] > 0 &&
-                (lo = min(lo, rate[t, τ] / unit_capacity[task_unit[t], τ]))
+            active[i, τ] > 0 && (lo = min(lo, rate[t, τ] / unit_capacity[task_unit[t], τ]))
         end
-        isfinite(lo) &&
-            (min_rate_fraction[i] = min(min_rate_fraction[i], 0.98 * lo))
+        isfinite(lo) && (min_rate_fraction[i] = min(min_rate_fraction[i], 0.98 * lo))
     end
 
     # Merchant sales and inventory trajectories.
@@ -624,17 +726,19 @@ function CampaignPlanningProblem(
         if material_kind[m] == :raw
             # Purchases exactly cover consumption; tiers split the volume.
             need = consumption[m, :]
-            tier_cap[m, 1] = isempty(need) ? 0.0 :
-                             n_tiers == 1 ?
-                             maximum(need) * rand(rng, Uniform(1.05, 1.20)) :
-                             minimum(need) * rand(rng, Uniform(0.7, 1.0))
+            tier_cap[m, 1] = if isempty(need)
+                0.0
+            elseif n_tiers == 1
+                maximum(need) * rand(rng, Uniform(1.05, 1.20))
+            else
+                minimum(need) * rand(rng, Uniform(0.7, 1.0))
+            end
             if n_tiers >= 2
-                tier_cap[m, 2] = max(0.0, maximum(need) * 1.25 - tier_cap[m, 1]) *
-                                 rand(rng, Uniform(0.6, 1.0))
+                tier_cap[m, 2] =
+                    max(0.0, maximum(need) * 1.25 - tier_cap[m, 1]) * rand(rng, Uniform(0.6, 1.0))
             end
             if n_tiers >= 3
-                tier_cap[m, 3] = max(0.0, maximum(need) * 1.45 -
-                                     tier_cap[m, 1] - tier_cap[m, 2])
+                tier_cap[m, 3] = max(0.0, maximum(need) * 1.45 - tier_cap[m, 1] - tier_cap[m, 2])
             end
             for τ in 1:T
                 remaining = need[τ]
@@ -649,24 +753,28 @@ function CampaignPlanningProblem(
             n_tiers >= 2 && (tier_price[m, 2] = base * rand(rng, Uniform(1.05, 1.25)))
             n_tiers >= 3 && (tier_price[m, 3] = base * rand(rng, Uniform(1.30, 1.60)))
             initial_inventory[m] = mean(need) * rand(rng, Uniform(0.05, 0.15))
-            net = vec(sum(purchase_plan[m, :, :]; dims = 1)) .- need
+            net = vec(sum(purchase_plan[m, :, :]; dims=1)) .- need
         end
         cum = cumsum(net)
         mean_net = sum(abs.(net)) / T
         initial_inventory[m] += -min(0.0, minimum(cum)) + 0.10 * mean_net + 0.05
-        tank[m] = max(initial_inventory[m] + max(0.0, maximum(cum)) +
-                      0.15 * mean_net + 0.05,
-                      1.1 * initial_inventory[m])
+        tank[m] = max(
+            initial_inventory[m] + max(0.0, maximum(cum)) + 0.15 * mean_net + 0.05,
+            1.1 * initial_inventory[m],
+        )
     end
 
     inventory_plan = zeros(Float64, M, T)
     previous = copy(initial_inventory)
     for m in 1:M, τ in 1:T
-        inventory_plan[m, τ] = previous[m] +
-                               (material_kind[m] == :raw ?
-                                sum(purchase_plan[m, :, τ]) :
-                                production[m, τ] - sales_plan[m, τ]) -
-                               consumption[m, τ]
+        inventory_plan[m, τ] =
+            previous[m] + (
+                if material_kind[m] == :raw
+                    sum(purchase_plan[m, :, τ])
+                else
+                    production[m, τ] - sales_plan[m, τ]
+                end
+            ) - consumption[m, τ]
         previous[m] = inventory_plan[m, τ]
     end
 
@@ -674,8 +782,8 @@ function CampaignPlanningProblem(
     for (i, m) in enumerate(finals)
         base = _CP_PRODUCT_PRICE[material_names[m]] * rand(rng, LogNormal(0, 0.10))
         for τ in 1:T
-            material_price[m, τ] = base * (1 + 0.35 * (delta[i, τ] - 1)) *
-                                   rand(rng, Uniform(0.98, 1.02))
+            material_price[m, τ] =
+                base * (1 + 0.35 * (delta[i, τ] - 1)) * rand(rng, Uniform(0.98, 1.02))
         end
     end
     sales_floor = zeros(Float64, M, T)
@@ -683,8 +791,7 @@ function CampaignPlanningProblem(
     for m in finals
         λ = rand(rng, Uniform(0.4, 0.9))
         sales_floor[m, :] .= λ .* sales_plan[m, :]
-        sales_ceiling[m, :] .= sales_plan[m, :] .*
-                               (1 .+ rand(rng, Uniform(0.10, 0.40), T))
+        sales_ceiling[m, :] .= sales_plan[m, :] .* (1 .+ rand(rng, Uniform(0.10, 0.40), T))
     end
     holding_cost = rand(rng, Uniform(2.0, 8.0), M)
     changeover_cost = rand(rng, Uniform(30.0, 150.0))
@@ -695,69 +802,83 @@ function CampaignPlanningProblem(
 
     if feasibility_status == feasible
         feasible_witness = CampaignScheduleWitness(
-            rate, active, starts, purchase_plan, inventory_plan, sales_plan)
+            rate, active, starts, purchase_plan, inventory_plan, sales_plan
+        )
     elseif feasibility_status == infeasible
         horizon = clamp(round(Int, T * rand(rng, Uniform(0.55, 1.0))), 2, T)
-        candidates = Tuple{Int,Float64}[]
+        candidates = Tuple{Int, Float64}[]
         for m in finals
-            producer = findfirst(t -> any(o == m for (o, _) in task_outputs[t]),
-                                 1:NT)
+            producer = findfirst(t -> any(o == m for (o, _) in task_outputs[t]), 1:NT)
             producer === nothing && continue
             out_coeff = sum(c for (o, c) in task_outputs[producer] if o == m)
             task_cap = out_coeff * sum(unit_capacity[task_unit[producer], 1:horizon])
-            raw_inputs = [(mm, c) for (mm, c) in task_inputs[producer]
-                          if material_kind[mm] == :raw]
-            raw_cap = isempty(raw_inputs) ? Inf : out_coeff * minimum(
-                (horizon * sum(tier_cap[mm, :]) + initial_inventory[mm]) / c
-                for (mm, c) in raw_inputs)
+            raw_inputs = [(mm, c) for (mm, c) in task_inputs[producer] if material_kind[mm] == :raw]
+            raw_cap = if isempty(raw_inputs)
+                Inf
+            else
+                out_coeff * minimum(
+                    (horizon * sum(tier_cap[mm, :]) + initial_inventory[mm]) / c for
+                    (mm, c) in raw_inputs
+                )
+            end
             bound = min(task_cap, raw_cap)
             demand = sum(sales_floor[m, 1:horizon])
             bound > eps() && demand > eps() && push!(candidates, (m, demand / bound))
         end
         isempty(candidates) && (candidates = [(finals[1], 1.0)])
-        sort!(candidates; by = x -> -x[2])
+        sort!(candidates; by=x -> -x[2])
         cut_material = candidates[rand(rng, 1:min(3, length(candidates)))][1]
-        producer = findfirst(t -> any(o == cut_material
-                                      for (o, _) in task_outputs[t]), 1:NT)
+        producer = findfirst(t -> any(o == cut_material for (o, _) in task_outputs[t]), 1:NT)
         out_coeff = sum(c for (o, c) in task_outputs[producer] if o == cut_material)
-        raw_inputs = [(mm, c) for (mm, c) in task_inputs[producer]
-                      if material_kind[mm] == :raw]
+        raw_inputs = [(mm, c) for (mm, c) in task_inputs[producer] if material_kind[mm] == :raw]
         initial_inventory[cut_material] *= rand(rng, Uniform(0.05, 0.20))
         for (mm, _) in raw_inputs
             initial_inventory[mm] *= rand(rng, Uniform(0.02, 0.15))
         end
         demand_raise = rand(rng, Uniform(1.05, 1.25))
         sales_floor[cut_material, 1:horizon] .*= demand_raise
-        sales_floor[cut_material, 1:horizon] .=
-            min.(sales_floor[cut_material, 1:horizon],
-                 0.98 .* sales_ceiling[cut_material, 1:horizon])
+        sales_floor[cut_material, 1:horizon] .= min.(
+            sales_floor[cut_material, 1:horizon], 0.98 .* sales_ceiling[cut_material, 1:horizon]
+        )
         demand_cum = sum(sales_floor[cut_material, 1:horizon])
         desired_upper = demand_cum * rand(rng, Uniform(0.60, 0.85))
         # A bursty campaign product can carry planted initial stock above the
         # shrunken demand target; cap it so the supply cut stays below demand.
         # Otherwise the scale numerator goes negative, `scale` clamps at its
         # floor, and the margin below turns negative.
-        initial_inventory[cut_material] =
-            min(initial_inventory[cut_material], 0.4 * desired_upper)
+        initial_inventory[cut_material] = min(initial_inventory[cut_material], 0.4 * desired_upper)
         task_bound_raw = out_coeff * sum(unit_capacity[task_unit[producer], :])
-        scale = clamp((desired_upper - initial_inventory[cut_material]) /
-                      max(task_bound_raw, eps()), 0.01, 0.90)
+        scale = clamp(
+            (desired_upper - initial_inventory[cut_material]) / max(task_bound_raw, eps()),
+            0.01,
+            0.90,
+        )
         unit_capacity[task_unit[producer], :] .*= scale
         for (mm, _) in raw_inputs
             tier_cap[mm, :] .*= scale
         end
         task_bound = out_coeff * sum(unit_capacity[task_unit[producer], 1:horizon])
-        raw_bound = isempty(raw_inputs) ? Inf : out_coeff * minimum(
-            (horizon * sum(tier_cap[mm, :]) + initial_inventory[mm]) / c
-            for (mm, c) in raw_inputs)
-        upper_bound = initial_inventory[cut_material] +
-                      min(task_bound, raw_bound)
+        raw_bound = if isempty(raw_inputs)
+            Inf
+        else
+            out_coeff * minimum(
+                (horizon * sum(tier_cap[mm, :]) + initial_inventory[mm]) / c for
+                (mm, c) in raw_inputs
+            )
+        end
+        upper_bound = initial_inventory[cut_material] + min(task_bound, raw_bound)
         certificate_margin = demand_cum - upper_bound
         @assert certificate_margin > 1e-6
         infeasibility_certificate = CampaignCapacityCertificate(
-            cut_material, horizon, demand_cum,
-            initial_inventory[cut_material], task_bound, raw_bound,
-            upper_bound, certificate_margin)
+            cut_material,
+            horizon,
+            demand_cum,
+            initial_inventory[cut_material],
+            task_bound,
+            raw_bound,
+            upper_bound,
+            certificate_margin,
+        )
     else
         position = _pp_seed_position(seed)
         supply_factor = 0.55 + 0.34 * position
@@ -766,17 +887,38 @@ function CampaignPlanningProblem(
         unit_capacity .*= supply_factor
         sales_floor .*= demand_factor
         sales_ceiling .= max.(sales_ceiling, sales_floor)
-        market_scenario = CampaignMarketScenario(
-            supply_factor, demand_factor, position)
+        market_scenario = CampaignMarketScenario(supply_factor, demand_factor, position)
     end
 
     problem = CampaignPlanningProblem(
-        T, 7.0, material_names, material_kind, task_names, task_unit, task_inputs,
-        task_outputs, task_cost, unit_names, unit_capacity, campaign_unit,
-        campaign_length, min_rate_fraction, n_tiers, tier_price, tier_cap,
-        material_price, sales_floor, sales_ceiling, tank, initial_inventory,
-        holding_cost, changeover_cost, feasible_witness,
-        infeasibility_certificate, market_scenario, feasibility_status,
+        T,
+        7.0,
+        material_names,
+        material_kind,
+        task_names,
+        task_unit,
+        task_inputs,
+        task_outputs,
+        task_cost,
+        unit_names,
+        unit_capacity,
+        campaign_unit,
+        campaign_length,
+        min_rate_fraction,
+        n_tiers,
+        tier_price,
+        tier_cap,
+        material_price,
+        sales_floor,
+        sales_ceiling,
+        tank,
+        initial_inventory,
+        holding_cost,
+        changeover_cost,
+        feasible_witness,
+        infeasibility_certificate,
+        market_scenario,
+        feasibility_status,
     )
     feasibility_status == feasible && @assert campaign_plan_satisfies(problem)
     feasibility_status == infeasible && @assert campaign_certificate_holds(problem)
@@ -784,8 +926,7 @@ function CampaignPlanningProblem(
 end
 
 """Re-check a planted campaign schedule against every model row by arithmetic."""
-function campaign_plan_satisfies(prob::CampaignPlanningProblem;
-                                 atol::Float64=1e-6)
+function campaign_plan_satisfies(prob::CampaignPlanningProblem; atol::Float64=1e-6)
     plan = prob.feasible_witness
     plan === nothing && return false
     T = prob.n_periods
@@ -809,13 +950,13 @@ function campaign_plan_satisfies(prob::CampaignPlanningProblem;
     all(x -> x in (0.0, 1.0), plan.starts) || return false
 
     for u in 1:U, τ in 1:T
-        load = sum(plan.rate[t, τ] for t in 1:NT if prob.task_unit[t] == u;
-                   init=0.0)
+        load = sum(plan.rate[t, τ] for t in 1:NT if prob.task_unit[t] == u; init=0.0)
         load <= prob.unit_capacity[u, τ] + atol * max(1.0, load) || return false
         if prob.campaign_unit[u]
-            sum(plan.active[campaign_index[t], τ]
-                for t in campaign_tasks if prob.task_unit[t] == u; init=0.0) <=
-                1.0 + atol || return false
+            sum(
+                plan.active[campaign_index[t], τ] for t in campaign_tasks if prob.task_unit[t] == u;
+                init=0.0,
+            ) <= 1.0 + atol || return false
         end
     end
 
@@ -827,8 +968,8 @@ function campaign_plan_satisfies(prob::CampaignPlanningProblem;
         abs(plan.starts[i, τ] - expected_start) <= atol || return false
         cap = prob.unit_capacity[prob.task_unit[task], τ]
         plan.rate[task, τ] <= cap * active + atol * max(1.0, cap) || return false
-        plan.rate[task, τ] + atol * max(1.0, cap) >=
-            prob.min_rate_fraction[i] * cap * active || return false
+        plan.rate[task, τ] + atol * max(1.0, cap) >= prob.min_rate_fraction[i] * cap * active ||
+            return false
         if expected_start > 0.5
             τ + L - 1 <= T || return false
             all(plan.active[i, k] > 0.5 for k in τ:(τ + L - 1)) || return false
@@ -836,35 +977,31 @@ function campaign_plan_satisfies(prob::CampaignPlanningProblem;
     end
 
     for m in 1:M, τ in 1:T
-        produced = sum(c * plan.rate[t, τ]
-                       for t in 1:NT for (mm, c) in prob.task_outputs[t]
-                       if mm == m; init=0.0)
-        consumed = sum(c * plan.rate[t, τ]
-                       for t in 1:NT for (mm, c) in prob.task_inputs[t]
-                       if mm == m; init=0.0)
-        bought = prob.material_kind[m] == :raw ?
-                 sum(plan.purchase[m, :, τ]) : 0.0
+        produced = sum(
+            c * plan.rate[t, τ] for t in 1:NT for (mm, c) in prob.task_outputs[t] if mm == m;
+            init=0.0,
+        )
+        consumed = sum(
+            c * plan.rate[t, τ] for t in 1:NT for (mm, c) in prob.task_inputs[t] if mm == m;
+            init=0.0,
+        )
+        bought = prob.material_kind[m] == :raw ? sum(plan.purchase[m, :, τ]) : 0.0
         sold = prob.material_kind[m] == :final ? plan.sales[m, τ] : 0.0
         previous = τ == 1 ? prob.initial_inventory[m] : plan.inventory[m, τ - 1]
         scale = max(1.0, abs(previous), produced, consumed, bought, sold)
-        abs(plan.inventory[m, τ] -
-            (previous + produced + bought - consumed - sold)) <= atol * scale ||
-            return false
+        abs(plan.inventory[m, τ] - (previous + produced + bought - consumed - sold)) <=
+        atol * scale || return false
         plan.inventory[m, τ] <= prob.tank[m] + atol * scale || return false
         if prob.material_kind[m] == :raw
             for j in 1:prob.n_tiers
-                plan.purchase[m, j, τ] <= prob.tier_cap[m, j] + atol * scale ||
-                    return false
+                plan.purchase[m, j, τ] <= prob.tier_cap[m, j] + atol * scale || return false
             end
         else
-            all(plan.purchase[m, j, τ] <= atol for j in 1:prob.n_tiers) ||
-                return false
+            all(plan.purchase[m, j, τ] <= atol for j in 1:prob.n_tiers) || return false
         end
         if prob.material_kind[m] == :final
-            plan.sales[m, τ] + atol * scale >= prob.sales_floor[m, τ] ||
-                return false
-            plan.sales[m, τ] <= prob.sales_ceiling[m, τ] + atol * scale ||
-                return false
+            plan.sales[m, τ] + atol * scale >= prob.sales_floor[m, τ] || return false
+            plan.sales[m, τ] <= prob.sales_ceiling[m, τ] + atol * scale || return false
         else
             plan.sales[m, τ] <= atol || return false
         end
@@ -873,8 +1010,7 @@ function campaign_plan_satisfies(prob::CampaignPlanningProblem;
 end
 
 """Recompute the bottleneck proof stored on a requested-infeasible campaign."""
-function campaign_certificate_holds(prob::CampaignPlanningProblem;
-                                    atol::Float64=1e-6)
+function campaign_certificate_holds(prob::CampaignPlanningProblem; atol::Float64=1e-6)
     cert = prob.infeasibility_certificate
     cert === nothing && return false
     M = length(prob.material_names)
@@ -882,33 +1018,37 @@ function campaign_certificate_holds(prob::CampaignPlanningProblem;
     1 <= cert.material <= M || return false
     1 <= cert.horizon <= prob.n_periods || return false
     prob.material_kind[cert.material] == :final || return false
-    producers = [t for t in 1:NT
-                 if any(m == cert.material for (m, _) in prob.task_outputs[t])]
+    producers = [t for t in 1:NT if any(m == cert.material for (m, _) in prob.task_outputs[t])]
     length(producers) == 1 || return false
     task = only(producers)
-    output = sum(c for (m, c) in prob.task_outputs[task]
-                 if m == cert.material)
-    task_bound = output * sum(prob.unit_capacity[prob.task_unit[task],
-                                                  1:cert.horizon])
-    raw_inputs = [(m, c) for (m, c) in prob.task_inputs[task]
-                  if prob.material_kind[m] == :raw]
-    raw_bound = isempty(raw_inputs) ? Inf : output * minimum(
-        (cert.horizon * sum(prob.tier_cap[m, :]) + prob.initial_inventory[m]) / c
-        for (m, c) in raw_inputs)
+    output = sum(c for (m, c) in prob.task_outputs[task] if m == cert.material)
+    task_bound = output * sum(prob.unit_capacity[prob.task_unit[task], 1:cert.horizon])
+    raw_inputs = [(m, c) for (m, c) in prob.task_inputs[task] if prob.material_kind[m] == :raw]
+    raw_bound = if isempty(raw_inputs)
+        Inf
+    else
+        output * minimum(
+            (cert.horizon * sum(prob.tier_cap[m, :]) + prob.initial_inventory[m]) / c for
+            (m, c) in raw_inputs
+        )
+    end
     demand = sum(prob.sales_floor[cert.material, 1:cert.horizon])
     upper = prob.initial_inventory[cert.material] + min(task_bound, raw_bound)
     scale = max(1.0, abs(demand), abs(upper))
     isapprox(cert.demand, demand; atol=atol * scale, rtol=1e-9) || return false
-    isapprox(cert.initial_inventory, prob.initial_inventory[cert.material];
-             atol=atol * scale, rtol=1e-9) || return false
-    isapprox(cert.task_bound, task_bound; atol=atol * scale, rtol=1e-9) ||
-        return false
-    (isinf(raw_bound) ? isinf(cert.raw_bound) :
-     isapprox(cert.raw_bound, raw_bound; atol=atol * scale, rtol=1e-9)) ||
-        return false
+    isapprox(
+        cert.initial_inventory, prob.initial_inventory[cert.material]; atol=atol * scale, rtol=1e-9
+    ) || return false
+    isapprox(cert.task_bound, task_bound; atol=atol * scale, rtol=1e-9) || return false
+    (
+        if isinf(raw_bound)
+            isinf(cert.raw_bound)
+        else
+            isapprox(cert.raw_bound, raw_bound; atol=atol * scale, rtol=1e-9)
+        end
+    ) || return false
     isapprox(cert.upper_bound, upper; atol=atol * scale, rtol=1e-9) || return false
-    isapprox(cert.margin, demand - upper; atol=atol * scale, rtol=1e-9) ||
-        return false
+    isapprox(cert.margin, demand - upper; atol=atol * scale, rtol=1e-9) || return false
     return upper + atol * scale < demand
 end
 
@@ -925,19 +1065,21 @@ function build_model(prob::CampaignPlanningProblem)
     @variable(model, rate[t = 1:NT, τ = 1:T] >= 0)
     @variable(model, active[i = 1:cT, τ = 1:T], Bin)
     @variable(model, starts[i = 1:cT, τ = 1:T], Bin)
-    @variable(model, 0 <= purchase[m = raws, j = 1:prob.n_tiers, τ = 1:T] <=
-              prob.tier_cap[m, j])
+    @variable(model, 0 <= purchase[m = raws, j = 1:prob.n_tiers, τ = 1:T] <= prob.tier_cap[m, j])
     @variable(model, 0 <= inventory[m = 1:M, τ = 1:T] <= prob.tank[m])
-    @variable(model, prob.sales_floor[m, τ] <=
-              sales[m = finals, τ = 1:T] <= prob.sales_ceiling[m, τ])
+    @variable(
+        model, prob.sales_floor[m, τ] <= sales[m = finals, τ = 1:T] <= prob.sales_ceiling[m, τ]
+    )
 
-    @objective(model, Max,
-        sum(prob.material_price[m, τ] * sales[m, τ] for m in finals, τ in 1:T) -
-        sum(prob.tier_price[m, j] * purchase[m, j, τ]
-            for m in raws, j in 1:prob.n_tiers, τ in 1:T) -
-        sum(prob.task_cost[t] * rate[t, τ] for t in 1:NT, τ in 1:T) -
+    @objective(
+        model,
+        Max,
+        sum(prob.material_price[m, τ] * sales[m, τ] for m in finals, τ in 1:T) - sum(
+            prob.tier_price[m, j] * purchase[m, j, τ] for m in raws, j in 1:prob.n_tiers, τ in 1:T
+        ) - sum(prob.task_cost[t] * rate[t, τ] for t in 1:NT, τ in 1:T) -
         sum(prob.holding_cost[m] * inventory[m, τ] for m in 1:M, τ in 1:T) -
-        prob.changeover_cost * sum(starts))
+            prob.changeover_cost * sum(starts)
+    )
 
     for m in 1:M, τ in 1:T
         inflow = AffExpr(0.0)
@@ -955,31 +1097,33 @@ function build_model(prob::CampaignPlanningProblem)
         if prob.material_kind[m] == :final
             add_to_expression!(inflow, -1.0, sales[m, τ])
         end
-        @constraint(model,
-            inventory[m, τ] ==
-            (τ == 1 ? prob.initial_inventory[m] : inventory[m, τ - 1]) + inflow)
+        @constraint(
+            model,
+            inventory[m, τ] == (τ == 1 ? prob.initial_inventory[m] : inventory[m, τ - 1]) + inflow
+        )
     end
 
     for u in 1:U, τ in 1:T
-        @constraint(model,
-            sum(rate[t, τ] for t in 1:NT if prob.task_unit[t] == u) <=
-            prob.unit_capacity[u, τ])
+        @constraint(
+            model,
+            sum(rate[t, τ] for t in 1:NT if prob.task_unit[t] == u) <= prob.unit_capacity[u, τ]
+        )
     end
 
     for u in 1:U
         prob.campaign_unit[u] || continue
         for τ in 1:T
-            @constraint(model,
-                sum(active[campaign_index[t], τ]
-                    for t in 1:NT if prob.task_unit[t] == u) <= 1)
+            @constraint(
+                model,
+                sum(active[campaign_index[t], τ] for t in 1:NT if prob.task_unit[t] == u) <= 1
+            )
         end
     end
 
     for (i, t) in enumerate(campaign_tasks), τ in 1:T
         cap = prob.unit_capacity[prob.task_unit[t], τ]
         @constraint(model, rate[t, τ] <= cap * active[i, τ])
-        @constraint(model,
-            rate[t, τ] >= prob.min_rate_fraction[i] * cap * active[i, τ])
+        @constraint(model, rate[t, τ] >= prob.min_rate_fraction[i] * cap * active[i, τ])
         previous = τ == 1 ? 0 : active[i, τ - 1]
         @constraint(model, starts[i, τ] >= active[i, τ] - previous)
         @constraint(model, starts[i, τ] <= active[i, τ])
@@ -988,9 +1132,11 @@ function build_model(prob::CampaignPlanningProblem)
 
     L = prob.campaign_length
     for (i, _) in enumerate(campaign_tasks), τ in 1:(T - L + 1)
-        @constraint(model,
+        @constraint(
+            model,
             sum(active[i, k] for k in τ:(τ + L - 1)) >=
-            L * (active[i, τ] - (τ == 1 ? 0 : active[i, τ - 1])))
+                L * (active[i, τ] - (τ == 1 ? 0 : active[i, τ - 1]))
+        )
     end
     # A campaign cannot start so late that its minimum duration would extend
     # past the modeled horizon. This closes the usual end-effect loophole.

@@ -138,6 +138,9 @@ process-network investment MILP. The corpus grows from 45 to 46 categories.
   unit's contribution rather than the sum over the units making that stream, so a
   configuration with parallel trains could publish a merchant outlet too small
   for the volume its own minimum rates push out.
+- Rebased onto `main` after the code-quality tooling landed and applied
+  JuliaFormatter to the eight new `process_planning` sources, so the branch
+  satisfies the `make lint` gate the merged PR #52 added.
 - Refinery complexity is now set by the scale of the request (`_pp_level_floor`:
   topping below 200 variables, hydroskimming from 200, cracking from 900) rather
   than left to the size score in `_pp_dimensions`. A topping refinery has the

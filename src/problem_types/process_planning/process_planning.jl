@@ -24,10 +24,10 @@ register_category(
 _pp_seed_position(seed::Int) = mod(seed * 0.6180339887498949, 1.0)
 
 """Positive, mean-one annual profile used by process campaign demand."""
-function _pp_seasonal_deviation(rng::AbstractRNG, amp::Real, phase::Real,
-                                n_periods::Int; period_days::Real=7.0)
-    row = [1 + amp * cos(2pi * period_days * (t - 1) / 365.25 + phase)
-           for t in 1:n_periods]
+function _pp_seasonal_deviation(
+    rng::AbstractRNG, amp::Real, phase::Real, n_periods::Int; period_days::Real=7.0
+)
+    row = [1 + amp * cos(2pi * period_days * (t - 1) / 365.25 + phase) for t in 1:n_periods]
     row .*= rand(rng, Uniform(0.97, 1.03), n_periods)
     row .= max.(row, 0.12)
     row ./= sum(row) / n_periods
