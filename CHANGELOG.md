@@ -138,6 +138,28 @@ process-network investment MILP. The corpus grows from 45 to 46 categories.
   unit's contribution rather than the sum over the units making that stream, so a
   configuration with parallel trains could publish a merchant outlet too small
   for the volume its own minimum rates push out.
+- Refinery complexity is now set by the scale of the request (`_pp_level_floor`:
+  topping below 200 variables, hydroskimming from 200, cracking from 900) rather
+  than left to the size score in `_pp_dimensions`. A topping refinery has the
+  smallest per-period block, so it could land exactly on any target and win on
+  the score's first element before the shape term preferring the more complete
+  refinery was consulted: roughly half of all `refinery` instances came back as a
+  bare crude-cut-and-blend LP at every size, including 44% at 2,000 variables,
+  contradicting both the variant docstring and `docs/process_planning.md`. Under
+  the floor every request of 200 variables or more carries at least three
+  conversion units and every request of 900 or more carries a cracking unit. The
+  floor combines with the callers' existing `minimum_level`, so `mode_switching`
+  and `hydrogen_network` keep their hydroskimming minimum at small sizes.
+
+  Cost, measured over 1,000 seeds per target across all three callers: the worst
+  relative size error rises to 16% just above the 200 threshold and is under 5%
+  from 400 variables up, against the 20% the category tests contract for. At
+  400-800 variables the extra network is paid for out of the horizon (mean
+  periods 8.3 to 4.3 at 400, 15.6 to 6.7 at 800, minimum still 3-4) while units,
+  grades and crudes all rise; above 900 both the horizon and the network grow.
+  The category test count falls because the blend-quality loop runs over fewer
+  (grade, period) pairs, not because any instance is skipped: every grade is
+  still blended in every period.
 
 ## 2026-09-04 (PR #52 review fixes)
 

@@ -61,9 +61,10 @@ component sets `B_p`, `n_store` tanked streams, `n_buy` purchased blendstocks an
 variables. That count is affine in `C` for a fixed flowsheet, so
 [`_pp_dimensions`](@ref) solves it for the crude count at each candidate horizon
 and keeps the pair that lands closest to the target with an operationally
-ordinary shape. Refinery complexity itself scales with the target: a small
-request yields a topping or hydroskimming refinery with a coarse cut slate, a
-large one a full conversion refinery with parallel trains and many grades.
+ordinary shape. Refinery complexity itself is set by the scale of the request
+rather than by that search — see [`_pp_level_floor`](@ref) — so a small request
+yields a topping or hydroskimming refinery with a coarse cut slate, and a large
+one a cracking or full conversion refinery with parallel trains and many grades.
 
 # Feasibility
 - `feasible`: a complete operation is simulated through the flowsheet and every

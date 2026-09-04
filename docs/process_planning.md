@@ -131,8 +131,16 @@ the affine coefficients with two probes, solves for the crude count at every
 candidate horizon in closed form, and keeps the triple that lands closest to the
 target. Ties favour operationally ordinary shapes and the more complete refinery.
 Requests land within about 20% of the target from 50 to 20,000 variables and
-usually much closer; a small request settles on a topping or hydroskimming
-refinery with a coarse assay, a large one on a full conversion refinery running
+usually much closer.
+
+Complexity is set by the scale of the request rather than left to that search:
+topping refineries are offered below 200 variables, hydroskimming and above from
+200, and cracking and above from 900. Size error alone cannot carry the choice —
+a topping refinery has the smallest per-period block, so it can land exactly on
+any target and win the tie before the shape term is consulted, which left about
+half of all requests, at every size, as a bare crude-cut-and-blend LP. Under the
+floor a small request settles on a topping or hydroskimming refinery with a
+coarse assay, and a large one on a cracking or full conversion refinery running
 parallel trains and a dozen grades. Small `mode_switching` and
 `hydrogen_network` requests use a compact diesel-hydrotreating line rather than
 silently degenerating to a topping-only model. Campaign targets through 20,000

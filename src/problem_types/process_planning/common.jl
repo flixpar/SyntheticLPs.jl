@@ -667,6 +667,26 @@ function _pp_variables_per_period(sk::PPSkeleton; mode_vars::Bool,
 end
 
 """
+    _pp_level_floor(target) -> Int
+
+The least refinery complexity level a request of `target` variables is served at:
+topping below 200 variables, hydroskimming to 900, cracking above it.
+
+The size score cannot be left to decide this. A topping refinery has by far the
+smallest per-period block, so it can land a total exactly on the target where a
+configuration with conversion units cannot, and it then wins on the score's first
+element — relative size error — before the shape term that prefers the more
+complete refinery is ever consulted. Left to the score, roughly half of all
+requests came back as a bare crude-cut-and-blend LP at every size, including the
+largest. Stating the complexity the scale deserves as a floor and letting the
+search work under it costs size accuracy only where the block is coarse relative
+to the target: measured over 1000 seeds per target, the worst relative error
+across the three callers rises to 16% just above the 200 threshold and is under
+5% from 400 variables up, against the 20% the category contracts for.
+"""
+_pp_level_floor(target::Int) = target < 200 ? 1 : target < 900 ? 2 : 3
+
+"""
     _pp_dimensions(rng, target; mode_vars, minimum_level=1,
                    extra_variables=0, compact_hydroprocessing=false)
         -> (structure, skeleton, n_periods)
@@ -678,11 +698,12 @@ One configuration is drawn per complexity level; for each, the per-period count
 is affine in the crude count, so two probes give its slope and intercept exactly
 and the crude count needed for a given horizon follows in closed form. Every
 (configuration, horizon, crude count) triple is then scored on relative size
-error first and shape second, so a small request settles on a topping or
-hydroskimming refinery and a large one on a full conversion refinery, without
-either being forced into a horizon of one period. Ties favour operationally
-ordinary shapes — a horizon of one to two dozen periods, a crude menu of a
-handful of grades — and the more complete refinery.
+error first and shape second, without either being forced into a horizon of one
+period. Ties favour operationally ordinary shapes — a horizon of one to two dozen
+periods, a crude menu of a handful of grades — and the more complete refinery.
+
+Complexity itself is set by [`_pp_level_floor`](@ref) rather than left to that
+score, which cannot carry it: see the note there.
 
 `compact_hydroprocessing=true` offers a one-unit diesel-hydrotreating structure
 for small mode/H2 requests. It preserves the defining physical feature without
@@ -710,7 +731,7 @@ function _pp_dimensions(rng::AbstractRNG, target::Int; mode_vars::Bool,
               (PPStructure(2, copy(_PP_CUT_SLATES[1]), [:diesel_ht],
                            [modes], [:heating_gasoil], Symbol[]), 2))
     end
-    for level in minimum_level:length(_PP_LEVEL_UNITS)
+    for level in max(minimum_level, _pp_level_floor(target)):length(_PP_LEVEL_UNITS)
         push!(candidates,
               (_pp_structure(rng, target, level; single_mode=!mode_vars), level))
     end

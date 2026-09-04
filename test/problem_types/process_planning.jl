@@ -97,6 +97,27 @@
             @test issorted(sizes)
         end
 
+        # Complexity tracks the scale of the request. A topping refinery has the
+        # smallest per-period block, so left to size error alone it wins ties at
+        # every target and a large request comes back as a bare
+        # crude-cut-and-blend LP; `_pp_level_floor` states the complexity the
+        # target deserves instead.
+        for variant in (:refinery, :mode_switching, :hydrogen_network)
+            for target in (200, 500, 2000, 20000), seed in 0:9
+                _, p = generate_problem(:process_planning, target, unknown, seed;
+                                        variant=variant)
+                @test SyntheticLPs.n_units(p.flowsheet) >= 3
+            end
+            # Above the cracking floor a conversion unit that cracks heavy feed
+            # is always present, not merely some hydrotreater.
+            for target in (900, 5000), seed in 0:9
+                _, p = generate_problem(:process_planning, target, unknown, seed;
+                                        variant=variant)
+                keys = [u.key for u in p.flowsheet.units]
+                @test any(k -> k in (:fcc, :hydrocracker, :coker), keys)
+            end
+        end
+
         # The horizon is genuinely multi-period wherever the target has room.
         for target in (200, 1000, 8000), seed in 0:2
             _, p = generate_problem(:process_planning, target, unknown, seed)
