@@ -57,7 +57,9 @@ yield_bound * crude_bound` barrels: crude runs cannot exceed the CDU capacity
 or the sum of initial tank stock and purchase upper bounds (per-crude
 inventory balance), and at most `yield_bound` barrels of blendstock can be
 produced per barrel of crude `argmax`-crude even when every unit runs at its
-best mode. Both bounds are aggregations of linear rows and variable bounds
+best mode (`yield_bound` carries the swing-cut allowance, since swing
+variables can also shift cut volume between neighbouring cuts). Both bounds
+are aggregations of linear rows and variable bounds
 only, so the certificate refutes the model as built - the variant is a pure
 LP, and no integrality is involved.
 """
@@ -143,6 +145,8 @@ struct RefineryPlanningProblem <: ProblemGenerator
     swing_pairs::Vector{Tuple{Int,Int}} # (lighter cut, heavier cut) stream indices
     swing_lo::Matrix{Float64}           # [crude, swing boundary]
     swing_hi::Matrix{Float64}           # [crude, swing boundary]
+    blend_pairs::Vector{Tuple{Int,Int}} # (stream, product) blend eligibility,
+                                        # the index order of the blend tensor
     unit_names::Vector{Symbol}
     unit_feed::Vector{Int}              # feed stream index per unit
     mode_unit::Vector{Int}              # owning unit per mode
@@ -261,9 +265,9 @@ end
 """
 Assemble the unit list, mode lists, and stream list for a configuration.
 Reformer severities come in adjacent pairs (or a triple) so mode-specific
-reformate pools stay contiguous on the octane ladder. Returns the stream
-name vector, per-unit mode definitions, and the ordered unit names in
-topological feed order (a unit always follows the units producing its feed).
+reformate pools stay contiguous on the octane ladder. Returns the ordered
+unit definitions in topological feed order (a unit always follows the units
+producing its feed).
 """
 function _rp_unit_layout(rng::AbstractRNG, configuration::Symbol,
                          n_ref_modes::Int=2)
@@ -274,7 +278,6 @@ function _rp_unit_layout(rng::AbstractRNG, configuration::Symbol,
         severity = (rand(rng) < 0.6 ? first(severity) : last(severity),)
     end
     reformate = Dict(:r91 => :R91, :r95 => :R95, :r98 => :R98)
-    octane = Dict(:r91 => 91.0, :r95 => 95.0, :r98 => 98.0)
     yield91 = Dict(:r91 => 0.91, :r95 => 0.87, :r98 => 0.83)
     gas91 = Dict(:r91 => 0.065, :r95 => 0.085, :r98 => 0.105)
     cost91 = Dict(:r91 => 2.3, :r95 => 3.2, :r98 => 4.1)
@@ -290,7 +293,7 @@ function _rp_unit_layout(rng::AbstractRNG, configuration::Symbol,
     ref_feed = configuration == :topping_reform ? :HN : :HTN
     push!(units, (:REF, ref_feed, ref_modes))
 
-    configuration == :topping_reform && return units, severity, octane
+    configuration == :topping_reform && return units
 
     push!(units, (:NHT, :HN, [(:desul, [Pair(:HTN, 0.995)], 1.2)]))
     push!(units, (:ISOM, :LN, [(:once_through, [Pair(:ISOM, 0.975)], 1.4)]))
@@ -321,7 +324,7 @@ function _rp_unit_layout(rng::AbstractRNG, configuration::Symbol,
                             Pair(:CGO, 0.42), Pair(:COKE, 0.31)], 4.2),
             ]))
     end
-    return units, severity, octane
+    return units
 end
 
 _rp_streams_and_pairs(unit_defs, products::Vector{Symbol}) = begin
@@ -382,7 +385,7 @@ function _rp_choose_dimensions(rng::AbstractRNG, target_variables::Int)
         n_ref_modes = minimal || target <= 62 ? 1 :
                       rand(rng) < 0.25 ? 3 : 2
         products = _rp_product_slate(rng, configuration, target, minimal)
-        unit_defs, _, _ = _rp_unit_layout(rng, configuration, n_ref_modes)
+        unit_defs = _rp_unit_layout(rng, configuration, n_ref_modes)
         best_layout = unit_defs
         n_modes = sum(length(modes) for (_, _, modes) in unit_defs)
         _, _, pairs = _rp_streams_and_pairs(unit_defs, products)
@@ -643,14 +646,8 @@ function _rp_demand_deviation(rng::AbstractRNG, products::Vector{Symbol},
     delta = ones(Float64, length(products), n_periods)
     for (p, product) in enumerate(products)
         amp = rand(rng, Uniform(amplitude[product]...))
-        for t in 1:n_periods
-            delta[p, t] = 1 + amp * cos(2π * (t - phase[product]) / n_periods)
-        end
-        delta[p, :] .*= rand(rng, Uniform(0.97, 1.03), n_periods)
-        # Strong seasonality (paving asphalt runs 0.1x in winter) must stay
-        # non-negative before the mean-one renormalisation.
-        delta[p, :] .= max.(delta[p, :], 0.12)
-        delta[p, :] ./= sum(delta[p, :]) / n_periods
+        delta[p, :] .= _pp_seasonal_deviation(rng, amp, phase[product],
+                                              n_periods)
     end
     return delta
 end
@@ -698,7 +695,7 @@ function RefineryPlanningProblem(
 )
     rng = MersenneTwister(seed)
     target = max(target_variables, 1)
-    configuration, n_crudes, n_swing, products, n_periods, n_ref_modes,
+    configuration, n_crudes, n_swing, products, n_periods, _,
     unit_defs = _rp_choose_dimensions(rng, target)
     C, T, P = n_crudes, n_periods, length(products)
     stream_names, stream_index, pairs = _rp_streams_and_pairs(unit_defs, products)
@@ -731,10 +728,6 @@ function RefineryPlanningProblem(
     swing_band = rand(rng, Uniform(0.02, 0.045), C, max(n_swing, 1))
     swing_lo = zeros(Float64, C, n_swing)
     swing_hi = zeros(Float64, C, n_swing)
-    for k in 1:n_swing
-        swing_lo[:, k] .= -swing_band[:, k] .* cut_yield[:, swing_pairs[k][1]]
-        swing_hi[:, k] .= swing_band[:, k] .* cut_yield[:, swing_pairs[k][2]]
-    end
 
     # Crude run profile: refinery scale in thousand bbl per period (a
     # 60-400 kbpd refinery over a month), with mild seasonality and one or
@@ -752,6 +745,19 @@ function RefineryPlanningProblem(
     mix_weights = exp.(rand(rng, Normal(0, 0.5), C))
     mix_weights ./= sum(mix_weights)
     crude_feed = [mix_weights[c] * run[t] for c in 1:C, t in 1:T]
+
+    # Swing bounds are volumes, not assay fractions: the band (2-4.5% of the
+    # source cut) scaled by the crude's smallest per-period run, so the single
+    # [crude, swing] bound is valid in every period. Sizing from the assay
+    # fraction alone would pin the swing variables six orders of magnitude
+    # below the cut volumes they transfer between.
+    min_run = minimum(crude_feed, dims = 2)
+    for k in 1:n_swing
+        swing_lo[:, k] .= -swing_band[:, k] .*
+                          cut_yield[:, swing_pairs[k][1]] .* min_run
+        swing_hi[:, k] .= swing_band[:, k] .*
+                          cut_yield[:, swing_pairs[k][2]] .* min_run
+    end
 
     # Reference plan: propagate stream availabilities in feed topological
     # order, running each unit at a realistic fraction of its feed stream.
@@ -856,27 +862,21 @@ function RefineryPlanningProblem(
         total > 0 && (gamma[s, :] ./= total)
     end
     blend_plan = zeros(Float64, C, length(pairs), T)
-    for (k, (s, p)) in enumerate(pairs), c in 1:C, t in 1:T
-        blend_plan[c, k, t] = gamma[s, p] * avail[c, s, t]
-    end
-
     volume = zeros(Float64, P, T)
-    for (k, (s, p)) in enumerate(pairs), c in 1:C, t in 1:T
-        volume[p, t] += blend_plan[c, k, t]
-    end
     blended_quality = zeros(Float64, P, _RP_N_ATTRS, T)
     # RVP and viscosity blend through their indices, so the spec search must
     # average the transformed values, not the raw ones.
     blended_rvp_index = zeros(Float64, P, T)
     blended_vis_index = zeros(Float64, P, T)
-    for (k, (s, p)) in enumerate(pairs), c in 1:C, t in 1:T, a in 1:_RP_N_ATTRS
-        blended_quality[p, a, t] += quality[c, s, a] * blend_plan[c, k, t]
-    end
     for (k, (s, p)) in enumerate(pairs), c in 1:C, t in 1:T
-        blended_rvp_index[p, t] +=
-            quality[c, s, _RP_RVP]^1.25 * blend_plan[c, k, t]
-        blended_vis_index[p, t] +=
-            cbrt(quality[c, s, _RP_VIS]) * blend_plan[c, k, t]
+        b = gamma[s, p] * avail[c, s, t]
+        blend_plan[c, k, t] = b
+        volume[p, t] += b
+        for a in 1:_RP_N_ATTRS
+            blended_quality[p, a, t] += quality[c, s, a] * b
+        end
+        blended_rvp_index[p, t] += quality[c, s, _RP_RVP]^1.25 * b
+        blended_vis_index[p, t] += cbrt(quality[c, s, _RP_VIS]) * b
     end
     for p in 1:P, a in 1:_RP_N_ATTRS, t in 1:T
         volume[p, t] > 0 &&
@@ -1023,8 +1023,12 @@ function RefineryPlanningProblem(
         ypath = _rp_yield_path(cut_yield, unit_feed, mode_unit, mode_yields,
                                pairs, P)
         horizon = clamp(round(Int, T * rand(rng, Uniform(0.55, 1.0))), 2, T)
+        # Sum the per-period ceilings over the horizon window: they vary with
+        # the crude-run profile, so `horizon * ceiling[c, 1]` is not a valid
+        # implication of the purchase bounds when a later period runs harder
+        # than the first.
         raw_purchase_bound = sum(initial_crude_inventory[c] +
-                                 horizon * purchase_ceiling[c, 1]
+                                 sum(purchase_ceiling[c, 1:horizon])
                                  for c in 1:C)
         raw_crude_bound = min(horizon * cdu_capacity, raw_purchase_bound)
         # Cut the product whose term demand is largest relative to the crude
@@ -1043,7 +1047,16 @@ function RefineryPlanningProblem(
                  0.98 .* sales_ceiling[cut_product, 1:horizon])
         demand_cum = sum(sales_floor[cut_product, 1:horizon])
         desired_upper = demand_cum * rand(rng, Uniform(0.60, 0.85))
-        yield_bound = maximum(ypath[:, cut_product])
+        # Cap the planted initial stock at a fraction of the shrunken demand
+        # target: if it exceeded `desired_upper` the scale numerator would go
+        # negative, `scale` would clamp at its floor, and the margin below
+        # could turn negative.
+        initial_product_inventory[cut_product] =
+            min(initial_product_inventory[cut_product], 0.4 * desired_upper)
+        # Swing cuts can move at most sum_k band_k * yield(heavy_k) <= 0.045
+        # barrels per barrel of crude into neighbouring cuts, so the yield
+        # path bound is inflated by that provable swing allowance.
+        yield_bound = maximum(ypath[:, cut_product]) + 0.05
         scale = clamp((desired_upper - initial_product_inventory[cut_product]) /
                       max(yield_bound * raw_crude_bound, eps()),
                       1.0e-3, 0.95)
@@ -1053,7 +1066,7 @@ function RefineryPlanningProblem(
         cdu_capacity *= scale
 
         purchase_bound = sum(initial_crude_inventory[c] +
-                             horizon * purchase_ceiling[c, 1] for c in 1:C)
+                             sum(purchase_ceiling[c, 1:horizon]) for c in 1:C)
         crude_bound = min(horizon * cdu_capacity, purchase_bound)
         upper_bound = initial_product_inventory[cut_product] +
                       yield_bound * crude_bound
@@ -1066,7 +1079,7 @@ function RefineryPlanningProblem(
             certificate_margin,
         )
     else
-        position = mod(seed * 0.6180339887498949, 1.0)
+        position = _pp_seed_position(seed)
         supply_factor = 0.42 + 0.53 * position
         demand_factor = 1 + 0.27 * (0.5 - position)
         # Scale only the crude supply side. Unit capacities stay untouched:
@@ -1085,7 +1098,7 @@ function RefineryPlanningProblem(
 
     return RefineryPlanningProblem(
         configuration, T, C, stream_names, cut_yield, quality, swing_pairs,
-        swing_lo, swing_hi, unit_names, unit_feed, mode_unit, mode_yields,
+        swing_lo, swing_hi, pairs, unit_names, unit_feed, mode_unit, mode_yields,
         mode_cost, unit_capacity, products, product_price, sales_floor,
         sales_ceiling, product_tank, initial_product_inventory,
         spec_direction, spec_rhs, crude_price, purchase_floor,
@@ -1102,14 +1115,7 @@ function build_model(prob::RefineryPlanningProblem)
     S = length(prob.stream_names)
     M = length(prob.mode_unit)
     K = length(prob.swing_pairs)
-    # Recompute the blend pair list exactly as the constructor ordered it.
-    blend_pairs = Tuple{Int,Int}[]
-    for (p, product) in enumerate(prob.product_names),
-        name in _RP_BLEND_TABLE[product]
-        s = findfirst(==(name), prob.stream_names)
-        s !== nothing && push!(blend_pairs, (s, p))
-    end
-    sort!(blend_pairs)
+    blend_pairs = prob.blend_pairs
     B = length(blend_pairs)
 
     @variable(model, prob.purchase_floor[c, t] <=
@@ -1150,6 +1156,10 @@ function build_model(prob::RefineryPlanningProblem)
     blend_k_of_stream = Dict{Int,Vector{Int}}()
     for (k, (s, _)) in enumerate(blend_pairs)
         push!(get!(blend_k_of_stream, s, Int[]), k)
+    end
+    blend_ks_of_product = Dict{Int,Vector{Int}}()
+    for (k, (_, p)) in enumerate(blend_pairs)
+        push!(get!(blend_ks_of_product, p, Int[]), k)
     end
     mode_consumers_of_stream = Dict{Int,Vector{Int}}()
     for m in 1:M
@@ -1201,16 +1211,17 @@ function build_model(prob::RefineryPlanningProblem)
             product_inventory[p, t] ==
             (t == 1 ? prob.initial_product_inventory[p] :
              product_inventory[p, t - 1]) +
-            sum(blend[c, k, t] for c in 1:C, k in 1:B if blend_pairs[k][2] == p) -
+            sum(blend[c, k, t]
+                for k in get(blend_ks_of_product, p, Int[]), c in 1:C) -
             sales[p, t])
     end
 
     # Quality specifications. RVP and viscosity enter through their linear
-    # blending indices (Chevron RVP^1.25 and Walter cSt^(1/3)).
-    coefficient = (c, s, a) -> begin
-        raw = prob.quality[c, s, a]
-        a == _RP_RVP ? raw^1.25 : a == _RP_VIS ? cbrt(raw) : raw
-    end
+    # blending indices (Chevron RVP^1.25 and Walter cSt^(1/3)); the index
+    # columns are transformed once, not per coefficient access.
+    quality_index = copy(prob.quality)
+    quality_index[:, :, _RP_RVP] .= prob.quality[:, :, _RP_RVP] .^ 1.25
+    quality_index[:, :, _RP_VIS] .= cbrt.(prob.quality[:, :, _RP_VIS])
     for p in 1:P, a in 1:_RP_N_ATTRS
         direction = prob.spec_direction[p, a]
         direction == 0 && continue
@@ -1219,12 +1230,12 @@ function build_model(prob::RefineryPlanningProblem)
             rhs = a == _RP_RVP ? raw_rhs^1.25 : a == _RP_VIS ? cbrt(raw_rhs) :
                   raw_rhs
             excess = AffExpr(0.0)
-            for k in 1:B
-                blend_pairs[k][2] == p || continue
+            for k in get(blend_ks_of_product, p, Int[])
                 s = blend_pairs[k][1]
                 for c in 1:C
                     add_to_expression!(excess,
-                                       coefficient(c, s, a) - rhs, blend[c, k, t])
+                                       quality_index[c, s, a] - rhs,
+                                       blend[c, k, t])
                 end
             end
             if direction == 1

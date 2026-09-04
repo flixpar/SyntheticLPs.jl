@@ -4,6 +4,70 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-09-04 (process-planning review fixes)
+
+**Previous Commit**: `70a0cec`
+
+**Commits**: (review fixes, pending commit)
+
+**Datetime**: 2026-09-04 12:16 UTC
+
+**Summary**: Hardened the `process_planning` generators after a full review
+pass: the campaign witness now provably satisfies every capacity and
+minimum-turndown row, the refinery supply certificate is now a sound
+implication of the model rows, and the refinery swing-cut structure is no
+longer inert.
+
+**Details**:
+
+- `campaign.jl`/`refinery.jl`: the infeasibility branches cap the cut
+  product's planted initial inventory at 0.4x the shrunken demand target
+  before computing the capacity scale. A bursty campaign product could carry
+  initial stock above that target, driving the scale numerator negative so
+  `scale` clamped at its floor and `@assert certificate_margin > 1e-6`
+  tripped - a deterministic `AssertionError` out of `generate_problem` for
+  such (target, seed) pairs (repro: campaign, target 1500, seed 44; about 1
+  in 1200 sampled pairs). With the cap the margin is positive on every path
+  (unclamped: demand - desired_upper >= 0.15*demand; clamped high: the clamp
+  condition itself bounds the scaled capacity below desired_upper - init).
+- `campaign.jl`: unit capacity is floored at 1.02x the planned load of each
+  period - the per-period utilisation draws spread by up to 1.42x, beyond the
+  1.08-1.3x headroom, so the planted witness could exceed the capacity row
+  it was sized from (demonstrated at 13 rows in 5 of 246 sampled instances).
+  The drawn turndown fraction is additionally capped at 0.98x the realised
+  minimum rate-to-capacity ratio over the campaign's active periods, since an
+  upstream turnaround can pull an inter-fed train's planned rate below 30% of
+  the peak load the capacity was sized from (demonstrated at target 1500,
+  seed 20). Both keep `CampaignScheduleWitness` a feasible point of the
+  unrelaxed MIP by construction.
+- `refinery.jl`: the infeasibility certificate's crude bound now sums the
+  purchase ceilings over the horizon window instead of multiplying period 1's
+  ceiling by the horizon - the ceilings vary per period, so the old bound was
+  not implied by the model rows (the true row-implied bound exceeded it in 5
+  of 360 samples, worst 6.8%, absorbed so far by the 15-40% margin). The
+  yield-path bound gains a +0.05 bbl/bbl swing-cut allowance, and the swing
+  bounds themselves are now volumes (band x assay cut x the crude's minimum
+  per-period run, 2-4.5% of cut volume) instead of inert assay fractions six
+  orders of magnitude below cut volumes; the certificate stays sound with
+  meaningful swings because the total swing mass is provably at most 0.045
+  bbl/bbl.
+- `refinery.jl`/`campaign.jl`/`process_planning.jl`: the blend-pair list is
+  stored in the struct (constructor, `build_model`, and tests previously
+  re-enumerated it in parallel); the golden-ratio seed positioning and the
+  seasonal-deviation core are shared through `_pp_seed_position` and
+  `_pp_seasonal_deviation`; dead code removed (unused `available` dict and
+  `n_tasks` alias in campaign, unused `severity`/`octane` returns of
+  `_rp_unit_layout`, unused `n_ref_modes` destructure); `build_model` uses a
+  product-keyed blend-pair lookup and transforms the RVP/viscosity index
+  columns once instead of per coefficient; the constructor fuses four
+  scatter passes over the blend triples into one.
+- `test/problem_types/process_planning.jl`: the campaign witness sweep widens
+  to seeds 0:12 (the capacity/turndown failures are rare draw conjunctions
+  the previous 0:2 sweep missed) and the certificate recomputation includes
+  the swing allowance.
+- `docs/process_planning.md`: certificate description notes the swing
+  allowance.
+
 ## 2026-09-04 (process-planning generators)
 
 **Previous Commit**: `7603f8b`

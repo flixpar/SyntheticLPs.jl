@@ -131,7 +131,8 @@ default) the selectors relax to `[0,1]` and the model is a pure LP.
   (`RefinerySupplyCertificate`) limits a product's cumulative term demand
   above `initial stock + yield_bound * min(CDU horizon capacity, initial
   crude stock + purchase ceilings)`, where `yield_bound` is the best-mode
-  conversion fraction of crude into that product's blendstocks; the campaign
+  conversion fraction of crude into that product's blendstocks plus the
+  swing-cut allowance; the campaign
   certificate (`CampaignCapacityCertificate`) bounds cumulative output by
   the producing task's unit capacity (`rate <= capacity * active <=
   capacity`, valid for relaxed selectors) and its raw-tier supply. Both are

@@ -414,12 +414,7 @@ function _cp_demand_deviation(rng::AbstractRNG, finals::Vector{Int},
         phase = cls == :winter ? peak + n_periods ÷ 2 :
                 cls == :spring ? peak - n_periods ÷ 4 :
                 cls == :summer ? peak : peak + n_periods ÷ 3
-        for t in 1:n_periods
-            delta[i, t] = 1 + amp * cos(2π * (t - phase) / n_periods)
-        end
-        delta[i, :] .*= rand(rng, Uniform(0.97, 1.03), n_periods)
-        delta[i, :] .= max.(delta[i, :], 0.12)
-        delta[i, :] ./= sum(delta[i, :]) / n_periods
+        delta[i, :] .= _pp_seasonal_deviation(rng, amp, phase, n_periods)
     end
     return delta
 end
@@ -438,7 +433,6 @@ function CampaignPlanningProblem(
     M = length(material_names)
     NT = length(task_names)
     U = length(unit_names)
-    n_tasks = NT
     campaign_tasks = [t for t in 1:NT if campaign_unit[task_unit[t]]]
     cT = length(campaign_tasks)
     campaign_index = Dict(t => i for (i, t) in enumerate(campaign_tasks))
@@ -537,10 +531,6 @@ function CampaignPlanningProblem(
     production = zeros(Float64, M, T)
     consumption = zeros(Float64, M, T)
     rate = zeros(Float64, NT, T)
-    available = Dict{Int,Float64}()
-    for m in 1:M
-        material_kind[m] == :inter && (available[m] = 0.0)
-    end
     for t in 1:NT
         u = task_unit[t]
         inter_inputs = [(m, c) for (m, c) in task_inputs[t]
@@ -582,10 +572,29 @@ function CampaignPlanningProblem(
         peak = maximum(load)
         headroom = rand(rng, Uniform(1.08, 1.3))
         for τ in 1:T
-            unit_capacity[u, τ] = peak * headroom * turnaround[u, τ]
+            # The per-period utilisation draws spread by up to 0.85/0.6 =
+            # 1.42x, beyond any headroom, so the planned load itself is a
+            # floor on capacity: the witness must clear every capacity row.
+            unit_capacity[u, τ] = max(load[τ] * 1.02,
+                                      peak * headroom * turnaround[u, τ])
         end
     end
     min_rate_fraction = [rand(rng, Uniform(0.12, 0.30)) for _ in 1:cT]
+    # The turndown fraction must also clear the planned dip of its own
+    # campaign: capacity is sized from the peak train load, and an upstream
+    # turnaround can pull the planned rate of an inter-fed train below 30% of
+    # that peak. Cap the drawn fraction by the realised minimum
+    # rate-to-capacity ratio (with slack) so the witness always satisfies the
+    # minimum-turndown rows.
+    for (i, t) in enumerate(campaign_tasks)
+        lo = Inf
+        for τ in 1:T
+            active[i, τ] > 0 &&
+                (lo = min(lo, rate[t, τ] / unit_capacity[task_unit[t], τ]))
+        end
+        isfinite(lo) &&
+            (min_rate_fraction[i] = min(min_rate_fraction[i], 0.98 * lo))
+    end
 
     # Merchant sales and inventory trajectories.
     delta = _cp_demand_deviation(rng, finals, material_names, T)
@@ -714,6 +723,12 @@ function CampaignPlanningProblem(
                  0.98 .* sales_ceiling[cut_material, 1:horizon])
         demand_cum = sum(sales_floor[cut_material, 1:horizon])
         desired_upper = demand_cum * rand(rng, Uniform(0.60, 0.85))
+        # A bursty campaign product can carry planted initial stock above the
+        # shrunken demand target; cap it so the supply cut stays below demand.
+        # Otherwise the scale numerator goes negative, `scale` clamps at its
+        # floor, and the margin below turns negative.
+        initial_inventory[cut_material] =
+            min(initial_inventory[cut_material], 0.4 * desired_upper)
         task_bound_raw = out_coeff * sum(unit_capacity[task_unit[producer], :])
         scale = clamp((desired_upper - initial_inventory[cut_material]) /
                       max(task_bound_raw, eps()), 0.01, 0.90)
@@ -734,7 +749,7 @@ function CampaignPlanningProblem(
             initial_inventory[cut_material], task_bound, raw_bound,
             upper_bound, certificate_margin)
     else
-        position = mod(seed * 0.6180339887498949, 1.0)
+        position = _pp_seed_position(seed)
         supply_factor = 0.55 + 0.34 * position
         demand_factor = 1 + 0.25 * (0.5 - position)
         tier_cap .*= supply_factor

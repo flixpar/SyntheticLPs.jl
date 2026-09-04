@@ -1,15 +1,7 @@
-# Local helpers shared by the contracts below: the blend pairs in the exact
-# order build_model enumerates them, the campaign task list, and stream
+# Local helpers shared by the contracts below: the stored blend-pair list (the
+# index order of the witness blend tensor), the campaign task list, and stream
 # production under the witness (whose swing displacements are zero).
-function _pp_refinery_pairs(p)
-    pairs = Tuple{Int,Int}[]
-    for (q, product) in enumerate(p.product_names),
-        name in SyntheticLPs._RP_BLEND_TABLE[product]
-        s = findfirst(==(name), p.stream_names)
-        s !== nothing && push!(pairs, (s, q))
-    end
-    return sort!(pairs)
-end
+_pp_refinery_pairs(p) = p.blend_pairs
 
 _pp_campaign_tasks(p) =
     [t for t in 1:length(p.task_names) if p.campaign_unit[p.task_unit[t]]]
@@ -262,7 +254,9 @@ end
             ypath = SyntheticLPs._rp_yield_path(
                 p.cut_yield, p.unit_feed, p.mode_unit, p.mode_yields,
                 _pp_refinery_pairs(p), length(p.product_names))
-            @test isapprox(cert.yield_bound, maximum(ypath[:, q]); atol = 1e-9)
+            # + the provable swing-cut allowance (see the certificate branch).
+            @test isapprox(cert.yield_bound, maximum(ypath[:, q]) + 0.05;
+                           atol = 1e-9)
             @test isapprox(cert.crude_bound,
                            min(cert.cdu_bound, cert.purchase_bound); atol = 1e-6)
             @test isapprox(cert.upper_bound,
@@ -379,7 +373,10 @@ end
         # Feasible witness: campaign blocks are binary and exclusive, block
         # lengths respect the minimum, rates respect capacity and turndown,
         # material balances close by arithmetic, and purchases stay in tier.
-        for target in (240, 2000), seed in 0:2
+        # The seed range is wide because the capacity and turndown rows fail
+        # only on rare draw conjunctions (utilisation-spread beyond headroom,
+        # turnaround dips below turndown), not on every instance.
+        for target in (240, 2000), seed in 0:12
             _, p = generate_problem(:process_planning, target, feasible, seed;
                                     variant = :campaign)
             w = p.feasible_witness
