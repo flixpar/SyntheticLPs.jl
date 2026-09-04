@@ -13,3 +13,10 @@ always_use_return = false
 # That corrupts the option names in the `@add_arg_table!` blocks under scripts/.
 format_docstrings = false
 normalize_line_endings = "unix"
+
+# `format(".")` walks every directory, `.git` included. Branch names ending in
+# `.jl` -- unavoidable in a repository called SyntheticLPs.jl -- leave ref and
+# reflog files whose names end in `.jl`, and the formatter tries to parse them
+# and warns loudly. The warnings are harmless (they do not fail the check) but
+# they bury the real output, so skip the directory.
+ignore = [".git"]

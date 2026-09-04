@@ -4,6 +4,39 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-09-04 (repair the CI quality job)
+
+**Previous Commit**: `6226cde`
+
+**Commits**: (pending)
+
+**Datetime**: 2026-09-04 UTC
+
+**Summary**: Fixed the `Formatting and linting` CI job, which had never once
+succeeded since the tooling landed in PR #52. It failed in `make setup`, before
+reaching a formatter or a linter, so neither gate was actually being enforced.
+
+**Details**:
+
+- `make setup` ran `Pkg.resolve()` first. `Pkg.instantiate()` installs the
+  General registry on demand, but `resolve` does not: with no registry in the
+  depot it fails immediately with "no registries have been installed. Cannot
+  resolve the following packages: `JuliaFormatter`, `Aqua`". This was
+  self-sustaining: the job never got far enough to succeed, so
+  `julia-actions/cache` never saved a depot for it ("No existing caches found
+  ... matching restore key `julia-cache;workflow=CI;job=quality;os=Linux;`"),
+  so the next run started from an empty depot and failed the same way. It
+  passed locally only because a developer depot already has the registry.
+  `setup` now installs General when `Pkg.Registry.reachable_registries()` comes
+  back empty, then resolves as before. Reproduced against an empty
+  `JULIA_DEPOT_PATH`: the old command fails with the CI error, the new one
+  succeeds.
+- Added `ignore = [".git"]` to `.JuliaFormatter.toml`. `format(".")` walks the
+  whole tree, and a repository named `SyntheticLPs.jl` accumulates git ref and
+  reflog files whose names end in `.jl`; the formatter tries to parse them as
+  Julia and emits a wall of `ParseError` warnings. They never failed the check
+  — `format` returns `true` regardless — but they buried the genuine output.
+
 ## 2026-09-04 (multi-period process-planning generators)
 
 **Previous Commit**: `4eaa541`
