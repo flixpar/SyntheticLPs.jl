@@ -27,24 +27,60 @@ python3 -m pip install -r requirements-dev.txt
 make setup   # instantiate the dedicated Julia tooling environment
 make format  # apply JuliaFormatter and Ruff
 make lint    # verify formatting and run Aqua/Ruff checks
+make test    # full Julia test suite at -O1 (make test CATEGORIES=tsp to focus)
 make check   # lint and run the complete Julia test suite
 ```
 
 ### Testing
 
+Always pass `-O1`. The suite is compilation-bound — roughly half its runtime was
+JIT — so `-O1` cuts wall clock by ~23% while running every assertion (measured:
+342s → ~263s). CI uses it too.
+
+**Prefer a focused run.** Naming categories as command-line arguments limits the
+per-variant sweeps and the per-category include loop to them. When only one
+problem class has changed, run just that class — it takes seconds rather than
+minutes, so there is no reason to run the full suite while iterating:
+
+```bash
+# One category (~15s). Use this by default when working on a single generator.
+julia --project=@. -O1 test/runtests.jl transportation
+
+# Several, space- or comma-separated:
+julia --project=@. -O1 test/runtests.jl tsp,knapsack
+
+# Through Pkg.test (keeps the solver-based testsets):
+julia --project=@. -e 'using Pkg; Pkg.test(; test_args=["tsp"], julia_args=["-O1"])'
+
+# Or via make:
+make test CATEGORIES=tsp,knapsack
+```
+
+An unregistered category name is an error rather than a silent no-op, so a typo
+cannot masquerade as a passing focused run.
+
+Run the full suite before committing, and whenever a change touches
+`src/SyntheticLPs.jl`, `src/transforms.jl`, `src/dataset.jl`, or `test/runtests.jl`
+— those are shared by every category, so a focused run cannot cover them.
+
 HiGHS is a test-only dependency in `[extras]`. Both commands work:
 
 ```bash
 # Full suite, including the solver-based feasibility-contract testsets:
-julia --project=@. -e 'using Pkg; Pkg.test()'
+julia --project=@. -e 'using Pkg; Pkg.test(; julia_args=["-O1"])'
 
 # Direct run: skips the solver-based testsets (HiGHS is not resolvable outside
 # the Pkg.test sandbox):
-julia --project=@. test/runtests.jl
+julia --project=@. -O1 test/runtests.jl
 ```
 
 `test/runtests.jl` loads HiGHS lazily behind a `HAS_HIGHS` flag, so the direct
 run skips those testsets with an `@info` notice instead of erroring.
+
+Framework-level testsets always run, focused or not; they are cheap and guard the
+shared machinery. Note `--problem-types` (`scripts/generate_lps.jl`) and `--types`
+(`scripts/analyze_problem_statuses.jl`) select what to *generate*, not what to
+test; the positional arguments above are the test-side filter.
 
 ### Problem generation
 
@@ -129,14 +165,6 @@ reproducible from a non-zero `seed`. `check_quality(model, optimizer; ...)` with
 `QualityCriteria`/`QualityResult` filters trivial, degenerate, unbounded, and
 ill-conditioned instances. The package stays solver-agnostic: the caller supplies
 the optimizer.
-
-**Precompilation** (bottom of `src/SyntheticLPs.jl`): a `PrecompileTools`
-`@compile_workload` calls `generate_problem` once per registered variant for each
-feasibility status. JIT-compiling the generator types, not solving or instance
-size, was the dominant cost in both the test suite and any fresh session — a cold
-pass over all 127 variants took 79.6s versus 0.34s precompiled. Adding a variant
-extends the workload automatically (it iterates `list_problems()`), so expect
-package precompilation to take ~80s and to rerun whenever `src/` changes.
 
 **Problem generators** (`src/problem_types/<category>/`): a `<category>.jl` entry
 point that `include`s one file per variant (or per closely related group), plus an
@@ -230,8 +258,11 @@ documentation, and regression coverage evolve as one reviewable unit.
   `Uniform`, and the imports from `runtests.jl` are already visible. The include
   loop sits *outside* the `if HAS_HIGHS` guard, so each file must guard its own
   solver-dependent tests (the established pattern is `@testset ... begin` wrapping
-  an inner `if HAS_HIGHS`); otherwise the direct `julia --project=@.
+  an inner `if HAS_HIGHS`); otherwise the direct `julia --project=@. -O1
   test/runtests.jl` run errors instead of skipping.
+- The focused-run filter matches the include loop by file basename, so a
+  category's test file must be named after the category for a focused run to pick
+  it up.
 
 ## Adding a category or variant
 

@@ -49,23 +49,50 @@ test and session start-up time by precompiling every registered generator.
   precompile. The script now repairs the environment itself and runs straight
   from a clone without a `--project` flag. Corrected its usage examples, which
   advertised `--project=@.` — an environment without HiGHS or ArgParse.
-- Added a `PrecompileTools` `@compile_workload` that runs `generate_problem`
-  once per registered variant, for each of the three feasibility statuses.
-  Profiling showed the suite spent **53.2%** of its runtime in JIT compilation
-  (`@time` over `runtests.jl`: 233 s, 53.24% compilation): a cold pass over all
-  127 variants took 79.6 s, while the second pass over the same work took 0.12 s,
-  and 0.47 s with fresh seeds *and* sizes — so it was compilation, not caching of
-  results. The cost tracks the *number of generator types*, not instance size or
-  solve count, which is why HiGHS was only ~9% of the suite (measured by
-  ablation: 233 s with the solver testsets, 213 s without) and why the target-500
-  instances were minor (7.5 s to generate, 11.4 s to solve, corpus-wide).
-  Measured effect: compilation 53.24% → 34.08%, suite 233 s → 168 s, `Pkg.test`
-  execution 5m03 → 3m10, steady-state `Pkg.test` wall ~330 s → 196 s, and a cold
-  sweep over all 127 variants in a fresh session 79.6 s → 0.34 s. Costs are a
-  one-off ~81 s package precompile (repeated once per Julia configuration, so
-  `Pkg.test`'s `--check-bounds=yes` pays it again) and ~0.5 s added to every
-  `using SyntheticLPs`. Covering all three statuses rather than one cost only 4 s
-  of extra precompile, because the paths share most of their compiled code.
+- Profiled where the test suite spends its time, after the new CI workflow made
+  the cost visible. The suite is **53.2% JIT compilation** (`@time` over
+  `runtests.jl`: 233 s, 53.24% compilation). A cold pass over all 127 variants
+  takes 79.6 s; a second pass over the same work takes 0.12 s, and 0.47 s with
+  fresh seeds *and* sizes — so it is compilation, not caching of results. The
+  cost tracks the **number of generator types**, not instance size or solve
+  count: HiGHS is only ~9% of the suite (ablation: 233 s with the solver
+  testsets, 213 s without), and the target-500 instances cost 7.5 s to generate
+  and 11.4 s to solve corpus-wide. Expect the suite to slow roughly linearly as
+  variants are added.
+- Tried and **reverted** a `PrecompileTools` `@compile_workload` over every
+  variant. It worked as intended locally — compilation 53.24% → 34.08%, suite
+  233 s → 168 s, and a cold sweep over all 127 variants in a fresh session
+  79.6 s → 0.34 s — but precompilation only relocates compilation rather than
+  removing it, so the gain depends on the cache surviving. CI invalidates it on
+  every commit that touches `src/`, and CI wall clock regressed 11m25s → 13m42s
+  (`Julia 1` 8m48s → 13m26s; the lint job 1m02s → 5m12s, because `make setup`
+  precompiles the package into the `quality` environment as well). Locally the
+  workload still won on a touched `src/` (309 s vs 337 s) and clearly won on an
+  untouched one (196 s vs ~330 s), but not by enough to justify the shared CI
+  cost. Kept for the record: the per-package `precompile_workload` preference
+  that PrecompileTools reads makes such a workload opt-out-able, if this is
+  revisited.
+- Switched the test suite to `-O1` in CI, the `Makefile`, and the documented
+  commands. Because the suite is compilation-bound, lowering the optimization
+  level trades a little runtime for much less codegen and wins outright, with
+  every assertion still running (166,410 passing in each case). Matched runs:
+  `-O2` 342 s / 5m24.6 s, **`-O1` 256–270 s / 4m09.7–4m23.4 s (−23%)**, `-O0`
+  225 s / 3m38.7 s (−34%). `-O0` is faster still but was not adopted, to keep
+  routine runs closer to release codegen. `--compile=min` was also tried and
+  rejected: it never finished the suite in 85 minutes, because interpreting the
+  generator code costs far more than the compilation it avoids. The `test` job
+  now calls `Pkg.test` directly rather than `julia-actions/julia-runtest`, which
+  exposes no `julia_args` and defaults to `coverage=true` — coverage was being
+  computed and discarded, as nothing in the repo consumes it.
+- Added a command-line category filter to `test/runtests.jl`. Positional
+  arguments (space- or comma-separated, and reachable through
+  `Pkg.test(; test_args=…)`) restrict the global-RNG sweep, the per-variant
+  generator sweep, and the `test/problem_types/*.jl` include loop to the named
+  categories, so iterating on one generator costs ~15 s instead of ~4 minutes.
+  Framework-level testsets always run; an unregistered name raises rather than
+  silently running nothing. No arguments — the default, and what CI uses — runs
+  everything. This is the test-side counterpart to `--problem-types` / `--types`
+  on the generation and analysis scripts, which select what to *generate*.
 - Made `make setup` run `Pkg.resolve()` before `Pkg.instantiate()`. The `quality`
   environment dev-depends on the package, so its manifest goes stale whenever the
   package gains a dependency — adding `PrecompileTools` broke `make lint` until

@@ -48,4 +48,8 @@ jobs:
           version: ${{ matrix.julia-version }}
       - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@v1
-      - uses: julia-actions/julia-runtest@v1
+      # Not julia-actions/julia-runtest: it does not expose arbitrary julia_args,
+      # and it defaults to coverage=true. The suite is compilation-bound (~53% of
+      # its runtime was JIT), so -O1 cuts wall clock by ~23% with every assertion
+      # still running, and nothing here consumes coverage data.
+      - run: julia --project=. -e 'using Pkg; Pkg.test(; coverage=false, julia_args=["-O1"])'

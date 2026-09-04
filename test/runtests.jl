@@ -19,6 +19,33 @@ catch
     false
 end
 
+# Optional focus filter, taken from the command line. Naming one or more
+# categories limits the per-variant sweeps and the per-category include loop to
+# them, for iterating on one generator without paying for all 127:
+#
+#     julia --project=@. -O1 test/runtests.jl transportation
+#     julia --project=@. -O1 test/runtests.jl tsp,knapsack
+#     Pkg.test(; test_args=["tsp"], julia_args=["-O1"])
+#
+# The framework-level testsets always run: they are cheap and guard the shared
+# machinery. No arguments — the default, and what CI uses — runs everything.
+const TEST_CATEGORIES = Symbol[
+    Symbol(strip(t)) for a in ARGS for t in split(a, ',') if !isempty(strip(t))
+]
+
+in_scope(ref) = isempty(TEST_CATEGORIES) || ref.category in TEST_CATEGORIES
+
+if !isempty(TEST_CATEGORIES)
+    # A typo would otherwise run only the framework testsets and pass, which
+    # looks exactly like a successful focused run.
+    unregistered = filter(!in(Set(list_categories())), TEST_CATEGORIES)
+    isempty(unregistered) || error(
+        "Unknown test categories: $(join(unregistered, ", ")). " *
+        "Known categories: $(join(sort(list_categories()), ", "))",
+    )
+    @info "Focused test run; pass no arguments to run everything." categories = TEST_CATEGORIES
+end
+
 # A deliberately always-feasible generator used to exercise retry exhaustion.
 struct ContractViolationTestProblem <: ProblemGenerator
     seed::Int
@@ -138,6 +165,7 @@ end
     # advance the caller's global stream, and must stay reproducible per seed.
     @testset "Global RNG Isolation" begin
         for ref in list_problems()
+            in_scope(ref) || continue
             Random.seed!(5171)
             expected = rand(3)
 
@@ -227,12 +255,16 @@ end
     problem_type_test_dir = joinpath(@__DIR__, "problem_types")
     if isdir(problem_type_test_dir)
         for test_file in sort(readdir(problem_type_test_dir; join=true))
-            endswith(test_file, ".jl") && include(test_file)
+            endswith(test_file, ".jl") || continue
+            category = Symbol(basename(test_file)[1:(end - 3)])
+            (isempty(TEST_CATEGORIES) || category in TEST_CATEGORIES) || continue
+            include(test_file)
         end
     end
 
     # Test individual problem generators (every registered variant)
     for ref in list_problems()
+        in_scope(ref) || continue
         test_problem_generator(ref)
     end
 
