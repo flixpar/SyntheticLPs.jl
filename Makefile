@@ -6,8 +6,14 @@ RUFF ?= ruff
 # `resolve` before `instantiate`: the quality environment dev-depends on the
 # package, so its manifest goes stale whenever the package gains a dependency,
 # and `instantiate` alone will not pick that up.
+#
+# The registry check has to come first. `instantiate` installs the General
+# registry on demand, but `resolve` does not -- it fails outright with "no
+# registries have been installed" on a machine that has never installed one.
+# That is every fresh CI runner with a cold julia-actions/cache, which is why
+# this target could not run in CI at all.
 setup:
-	$(JULIA) --startup-file=no --project=quality -e 'using Pkg; Pkg.resolve(); Pkg.instantiate()'
+	$(JULIA) --startup-file=no --project=quality -e 'using Pkg; isempty(Pkg.Registry.reachable_registries()) && Pkg.Registry.add("General"); Pkg.resolve(); Pkg.instantiate()'
 
 format:
 	$(JULIA) --startup-file=no --project=quality -e 'using JuliaFormatter; format(".")'
