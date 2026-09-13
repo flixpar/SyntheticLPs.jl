@@ -32,7 +32,7 @@
         @test length(p.demands) == n_pieces
         @test all(length.(p.patterns) .== n_pieces)
         @test all(>(0), p.demands)
-        @test all(>=(1), p.stock_limit)
+        @test p.stock_limit >= 1
         for pattern in p.patterns
             @test dot(pattern, p.piece_lengths) <= p.stock_length + 1e-9
             @test sum(pattern) > 0

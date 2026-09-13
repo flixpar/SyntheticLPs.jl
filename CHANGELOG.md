@@ -52,6 +52,14 @@ invariants, certificate arithmetic, and HiGHS-backed feasibility contracts.
     (the old 100-node clamp silently capped the corpus at 9,900 arcs);
     arc count equals the target exactly. `build_model` builds node adjacency in
     one pass instead of O(n*m) scans.
+  - Review fix (PR #55): source/sink shortcut arcs in `_network_flow_topology`
+    are now capped at the target arc count. Uncapped, they could overshoot the
+    documented exact sizing on small requests — e.g. `target_variables == 7`
+    (a 5-node network: 4 backbone arcs plus up to 4 distinct shortcuts → 8
+    arcs), and at `target_variables == 3` any shortcut fired past the 3-arc
+    backbone (measured: 181 of 17,478 small-target generations returned too
+    many arcs).
+    The cap never binds for targets ≥ 8, so existing seeds are unchanged.
   - `infeasible` + max-flow requests become min-cost instances whose contracted
     volume cannot be routed (documented; a max-flow objective is always
     feasible since the zero flow is admissible).
@@ -127,7 +135,14 @@ invariants, certificate arithmetic, and HiGHS-backed feasibility contracts.
   HiGHS-guarded feasibility-contract sweeps (the network_flow file also
   cross-checks the stored Dinic max flow against the solver's objective, and
   resource_allocation cross-checks the analytic `floor_utilization <= 1`
-  feasibility oracle against HiGHS on `unknown` instances).
+  feasibility oracle against HiGHS on `unknown` instances). Review fixes
+  (PR #55): network_flow gained a small-target exactness sweep
+  (`target in (1, 2, 3, 4, 5, 7, 10)`, seeds 0:50) pinning the shortcut cap,
+  and the cutting_stock file's stock-limit assertion is now the scalar
+  comparison `p.stock_limit >= 1` — the previous two-arg
+  `all(>=(1), p.stock_limit)` iterates a scalar, which only works on Julia
+  ≥ 1.12 (numbers became iterable there) and `MethodError`s on the `[compat]`
+  floor of 1.11.
 - Docs: rewrote `docs/network_flow.md`, `docs/cutting_stock.md`, and
   `docs/resource_allocation.md` (the network_flow page still described the
   pre-isolation `Random.seed!` constructor and a density-threshold topology

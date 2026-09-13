@@ -24,6 +24,15 @@
         @test abs(num_variables(m) - target) <= 0.25 * target || num_variables(m) <= 50
     end
 
+    # Small targets pin the exactness the same way: the backbone plus any
+    # sampled shortcuts must still land on the target, not overshoot it
+    # (shortcuts are capped at the arc budget; only targets below the 3-arc
+    # backbone round up to it). A seed sweep covers every shortcut draw.
+    for target in (1, 2, 3, 4, 5, 7, 10), seed in 0:50
+        m, p = generate_problem(:network_flow, target, feasible, seed)
+        @test num_variables(m) == length(p.arcs) == max(target, 3)
+    end
+
     # Sizing cap: above the documented limit the request is rejected rather
     # than silently undersized; at the limit the constructor still delivers
     # exactly the requested arc count (constructor only -- no model build).

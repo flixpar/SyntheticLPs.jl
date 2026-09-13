@@ -209,11 +209,12 @@ end
     _network_flow_topology(rng, n_nodes, n_arcs) -> Vector{Tuple{Int,Int}}
 
 Build a directed network on `1:n_nodes` with exactly `n_arcs` forward arcs
-`(i, j)`, `i < j`: the backbone path `1 -> 2 -> ... -> n_nodes` is always
+`(i, j)`, `i < j` (targets below the 3-arc backbone of the minimum 4-node
+network round up to it): the backbone path `1 -> 2 -> ... -> n_nodes` is always
 present, shortcut arcs from the source and to the sink are added with
-probability 0.3 each (feeder arcs bypassing intermediate relays, as the
-`generalized_flow` sibling does), and the remainder is a shuffled fill of the
-forward candidates. Forward-only arcs keep the graph a DAG ordered by node
+probability 0.3 each while budget remains (feeder arcs bypassing intermediate
+relays, as the `generalized_flow` sibling does), and the remainder is a
+shuffled fill of the forward candidates. Forward-only arcs keep the graph a DAG ordered by node
 index — nothing re-enters the source or leaves the sink — which is what makes
 source outflow, sink inflow, and cut crossings coincide, so the max-flow /
 min-cut theory behind the feasibility control applies verbatim to the built LP.
@@ -229,12 +230,15 @@ function _network_flow_topology(rng::AbstractRNG, n_nodes::Int, n_arcs::Int)
         push!(arcs, (i, i + 1))
     end
 
-    # Source shortcuts and sink shortcuts.
+    # Source shortcuts and sink shortcuts, capped at the target arc count:
+    # small requests leave little or no budget beyond the backbone, and
+    # uncapped shortcuts could return more arcs than requested (the fill stage
+    # below only tops up, it never truncates).
     for i in 2:(n_nodes - 1)
-        if rand(rng) < 0.3
+        if rand(rng) < 0.3 && length(arcs) < n_arcs
             push!(arcs, (1, i))
         end
-        if rand(rng) < 0.3
+        if rand(rng) < 0.3 && length(arcs) < n_arcs
             push!(arcs, (i, n_nodes))
         end
     end
