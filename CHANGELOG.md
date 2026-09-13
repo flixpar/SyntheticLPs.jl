@@ -4,6 +4,150 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-09-13 (modernize the network_flow, cutting_stock, and resource_allocation standard generators)
+
+**Previous Commit**: `8fe4393`
+
+**Commits**: (pending)
+
+**Datetime**: 2026-09-13 UTC
+
+**Summary**: Rewrote the three oldest `standard` generators (June 2026 vintage)
+to the quality bar of the newer families: feasibility is now controlled by
+planted, provable mechanisms with typed witnesses and certificates instead of
+estimates and heuristic patch cascades, data generation is grounded and
+scale-aware, sizing caps are explicit `ArgumentError`s instead of silent
+undershoots, and each category gained its first dedicated test file
+(`test/problem_types/<category>.jl`) covering exact sizing formulas, data
+invariants, certificate arithmetic, and HiGHS-backed feasibility contracts.
+
+**Details**:
+
+- `network_flow/standard` (`src/problem_types/network_flow/standard.jl`):
+  - The constructor now computes the TRUE max source-sink flow (deterministic
+    Dinic: BFS level graphs, blocking-flow DFS with current-arc pointers) on the
+    sampled capacities, and every feasibility profile is placed relative to that
+    exact boundary: `feasible` targets 25–85% of the max flow, `infeasible`
+    contracts 115–160% of it, `unknown` draws 60–140% (a genuine coin flip on
+    either side). The old source-cut estimate could in principle mislabel a
+    `feasible` request when an internal cut was tighter than 0.4x the source
+    cut; worse, the old topology admitted arcs INTO the source, so the
+    source-outflow equality was satisfiable by circulating flow even at max
+    flow zero — the old "guarantee" was unsound, not merely approximate.
+  - The network is now a forward-arc DAG (`i < j`) with a guaranteed
+    `1 -> 2 -> ... -> n` backbone, which makes source outflow, sink inflow, and
+    cut crossings coincide so max-flow/min-cut theory applies verbatim to the
+    built LP.
+  - Typed planting: `NetworkFlowWitness` (per-arc flow plan, the scaled
+    max-flow assignment) for `feasible`, `NetworkFlowCutCertificate` (minimum
+    cut read off the residual graph: source side, crossing arcs, capacity
+    strictly below the contracted volume) for `infeasible`.
+  - Data grounding: nodes scattered over three geography shapes (`:corridor`
+    in index order so the backbone follows it, `:clustered`, `:uniform`);
+    per-unit cost is Euclidean distance times a lognormal route factor; tiered
+    lognormal capacities. Arcs stored as a sorted vector with aligned
+    capacity/cost vectors (the `Dict`s are gone); helpers renamed to
+    `_network_flow_*` with rng-first signatures.
+  - Sizing: `NETWORK_FLOW_MAX_ARCS = 1_000_000` with `ArgumentError` above
+    (the old 100-node clamp silently capped the corpus at 9,900 arcs);
+    arc count equals the target exactly. `build_model` builds node adjacency in
+    one pass instead of O(n*m) scans.
+  - Review fix (PR #55): source/sink shortcut arcs in `_network_flow_topology`
+    are now capped at the target arc count. Uncapped, they could overshoot the
+    documented exact sizing on small requests — e.g. `target_variables == 7`
+    (a 5-node network: 4 backbone arcs plus up to 4 distinct shortcuts → 8
+    arcs), and at `target_variables == 3` any shortcut fired past the 3-arc
+    backbone (measured: 181 of 17,478 small-target generations returned too
+    many arcs).
+    The cap never binds for targets ≥ 8, so existing seeds are unchanged.
+  - `infeasible` + max-flow requests become min-cost instances whose contracted
+    volume cannot be routed (documented; a max-flow objective is always
+    feasible since the zero flow is admissible).
+- `cutting_stock/standard` (`src/problem_types/cutting_stock/standard.jl`):
+  - Removed the "no-pattern" infeasibility method: it produced degenerate
+    instances with an all-zero demand row (`0 >= d`) — measured at 9 of 30
+    sampled infeasible instances — trivially presolve-detectable and worthless
+    for solver testing. Every piece type now always owns its single-piece
+    pattern (first, in piece order), so no demand row can be uncoverable.
+  - Infeasibility is now one provable mechanism instead of three heuristic
+    ones: with `e_i = max_j patterns[j][i]` (best yield of piece `i` per stock,
+    computed on the FINAL patterns and demands), a stock limit `S` with
+    `d_i > S * e_i` is a two-row Farkas contradiction stored as
+    `StockShortageCertificate`; the bottleneck piece's demand is raised to
+    `ceil(margin * S * e_i)`, `margin ~ U(1.2, 1.5)`, with a constructor guard
+    on the invariant. Scenario flavor (rush order / seasonal spike / backlog /
+    mixed) is retained for realism.
+  - `feasible` stores a `StockPlanWitness`: the exact integer trivial plan
+    (single-piece pattern `i` run `cld(d_i, s_i)` times), verified in integer
+    arithmetic, under a finite budget of 1.3–1.8x the plan's usage. The old
+    feasible case had unlimited stock, so the budget row never constrained
+    anything.
+  - Fixed a dead-branch bug: the old demand/scaling logic branched on
+    `length in common_lengths`, but jittered-and-rounded common lengths never
+    equal a catalog value exactly, so the common-length branch (higher medians,
+    rush-order concentration) never once fired. Commonness is now a tracked
+    `is_common` flag kept in lockstep through dedup.
+  - Demand distribution fixed quantile-wise: `[demand_min, demand_max]` is a
+    ~2-sigma band around the geometric mean instead of a range whose center
+    `(min+max)/2` piled up to a third of draws at the clamp minimum.
+  - Sizing: the infeasible path badly undershot before (target 50 realized 14
+    variables, target 500 realized 91) because the distinct-pattern pool
+    stalled; a deterministic single/two-type enumeration top-up now guarantees
+    the exact target for every status. Helpers renamed `cs_*` with rng-first
+    signatures and O(1) pattern-membership checks.
+  - Known caveat (measured, documented in `docs/cutting_stock.md`): infeasible
+    instances are presolve-easy (HiGHS needs 1–3 simplex iterations, below the
+    default `check_quality` minimum of 3), so `quality_filter=true` datasets
+    will not include them; feasible and unknown instances pass.
+- `resource_allocation/standard` (`src/problem_types/resource_allocation/standard.jl`):
+  - Removed the silent `min(2000, target_variables)` cap: `t=5000` realized
+    only 40% of the requested size. The documented limit is now
+    `RESOURCE_ALLOCATION_MAX_VARIABLES = 100_000` with an `ArgumentError` above.
+  - Replaced the ~180-line infeasibility heuristic (greedy bump loop, "final
+    safety check", "recheck and force if needed") with a planted certificate:
+    since `x_i >= min_levels_i` and usage is nonnegative, a pool whose
+    floor-induced consumption exceeds its capacity is unconditionally
+    infeasible. 1–3 pools are cut to `consumption / (1 + U(0.1, 0.4))` and the
+    `FloorOvercommitCertificate` stores the violated pool, its committed
+    activities, and the contradiction. No iteration, no fallbacks.
+  - `feasible` plants a nominal allocation plan; capacities are the plan's
+    consumption plus per-pool lognormal headroom (varied so different rows
+    bind) and floors are fractions of the plan, with the plan stored as an
+    `AllocationPlanWitness`. `unknown` steers the tightest floor utilization
+    onto `1 ± U(0.05, 0.35)` by splitting the adjustment between floors and
+    capacities ratio-preservingly — a fair coin flip at every scale (measured
+    10/10, 12/8, 10/10 OPTIMAL/INFEASIBLE at targets 50/500/5000).
+  - Realism: usage is now sparse (each activity draws on `DiscreteUniform(1,
+    max_uses)` pools, 8–30% dense measured, no all-zero rows or dead pools)
+    instead of a fully dense matrix; the pool count scales with the portfolio
+    (4–12 / 10–36 / 20–64 / 32–96 by tier) instead of `rand(2:50)` at every
+    scale; four allocation regimes (`:manufacturing_capacity`, `:cloud_compute`,
+    `:workforce_hours`, `:advertising_budget`) shift profit/usage scales,
+    correlation, and pool spread. The quality-profit/quality-usage correlation
+    (profitable activities are resource-hungry) is retained. Constructor-local
+    closures replaced by file-level `_resource_allocation_*` helpers.
+- Tests: new `test/problem_types/network_flow.jl` (252 lines),
+  `test/problem_types/cutting_stock.jl` (197), and
+  `test/problem_types/resource_allocation.jl` (187) — none of the three
+  categories had dedicated coverage before. Each holds registry shape, exact
+  variable/row-count formulas, sizing sweeps, data invariants, witness and
+  certificate arithmetic recomputed from struct fields, reproducibility, and
+  HiGHS-guarded feasibility-contract sweeps (the network_flow file also
+  cross-checks the stored Dinic max flow against the solver's objective, and
+  resource_allocation cross-checks the analytic `floor_utilization <= 1`
+  feasibility oracle against HiGHS on `unknown` instances). Review fixes
+  (PR #55): network_flow gained a small-target exactness sweep
+  (`target in (1, 2, 3, 4, 5, 7, 10)`, seeds 0:50) pinning the shortcut cap,
+  and the cutting_stock file's stock-limit assertion is now the scalar
+  comparison `p.stock_limit >= 1` — the previous two-arg
+  `all(>=(1), p.stock_limit)` iterates a scalar, which only works on Julia
+  ≥ 1.12 (numbers became iterable there) and `MethodError`s on the `[compat]`
+  floor of 1.11.
+- Docs: rewrote `docs/network_flow.md`, `docs/cutting_stock.md`, and
+  `docs/resource_allocation.md` (the network_flow page still described the
+  pre-isolation `Random.seed!` constructor and a density-threshold topology
+  that no longer existed); rebuilt `docs/explainer.html`.
+
 ## 2026-09-04 (repair the CI quality job)
 
 **Previous Commit**: `6226cde`
