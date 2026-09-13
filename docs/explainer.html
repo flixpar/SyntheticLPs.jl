@@ -290,7 +290,7 @@ window.MathJax={
     <span class="chip chip-continuous">Continuous</span>
   </div>
 </a>
-<a class="card fam-border-network" href="#network_flow" data-target="network_flow" data-search="network flow the network flow generator creates continuous single-commodity flow lps over a directed graph, either maximizing source outflow or minimizing cost for a required flow. single-commodity max-flow or min-cost flow">
+<a class="card fam-border-network" href="#network_flow" data-target="network_flow" data-search="network flow single-commodity flow over capacitated directed networks. the category contains two variants: `standard`, the classical max-flow / min-cost-flow lp with an exact max-flow-based feasibility control, and `generalized_flow`, a lossy-flow variant whose arcs attenuate what they carry. both build pure continuous lps, and both use a local rng — calling a generator neither reseeds nor consumes julia&#x27;s global rng, and `build_model` does no sampling. single-commodity max-flow or min-cost flow">
   <div class="card-top"><span class="card-title">Network Flow</span></div>
   <p class="card-tag">Single-commodity max-flow or min-cost flow</p>
   <div class="chips">
@@ -414,7 +414,7 @@ window.MathJax={
     <span class="chip chip-continuous">Continuous</span>
   </div>
 </a>
-<a class="card fam-border-production" href="#resource_allocation" data-target="resource_allocation" data-search="resource allocation resource allocation generates a continuous profit-maximization lp that allocates limited resources among competing activities with optional minimum activity levels. allocate scarce resources among activities">
+<a class="card fam-border-production" href="#resource_allocation" data-target="resource_allocation" data-search="resource allocation resource allocation generates a continuous profit-maximization lp that allocates limited shared resources across competing activities, with optional minimum activity levels. allocate scarce resources among activities">
   <div class="card-top"><span class="card-title">Resource Allocation</span></div>
   <p class="card-tag">Allocate scarce resources among activities</p>
   <div class="chips">
@@ -458,7 +458,7 @@ window.MathJax={
     <span class="chip chip-binary">Binary</span>
   </div>
 </a>
-<a class="card fam-border-scheduling" href="#cutting_stock" data-target="cutting_stock" data-search="cutting stock `cuttingstockproblem` generates a cutting-pattern model that minimizes the number of stock pieces used to satisfy demand for required piece lengths. one-dimensional pattern cutting">
+<a class="card fam-border-scheduling" href="#cutting_stock" data-target="cutting_stock" data-search="cutting stock `cuttingstockproblem` (`cutting_stock/standard`) generates a cutting-pattern model that minimizes the number of stock pieces used to satisfy demand for required piece lengths, with certificate-backed control of the requested feasibility status. one-dimensional pattern cutting">
   <div class="card-top"><span class="card-title">Cutting Stock</span></div>
   <p class="card-tag">One-dimensional pattern cutting</p>
   <div class="chips">
@@ -758,58 +758,58 @@ inflow(k,v) = outflow(k,v)                 for v not in {s_k,t_k}</pre>
   <header class="art-head fam-border-network">
     <div class="art-eyebrow"><span class="fam-dot fam-network"></span>Network &amp; Routing</div>
     <h2>Network Flow</h2>
-    <p class="art-intro">The network flow generator creates continuous single-commodity flow LPs over a directed graph, either maximizing source outflow or minimizing cost for a required flow.</p>
+    <p class="art-intro">Single-commodity flow over capacitated directed networks. The category contains two variants: <code>standard</code>, the classical max-flow / min-cost-flow LP with an exact max-flow-based feasibility control, and <code>generalized_flow</code>, a lossy-flow variant whose arcs attenuate what they carry. Both build pure continuous LPs, and both use a local RNG — calling a generator neither reseeds nor consumes Julia&#x27;s global RNG, and <code>build_model</code> does no sampling.</p>
     <div class="chips">
       <span class="chip chip-sense">Objective: Min/Max</span>
       <span class="chip chip-continuous">Continuous variables</span>
     </div>
   </header>
   <section class="doc-section">
-  <h3><span class="sec-icon">◆</span>Overview</h3>
-  <div class="sec-body"><p>This generator represents routing through a capacitated directed network. Node 1 is the source, the last node is the sink, arcs have capacities and per-unit costs, and intermediate nodes conserve flow. Depending on the sampled objective type, the model either sends as much flow as possible from source to sink or sends a specified target amount at minimum cost.</p></div>
+  <h3><span class="sec-icon">§</span>Variants</h3>
+  <div class="sec-body"><table><thead><tr><th>Variant</th><th>Model class</th><th>Key structure</th><th>Domain grounding</th></tr></thead><tbody><tr><td><code>standard</code></td><td>continuous LP</td><td>max-flow or min-cost flow with a contracted volume; exact Dinic max flow drives feasibility</td><td>freight corridors, regional grids, mesh distribution</td></tr><tr><td><code>generalized_flow</code></td><td>continuous LP</td><td>per-arc gain multipliers in (0, 1]; required *delivered* amount at the sink</td><td>transmission losses, evaporation, conversion yield</td></tr></tbody></table></div>
 </section><section class="doc-section">
-  <h3><span class="sec-icon">▦</span>Generator Data and Sizing</h3>
-  <div class="sec-body"><p><code>target_variables</code> maps to the number of directed arcs:</p>
-<pre class="formula">target_variables ~= length(arcs)</pre>
-<p>The constructor seeds Julia&#x27;s global RNG with <code>Random.seed!(seed)</code>. The same target, feasibility status, and seed reproduce the same graph, capacities, costs, objective choice, and target flow.</p>
-<p>Problem scale controls node search ranges, density, capacities, and costs:</p>
-<table><thead><tr><th>Target variables</th><th>Node search range</th><th>Target density</th><th>Capacity range</th><th>Cost range</th></tr></thead><tbody><tr><td><code>&lt;= 100</code></td><td><code>4:15</code></td><td><code>0.4</code></td><td><code>10.0</code> to <code>100.0</code></td><td><code>1.0</code> to <code>10.0</code></td></tr><tr><td><code>&lt;= 500</code></td><td><code>10:35</code></td><td><code>0.2</code></td><td><code>10.0</code> to <code>500.0</code></td><td><code>1.0</code> to <code>25.0</code></td></tr><tr><td><code>&gt; 500</code></td><td><code>20:100</code></td><td><code>0.1</code></td><td><code>50.0</code> to <code>2000.0</code></td><td><code>1.0</code> to <code>50.0</code></td></tr></tbody></table>
-<p>The node count is the first value whose rounded dense-arc estimate reaches at least 90% of the target. <code>source_node</code> is always 1 and <code>sink_node</code> is always <code>n_nodes</code>.</p>
-<p>Topology generation first creates the path <code>(1,2), (2,3), ..., (n_nodes-1,n_nodes)</code> to ensure source-to-sink connectivity. It then optionally adds arcs from the source to intermediate nodes and from intermediate nodes to the sink with probability 0.3 each, followed by shuffled random directed arcs without self-loops until the requested arc count is reached. If the path alone already exceeds <code>target_variables</code>, the returned graph can have more arcs than the target.</p>
-<p>Each arc gets:</p>
-<ul><li>capacity sampled uniformly from the scale-specific floating-point interval and rounded to 2 digits</li><li>cost sampled uniformly from the scale-specific floating-point interval and rounded to 2 digits</li></ul>
-<p>The struct stores:</p>
-<ul><li><code>n_nodes::Int</code></li><li><code>source_node::Int</code></li><li><code>sink_node::Int</code></li><li><code>arcs::Vector{Tuple{Int,Int}}</code></li><li><code>capacities::Dict{Tuple{Int,Int},Float64}</code></li><li><code>costs::Dict{Tuple{Int,Int},Float64}</code></li><li><code>flow_objective::Symbol</code>, either <code>:max_flow</code> or <code>:min_cost</code></li><li><code>target_flow::Union{Float64,Nothing}</code></li></ul>
-<p>Objective selection depends on target size: targets <code>&lt;= 100</code> choose <code>:max_flow</code> with probability 0.7; larger targets choose <code>:max_flow</code> with probability 0.4. The remaining cases use <code>:min_cost</code>.</p></div>
-</section><section class="doc-section">
-  <h3><span class="sec-icon">∑</span>LP Formulation</h3>
-  <div class="sec-body"><p>Sets:</p>
-<ul><li><code>V = {1, ..., n_nodes}</code></li><li><code>A = arcs</code></li><li><code>s = source_node</code></li><li><code>t = sink_node</code></li></ul>
+  <h3><span class="sec-icon">§</span>`standard` Formulation</h3>
+  <div class="sec-body"><p>Sets and data:</p>
+<ul><li><code>V = {1, ..., n_nodes}</code>, <code>s = source_node = 1</code>, <code>t = sink_node = n_nodes</code></li><li><code>A = arcs</code>: forward arcs <code>(i, j)</code> with <code>i &lt; j</code>, always containing the backbone<p>path <code>1 -&gt; 2 -&gt; ... -&gt; n_nodes</code>; the network is a DAG ordered by node index</p></li><li><code>cap[a]</code>, <code>cost[a]</code>: per-arc capacity and per-unit routing cost</li></ul>
 <p>Decision variable:</p>
-<pre class="formula">flow[a] &gt;= 0 = flow on directed arc a</pre>
-<p>Capacity bounds are modeled as constraints:</p>
-<pre class="formula">flow[i,j] &lt;= capacities[(i,j)]    for each (i,j) in A</pre>
-<p>Intermediate-node flow conservation:</p>
-<pre class="formula">sum_{(i,v) in A} flow[i,v] = sum_{(v,j) in A} flow[v,j]
-    for each v in V \ {s,t}</pre>
-<p>For <code>:max_flow</code>, the objective is:</p>
-<pre class="formula">maximize sum_{(s,j) in A} flow[s,j]</pre>
-<p>For <code>:min_cost</code>, the objective and source-flow requirement are:</p>
-<pre class="formula">minimize sum_{a in A} costs[a] * flow[a]
-sum_{(s,j) in A} flow[s,j] = target_flow</pre>
-<p>The model does not add a corresponding sink inflow requirement. Conservation at intermediate nodes plus the graph structure usually forces flow to terminate at the sink when there are no useful cycles, but cycles and arcs into the source or out of the sink are allowed by topology generation.</p></div>
+<pre class="formula">flow[a] &gt;= 0 = flow on arc a        (one variable per arc)</pre>
+<p>Capacity rows, one per arc:</p>
+<pre class="formula">flow[a] &lt;= cap[a]                   for each a in A</pre>
+<p>Flow conservation at every intermediate node:</p>
+<pre class="formula">sum_{(u,v) in A} flow[u,v] = sum_{(v,w) in A} flow[v,w]
+    for each v in V \ {s, t}</pre>
+<p>Forward-only arcs are what make the feasibility control airtight: nothing can re-enter the source or leave the sink, so source outflow, sink inflow, and cross-cut flow all coincide and classical max-flow / min-cut theory applies verbatim to the built LP.</p>
+<p>The objective is sampled per instance:</p>
+<ul><li><code>:max_flow</code> — maximize source outflow:<pre class="formula">  maximize sum_{(s,j) in A} flow[s,j]</pre></li><li><code>:min_cost</code> — route a *contracted volume* <code>target_flow</code> at minimum cost,<p>enforced by one extra equality on the source&#x27;s out-arcs:</p>
+<pre class="formula">  minimize sum_{a in A} cost[a] * flow[a]
+  sum_{(s,j) in A} flow[s,j] = target_flow</pre></li></ul>
+<p>The struct stores <code>arcs</code> (sorted), aligned <code>capacities</code>/<code>costs</code> vectors, node <code>positions</code> and the sampled <code>geography</code> shape, <code>flow_objective</code>, <code>target_flow</code>, the exact <code>max_flow_value</code>, a typed <code>feasible_witness</code> / <code>infeasibility_certificate</code> (or <code>nothing</code>), and the requested <code>feasibility_status</code>.</p></div>
 </section><section class="doc-section">
-  <h3><span class="sec-icon">⚖</span>Feasibility Controls</h3>
-  <div class="sec-body"><p>The generator estimates maximum available flow as the sum of capacities on arcs leaving the source. This is an upper bound, not an exact max-flow solve.</p>
-<ul><li><code>feasible</code>: for <code>:min_cost</code>, sets <code>target_flow</code> to 10% to 40% of the source-out capacity estimate. For <code>:max_flow</code>, no extra requirement is added.</li><li><code>infeasible</code>: if the sampled objective is <code>:min_cost</code>, sets <code>target_flow</code> to 120% to 170% of the source-out capacity estimate. If the sampled objective is <code>:max_flow</code>, the constructor switches to <code>:min_cost</code> and uses the same impossible target rule.</li><li><code>unknown</code>: randomly maps to feasible with probability 0.7 or infeasible with probability 0.3 before applying the rules above.</li></ul>
-<p>Because the target-flow logic is based only on source-out capacity, feasible <code>:min_cost</code> instances are intended to be feasible but are not verified by an exact max-flow computation. Infeasible target-flow instances are guaranteed with respect to the model&#x27;s source-out equality and source capacity constraints when the estimate is positive.</p></div>
+  <h3><span class="sec-icon">§</span>`standard` Data Grounding</h3>
+  <div class="sec-body"><p>Nodes are scattered over a 100 x 100 region in one of three sampled geography shapes:</p>
+<ul><li><code>:corridor</code> — nodes strung along a slightly bent transport corridor *in index<p>order*, so the source and sink sit at opposite ends and the backbone follows the corridor (pipelines, rail, river navigation);</p></li><li><code>:clustered</code> — nodes grouped around a handful of well-separated cluster<p>centers with Gaussian spread (regional road networks);</p></li><li><code>:uniform</code> — uniform coverage of the region (mesh-like distribution grids).</li></ul>
+<p>Per-unit routing cost is proportional to the Euclidean distance between the arc&#x27;s endpoints, multiplied by a lognormal route factor whose spread is drawn once per instance — long-haul arcs cost more, with route-dependent heterogeneity on top, so cost is strongly correlated with distance rather than uniform noise. Capacities are lognormal, in tiers that grow with the requested scale (roughly feeder networks -&gt; trunk lines -&gt; backbone grids): median around 40 for targets up to 100 arcs, up to around 600 near the 1,000,000-arc cap, with tier-dependent spread.</p></div>
 </section><section class="doc-section">
-  <h3><span class="sec-icon">▤</span>Model Characteristics</h3>
-  <div class="sec-body"><p>The model has one continuous nonnegative variable per arc. It has one capacity constraint per arc, plus one conservation constraint for each intermediate node with incident arcs. A <code>:min_cost</code> instance with a target flow adds one source-flow equality.</p>
-<p>The matrix is sparse: each arc variable appears in its own capacity row and in up to two conservation rows, plus possibly the source-flow row. The formulation is continuous. Network flow LPs often have integral extreme points under integral capacities for standard source-sink formulations, but this generator does not declare integer variables.</p></div>
+  <h3><span class="sec-icon">§</span>`standard` Feasibility Control</h3>
+  <div class="sec-body"><p>The constructor computes the TRUE maximum source-sink flow (Dinic&#x27;s algorithm, deterministic, on the planted capacities) and derives the min cut from the residual graph, so every profile is placed relative to an exact boundary rather than an estimate:</p>
+<ul><li><code>feasible</code>: <code>target_flow</code> is 25%-85% of the max flow. The stored witness is<p>the max-flow assignment scaled by <code>target_flow / max_flow_value</code> (<code>:min_cost</code>) or the unscaled assignment (<code>:max_flow</code> — a feasible point that is in fact optimal); scaling preserves conservation and keeps every capacity row satisfied by construction.</p></li><li><code>infeasible</code>: a max-flow objective is always feasible (the zero flow is<p>admissible), so the request becomes a min-cost instance whose contracted volume is 115%-160% of the max flow — a realistic &quot;contracted volume cannot be routed&quot; scenario. The stored certificate is a minimum cut: the cut arcs are exactly the arcs whose tail lies on the source side and whose head does not, and their total capacity equals the max flow and is strictly below the contract. Any feasible flow must push at least the contracted volume across the cut (nothing re-enters the source), which the cut cannot carry — the source-outflow equality is refuted using LP rows alone.</p></li><li><code>unknown</code>: the objective is kept. A <code>:min_cost</code> contract is drawn as<p>60%-140% of the max flow — a genuine coin flip on either side of the feasibility boundary at every problem size (routable exactly when the contract does not exceed the max flow); <code>:max_flow</code> instances stay unconstrained (trivially feasible, no claim either way). Neither a witness nor a certificate is stored.</p></li></ul>
+<p>The model is a pure continuous LP, so the certificate refutes the model as built and survives every transform.</p></div>
 </section><section class="doc-section">
-  <h3><span class="sec-icon">✎</span>Practical Notes</h3>
-  <div class="sec-body"><p>These instances are useful for testing sparse network LP behavior, objective switching, and capacity-conservation structure. The implementation permits arbitrary directed arcs, including arcs into the source, arcs out of the sink, and cycles. The <code>max_flow_estimate</code> is deliberately simple, so it should be treated as a data-generation heuristic rather than a certified graph-theoretic max flow.</p></div>
+  <h3><span class="sec-icon">§</span>`standard` Sizing and Variable Counts</h3>
+  <div class="sec-body"><p>Variables are the arcs, and the arc count equals the target exactly. <code>n_nodes</code> is the smallest <code>n &gt;= 4</code> with <code>n * (n - 1) / 2 &gt;= target_variables</code> (plus the backbone, source/sink shortcuts, and a shuffled fill of the remaining forward candidates up to the target), so:</p>
+<pre class="formula">n_nodes = max(4, ceil((1 + sqrt(1 + 8 * target_variables)) / 2))
+variables = target_variables
+rows = target_variables + (n_nodes - 2) + [1 if :min_cost]</pre>
+<p>Targets below 3 round up to the 3-arc backbone of the minimum 4-node network. The maximum supported target is 1,000,000 arcs (about 1415 nodes, two million candidate arcs); larger requests raise an <code>ArgumentError</code> instead of silently undersizing, the same convention as <code>telecom_network_design</code> and <code>supply_chain/network_planning</code>.</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>`generalized_flow`</h3>
+  <div class="sec-body"><p>Models lossy flow: each arc <code>(i, j)</code> has a multiplicative gain <code>g in (0.85, 1.0]</code>; flow sent on an arc arrives at its head multiplied by <code>g</code> (transmission losses, evaporation, conversion yield), making conservation multiplicative. Node 1 is the source, node <code>n_nodes</code> the sink, and the model must DELIVER a required amount at the sink (post-gain inflow on the sink&#x27;s in-arcs) while minimizing routing cost subject to per-arc capacities and a source-supply cap. The topology mirrors <code>standard</code> (backbone path, forward arcs, shortcuts).</p>
+<p>Feasibility profiles:</p>
+<ul><li><code>feasible</code>: the backbone path is guaranteed to deliver the demand — backbone<p>capacities and the source supply cover <code>demand / prod(g over backbone)</code> with slack.</p></li><li><code>infeasible</code>: the post-gain inflow capacity into the sink is capped so that<p><code>sum over sink in-arcs of g * cap = demand * alpha</code> with <code>alpha in [0.7, 0.9] &lt; 1</code>; delivered flow can never reach <code>demand</code> regardless of the rest of the network, an LP-relaxation-proof pigeonhole bound.</p></li><li><code>unknown</code>: a natural instance biased toward feasible.</li></ul>
+<p>Variables are again one per arc (<code>length(arcs)</code>).</p></div>
+</section><section class="doc-section">
+  <h3><span class="sec-icon">§</span>References</h3>
+  <div class="sec-body"><ul><li>Ahuja, R.K., Magnanti, T.L., Orlin, J.B. (1993). Network Flows: Theory,<p>Algorithms, and Applications. Prentice Hall. (Max-flow/min-cut theory, min-cost flow formulations.)</p></li><li>Dinic, E.A. (1970). Algorithm for solution of a problem of maximum flow in<p>networks with power estimation. Soviet Mathematics Doklady 11.</p></li></ul></div>
 </section>
 </article>
 <article id="telecom_network_design" class="view article">
@@ -1643,7 +1643,7 @@ lower_bounds   .*= floor_scale</pre>
   <header class="art-head fam-border-production">
     <div class="art-eyebrow"><span class="fam-dot fam-production"></span>Production &amp; Planning</div>
     <h2>Resource Allocation</h2>
-    <p class="art-intro">Resource allocation generates a continuous profit-maximization LP that allocates limited resources among competing activities with optional minimum activity levels.</p>
+    <p class="art-intro">Resource allocation generates a continuous profit-maximization LP that allocates limited shared resources across competing activities, with optional minimum activity levels.</p>
     <div class="chips">
       <span class="chip chip-sense">Objective: Max</span>
       <span class="chip chip-continuous">Continuous variables</span>
@@ -1651,21 +1651,36 @@ lower_bounds   .*= floor_scale</pre>
   </header>
   <section class="doc-section">
   <h3><span class="sec-icon">◆</span>Overview</h3>
-  <div class="sec-body"><p>This generator models a generic resource allocation problem: activities earn profit but consume multiple limited resources. The decision is how much of each activity to run. Examples include allocating labor, budget, machine time, or raw materials across departments, campaigns, jobs, or production modes.</p>
-<p>The generator can construct feasible instances by building capacities around a synthetic demand plan, or construct infeasible instances by forcing minimum activity levels to exceed selected resource capacities.</p></div>
+  <div class="sec-body"><p>This generator models budget-style allocation: a portfolio of activities earns profit per unit and draws on a sparse set of shared resource pools — machine hours, cloud compute, staff hours, advertising budgets. The decisions are activity levels. One capacity row per pool limits aggregate consumption, and commitment floors impose minimum activity levels on a subset of activities.</p>
+<p>Unlike <code>product_mix</code>, budgets here are *allocated*, not reserved against market demand. There are no activity ceilings at all, the number of shared pools grows with the portfolio (up to 96 resources versus product mix&#x27;s 3–30), and each activity touches only a handful of pools. Capacity rows, not per-variable bounds, carry all the tension.</p>
+<p>Capacities and commitment floors are derived from a **planted allocation plan** rather than sampled independently of each other. Independent sampling lets aggregate floor demand and aggregate capacity drift apart as the portfolio grows, which silently decides feasibility as a side effect of scale. Anchoring both sides on one nominal plan keeps them mutually consistent at every size.</p>
+<p>The generator samples an allocation regime (manufacturing capacity, cloud compute, workforce hours, advertising budget) that shifts profit and usage scales, the profit/usage correlation, and how many pools an activity touches, plus scale-dependent parameter tiers.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">▦</span>Generator Data and Sizing</h3>
-  <div class="sec-body"><p><code>target_variables</code> maps directly to activities:</p>
-<pre class="formula">n_activities = max(3, min(2000, target_variables))</pre>
-<p>Resource count and parameter ranges are sampled as:</p>
-<ul><li><code>n_resources</code>: <code>rand(2:50)</code>.</li><li><code>min_resource</code>: integer from <code>50:1000</code>.</li><li><code>max_resource</code>: integer from <code>200:10000</code>.</li><li><code>min_profit</code>: from <code>0.1:0.1:2.0</code>.</li><li><code>max_profit</code>: from <code>5.0:5.0:100.0</code>.</li><li><code>min_usage</code>: from <code>0.01:0.01:0.5</code>.</li><li><code>max_usage</code>: from <code>1.0:1.0:20.0</code>.</li><li><code>correlation_strength</code>: from <code>0.5:0.1:0.9</code>.</li><li><code>add_min_constraints</code>: true with probability <code>0.7</code>, always true for requested infeasible instances.</li><li><code>min_level_prob</code>: from <code>0.2:0.1:0.5</code>.</li></ul>
+  <div class="sec-body"><p><code>target_variables</code> maps directly onto activities:</p>
+<pre class="formula">n_activities = max(3, min(100_000, target_variables))</pre>
+<p>Requests above <code>100_000</code> raise an <code>ArgumentError</code> instead of being silently undersized. The usage matrix is materialised as a dense <code>n_activities × n_resources</code> block of <code>Float64</code> (at the cap, 100_000 × up to 96 doubles is roughly 77 MB), which is what fixes the limit. The previous silent 2,000-activity cap is gone: a 5,000-variable request realizes 5,000 variables.</p>
+<p>Resource counts and parameter distributions depend on the requested scale.</p>
+<p>For <code>target_variables &lt;= 250</code> (small portfolio):</p>
+<ul><li><code>n_resources</code>: <code>DiscreteUniform(4, 12)</code>.</li><li><code>usage_min</code> / <code>usage_max</code>: <code>LogNormal(log(0.8), 0.35)</code> / <code>LogNormal(log(6.0), 0.3)</code>.</li><li><code>profit_min</code> / <code>profit_max</code>: <code>LogNormal(log(12.0), 0.4)</code> / <code>LogNormal(log(90.0), 0.3)</code>.</li><li><code>uses_density</code>: <code>Beta(3, 5)</code>.</li><li><code>commitment_prob</code>: <code>Beta(4, 6)</code>.</li><li><code>correlation_strength</code>: <code>Beta(4, 3)</code>.</li><li><code>activity_center</code>: <code>LogNormal(log(120.0), 0.4)</code>.</li></ul>
+<p>For <code>250 &lt; target_variables &lt;= 1000</code> (departmental allocation):</p>
+<ul><li><code>n_resources</code>: <code>DiscreteUniform(10, 36)</code>.</li><li><code>usage_min</code> / <code>usage_max</code>: <code>LogNormal(log(0.5), 0.4)</code> / <code>LogNormal(log(4.5), 0.35)</code>.</li><li><code>profit_min</code> / <code>profit_max</code>: <code>LogNormal(log(8.0), 0.45)</code> / <code>LogNormal(log(70.0), 0.35)</code>.</li><li><code>uses_density</code>: <code>Beta(2, 5)</code>.</li><li><code>commitment_prob</code>: <code>Beta(5, 5)</code>.</li><li><code>correlation_strength</code>: <code>Beta(5, 4)</code>.</li><li><code>activity_center</code>: <code>LogNormal(log(80.0), 0.45)</code>.</li></ul>
+<p>For <code>1000 &lt; target_variables &lt;= 5000</code> (divisional allocation):</p>
+<ul><li><code>n_resources</code>: <code>DiscreteUniform(20, 64)</code>.</li><li><code>usage_min</code> / <code>usage_max</code>: <code>LogNormal(log(0.3), 0.45)</code> / <code>LogNormal(log(3.5), 0.4)</code>.</li><li><code>profit_min</code> / <code>profit_max</code>: <code>LogNormal(log(4.0), 0.5)</code> / <code>LogNormal(log(50.0), 0.4)</code>.</li><li><code>uses_density</code>: <code>Beta(2, 6)</code>.</li><li><code>commitment_prob</code>: <code>Beta(6, 4)</code>.</li><li><code>correlation_strength</code>: <code>Beta(6, 4)</code>.</li><li><code>activity_center</code>: <code>LogNormal(log(50.0), 0.5)</code>.</li></ul>
+<p>For <code>target_variables &gt; 5000</code> (enterprise portfolio):</p>
+<ul><li><code>n_resources</code>: <code>DiscreteUniform(32, 96)</code>.</li><li><code>usage_min</code> / <code>usage_max</code>: <code>LogNormal(log(0.2), 0.5)</code> / <code>LogNormal(log(3.0), 0.45)</code>.</li><li><code>profit_min</code> / <code>profit_max</code>: <code>LogNormal(log(2.0), 0.55)</code> / <code>LogNormal(log(35.0), 0.45)</code>.</li><li><code>uses_density</code>: <code>Beta(2, 7)</code>.</li><li><code>commitment_prob</code>: <code>Beta(7, 4)</code>.</li><li><code>correlation_strength</code>: <code>Beta(8, 3)</code>.</li><li><code>activity_center</code>: <code>LogNormal(log(30.0), 0.5)</code>.</li></ul>
+<p>The generator then samples one of four allocation regimes, each stored as a <code>Symbol</code> in the <code>profile</code> field, and applies its adjustments:</p>
+<pre class="formula">manufacturing_capacity  usage x1.2/x1.5 on min/max, commitment_prob x1.15
+cloud_compute           profit x1.6/x2.4, usage_max x1.3, uses_density x0.7
+workforce_hours         profit x0.8/x0.7, usage x1.2(min)/x0.8(max),
+                        correlation x1.2, commitment_prob x1.3
+advertising_budget      profit_max x1.6, usage x0.6/x0.7, uses_density x1.3</pre>
+<p>After adjustments, <code>uses_density</code> is clamped to <code>[0.05, 0.9]</code>, <code>commitment_prob</code> to <code>[0.05, 0.95]</code>, and <code>correlation_strength</code> to <code>[0.1, 0.95]</code>.</p>
 <p>Generated data:</p>
-<ul><li><code>quality_factors[i]</code>: uniform random quality in <code>[0, 1)</code>.</li><li><code>profits[i]</code>: base uniform profit plus a quality-correlated profit component.</li><li><code>usage[i, j]</code>: dense resource usage; base uniform usage plus a quality-correlated usage component.</li><li><code>resources[j]</code>: generated either stochastically for <code>unknown</code> or constructively from a demand plan for requested feasible/infeasible cases.</li><li><code>min_levels[i]</code>: optional activity minimums, initialized to zero.</li></ul>
-<p>Two helper calculations are used in constructive modes:</p>
-<ul><li><code>compute_demand_plan(...)</code>: builds a normalized positive activity plan based on profit, average usage, and quality.</li><li><code>compute_single_activity_caps(...)</code>: computes each activity&#x27;s maximum single-activity level under the current resource capacities.</li></ul>
+<ul><li><code>quality_factors[i]</code>: <code>Beta(2, 2)</code> per activity.</li><li><code>profits[i]</code>: log-normal base profit clamped to <code>[profit_min, profit_max]</code>, plus a quality-correlated component. Profits are strictly positive.</li><li><code>pool_scale[j]</code>: per-pool intensity, <code>LogNormal(log(sqrt(usage_min * usage_max)), 0.4)</code> clamped to <code>[usage_min, usage_max]</code> — some pools are expensive for every activity.</li><li><code>usage[i, j]</code>: sparse by construction. <code>max_uses = clamp(ceil(n_resources * uses_density), 2, n_resources)</code>; each activity draws its pool count from <code>DiscreteUniform(1, max_uses)</code>, picks that many pools at random, and consumes <code>pool_scale[j] * (0.4 + correlation_strength * quality[i]) * LogNormal(0, 0.4)</code> from each. Usage is therefore positively correlated with quality, just like profit: high-quality activities are both lucrative and resource-hungry, so the LP has no obvious winner.</li><li>Repair pass: any pool no activity draws on receives one positive draw from a random activity, so there are no vacuous capacity rows. Every activity uses at least one pool by construction (this is also what keeps the profit-maximization bounded).</li><li><code>nominal_plan[i]</code>: the planted allocation plan, <code>LogNormal(log(activity_center), 0.55)</code> clamped to <code>[0.1, 10] * activity_center</code>.</li><li><code>consumption = usage&#x27; * nominal_plan</code>: what the plan actually consumes.</li><li><code>capacities[j] = consumption[j] * (1 + headroom[j])</code>, with <code>headroom[j]</code> from <code>LogNormal(log(0.2), 0.9)</code> clamped to <code>[0.02, 2.5]</code>. The wide spread leaves a few pools nearly saturated (binding rows at the optimum) and others with slack.</li><li><code>min_levels[i]</code>: with probability <code>clamp(0.25 + 0.7 * commitment_prob, 0.25, 0.95)</code>, a commitment floor of <code>(0.2 + 0.7 * Beta(2, 2)) * nominal_plan[i]</code>; otherwise <code>0</code>. The fraction is capped at <code>0.9</code>, so floors always stay strictly below the plan. At least one activity always carries a floor.</li></ul>
 <p>The stored struct fields are:</p>
-<ul><li><code>n_activities::Int</code></li><li><code>n_resources::Int</code></li><li><code>profits::Vector{Float64}</code></li><li><code>usage::Matrix{Float64}</code></li><li><code>resources::Vector{Float64}</code></li><li><code>min_levels::Vector{Float64}</code></li></ul>
-<p>The constructor calls <code>Random.seed!(seed)</code>, making instances reproducible for identical inputs while resetting Julia&#x27;s global RNG.</p></div>
+<ul><li><code>n_activities::Int</code></li><li><code>n_resources::Int</code></li><li><code>profits::Vector{Float64}</code></li><li><code>usage::Matrix{Float64}</code> (<code>n_activities × n_resources</code>)</li><li><code>capacities::Vector{Float64}</code></li><li><code>min_levels::Vector{Float64}</code></li><li><code>nominal_plan::Vector{Float64}</code></li><li><code>floor_utilization::Float64</code></li><li><code>profile::Symbol</code></li><li><code>feasible_witness::Union{Nothing,AllocationPlanWitness}</code></li><li><code>infeasibility_certificate::Union{Nothing,FloorOvercommitCertificate}</code></li><li><code>feasibility_status::FeasibilityStatus</code></li></ul>
+<p>The constructor draws from a local <code>MersenneTwister(seed)</code>, so generation is reproducible for the same arguments and package version and never disturbs Julia&#x27;s global RNG.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">∑</span>LP Formulation</h3>
   <div class="sec-body"><p>Sets and indices:</p>
@@ -1674,40 +1689,41 @@ lower_bounds   .*= floor_scale</pre>
 <pre class="formula">x_i &gt;= 0    level of activity i</pre>
 <p>Objective:</p>
 <div class="math">\[\max \sum_{i \in A} profit_i x_i\]</div>
-<p>Resource constraints:</p>
-<div class="math">\[\sum_{i \in A} usage_{i,j} x_i \le resource_j \quad \forall j \in R\]</div>
-<p>Minimum-level constraints are added only when <code>min_levels[i] &gt; 0</code>:</p>
+<p>Resource constraints (only activities with a positive usage coefficient appear in a row):</p>
+<div class="math">\[\sum_{i \in A} usage_{i,j} x_i \le capacity_j \quad \forall j \in R\]</div>
+<p>Commitment-floor constraints are added only when <code>min_levels[i] &gt; 0</code>, as explicit rows:</p>
 <div class="math">\[x_i \ge min\_level_i\]</div>
-<p>Bounds:</p>
-<ul><li>All variables are continuous and nonnegative.</li><li>There are no explicit upper bounds except those implied by resource capacities.</li></ul>
-<p>Interpretation: the model allocates scarce resources to the most profitable activity levels while satisfying any required minimum levels.</p></div>
+<p>Bounds: all variables are continuous and nonnegative; there are no other variable bounds.</p>
+<p>Interpretation: the model allocates scarce shared resources to the most profitable activity levels while honouring mandatory minimum commitments.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">⚖</span>Feasibility Controls</h3>
-  <div class="sec-body"><p>The constructor maps the requested status to:</p>
-<pre class="formula">:feasible      if feasibility_status == feasible
-:infeasible    if feasibility_status == infeasible
-:all           if feasibility_status == unknown</pre>
-<p>For <code>unknown</code> (<code>:all</code>), the generator uses the original stochastic construction:</p>
-<ol><li>Computes expected usage per resource.</li><li>Sets <code>resources</code> to a random fraction of expected aggregate usage, then clamps each resource to <code>[min_resource, max_resource]</code>.</li><li>If minimum constraints are enabled, assigns each activity a positive minimum with probability <code>min_level_prob</code>; each minimum is <code>0.1</code>, <code>0.15</code>, <code>0.2</code>, <code>0.25</code>, or <code>0.3</code> times that activity&#x27;s single-activity maximum.</li></ol>
-<p>This branch does not force a particular feasibility outcome.</p>
-<p>For <code>feasible</code>, the generator:</p>
-<ol><li>Builds a demand plan from profits, usage, and quality.</li><li>Sets each resource to demand-plan consumption times a capacity anchor from <code>1.10</code> to <code>1.50</code>, then clamps to <code>[min_resource, max_resource]</code>.</li><li>Scales the demand plan to fit the post-clamp capacities.</li><li>Creates a baseline activity vector at roughly <code>75%</code> to <code>95%</code> of the fitted scale.</li><li>Optionally assigns minimum levels as <code>10%</code> to <code>30%</code> of positive baseline levels.</li></ol>
-<p>The positive minimum levels are therefore constructed below a known baseline that fits the resource capacities.</p>
-<p>For <code>infeasible</code>, the generator starts similarly but with tighter capacity anchors from <code>0.95</code> to <code>1.10</code> and a baseline at roughly <code>70%</code> to <code>90%</code> of the fitted scale. It then:</p>
-<ol><li>Ensures minimum constraints are enabled and at least one or two minimum levels are selected when possible.</li><li>Clips existing positive minimum levels to at most <code>0.8</code> times each single-activity cap.</li><li>Selects one to three resources to violate, biased toward the highest current minimum-consumption ratios.</li><li>Sets target required consumption for those resources to <code>resources[r] * (1.05 to 1.25)</code>.</li><li>Raises selected minimum levels iteratively until the target violation is reached or candidates are exhausted.</li><li>Performs final checks and may reduce a violated resource capacity to below the final required minimum consumption.</li></ol>
-<p>The intended infeasibility is that the sum of resource usage implied by mandatory minimum activity levels exceeds one or more resource capacities.</p></div>
+  <div class="sec-body"><p>Because every usage coefficient is nonnegative and there are no activity ceilings, <code>x = min_levels</code> is the pointwise-smallest candidate point. The instance is therefore feasible **iff**</p>
+<div class="math">\[floor\_utilization \;=\; \max_{j \in R} \frac{\sum_{i \in A} usage_{i,j}\, min\_level_i}{capacity_j} \;\le\; 1 .\]</div>
+<p>That scalar is stored in the <code>floor_utilization</code> field, and the three profiles differ only in where they place it.</p>
+<p>For <code>feasible</code>, nothing is perturbed: floors are at most <code>0.9 * nominal_plan</code>, capacities strictly exceed the plan&#x27;s consumption, so <code>floor_utilization &lt; 1</code> by construction. The plan is stored as an <code>AllocationPlanWitness</code> (<code>plan</code>, <code>consumption</code>, <code>slack = capacities - consumption</code>, all strictly positive) and is an actual feasible point of the built model.</p>
+<p>For <code>infeasible</code>, the generator over-commits specific budget lines. It computes the consumption the floors alone impose, picks the pools that committed activities actually draw on, and cuts one to three of those pools&#x27; capacities below the floors&#x27; own demand:</p>
+<pre class="formula">capacity_j = floor_consumption_j / (1 + margin),   margin ~ U(0.1, 0.4)</pre>
+<p>The number of violated pools is 1 (55%), 2 (27%), or 3 (18%), clamped to the number of pools with positive floor consumption. Since every <code>x_i &gt;= min_levels[i]</code> and usage is nonnegative, resource <code>j</code>&#x27;s capacity row cannot be satisfied by any allocation — an unconditional refutation with no search or fallbacks, using only aggregate LP rows (so it survives <code>relax_integer=true</code>; the model is continuous regardless). The most violated pool and the committed activities that draw on it are stored in a <code>FloorOvercommitCertificate</code> (<code>resource</code>, <code>activities</code>, <code>floor_consumption</code>, <code>capacity</code>) with <code>floor_consumption &gt; capacity</code>, and <code>floor_utilization</code> lands in <code>[1.1, 1.4]</code>.</p>
+<p>For <code>unknown</code>, the generator steers the tightest floor utilization onto a target drawn as <code>1 ± U(0.05, 0.35)</code> with a fair coin for the sign — a genuine coin flip, independent of problem size. Let <code>gap = target / floor_utilization</code> for the pre-perturbation data. The adjustment is split between raising floors and cutting capacity so neither side is pushed to an unrealistic extreme:</p>
+<pre class="formula">theta          = 0.35 + 0.3 * rand()
+capacity_scale = clamp(gap^(theta - 1), 0.35, 3.0)
+floor_scale    = gap * capacity_scale
+capacities    .*= capacity_scale
+min_levels    .*= floor_scale</pre>
+<p>Since utilization scales by <code>floor_scale / capacity_scale = gap</code> regardless of the clamps, the realized <code>floor_utilization</code> equals the target, which sits at least 5% away from 1 on whichever side the coin picked. No witness or certificate is stored.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">▤</span>Model Characteristics</h3>
   <div class="sec-body"><p>Variable count:</p>
 <pre class="formula">n_activities</pre>
 <p>Constraint count drivers:</p>
-<ul><li><code>n_resources</code> dense resource constraints.</li><li>One lower-bound constraint for each positive <code>min_levels[i]</code>.</li></ul>
-<p>The usage matrix is dense because every entry is assigned a positive continuous value. Constraint density is therefore high: every resource row involves every activity.</p>
-<p>The model is a continuous LP. Activities are divisible, with no integer or binary restrictions.</p></div>
+<ul><li><code>n_resources</code> capacity constraints.</li><li>One commitment-floor constraint for each positive <code>min_levels[i]</code> (roughly 35–90% of activities depending on tier and regime).</li></ul>
+<p>The usage matrix is stored dense-with-zeros for build simplicity but sampled sparsely: each activity touches <code>DiscreteUniform(1, max_uses)</code> pools, so the fraction of nonzero entries is typically 8–30% (denser for small portfolios, sparser at scale). Zero coefficients are omitted from the capacity rows, which are therefore genuinely sparse.</p>
+<p>The model is a continuous LP. Activity levels are divisible; no integer or batch restrictions.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">✎</span>Practical Notes</h3>
-  <div class="sec-body"><p>This generator is useful for dense resource-allocation LPs where profit and resource usage are positively correlated through a quality factor. Requested feasible and infeasible modes are more constructive than the <code>unknown</code> mode, which remains stochastic.</p>
-<p>Because both <code>min_resource</code> and <code>max_resource</code> are sampled independently, it is possible for <code>min_resource</code> to exceed <code>max_resource</code>. The code then applies <code>max.(resources, min_resource)</code> followed by <code>min.(resources, max_resource)</code> or equivalent scalar clamps, so the final cap can be driven to <code>max_resource</code> in those cases. This is an implementation quirk to keep in mind when interpreting sampled resource scales.</p></div>
+  <div class="sec-body"><p>Use this generator for budget-allocation LPs with many shared resource pools, sparse per-activity consumption, and correlated profit/usage structure. For the market-flavored problem — products with sales ceilings, fewer resources, denser consumption — use <code>product_mix</code> instead; the two share the planted-plan/utilization machinery but remain distinct generators.</p>
+<p>The LP is always bounded: profits are strictly positive, every activity draws on at least one pool with finite capacity, and capacities are strictly positive, so no variable can grow without bound.</p>
+<p>Observed behavior under HiGHS: <code>feasible</code> is 100% <code>OPTIMAL</code> and <code>infeasible</code> is 100% <code>INFEASIBLE</code> across targets 50–20,000 (5 seeds each; also verified through <code>generate_problem(...; optimizer=HiGHS.Optimizer)</code>, which raises on contract violation). The <code>unknown</code> profile stayed close to an even split (20 seeds each: 10/10 at 50, 12/8 at 500, 10/10 at 5,000) and the analytic <code>floor_utilization &lt;= 1</code> test agreed with the solver on every instance. A 100,000-variable instance builds and passes solver verification in about 4 seconds.</p></div>
 </section>
 </article>
 <article id="unit_commitment" class="view article">
@@ -2003,7 +2019,7 @@ SyntheticLPs.validate_bin_packing_certificate(problem)</pre>
   <header class="art-head fam-border-scheduling">
     <div class="art-eyebrow"><span class="fam-dot fam-scheduling"></span>Assignment &amp; Scheduling</div>
     <h2>Cutting Stock</h2>
-    <p class="art-intro"><code>CuttingStockProblem</code> generates a cutting-pattern model that minimizes the number of stock pieces used to satisfy demand for required piece lengths.</p>
+    <p class="art-intro"><code>CuttingStockProblem</code> (<code>cutting_stock/standard</code>) generates a cutting-pattern model that minimizes the number of stock pieces used to satisfy demand for required piece lengths, with certificate-backed control of the requested feasibility status.</p>
     <div class="chips">
       <span class="chip chip-sense">Objective: Min</span>
       <span class="chip chip-integer">Integer variables</span>
@@ -2011,18 +2027,20 @@ SyntheticLPs.validate_bin_packing_certificate(problem)</pre>
   </header>
   <section class="doc-section">
   <h3><span class="sec-icon">◆</span>Overview</h3>
-  <div class="sec-body"><p>This generator represents a one-dimensional cutting stock planning problem. A manufacturer has stock material of a standard length and must cut it into demanded piece lengths. The model chooses how many times to use each generated cutting pattern.</p></div>
+  <div class="sec-body"><p>This generator represents a one-dimensional cutting stock planning problem. A manufacturer has stock material of a standard length and must cut it into demanded piece lengths. The model chooses how many times to use each generated cutting pattern. Pattern usage is continuous, so the model is the LP relaxation of the pattern-count problem; the category&#x27;s <code>integer_patterns</code> variant covers the integral formulation.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">▦</span>Generator Data and Sizing</h3>
-  <div class="sec-body"><p><code>target_variables</code> is used as a soft target for the number of generated cutting patterns:</p>
-<pre class="formula">max_patterns = target_variables</pre>
-<p>The actual number of variables in the built model is <code>length(patterns)</code>. It can be less than <code>target_variables</code> if duplicate complex patterns are rejected or the pattern generator exhausts attempts. It can also exceed <code>target_variables</code> when mandatory single-piece patterns are added for more piece types than the requested pattern target. Piece-type counts and distributions scale by target size:</p>
+  <div class="sec-body"><p><code>target_variables</code> is the exact number of generated cutting patterns, and therefore the exact variable count:</p>
+<pre class="formula">n_patterns = target_variables</pre>
+<p>Pattern generation has three stages: one single-piece pattern per piece type (emitted first, in piece order), a greedy residual-fill sampler for mixed patterns, and a deterministic enumeration of sub-maximal single-type and two-type patterns that tops the list up to <code>n_patterns</code> even if the greedy stage stalls. Duplicate patterns are rejected, and the generator errors rather than returning fewer patterns than requested.</p>
+<p>Piece-type counts and distributions scale by target size:</p>
 <ul><li><code>target_variables &lt;= 250</code>: <code>n_piece_types</code> from <code>3:min(15, max(3, target_variables / 10))</code>, stock length from <code>Uniform(3, 8)</code>, demand range from random <code>5:20</code> to random <code>50:200</code>, common-length probability <code>0.3-0.6</code>, waste factor <code>0.05-0.15</code>.</li><li><code>target_variables &lt;= 1000</code>: <code>n_piece_types</code> from <code>8:min(50, max(8, target_variables / 20))</code>, stock length from <code>Uniform(6, 12)</code>, demand range from random <code>20:100</code> to random <code>200:1000</code>, common-length probability <code>0.4-0.7</code>, waste factor <code>0.03-0.10</code>.</li><li>larger targets: <code>n_piece_types</code> from <code>20:min(200, max(20, target_variables / 50))</code>, stock length from <code>Uniform(8, 20)</code>, demand range from random <code>100:500</code> to random <code>1000:10000</code>, common-length probability <code>0.5-0.8</code>, waste factor <code>0.02-0.08</code>.</li></ul>
-<p>Piece lengths are either near common sizes, with <code>Normal(0, 0.02)</code> variation, or sampled from a transformed <code>Beta(2, 3)</code> distribution between <code>0.1</code> and about <code>95</code> percent of stock length. Lengths are rounded to precision <code>0.05</code> for smaller stock and <code>0.1</code> for stock over 10. Duplicate lengths are removed, so actual piece-type count may shrink.</p>
-<p>Demands are sampled from lognormal distributions. Common lengths use <code>LogNormal(log((demand_min + demand_max) / 1.3), 0.5)</code>; other lengths use <code>LogNormal(log((demand_min + demand_max) / 2.0), 0.7)</code>. Demands are rounded to coarser increments as they grow and clamped to the selected range.</p>
+<p>The sampled count is then raised to at least <code>clamp(round(target_variables / 4), 20, 200)</code> so the distinct-pattern pool can reach the target, and capped at <code>target_variables</code> so every piece type can own a single-piece pattern (a piece type without one could leave its demand row structurally uncoverable). Duplicate lengths are removed, so the actual piece-type count may shrink slightly.</p>
+<p>Piece lengths are either near common catalog sizes, with <code>Normal(0, 0.02)</code> variation around a drawn catalog value, or sampled from a transformed <code>Beta(2, 3)</code> distribution between <code>0.1</code> and about 95 percent of stock length. Lengths are rounded to two digits (catalog) or to precision <code>0.05</code> for stock up to 10 and <code>0.1</code> above. Which lengths are catalog sizes is tracked as a flag, because the jittered, rounded lengths almost never equal a catalog value exactly.</p>
+<p>Base demands are lognormal with parameters quantile-matched to the drawn range: <code>[demand_min, demand_max]</code> is a roughly two-sigma band (<code>sigma = log(demand_max / demand_min) / 4</code>, median <code>sqrt(demand_min * demand_max)</code>), so the range clamp only trims the outer few percent of draws instead of piling mass on the minimum. Catalog lengths are ordered at 1.25x the volume with three-quarters of the spread; demands are rounded to coarser increments as they grow.</p>
 <p>The struct stores:</p>
-<ul><li><code>piece_lengths</code></li><li><code>demands</code></li><li><code>patterns</code>, where <code>patterns[p][i]</code> is the count of piece type <code>i</code> produced by pattern <code>p</code></li><li><code>stock_length</code></li><li><code>stock_limit</code>, where <code>0</code> means unlimited stock pieces</li></ul>
-<p>The constructor calls <code>Random.seed!(seed)</code>, resetting Julia&#x27;s global RNG.</p></div>
+<ul><li><code>stock_length</code></li><li><code>piece_lengths</code></li><li><code>demands</code>, all positive</li><li><code>patterns</code>, where <code>patterns[p][i]</code> is the count of piece type <code>i</code> produced by pattern <code>p</code>; entries <code>1:length(piece_lengths)</code> are the single-piece patterns in piece order</li><li><code>stock_limit</code>, a finite positive cap on total pattern usage (there is no unlimited mode)</li><li><code>scenario</code>, the demand regime the instance narrates</li><li><code>feasible_witness</code>, set for <code>feasible</code> requests</li><li><code>infeasibility_certificate</code>, set for <code>infeasible</code> requests</li><li><code>feasibility_status</code>, the requested profile</li></ul>
+<p>All randomness lives in the constructor behind a constructor-local <code>MersenneTwister(seed)</code>; the caller&#x27;s global RNG is never read or advanced.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">∑</span>LP Formulation</h3>
   <div class="sec-body"><p>Sets:</p>
@@ -2033,24 +2051,23 @@ SyntheticLPs.validate_bin_packing_certificate(problem)</pre>
 <div class="math">\[\min \sum_{p \in P} x_p\]</div>
 <p>Demand satisfaction:</p>
 <div class="math">\[\sum_{p \in P} a_{pi} x_p \ge d_i \quad \forall i \in I\]</div>
-<p>Optional stock limit:</p>
-<div class="math">\[\sum_{p \in P} x_p \le S \quad \text{if } S > 0\]</div>
+<p>Stock limit (always present, since <code>stock_limit &gt;= 1</code>):</p>
+<div class="math">\[\sum_{p \in P} x_p \le S\]</div>
 <p>Bounds are nonnegativity only. Although cutting stock is naturally integer, <code>x_p</code> is continuous in the implemented model, so this is the LP relaxation of the pattern-count problem.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">⚖</span>Feasibility Controls</h3>
-  <div class="sec-body"><p>The constructor maps the requested status to a boolean target:</p>
-<ul><li><code>feasible</code>: target feasible.</li><li><code>infeasible</code>: target infeasible.</li><li><code>unknown</code>: randomly chooses feasible or infeasible with probability 0.5 each.</li></ul>
-<p>For feasible targets, the generator creates patterns using <code>generate_cutting_patterns</code>, copies base demands, perturbs each demand by <code>Uniform(0.8, 1.2)</code>, and sets <code>stock_limit = 0</code> for unlimited stock. Pattern generation always starts with single-piece patterns for each piece type, so every piece type has at least one direct production route as long as each length fits in stock.</p>
-<p>For infeasible targets, one of three methods is selected:</p>
-<ul><li>Single piece impossibility: picks the smallest piece type, estimates its best pattern efficiency, sets a finite stock limit, and raises that piece&#x27;s demand above maximum possible production under the stock limit.</li><li>No-pattern scenario: removes every pattern containing one target piece type while keeping positive demand for it, with unlimited stock. That piece cannot be produced at all.</li><li>Combined stock and demand contradiction: generates normal patterns, estimates a lower bound on stock needed, sets stock limit to <code>40-70</code> percent of that bound, and scales demands upward.</li></ul>
-<p>Infeasible demand scaling is influenced by scenario labels such as rush order, seasonal spike, backlog clearing, and mixed, with scaling factors generally between about <code>0.8</code> and <code>4.0</code> depending on length commonality and scenario.</p></div>
+  <div class="sec-body"><p>Feasibility is decided by the stock limit relative to two elementary bounds computed from the final pattern list. Let <code>s_i = floor(L / ℓ_i)</code> be the yield of piece <code>i</code>&#x27;s single-piece pattern and <code>e_i = max_p a_{pi} &gt;= s_i &gt;= 1</code> its best yield over all patterns. Then:</p>
+<ul><li>Any <code>x &gt;= 0</code> produces at most <code>e_i * sum(x)</code> units of piece <code>i</code>, so<p><code>d_i &gt; S * e_i</code> for any single <code>i</code> proves infeasibility.</p></li><li>Running each single-piece pattern <code>cld(d_i, s_i)</code> times meets every demand<p>using <code>U = sum_i cld(d_i, s_i)</code> stock pieces, so <code>S &gt;= U</code> proves feasibility.</p></li></ul>
+<p>The three profiles place <code>S</code> relative to <code>U</code>:</p>
+<ul><li><code>feasible</code>: <code>S = U * Uniform(1.3, 1.8)</code>. The budget is generous but real —<p>any plan restricted to single-piece patterns must respect it (the planted plan uses 55-77 percent of it) — while the trivial plan itself is stored as a <code>StockPlanWitness</code> whose integer arithmetic (<code>s_i * usage[i] &gt;= d_i</code>, <code>sum(usage) &lt;= S</code>) needs no tolerances.</p></li><li><code>infeasible</code>: demands are first scaled by scenario flavor (rush order,<p>seasonal spike, backlog clearing, or mixed, with rush orders concentrated on catalog lengths), then <code>S = U * Uniform(0.30, 0.55)</code>. The piece type with the largest demand-per-yield ratio is the bottleneck; its demand is raised, if the scenario draw did not already do so, to <code>ceil(margin * S * e_i)</code> with <code>margin</code> in <code>1.2-1.5</code>, and the result is stored as a <code>StockShortageCertificate(piece_index, max_yield_per_stock, stock_limit, demand)</code> with the invariant <code>demand &gt; stock_limit * max_yield_per_stock</code>. The constructor verifies the invariant on the returned fields; the refutation is a two-row Farkas argument on the demand and stock rows alone, so it survives <code>relax_integer = true</code>.</p></li><li><code>unknown</code>: <code>S = U * exp(Normal(-0.15, 0.45))</code>, log-centered slightly below<p>the direct plan&#x27;s need. Whether the sampled mixed patterns close the gap depends on the draw; across seeds the profile lands near an even OPTIMAL/INFEASIBLE split at every scale. Neither a witness nor a certificate is stored.</p></li></ul>
+<p>Unlike earlier versions of this generator, there is no &quot;no-pattern&quot; mode: an instance whose demand row has no production route at all is trivially detectable and useless for solver testing, and every infeasible instance is now built around the stored certificate.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">▤</span>Model Characteristics</h3>
-  <div class="sec-body"><p>Variable count is <code>length(patterns)</code>, not necessarily exactly <code>target_variables</code>. Constraint count is one row per piece type plus one stock-limit row when <code>stock_limit &gt; 0</code>. The pattern matrix is sparse because each pattern uses only a subset of piece types. Single-piece patterns are very sparse; generated complex patterns have a small random number of selected piece types, biased toward shorter pieces.</p>
-<p>The model is continuous even though the real cutting decision is integer. Fractional pattern usage is allowed by the built JuMP model.</p></div>
+  <div class="sec-body"><p>Variable count is exactly <code>target_variables</code>. Constraint count is one row per piece type plus one stock-limit row. The pattern matrix is sparse because each mixed pattern uses only a subset of piece types, biased toward shorter pieces; the leading single-piece patterns are very sparse. Coefficients are small nonnegative integers and the right-hand sides are moderate integers, so the instances are numerically tame.</p></div>
 </section><section class="doc-section">
   <h3><span class="sec-icon">✎</span>Practical Notes</h3>
-  <div class="sec-body"><p>This generator is useful for testing column-style covering LPs, sparse nonnegative matrices, and infeasibility from missing coverage or aggregate resource limits. It does not generate patterns by solving a pricing problem; it samples a fixed pattern list up front. Because duplicate pattern rejection and unique piece lengths can shrink dimensions, expect actual model size to differ from the target, especially for small targets or repeated common lengths.</p></div>
+  <div class="sec-body"><p>This generator is useful for testing column-style covering LPs, sparse nonnegative matrices, and infeasibility that requires combining a covering row with an aggregate budget row. It does not generate patterns by solving a pricing problem; it samples a fixed pattern list up front. The <code>unknown</code> profile genuinely depends on how well the sampled patterns pack, rather than on a hidden coin flip between two committed constructions.</p>
+<p>One caveat for dataset work: the infeasible instances are *correct but presolve-friendly*. Because the certificate is a two-row argument with integer coefficients, HiGHS detects the contradiction in a handful of simplex iterations, so <code>check_quality</code> rejects them under the default <code>min_iterations = 3</code> when <code>quality_filter = true</code> (the same holds, and strictly worse, for an aggregate all-pieces certificate — scaling every demand uniformly makes the contradiction even easier to aggregate). The <code>feasible</code> and <code>unknown</code> profiles pass the quality filter normally; pair <code>infeasible</code> requests with <code>quality_filter = false</code>, or accept that the filter drops them.</p></div>
 </section>
 </article>
 <article id="operating_room_scheduling" class="view article">
