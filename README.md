@@ -34,7 +34,7 @@ This package provides:
 
 Each problem domain is a **category** (e.g. `:transportation`) grouping one or
 more **variants** — concrete formulations with their own data generation and
-model structure. There are 46 categories; the default variant is listed first.
+model structure. There are 45 categories; the default variant is listed first.
 Detailed notes for many categories live under [`docs/`](docs/README.md).
 
 - `airline_crew` — `standard`
@@ -48,7 +48,6 @@ Detailed notes for many categories live under [`docs/`](docs/README.md).
 - `energy` — `standard`, `dc_opf`, `optimal_transmission_switching`, `ramping`, `reserves`, `storage`, `transmission`
 - `facility_location` — `standard`, `p_median`, `two_echelon`
 - `feed_blending` — `standard`
-- `generic_milp` — `standard`
 - `graph_optimization` — `independent_set`, `generalized_independent_set`, `map_labeling`, `quasi_clique`, `vertex_coloring`, `vertex_cover`
 - `hub_location` — `p_hub_median`, `budgeted_backbone`, `capacitated`, `compact_single_allocation`, `hub_covering`, `hub_network`, `multiple_allocation`, `r_allocation`
 - `inventory` — `standard`, `lot_sizing`, `multi_echelon`, `multi_item`

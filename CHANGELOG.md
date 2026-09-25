@@ -4,6 +4,61 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-09-25 (remove the generic_milp category)
+
+**Previous Commit**: `7134748`
+
+**Commits**: (pending)
+
+**Datetime**: 2026-09-25 UTC
+
+**Summary**: Removed the `generic_milp` category. It was the one generator in the
+corpus with no application domain behind it — a random sparse coefficient matrix
+with sampled variable domains, row senses, and coefficient scales, with
+feasibility planted algebraically rather than arising from a modelled situation.
+That makes it a distributional MILP sampler rather than a realistic instance
+family, which is the opposite of this project's stated goal. The corpus drops
+from 46 to 45 categories.
+
+**Details**:
+
+- Deleted `src/problem_types/generic_milp/` (`generic_milp.jl` entry point and
+  `standard.jl`, holding `GenericMILPProblem`, `GenericMILPRow`, the variable
+  layout/bound-regime sampler, the O(width) sparse support sampler, and the
+  coefficient-magnitude regimes).
+- Dropped the corresponding `include("problem_types/generic_milp/generic_milp.jl")`
+  line from `src/SyntheticLPs.jl`, so `:generic_milp` no longer registers and
+  `list_categories()` returns 45 entries.
+- Deleted `test/problem_types/generic_milp.jl` (the row-support sortedness,
+  distinctness, and range contracts). The include loop in `test/runtests.jl`
+  discovers test files by glob, so no test-side wiring changed; `generic_milp` is
+  also no longer a valid focused-run category argument.
+- Updated the category count and catalog listing in `README.md` and the category
+  count in `CLAUDE.md`. There was no `docs/generic_milp.md` page and no entry in
+  `scripts/build_explainer.py`'s `META` catalog, so `docs/explainer.html` did not
+  need rebuilding.
+
+**Structural coverage note**: `generic_milp/standard` was the corpus's only
+source of two matrix features, and no remaining generator produces either.
+Verified empirically by sweeping all 129 registered variants over all three
+feasibility statuses at two target sizes and two seeds:
+
+- ranged affine rows (`lo <= a'x <= hi`, i.e. `MOI.Interval` rows);
+- fixed columns (`lower == upper`).
+
+Free columns are *not* in this list: they survive removal in `energy/dc_opf` and
+`energy/optimal_transmission_switching` (bus voltage angles),
+`inverse_optimization/shortest_path` and `shortest_path_layered` (unrestricted
+dual potentials), `portfolio/cvar` (the value-at-risk level), and
+`radiotherapy/mean_tail_dose` (the tail threshold).
+
+Test coverage of the transforms that handle these features is unaffected: the
+`Bounds to Constraints` and `Dual Reformulation` testsets in `test/runtests.jl`
+build their ranged, fixed, and free cases as hand-written JuMP models rather than
+by generating an instance. What is gone is the presence of ranged rows and fixed
+columns in *generated* instances, so a dataset built from this corpus will not
+contain them unless a future generator reintroduces them naturally.
+
 ## 2026-09-13 (modernize the network_flow, cutting_stock, and resource_allocation standard generators)
 
 **Previous Commit**: `8fe4393`
