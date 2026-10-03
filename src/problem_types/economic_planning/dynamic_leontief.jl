@@ -205,7 +205,7 @@ function _leontief_dimensions(rng::AbstractRNG, target::Int)
     best_score = Inf
     for T in T_lo:T_hi
         for P in max(13, fld(target, T) - 1):(cld(target, T) + 1)
-            center = (P - 2) / (3 + 2 * f_pref)
+            center = clamp((P - 2) / (3 + 2 * f_pref), 3.0, Float64(LEONTIEF_MAX_SECTORS))
             for n in max(3, floor(Int, center) - 2):min(LEONTIEF_MAX_SECTORS, ceil(Int, center) + 2)
                 rem = P - 2 - 3n
                 (rem < 0 || isodd(rem)) && continue
@@ -222,6 +222,9 @@ function _leontief_dimensions(rng::AbstractRNG, target::Int)
             end
         end
     end
+    # Only the 45-variable minimum instance has no candidate near the target.
+    isfinite(best_score) || target <= 60 ||
+        error("dynamic_leontief: no (T, n, n_tr) combination found for target $target")
     return best
 end
 
