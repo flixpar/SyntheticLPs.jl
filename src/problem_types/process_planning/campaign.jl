@@ -1234,6 +1234,7 @@ function _cp_capacity_bottleneck!(
         demand = sum(view(sales_floor, m, 1:horizon))
         bound > eps() && demand > eps() && push!(candidates, (m, demand / bound))
     end
+    isempty(candidates) && push!(candidates, (first(m for m in finals if haskey(producer_of, m)), 1.0))
     sort!(candidates; by=x -> -x[2])
     cut_material = candidates[rand(rng, 1:min(3, length(candidates)))][1]
     producer = producer_of[cut_material]
