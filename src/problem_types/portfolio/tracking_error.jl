@@ -41,8 +41,8 @@ Enhanced-index (tracking) equity portfolio under an ESG exclusion list.
 
 An equity universe on the factor-structured scenario market of `portfolio.jl`.
 One sector is *energy*, and the last style factor is a *commodity* factor on
-which energy names load heavily (1–2) and everything else barely (|B| ≤ 0.02).
-An exclusion list removes some names from the investable universe; the
+which energy names load heavily (1.5–3) and everything else lightly (−0.01 to
+0.1). An exclusion list (1–4% of names) removes some names from the investable universe; the
 benchmark still holds them, so the excluded weight is an unavoidable active
 bet.
 
@@ -73,7 +73,8 @@ excluded names) is a constant.
     single-row bound conflict).
   - `unknown`: a small random exclusion list and a natural mandate (bands drawn
     relative to the benchmark, TE budget 0.4–1.1× the naive
-    exclusion-renormalized portfolio's TE), with no repair.
+    exclusion-renormalized portfolio's TE, floored at 5% of the benchmark's
+    scenario MAD), with no repair.
 
 # Sizing
 
@@ -132,7 +133,7 @@ function TrackingErrorPortfolioProblem(
 
     # Exclusions: a small random ESG list (never energy-only here).
     infeasible_request = feasibility_status == infeasible
-    n_random_excl = round(Int, n * rand(rng, Uniform(0.0, 0.03)))
+    n_random_excl = clamp(round(Int, n * rand(rng, Uniform(0.01, 0.04))), 1, n ÷ 4)
     excluded = sort(unique(vcat(
         _portfolio_distinct(rng, n, n_random_excl),
         infeasible_request ? energy_names : Int[],
@@ -153,12 +154,12 @@ function TrackingErrorPortfolioProblem(
     )
     commodity = 1 + n_styles                               # column in style_loadings
     for i in 1:n
-        market.style_loadings[i, commodity] = sector[i] == 1 ? rand(rng, Uniform(1.0, 2.0)) : rand(rng, Uniform(-0.02, 0.02))
+        market.style_loadings[i, commodity] = sector[i] == 1 ? rand(rng, Uniform(1.5, 3.0)) : rand(rng, Uniform(-0.01, 0.1))
     end
     # Energy names are a meaningful share of the cap-weighted benchmark.
     b = market.benchmark
     energy_weight = sum(b[energy_names])
-    target_energy = rand(rng, Uniform(0.05, 0.10))
+    target_energy = rand(rng, Uniform(0.08, 0.12))
     b[energy_names] .*= target_energy / energy_weight
     others = setdiff(1:n, energy_names)
     b[others] .*= (1 - target_energy) / sum(b[others])
@@ -194,7 +195,8 @@ function TrackingErrorPortfolioProblem(
     naive = zeros(Float64, n)
     naive[investable] .= b[investable] ./ sum(b[investable])
     naive_te = _tracking_error(market, naive, benchmark_returns)
-    te_budget = naive_te * rand(rng, Uniform(0.4, 1.1))
+    bench_mad = sum(abs, benchmark_returns .- sum(benchmark_returns) / S) / S
+    te_budget = max(naive_te, 0.05 * bench_mad) * rand(rng, Uniform(0.4, 1.1))
 
     witness = nothing
     certificate = nothing
@@ -210,8 +212,20 @@ function TrackingErrorPortfolioProblem(
         te_budget = max(te_budget, ref_te * rand(rng, Uniform(1.05, 1.3)))
         witness = TrackingErrorWitness(x_ref[investable], f_ref, ref_te)
     elseif infeasible_request
-        max_loading = maximum(market.style_loadings[investable, commodity])
-        gap = bench_exposure[commodity] - max_loading
+        loadings = market.style_loadings[investable, commodity]
+        max_loading = maximum(loadings)
+        # Keep the factor row satisfiable on its own under the position caps
+        # (Σ_{B>0} B·cap above the band), so only the budget row exposes the
+        # contradiction — presolve's single-row activity check cannot.
+        row_max() = sum(max(loadings[j], 0.0) * max_position[investable[j]] for j in eachindex(investable))
+        if 0.9 * row_max() < 1.5 * max_loading
+            factor = 1.5 * max_loading / (0.9 * row_max())
+            for i in investable
+                max_position[i] = min(1.0, max_position[i] * factor)
+            end
+        end
+        ceiling = min(bench_exposure[commodity], 0.9 * row_max())
+        gap = ceiling - max_loading
         gap > 1e-3 || error("internal: commodity exposure gap not positive")
         exposure_lower[commodity] = max_loading + gap * rand(rng, Uniform(0.3, 0.6))
         exposure_upper[commodity] = bench_exposure[commodity] + (bench_exposure[commodity] - exposure_lower[commodity])

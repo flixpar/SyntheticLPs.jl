@@ -93,9 +93,9 @@ targets ≥ 40; `n_assets ≈ 10–18%` of the target.
 
 ## `tracking_error`
 
-**Universe.** An equity index: sector 1 is *energy* (5–10% of names, 5–10% of
+**Universe.** An equity index: sector 1 is *energy* (5–10% of names, 8–12% of
 benchmark weight). The last style factor is a *commodity* factor with loadings
-1–2 for energy names and at most ±0.02 elsewhere. An ESG exclusion list removes
+1.5–3 for energy names and −0.01 to 0.1 elsewhere. An ESG exclusion list removes
 names from the investable universe (the benchmark still holds them).
 
 **Formulation.**
@@ -117,16 +117,18 @@ targets ≥ 60; `n_assets ≈ 15–30%` of the target. Rows
 
 **Feasibility.**
 
-- `feasible`: a small random exclusion list (0–3%); the investable benchmark is
+- `feasible`: a small random exclusion list (1–4% of names); the investable benchmark is
   water-filled under 90% of the caps and the bands and TE budget are widened
   around it (`TrackingErrorWitness`).
 - `infeasible`: the whole energy sector is excluded while the commodity band's
   lower side exceeds every investable name's commodity loading
   (`TrackingErrorCertificate`): the factor row and the budget row give
-  `f ≤ max loading < band_lower`.
+  `f ≤ max loading < band_lower`. The band is also kept below the factor
+  row's own activity bound under the position caps, so the contradiction needs
+  the budget row and is not visible to presolve's single-row checks.
 - `unknown`: random exclusions and the natural mandate (bands relative to the
   benchmark, TE budget 0.4–1.1× the naive exclusion-renormalized portfolio's
-  TE) with no repair; both outcomes occur.
+  TE, floored at 5% of the benchmark's scenario MAD) with no repair; both outcomes occur.
 
 ## Practical notes
 

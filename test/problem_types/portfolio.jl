@@ -200,6 +200,11 @@ end
         @test maximum(bad.market.style_loadings[bad.investable, cert.factor]) ≈ cert.max_investable_loading
         @test cert.band_lower == bad.exposure_lower[cert.factor]
         @test cert.band_lower > cert.max_investable_loading + 1e-3
+        # The factor row alone is satisfiable under the caps (no single-row
+        # presolve contradiction); only the budget row exposes it.
+        row_max = sum(max(bad.market.style_loadings[i, cert.factor], 0.0) * bad.max_position[i] for i in bad.investable)
+        @test row_max > cert.band_lower
+        @test !isempty(prob.excluded)
     end
 end
 
