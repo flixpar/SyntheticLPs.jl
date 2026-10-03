@@ -1,274 +1,296 @@
 using JuMP
 using Random
 using Distributions
-using Statistics
+
+"""
+    TrackingErrorWitness
+
+Planted feasible point of a [`TrackingErrorPortfolioProblem`](@ref): weights
+over the investable assets (the benchmark restricted to the investable universe
+and water-filled under 90% of the position caps), their factor `exposures`, and
+their mean absolute tracking error `tracking_error < te_budget`.
+"""
+struct TrackingErrorWitness
+    weights::Vector{Float64}
+    exposures::Vector{Float64}
+    tracking_error::Float64
+end
+
+"""
+    TrackingErrorCertificate
+
+Exclusion-versus-neutrality proof. The commodity style factor (column
+`factor` of the exposure block) must stay within `band_lower` of the benchmark
+exposure, but every investable asset has commodity loading at most
+`max_investable_loading < band_lower`. The factor-definition row
+`f = Σ_i B_i x_i` together with the budget row `Σ x_i = 1` and `x ≥ 0` gives
+`f ≤ max_investable_loading`, contradicting the bound `f ≥ band_lower`.
+"""
+struct TrackingErrorCertificate
+    factor::Int
+    max_investable_loading::Float64
+    band_lower::Float64
+end
 
 """
     TrackingErrorPortfolioProblem <: ProblemGenerator
 
-Generator for index-tracking / enhanced-indexing portfolio optimization problems.
+Enhanced-index (tracking) equity portfolio under an ESG exclusion list.
 
-Models an institutional enhanced-indexing mandate: the manager seeks to *beat* a
-benchmark index in expected return while staying close to it in a risk sense. The
-risk measure is the benchmark-relative tracking error, quantified via the mean
-absolute deviation (MAD) of the active return across scenarios. This linearizes
-exactly into a pure LP, so the model is a continuous LP (no integer variables).
+# Data
 
-# Overview
+An equity universe on the factor-structured scenario market of `portfolio.jl`.
+One sector is *energy*, and the last style factor is a *commodity* factor on
+which energy names load heavily (1–2) and everything else barely (|B| ≤ 0.02).
+An exclusion list removes some names from the investable universe; the
+benchmark still holds them, so the excluded weight is an unavoidable active
+bet.
 
-The decisions are long-only portfolio weights `x[i]` plus per-scenario absolute
-active-return auxiliaries `u[s]`. The objective maximizes expected return. The
-portfolio must be fully invested (`sum x_i = 1`), respect per-asset position
-limits, keep each sector's *deviation* from the benchmark within a two-sided band,
-and keep the average absolute active return (the tracking error) below a budget.
+# Formulation
 
-Structurally this differs from the CVaR sibling: risk is measured relative to a
-benchmark via MAD tracking error (not absolute tail CVaR), and sector limits are
-two-sided *deviation* bands around benchmark weights (not absolute upper caps).
+Variables: weights `x_i` for the investable names, factor exposures `f`
+(market, styles, sector weights), and per-scenario absolute active returns `u_s`:
 
-# Fields
+```math
+\\max \\sum_i α_i x_i \\quad\\text{s.t.}\\quad
+u_s \\ge \\pm\\Big(F_s·f + \\sum_{i \\in J_s} E_{is} x_i - r_s·b\\Big),\\;
+\\tfrac1S \\sum_s u_s \\le \\mathrm{TE},\\; \\sum_i x_i = 1,
+```
 
-  - `n_assets::Int`: Number of investable assets
-  - `n_scenarios::Int`: Number of return scenarios for the MAD linearization
-  - `n_sectors::Int`: Number of industry sectors
-  - `n_factors::Int`: Number of common risk factors driving scenario returns
-  - `expected_returns::Vector{Float64}`: Expected (mean + alpha) return per asset
-  - `scenario_returns::Matrix{Float64}`: Return matrix (n_scenarios × n_assets)
-  - `benchmark::Vector{Float64}`: Benchmark index weights (sum to 1)
-  - `te_budget::Float64`: Maximum allowable average absolute active return (tracking error)
-  - `sector_assignments::Vector{Int}`: Sector index per asset
-  - `sector_band::Vector{Float64}`: Two-sided deviation band per sector
-  - `max_position::Vector{Float64}`: Maximum weight per asset
-"""
-struct TrackingErrorPortfolioProblem <: ProblemGenerator
-    n_assets::Int
-    n_scenarios::Int
-    n_sectors::Int
-    n_factors::Int
-    expected_returns::Vector{Float64}
-    scenario_returns::Matrix{Float64}
-    benchmark::Vector{Float64}
-    te_budget::Float64
-    sector_assignments::Vector{Int}
-    sector_band::Vector{Float64}
-    max_position::Vector{Float64}
-end
-
-"""
-    TrackingErrorPortfolioProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-
-Construct an index-tracking portfolio optimization problem instance.
-
-Variables: `x[i]` (weights, n_assets) and `u[s]` (absolute active return per
-scenario, n_scenarios).
-
-    Total variables = n_assets + n_scenarios
-
-Dimensions are sized as `n_assets = max(5, round(target / 5))` and
-`n_scenarios = max(n_assets, target - n_assets)`, so the total equals roughly
-`target_variables`.
-
-# Arguments
-
-  - `target_variables`: Target number of decision variables
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
+with `f = Bᵀx` (definition rows), active factor bands
+`|f_k − f^b_k| ≤ δ_k` and active sector bands as bounds on `f`, and position
+caps as bounds on `x`. The benchmark scenario return `r_s·b` (including
+excluded names) is a constant.
 
 # Feasibility
 
-  - `feasible`/`unknown` (biased feasible): the benchmark portfolio `x = b` is
-    admissible by construction. It is fully invested (`sum b_i = 1`), it produces
-    zero active return in every scenario (so `TE = 0 <= te_budget`), it has zero
-    sector deviation (within any `sector_band >= 0`), and position limits are set
-    to `max_position_i >= b_i`. Hence the LP has a finite optimum.
-  - `infeasible`: the per-asset position limits are scaled so that
-    `sum_i max_position_i < 1`. Then `sum_i x_i <= sum_i max_position_i < 1`
-    contradicts the full-investment constraint `sum_i x_i = 1`. This is a pure-LP
-    aggregate contradiction that survives the relaxation (the model is already an
-    LP).
+  - `feasible`: a small random exclusion list; the investable benchmark is
+    water-filled under 90% of the caps, and the bands and TE budget are widened
+    around it (`feasible_witness`).
+  - `infeasible`: the whole energy sector is excluded while the commodity band
+    demands more commodity exposure than any investable name carries
+    (`infeasibility_certificate`; factor row + budget row + bounds — not a
+    single-row bound conflict).
+  - `unknown`: a small random exclusion list and a natural mandate (bands drawn
+    relative to the benchmark, TE budget 0.4–1.1× the naive
+    exclusion-renormalized portfolio's TE), with no repair.
+
+# Sizing
+
+Variables = `n_investable + n_factors + n_scenarios`, exact for targets ≥ 60,
+with `n_assets ≈ 15–30%` of the target. Rows
+= `2·n_scenarios + n_factors + 2`; nonzeros ≈ `2·S·(K + J + 1) + 7n` (≈ 3–5M at
+100k variables).
+"""
+struct TrackingErrorPortfolioProblem <: ProblemGenerator
+    market::PortfolioMarket
+    investable::Vector{Int}
+    excluded::Vector{Int}
+    max_position::Vector{Float64}
+    exposure_lower::Vector{Float64}
+    exposure_upper::Vector{Float64}
+    benchmark_returns::Vector{Float64}
+    te_budget::Float64
+    energy_sector::Int
+    feasible_witness::Union{Nothing, TrackingErrorWitness}
+    infeasibility_certificate::Union{Nothing, TrackingErrorCertificate}
+end
+
+"""Mean absolute active return of full-universe weights `x` against benchmark returns."""
+function _tracking_error(market::PortfolioMarket, x::Vector{Float64}, benchmark_returns::Vector{Float64})
+    active = _portfolio_scenario_returns(market, x) .- benchmark_returns
+    return sum(abs, active) / length(active)
+end
+
+"""
+    TrackingErrorPortfolioProblem(target_variables, feasibility_status, seed)
+
+Construct an enhanced-index tracking instance with a constructor-local RNG. See
+the type docstring for sizing and contracts.
 """
 function TrackingErrorPortfolioProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
+    V = max(target_variables, 40)
 
-    # --- Dimension sizing: total = n_assets + n_scenarios ---
-    n_assets = max(5, round(Int, target_variables / 5))
-    n_scenarios = max(n_assets, target_variables - n_assets)
+    # --- Dimensions: V ≈ n_investable + K + S. ---
+    share = rand(rng, Uniform(0.15, 0.30))
+    n = max(8, round(Int, share * V))
+    n_sectors = clamp(rand(rng, 8:11), 2, max(2, n ÷ 4))
+    n_styles = clamp(rand(rng, 3:6), 2, max(2, n ÷ 4))     # last style = commodity
+    K = 1 + n_styles + n_sectors
 
-    # --- Scale-tiered group sizes ---
-    if target_variables <= 100
-        n_sectors = round(Int, rand(rng, Uniform(3, 6)))
-        n_factors = round(Int, rand(rng, Uniform(2, 4)))
-    elseif target_variables <= 500
-        n_sectors = round(Int, rand(rng, Uniform(5, 9)))
-        n_factors = round(Int, rand(rng, Uniform(3, 6)))
-    else
-        n_sectors = round(Int, rand(rng, Uniform(8, 11)))
-        n_factors = round(Int, rand(rng, Uniform(5, 8)))
+    # Sectors: sector 1 is energy (5–10% of names).
+    sector = Vector{Int}(undef, n)
+    n_energy = clamp(round(Int, n * rand(rng, Uniform(0.05, 0.10))), 1, n ÷ 4)
+    perm = randperm(rng, n)
+    energy_names = sort(perm[1:n_energy])
+    sector[energy_names] .= 1
+    rest = perm[(n_energy + 1):end]
+    sector[rest] .= 1 .+ _portfolio_balanced_groups(rng, length(rest), n_sectors - 1)
+
+    # Exclusions: a small random ESG list (never energy-only here).
+    infeasible_request = feasibility_status == infeasible
+    n_random_excl = round(Int, n * rand(rng, Uniform(0.0, 0.03)))
+    excluded = sort(unique(vcat(
+        _portfolio_distinct(rng, n, n_random_excl),
+        infeasible_request ? energy_names : Int[],
+    )))
+    investable = setdiff(1:n, excluded)
+    n_inv = length(investable)
+    S = max(10, V - n_inv - K)
+
+    market = _portfolio_market(
+        rng,
+        n,
+        S,
+        n_styles,
+        n_sectors;
+        sector=sector,
+        crash_probability=rand(rng, Uniform(0.02, 0.05)),
+        shocks_per_scenario=rand(rng, 16:32),
+    )
+    commodity = 1 + n_styles                               # column in style_loadings
+    for i in 1:n
+        market.style_loadings[i, commodity] = sector[i] == 1 ? rand(rng, Uniform(1.0, 2.0)) : rand(rng, Uniform(-0.02, 0.02))
     end
+    # Energy names are a meaningful share of the cap-weighted benchmark.
+    b = market.benchmark
+    energy_weight = sum(b[energy_names])
+    target_energy = rand(rng, Uniform(0.05, 0.10))
+    b[energy_names] .*= target_energy / energy_weight
+    others = setdiff(1:n, energy_names)
+    b[others] .*= (1 - target_energy) / sum(b[others])
+    # Re-derive scenario-dependent data after editing loadings and weights.
+    benchmark_returns = _portfolio_scenario_returns(market, b)
+    bench_exposure = _portfolio_exposures(market, b)
+    n_style_cols = 1 + n_styles
 
-    n_sectors = max(1, min(n_sectors, n_assets))
-    n_factors = max(1, min(n_factors, n_assets))
-
-    # --- Balanced sector assignment (every sector gets at least one asset) ---
-    function balanced_assign(n_items, n_groups)
-        assignment = zeros(Int, n_items)
-        perm = randperm(rng, n_items)
-        for g in 1:n_groups
-            assignment[perm[g]] = g
+    # --- Natural mandate. ---
+    max_position = zeros(Float64, n)
+    for i in investable
+        max_position[i] = max(b[i] * rand(rng, Uniform(1.5, 3.0)), rand(rng, Uniform(2.0, 5.0)) / n)
+    end
+    inv_caps = max_position[investable]
+    sum(inv_caps) < 1.5 && (max_position[investable] .*= 1.5 / sum(inv_caps))
+    exposure_lower = Vector{Float64}(undef, K)
+    exposure_upper = Vector{Float64}(undef, K)
+    for k in 1:K
+        width = k <= n_style_cols ? rand(rng, Uniform(0.05, 0.2)) : rand(rng, Uniform(0.02, 0.06))
+        exposure_lower[k] = bench_exposure[k] - width
+        exposure_upper[k] = bench_exposure[k] + width
+    end
+    for k in (n_style_cols + 1):K
+        exposure_lower[k] = max(0.0, exposure_lower[k])
+    end
+    # Sector bands apply only to sectors with investable names left: an
+    # excluded sector's active weight is the exclusion itself.
+    for g in 1:n_sectors
+        if !any(market.sector[i] == g for i in investable)
+            exposure_lower[n_style_cols + g] = 0.0
         end
-        for i in (n_groups + 1):n_items
-            assignment[perm[i]] = rand(rng, 1:n_groups)
+    end
+    naive = zeros(Float64, n)
+    naive[investable] .= b[investable] ./ sum(b[investable])
+    naive_te = _tracking_error(market, naive, benchmark_returns)
+    te_budget = naive_te * rand(rng, Uniform(0.4, 1.1))
+
+    witness = nothing
+    certificate = nothing
+    if feasibility_status == feasible
+        x_ref = zeros(Float64, n)
+        x_ref[investable] .= _portfolio_waterfill(b[investable], 0.9 .* max_position[investable])
+        f_ref = _portfolio_exposures(market, x_ref)
+        for k in 1:K
+            exposure_lower[k] = min(exposure_lower[k], f_ref[k] - 0.01)
+            exposure_upper[k] = max(exposure_upper[k], f_ref[k] + 0.01)
         end
-        return assignment
-    end
-
-    sector_assignments = balanced_assign(n_assets, n_sectors)
-
-    # --- Factor loadings (sector-correlated) ---
-    factor_loadings = rand(rng, Normal(0.0, 0.3), n_assets, n_factors)
-    for i in 1:n_assets
-        primary_factor = (sector_assignments[i] - 1) % n_factors + 1
-        factor_loadings[i, primary_factor] += rand(rng, Uniform(0.3, 0.7))
-    end
-
-    # --- Scenario returns via factor model (common factors + idiosyncratic) ---
-    factor_returns = rand(rng, Normal(0.0, 0.05), n_scenarios, n_factors)
-    idiosyncratic = rand(rng, Normal(0.0, 0.02), n_scenarios, n_assets)
-    scenario_returns = factor_returns * factor_loadings' + idiosyncratic
-
-    # --- Expected returns: mean scenario return plus small alpha noise ---
-    expected_returns = vec(mean(scenario_returns; dims=1))
-    expected_returns .+= rand(rng, Normal(0.0, 0.01), n_assets)
-
-    # --- Benchmark weights (log-normal market-cap style, normalized) ---
-    raw_weights = rand(rng, LogNormal(0.0, 0.8), n_assets)
-    benchmark = raw_weights ./ sum(raw_weights)
-
-    # --- Position limits: at least the benchmark weight, with headroom ---
-    # max_position_i = max(b_i, draw) * slack  (>= b_i guarantees benchmark admissible).
-    # Express the per-asset cap as a multiple of equal-weight (1/n_assets), clamped
-    # to sensible absolute bounds. The range is built so the lower bound is ALWAYS
-    # strictly below the upper bound across every supported n_assets — a naive
-    # min/max clamp inverts for very large (n_assets > 300) or very small
-    # (n_assets == 5) portfolios and would make Uniform(lo, hi) throw.
-    ew = 1.0 / n_assets
-    pos_lo = clamp(2.0 * ew, 0.005, 0.30)
-    pos_hi = max(clamp(6.0 * ew, 0.02, 0.40), pos_lo * 1.5)
-    base_position = [rand(rng, Uniform(pos_lo, pos_hi)) for _ in 1:n_assets]
-    max_position = [
-        max(benchmark[i], base_position[i]) * rand(rng, Uniform(1.1, 1.6)) for i in 1:n_assets
-    ]
-
-    # --- Sector deviation bands (two-sided, around benchmark) ---
-    sector_band = [rand(rng, Uniform(0.03, 0.12)) for _ in 1:n_sectors]
-
-    # --- Tracking-error budget: a fraction of the benchmark's own scenario MAD ---
-    # Reference MAD: average absolute deviation of the benchmark scenario return
-    # from its own mean (a natural scale for an active-return budget).
-    bench_scen = scenario_returns * benchmark
-    bench_mad = mean(abs.(bench_scen .- mean(bench_scen)))
-    te_budget = bench_mad * rand(rng, Uniform(0.15, 0.5))
-
-    # --- Feasibility handling ---
-    actual_status = feasibility_status
-    if feasibility_status == unknown
-        actual_status = rand(rng) < 0.75 ? feasible : infeasible
-    end
-
-    if actual_status == feasible
-        # The benchmark x = b is already admissible:
-        #   sum b_i = 1, A_s = 0 for all s => TE = 0 <= te_budget,
-        #   sector deviation = 0 within any band >= 0, and max_position_i >= b_i.
-        # Add a touch of slack to keep the model numerically comfortable.
-        for i in 1:n_assets
-            max_position[i] = max(max_position[i], benchmark[i] * 1.05)
-        end
-        te_budget = max(te_budget, 1e-6)
-        sector_band .= max.(sector_band, 0.02)
-
-    elseif actual_status == infeasible
-        # Make full investment impossible: scale position limits so their sum < 1.
-        target_sum = rand(rng, Uniform(0.7, 0.9))
-        max_position .*= (target_sum / sum(max_position))
-        # (Aggregate contradiction: sum x_i <= sum max_position_i < 1 = required.)
+        ref_te = _tracking_error(market, x_ref, benchmark_returns)
+        te_budget = max(te_budget, ref_te * rand(rng, Uniform(1.05, 1.3)))
+        witness = TrackingErrorWitness(x_ref[investable], f_ref, ref_te)
+    elseif infeasible_request
+        max_loading = maximum(market.style_loadings[investable, commodity])
+        gap = bench_exposure[commodity] - max_loading
+        gap > 1e-3 || error("internal: commodity exposure gap not positive")
+        exposure_lower[commodity] = max_loading + gap * rand(rng, Uniform(0.3, 0.6))
+        exposure_upper[commodity] = bench_exposure[commodity] + (bench_exposure[commodity] - exposure_lower[commodity])
+        certificate = TrackingErrorCertificate(commodity, max_loading, exposure_lower[commodity])
     end
 
     return TrackingErrorPortfolioProblem(
-        n_assets,
-        n_scenarios,
-        n_sectors,
-        n_factors,
-        expected_returns,
-        scenario_returns,
-        benchmark,
-        te_budget,
-        sector_assignments,
-        sector_band,
+        market,
+        investable,
+        excluded,
         max_position,
+        exposure_lower,
+        exposure_upper,
+        benchmark_returns,
+        te_budget,
+        1,
+        witness,
+        certificate,
     )
 end
 
 """
     build_model(prob::TrackingErrorPortfolioProblem)
 
-Build a JuMP model for the index-tracking portfolio problem. Deterministic — uses
-only data from the struct fields.
-
-# Returns
-
-  - `model`: The JuMP model
+Build the tracking-error LP. Deterministic and linear in the number of nonzeros.
 """
 function build_model(prob::TrackingErrorPortfolioProblem)
     model = Model()
+    market = prob.market
+    n = market.n_assets
+    S = market.n_scenarios
+    K = _portfolio_n_factors(market)
+    n_style_cols = 1 + market.n_styles
 
-    n = prob.n_assets
-    S = prob.n_scenarios
+    @variable(model, 0 <= x[j=1:length(prob.investable)] <= prob.max_position[prob.investable[j]])
+    @variable(model, prob.exposure_lower[k] <= exposure[k=1:K] <= prob.exposure_upper[k])
+    @variable(model, u[1:S] >= 0)
 
-    # Variables
-    @variable(model, x[1:n] >= 0)        # portfolio weights (long-only)
-    @variable(model, u[1:S] >= 0)        # absolute active return per scenario
-
-    # Objective: maximize expected return
-    @objective(model, Max, sum(prob.expected_returns[i] * x[i] for i in 1:n))
-
-    # Full investment (fully invested, long-only)
-    @constraint(model, sum(x[i] for i in 1:n) == 1.0)
-
-    # MAD tracking-error linearization:
-    #   A_s = sum_i r[s,i] * (x_i - b_i);  u[s] >= A_s and u[s] >= -A_s
-    for s in 1:S
-        active_return = sum(prob.scenario_returns[s, i] * (x[i] - prob.benchmark[i]) for i in 1:n)
-        @constraint(model, u[s] >= active_return)
-        @constraint(model, u[s] >= -active_return)
+    asset_var = Vector{Union{Nothing, VariableRef}}(nothing, n)
+    for (j, i) in enumerate(prob.investable)
+        asset_var[i] = x[j]
     end
 
-    # Tracking-error budget: average absolute active return <= te_budget
-    @constraint(model, (1.0 / S) * sum(u[s] for s in 1:S) <= prob.te_budget)
-
-    # Position limits
-    for i in 1:n
-        @constraint(model, x[i] <= prob.max_position[i])
+    objective = AffExpr(0.0)
+    for (j, i) in enumerate(prob.investable)
+        add_to_expression!(objective, market.expected_returns[i], x[j])
     end
+    @objective(model, Max, objective)
 
-    # Sector deviation bands (two-sided): within +/- band of benchmark sector weight
-    for sct in 1:prob.n_sectors
-        assets_in_sector = [i for i in 1:n if prob.sector_assignments[i] == sct]
-        if !isempty(assets_in_sector)
-            dev = sum(x[i] - prob.benchmark[i] for i in assets_in_sector)
-            @constraint(model, dev <= prob.sector_band[sct])
-            @constraint(model, dev >= -prob.sector_band[sct])
+    for k in 1:K
+        expr = AffExpr(0.0)
+        add_to_expression!(expr, 1.0, exposure[k])
+        for (j, i) in enumerate(prob.investable)
+            loading = k <= n_style_cols ? market.style_loadings[i, k] : (market.sector[i] == k - n_style_cols ? 1.0 : 0.0)
+            iszero(loading) || add_to_expression!(expr, -loading, x[j])
         end
+        @constraint(model, expr == 0)
     end
+
+    active = _portfolio_scenario_expressions(market, asset_var, exposure)
+    for s in 1:S
+        r = prob.benchmark_returns[s]
+        @constraint(model, u[s] - active[s] >= -r)
+        @constraint(model, u[s] + active[s] >= r)
+    end
+    te = AffExpr(0.0)
+    sizehint!(te.terms, S)
+    for s in 1:S
+        add_to_expression!(te, 1.0 / S, u[s])
+    end
+    @constraint(model, te_budget, te <= prob.te_budget)
+    @constraint(model, budget, sum(x) == 1.0)
 
     return model
 end
 
-# Register the variant (cvar remains the default; do NOT pass default=true)
 register_variant(
     :portfolio,
     :tracking_error,
     TrackingErrorPortfolioProblem,
-    "Index-tracking portfolio: maximize return under a MAD tracking-error budget with sector deviation bands and position limits (pure LP)",
+    "Enhanced-index tracking under an ESG exclusion list: max alpha under a MAD tracking-error budget, factor and sector bands, and position caps",
 )
