@@ -3,39 +3,89 @@ using Random
 using Distributions
 
 """
+    TwoEchelonWitness
+
+Planted feasible plan for [`TwoEchelonFacilityLocationProblem`](@ref): the open
+warehouses, the size installed at each (`0` when closed), and one flow per
+inbound (`supply_flow`, aligned with `in_supplier`/`in_warehouse`) and outbound
+(`delivery_flow`, aligned with `out_warehouse`/`out_customer`) lane. Integral in
+`y`/`z`, so it is feasible for the MIP and for every relaxation.
+"""
+struct TwoEchelonWitness
+    open::Vector{Int}
+    size_choice::Vector{Int}
+    supply_flow::Vector{Float64}
+    delivery_flow::Vector{Float64}
+end
+
+"""
+    TwoEchelonRegionalDeficit
+
+LP-row infeasibility certificate for [`TwoEchelonFacilityLocationProblem`](@ref).
+`customers` is a demand region `R` and `warehouses` is `N(R)`, every warehouse
+with a delivery lane into `R`. Summing the demand rows of `R`, the delivery
+lanes are bounded by the outflow of `N(R)`; conservation equates outflow with
+inflow, the throughput rows bound inflow by `Σ_k cap[w,k] z[w,k]`, and the size
+rows with `y ≤ 1` bound that by `max_k cap[w,k]`:
+
+    region_demand = Σ_{c∈R} d_c ≤ Σ_{w∈N(R)} max_k cap[w,k] = max_capacity
+
+The generator makes `region_demand ≥ 1.1 · max_capacity`, so the model is
+infeasible for fractional `y`/`z` too. The argument aggregates `|R|` demand rows
+and `3|N(R)|` warehouse rows, so presolve does not see it in a single row.
+"""
+struct TwoEchelonRegionalDeficit
+    customers::Vector{Int}
+    warehouses::Vector{Int}
+    region_demand::Float64
+    max_capacity::Float64
+end
+
+"""
     TwoEchelonFacilityLocationProblem <: ProblemGenerator
 
-Generator for two-echelon capacitated facility location problems with discrete
-warehouse sizing.
+Two-echelon capacitated facility location with discrete warehouse sizing over a
+sparse plant → distribution-center → customer network.
 
 # Overview
 
-Models a two-echelon distribution network: suppliers → warehouses → customers.
-The decisions are which candidate warehouses to open, what discrete capacity size
-to install at each opened warehouse, and the flows on both echelons (supplier→
-warehouse and warehouse→customer). The objective minimizes fixed opening cost,
-size-installation cost, two-echelon transport cost (distance-based), and per-unit
-handling cost. Constraints enforce: at most one size per warehouse (linked to the
-open decision), supplier supply limits, customer demand satisfaction, warehouse
-throughput bounded by the chosen size, flow conservation at warehouses (inflow ≥
-outflow), and that inbound flow only occurs at opened warehouses.
+Plants (suppliers) ship to candidate distribution centers (warehouses), which
+deliver to customers. Decisions: which warehouses to open (`y`), which discrete
+size to build at each open one (`z`), and the flows on the sparse lane sets —
+each warehouse is sourced from its `L` nearest plants (`f1`) and each customer
+can be served from its `K_c` nearest warehouses (`f2`). Lanes follow real
+practice: nobody ships pallets across the continent to a customer when a closer
+DC exists, which keeps the model sparse and lets it scale to millions of lanes.
+
+Constraints:
+
+  - size choice `Σ_k z[w,k] = y[w]`;
+  - plant capacity `Σ_{lanes out of s} f1 ≤ supply_s`;
+  - customer demand `Σ_{lanes into c} f2 ≥ d_c`;
+  - throughput `Σ_{lanes into w} f1 ≤ Σ_k cap[w,k] z[w,k]`;
+  - cross-dock conservation `Σ_{lanes into w} f1 = Σ_{lanes out of w} f2`;
+  - strong (disaggregated) linking `f2[w→c] ≤ d_c · y[w]` on every delivery
+    lane, the textbook strengthening that keeps the opening decisions binding in
+    the LP relaxation (the aggregate form lets `y` go to `throughput / cap`).
+
+Size options have concave-with-noise installation costs (economies of scale
+with site-specific construction costs), so several sizes stay on the lower
+envelope rather than one dominating.
 
 # Fields
 
-  - `n_warehouses::Int`: Number of candidate warehouse locations
-  - `n_suppliers::Int`: Number of suppliers
-  - `n_customers::Int`: Number of customers
-  - `warehouse_locations::Vector{Tuple{Float64,Float64}}`: Warehouse coordinates
-  - `supplier_locations::Vector{Tuple{Float64,Float64}}`: Supplier coordinates
-  - `customer_locations::Vector{Tuple{Float64,Float64}}`: Customer coordinates
-  - `supplier_capacities::Vector{Float64}`: Supply capacity at each supplier
-  - `customer_demands::Vector{Float64}`: Demand at each customer
-  - `warehouse_fixed_costs::Vector{Float64}`: Fixed cost to open each warehouse
-  - `warehouse_size_options::Vector{Float64}`: Available throughput capacity sizes
-  - `warehouse_size_costs::Vector{Float64}`: Installation cost for each size option
-  - `supplier_warehouse_costs::Matrix{Float64}`: Transport cost supplier→warehouse (S×W)
-  - `warehouse_customer_costs::Matrix{Float64}`: Transport cost warehouse→customer (W×C)
-  - `handling_costs::Vector{Float64}`: Per-unit handling cost at each warehouse
+  - `n_warehouses`, `n_suppliers`, `n_customers`
+  - `warehouse_locations`, `supplier_locations`, `customer_locations`
+  - `supplier_capacities::Vector{Float64}`, `customer_demands::Vector{Float64}`
+  - `warehouse_fixed_costs::Vector{Float64}`
+  - `size_capacity::Matrix{Float64}`, `size_cost::Matrix{Float64}`: `W × K`
+    per-warehouse size options (sorted increasing in capacity)
+  - `handling_costs::Vector{Float64}`: per-unit cross-dock cost at each warehouse
+  - `in_supplier`, `in_warehouse`, `in_cost`: inbound lanes (plant → DC)
+  - `out_warehouse`, `out_customer`, `out_cost`: delivery lanes (DC → customer),
+    grouped by customer
+  - `feasible_witness::Union{Nothing,TwoEchelonWitness}`
+  - `infeasibility_certificate::Union{Nothing,TwoEchelonRegionalDeficit}`
 """
 struct TwoEchelonFacilityLocationProblem <: ProblemGenerator
     n_warehouses::Int
@@ -47,331 +97,362 @@ struct TwoEchelonFacilityLocationProblem <: ProblemGenerator
     supplier_capacities::Vector{Float64}
     customer_demands::Vector{Float64}
     warehouse_fixed_costs::Vector{Float64}
-    warehouse_size_options::Vector{Float64}
-    warehouse_size_costs::Vector{Float64}
-    supplier_warehouse_costs::Matrix{Float64}
-    warehouse_customer_costs::Matrix{Float64}
+    size_capacity::Matrix{Float64}
+    size_cost::Matrix{Float64}
     handling_costs::Vector{Float64}
+    in_supplier::Vector{Int}
+    in_warehouse::Vector{Int}
+    in_cost::Vector{Float64}
+    out_warehouse::Vector{Int}
+    out_customer::Vector{Int}
+    out_cost::Vector{Float64}
+    feasible_witness::Union{Nothing, TwoEchelonWitness}
+    infeasibility_certificate::Union{Nothing, TwoEchelonRegionalDeficit}
+end
+
+const _TWO_ECHELON_SIZE_MULTS = Dict(3 => [0.5, 1.0, 1.7], 4 => [0.4, 0.75, 1.2, 1.8])
+
+# Dimension plan: returns (W, K_sizes, L, lanes_per_customer_vector).
+# Variable count = W*(1 + K) + W*L + Σ_c lanes_c, hit exactly whenever the
+# target leaves room for at least one customer.
+function _two_echelon_dimensions(rng::AbstractRNG, target::Int)
+    n_sizes = rand(rng, 3:4)
+    n_inbound = rand(rng, 2:3)
+    lanes = rand(rng, 3:6)
+    customers_per_dc = rand(rng, 8:16)
+    W = max(2, round(Int, target / (1 + n_sizes + n_inbound + customers_per_dc * lanes)))
+    n_suppliers = max(1, round(Int, W / rand(rng, 4:8)))
+    n_inbound = min(n_inbound, n_suppliers)
+    lanes = min(lanes, W)
+    remaining = target - W * (1 + n_sizes + n_inbound)
+    if remaining < 2
+        # Tiny targets: shrink the per-warehouse blocks, accept a small overshoot.
+        n_sizes, n_inbound = 3, 1
+        lanes = min(lanes, 2)
+        remaining = max(lanes, target - W * (1 + n_sizes + n_inbound))
+    end
+    n_customers = cld(remaining, lanes)
+    lanes_per_customer = fill(lanes, n_customers)
+    # Trim lanes (keeping at least one per customer) to land exactly.
+    deficit = n_customers * lanes - remaining
+    c = 1
+    while deficit > 0 && any(>(1), lanes_per_customer)
+        if lanes_per_customer[c] > 1
+            lanes_per_customer[c] -= 1
+            deficit -= 1
+        end
+        c = mod1(c + 1, n_customers)
+    end
+    return W, n_suppliers, n_sizes, n_inbound, lanes_per_customer
 end
 
 """
     TwoEchelonFacilityLocationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
-Construct a two-echelon capacitated facility location and sizing instance.
+Construct a sparse two-echelon facility location and sizing instance.
 
-# Arguments
+# Variable-count formula
 
-  - `target_variables`: Target number of variables
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
+    total = W·(1 + K) + W·L + Σ_c K_c
 
-# Details
+(`y`, `z`, inbound lanes, delivery lanes) with `K ∈ {3,4}` size options,
+`L ∈ {2,3}` inbound lanes per warehouse, `8–16` customers per warehouse and
+`K_c ∈ 3..6` delivery lanes per customer. The customer count and per-customer
+lane counts are chosen so `total == target_variables` exactly for every target
+above ~15 (tiny targets overshoot by a few variables). Build time is
+near-linear (nearest-site queries use a bucket grid), so there is no size cap.
 
-Variables: y[w] (open, Bin), z[w,k] (size choice, Bin), f1[s,w] (supplier→warehouse
-flow), f2[w,c] (warehouse→customer flow). Total variable count:
+# Feasibility
 
-    n_warehouses × (1 + n_size_options + n_suppliers + n_customers)
-
-Dimensions are sized in the constructor to hit `target_variables`.
+  - `feasible`: a plan is planted — a random 50–80% of warehouses open, every
+    customer is served in full by its nearest open admissible warehouse, each
+    open warehouse buys the smallest size covering its throughput with a 5–15%
+    margin (its size ladder is raised when even the largest size is short), and
+    each open warehouse is sourced from its nearest plant, whose capacity is
+    raised to 1.1–1.3× its planted load where needed. Stored as a
+    [`TwoEchelonWitness`](@ref).
+  - `infeasible`: natural data plus a regional deficit: a compact region `R`
+    (4–12% of customers around a random customer) sees a 30–80% demand surge
+    and zoning limits on the DCs `N(R)` that can reach it, leaving
+    `Σ_R d ≥ 1.1–1.3 × Σ_{N(R)} max_k cap[w,k]`. Stored as a
+    [`TwoEchelonRegionalDeficit`](@ref); valid for the LP relaxation.
+  - `unknown`: natural data — size ladders and plant capacities are planned
+    against a demand *forecast* (ladders top out at ~1.5–2.3× each DC's
+    catchment; plants at 1.0–1.4× their planned load), while realized demand
+    carries 1–3 spatially correlated regional shocks of 1.2–2.8×. Whether
+    neighbouring DCs and plants can absorb a shock is left to the data, so the
+    instance is genuinely two-sided (about 80% feasible across seeds and sizes).
 """
 function TwoEchelonFacilityLocationProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
+    W, S, n_sizes, n_inbound, lanes_per_customer = _two_echelon_dimensions(rng, target_variables)
+    C = length(lanes_per_customer)
+    max_lanes = maximum(lanes_per_customer)
 
-    # Determine scale
-    if target_variables <= 150
-        min_wh, max_wh = 2, 15
-        min_supp, max_supp = 2, 10
-        min_cust, max_cust = 3, 20
-        n_size_options = 3
-        grid_size = rand(rng, 100.0:20.0:300.0)
-        demand_range = (10.0, 100.0)
-        supply_range = (50.0, 500.0)
-        transport_cost = rand(rng, 0.5:0.1:1.5)
-    elseif target_variables <= 800
-        min_wh, max_wh = 5, 30
-        min_supp, max_supp = 3, 20
-        min_cust, max_cust = 10, 50
-        n_size_options = 4
-        grid_size = rand(rng, 200.0:50.0:600.0)
-        demand_range = (20.0, 200.0)
-        supply_range = (100.0, 1000.0)
-        transport_cost = rand(rng, 0.8:0.1:2.0)
-    else
-        min_wh, max_wh = 10, 100
-        min_supp, max_supp = 5, 50
-        min_cust, max_cust = 20, 150
-        n_size_options = 5
-        grid_size = rand(rng, 500.0:100.0:1500.0)
-        demand_range = (50.0, 500.0)
-        supply_range = (200.0, 3000.0)
-        transport_cost = rand(rng, 1.0:0.2:3.0)
+    # --- Geography: customers in metro clusters, DC sites near metros,
+    # plants in a few manufacturing zones ---
+    span = rand(rng, 600.0:100.0:1500.0)
+    n_metros = clamp(round(Int, sqrt(W) * rand(rng, 0.8:0.1:1.5)), 2, 60)
+    metros = [(span * rand(rng), span * rand(rng)) for _ in 1:n_metros]
+    metro_spread = span / (2.5 * sqrt(n_metros))
+    customer_locations = _fl_clustered_points(rng, C, metros, metro_spread, span)
+    warehouse_locations = _fl_clustered_points(
+        rng, W, metros, 1.5 * metro_spread, span; rural_fraction=0.35
+    )
+    n_zones = clamp(round(Int, sqrt(S)), 1, 12)
+    zones = [(span * rand(rng), span * rand(rng)) for _ in 1:n_zones]
+    supplier_locations = _fl_clustered_points(
+        rng, S, zones, span / 12, span; rural_fraction=0.25
+    )
+
+    # --- Sparse lanes ---
+    nearest_dc = _fl_nearest_sites(warehouse_locations, customer_locations, max_lanes)
+    nearest_plant = _fl_nearest_sites(supplier_locations, warehouse_locations, n_inbound)
+    inbound_rate = rand(rng, 0.015:0.005:0.04)      # full-truckload, per unit-km
+    delivery_rate = rand(rng, 0.06:0.01:0.15)       # less-than-truckload, per unit-km
+    out_warehouse = Int[]
+    out_customer = Int[]
+    out_cost = Float64[]
+    sizehint!(out_warehouse, sum(lanes_per_customer))
+    for c in 1:C, w in nearest_dc[c][1:lanes_per_customer[c]]
+        push!(out_warehouse, w)
+        push!(out_customer, c)
+        d = _fl_dist(customer_locations[c], warehouse_locations[w])
+        push!(out_cost, round(delivery_rate * (5.0 + d) * (0.9 + 0.2 * rand(rng)); digits=3))
+    end
+    in_supplier = Int[]
+    in_warehouse = Int[]
+    in_cost = Float64[]
+    for w in 1:W, s in nearest_plant[w]
+        push!(in_supplier, s)
+        push!(in_warehouse, w)
+        d = _fl_dist(supplier_locations[s], warehouse_locations[w])
+        push!(in_cost, round(inbound_rate * (10.0 + d) * (0.9 + 0.2 * rand(rng)); digits=3))
     end
 
-    # Solve for dimensions to hit target.
-    # total_vars = n_wh × (1 + n_size_options + n_supp + n_cust)
-    best_config = (min_wh, min_supp, min_cust)
-    best_error = Inf
+    # --- Demand forecast (lognormal, heavier in big metros) ---
+    forecast = round.(exp.(rand(rng, Normal(log(120.0), 0.7), C)); digits=2)
+    forecast .= max.(forecast, 1.0)
 
-    for n_wh in min_wh:max_wh
-        target_per_wh = target_variables / n_wh
-        target_flows = target_per_wh - 1 - n_size_options
-
-        if target_flows < (min_supp + min_cust)
-            continue
-        end
-
-        # Split flow variables between suppliers and customers
-        ratio = rand(rng, 0.3:0.1:0.7)
-        n_supp = clamp(round(Int, target_flows * ratio), min_supp, max_supp)
-        n_cust = clamp(round(Int, target_flows * (1 - ratio)), min_cust, max_cust)
-
-        actual_vars = n_wh * (1 + n_size_options + n_supp + n_cust)
-        err = abs(actual_vars - target_variables) / target_variables
-
-        if err < best_error
-            best_error = err
-            best_config = (n_wh, n_supp, n_cust)
-        end
+    # --- Size ladders planned against the forecast catchment ---
+    catchment = zeros(W)
+    for c in 1:C
+        catchment[nearest_dc[c][1]] += forecast[c]
     end
+    avg_catchment = sum(forecast) / W
+    mults = _TWO_ECHELON_SIZE_MULTS[n_sizes]
+    base = [max(catchment[w], 0.3 * avg_catchment) * rand(rng, Uniform(0.85, 1.25)) for w in 1:W]
+    size_capacity = [round(base[w] * mults[k]; digits=2) for w in 1:W, k in 1:n_sizes]
 
-    n_warehouses, n_suppliers, n_customers = best_config
-
-    # Generate warehouse locations (uniform over grid)
-    warehouse_locations = [(grid_size * rand(rng), grid_size * rand(rng)) for _ in 1:n_warehouses]
-
-    # Suppliers clustered (e.g. manufacturing zones)
-    n_supp_clusters = max(1, n_suppliers ÷ 5)
-    supp_centers = [(grid_size * rand(rng), grid_size * rand(rng)) for _ in 1:n_supp_clusters]
-    supplier_locations = Tuple{Float64, Float64}[]
-    for _ in 1:n_suppliers
-        center = rand(rng, supp_centers)
-        x = clamp(center[1] + randn(rng) * grid_size / 10, 0.0, grid_size)
-        y = clamp(center[2] + randn(rng) * grid_size / 10, 0.0, grid_size)
-        push!(supplier_locations, (x, y))
-    end
-
-    # Customers clustered (e.g. cities)
-    n_cust_clusters = max(2, n_customers ÷ 8)
-    cust_centers = [(grid_size * rand(rng), grid_size * rand(rng)) for _ in 1:n_cust_clusters]
-    customer_locations = Tuple{Float64, Float64}[]
-    for _ in 1:n_customers
-        center = rand(rng, cust_centers)
-        x = clamp(center[1] + randn(rng) * grid_size / 8, 0.0, grid_size)
-        y = clamp(center[2] + randn(rng) * grid_size / 8, 0.0, grid_size)
-        push!(customer_locations, (x, y))
-    end
-
-    # Customer demands (log-normal)
-    min_demand, max_demand = demand_range
-    log_mean = log(sqrt(min_demand * max_demand))
-    log_std = log(max_demand / min_demand) / 4
-    customer_demands = [
-        clamp(exp(rand(rng, Normal(log_mean, log_std))), min_demand, max_demand) for
-        _ in 1:n_customers
-    ]
-    customer_demands = round.(customer_demands; digits=2)
-
-    total_demand = sum(customer_demands)
-
-    # Supplier capacities
-    min_supply, max_supply = supply_range
-    supplier_capacities = [rand(rng, Uniform(min_supply, max_supply)) for _ in 1:n_suppliers]
-    supplier_capacities = round.(supplier_capacities; digits=2)
-
-    # Ensure ample total supply >= total demand by default (feasibility baseline)
-    total_supply = sum(supplier_capacities)
-    if total_supply < total_demand * 1.2
-        scale = (total_demand * 1.3) / total_supply
-        supplier_capacities .*= scale
-        supplier_capacities = round.(supplier_capacities; digits=2)
-    end
-
-    # Warehouse discrete size options (economies of scale)
-    base_capacity = total_demand / n_warehouses
-    all_mults = [0.5, 1.0, 1.5, 2.0, 3.0]
-    warehouse_size_options = [
-        round(base_capacity * mult; digits=2) for mult in all_mults[1:n_size_options]
-    ]
-
-    # Sublinear size costs (economies of scale)
-    base_size_cost = rand(rng, 5000.0:1000.0:20000.0)
-    warehouse_size_costs = [
-        round(base_size_cost * (cap / warehouse_size_options[1])^0.85; digits=2) for
-        cap in warehouse_size_options
-    ]
-
-    # Fixed warehouse opening costs (location-dependent)
-    warehouse_fixed_costs = [
-        rand(rng, Uniform(10000.0, 50000.0)) * (1 + 0.3 * rand(rng)) for _ in 1:n_warehouses
-    ]
-    warehouse_fixed_costs = round.(warehouse_fixed_costs; digits=2)
-
-    # Distance-based transport costs
-    calc_distance(a, b) = sqrt((a[1] - b[1])^2 + (a[2] - b[2])^2)
-
-    supplier_warehouse_costs = zeros(n_suppliers, n_warehouses)
-    for i in 1:n_suppliers, j in 1:n_warehouses
-        dist = calc_distance(supplier_locations[i], warehouse_locations[j])
-        supplier_warehouse_costs[i, j] = round(
-            dist * transport_cost * (0.9 + 0.2 * rand(rng)); digits=2
-        )
-    end
-
-    warehouse_customer_costs = zeros(n_warehouses, n_customers)
-    for i in 1:n_warehouses, j in 1:n_customers
-        dist = calc_distance(warehouse_locations[i], customer_locations[j])
-        warehouse_customer_costs[i, j] = round(
-            dist * transport_cost * (0.9 + 0.2 * rand(rng)); digits=2
-        )
-    end
-
-    # Handling costs at warehouses
-    handling_costs = round.([rand(rng, Uniform(0.5, 2.5)) for _ in 1:n_warehouses]; digits=2)
-
-    # --- Feasibility handling ---
-    actual_status = feasibility_status
+    # --- Realized demand: `unknown` adds a few spatially correlated regional
+    # shocks (a fixed handful of hot spots, so the chance that one of them
+    # overwhelms its local capacity does not drift with instance size) ---
+    demands = copy(forecast)
     if feasibility_status == unknown
-        # Natural instance; bias toward feasible but do NOT force infeasibility.
-        actual_status = feasible
+        for _ in 1:rand(rng, 1:3)
+            center = customer_locations[rand(rng, 1:C)]
+            radius = metro_spread * rand(rng, Uniform(0.5, 1.5))
+            surge = rand(rng, Uniform(1.2, 2.8))
+            for c in 1:C
+                _fl_dist(customer_locations[c], center) <= radius && (demands[c] *= surge)
+            end
+        end
+        demands .= round.(demands; digits=2)
     end
 
-    if actual_status == feasible
-        # Guarantee solvability:
-        # 1. Aggregate max warehouse throughput must comfortably exceed total demand.
-        max_possible_capacity = sum(warehouse_size_options[end] for _ in 1:n_warehouses)
-        if max_possible_capacity < total_demand * 1.2
-            scale = (total_demand * 1.3) / max_possible_capacity
-            warehouse_size_options .*= scale
-            warehouse_size_options = round.(warehouse_size_options; digits=2)
-        end
-        # 2. Aggregate supply must comfortably exceed total demand.
-        total_supply = sum(supplier_capacities)
-        if total_supply < total_demand * 1.2
-            scale = (total_demand * 1.3) / total_supply
-            supplier_capacities .*= scale
-            supplier_capacities = round.(supplier_capacities; digits=2)
-        end
-
-    elseif actual_status == infeasible
-        # Reliable infeasibility: make it provably impossible to serve all demand.
-        # Aggregate maximum warehouse throughput (all opened at largest size) is
-        # forced strictly below total demand with a clear margin, so the customer
-        # demand constraints cannot all be satisfied regardless of supply or sizing.
-        target_cap_fraction = rand(rng, 0.7:0.05:0.9)  # 70%-90% of demand
-        target_total_cap = total_demand * target_cap_fraction
-        max_size = target_total_cap / n_warehouses
-        # Build size options strictly bounded by max_size so even all-largest-size
-        # across all warehouses cannot meet demand.
-        warehouse_size_options = [
-            round(max_size * mult; digits=2) for mult in all_mults[1:n_size_options]
-        ]
-        # Normalize so the LARGEST option equals max_size (largest mult may exceed 1).
-        warehouse_size_options ./= all_mults[n_size_options]
-        warehouse_size_options = round.(warehouse_size_options; digits=2)
-        # Recompute size costs consistently.
-        base_opt = max(warehouse_size_options[1], 1e-6)
-        warehouse_size_costs = [
-            round(base_size_cost * (cap / base_opt)^0.85; digits=2) for
-            cap in warehouse_size_options
-        ]
+    # --- Plant capacity, planned against the forecast load each plant would
+    # carry if every DC were replenished from its nearest plant ---
+    planned_load = zeros(S)
+    for w in 1:W
+        planned_load[nearest_plant[w][1]] += max(catchment[w], 0.3 * avg_catchment)
     end
+    supply_factor = feasibility_status == unknown ? rand(rng, Uniform(1.0, 1.4)) : 1.25
+    supplier_capacities = round.(
+        max.(planned_load, 0.3 * sum(forecast) / S) .* supply_factor .*
+        rand(rng, Uniform(0.9, 1.2), S);
+        digits=2,
+    )
+
+    # --- Costs: fixed opening, size installation, handling ---
+    spacing = span / sqrt(W)
+    site_factor = rand(rng, Uniform(0.7, 1.4), W)
+    warehouse_fixed_costs = round.(
+        site_factor .* delivery_rate .* spacing .* max.(base, 1.0) .* rand(rng, Uniform(0.4, 1.2));
+        digits=2,
+    )
+    handling_costs = round.(rand(rng, Uniform(0.5, 2.5), W); digits=3)
+
+    witness = nothing
+    certificate = nothing
+    if feasibility_status == feasible
+        p_open = rand(rng, Uniform(0.5, 0.8))
+        is_open = rand(rng, W) .< p_open
+        # Every customer needs an open admissible DC; open the nearest if not.
+        lane_start = cumsum(vcat(1, lanes_per_customer))
+        for c in 1:C
+            any(is_open[out_warehouse[l]] for l in lane_start[c]:(lane_start[c + 1] - 1)) ||
+                (is_open[out_warehouse[lane_start[c]]] = true)
+        end
+        delivery_flow = zeros(length(out_warehouse))
+        throughput = zeros(W)
+        for c in 1:C
+            # Lanes are sorted by distance, so the first open one is nearest.
+            l = findfirst(l -> is_open[out_warehouse[l]], lane_start[c]:(lane_start[c + 1] - 1))
+            lane = lane_start[c] + l - 1
+            delivery_flow[lane] = demands[c]
+            throughput[out_warehouse[lane]] += demands[c]
+        end
+        size_choice = zeros(Int, W)
+        for w in 1:W
+            is_open[w] || continue
+            need = throughput[w] * rand(rng, Uniform(1.05, 1.15))
+            if size_capacity[w, end] < need
+                scale = need * rand(rng, Uniform(1.0, 1.2)) / size_capacity[w, end]
+                size_capacity[w, :] .= round.(size_capacity[w, :] .* scale; digits=2)
+                size_capacity[w, end] < need && (size_capacity[w, end] = ceil(need))
+            end
+            size_choice[w] = findfirst(k -> size_capacity[w, k] >= need, 1:n_sizes)
+        end
+        # Each open DC is replenished from its nearest plant (first inbound lane).
+        supply_flow = zeros(length(in_supplier))
+        plant_load = zeros(S)
+        for w in 1:W
+            is_open[w] || continue
+            lane = (w - 1) * n_inbound + 1
+            supply_flow[lane] = throughput[w]
+            plant_load[in_supplier[lane]] += throughput[w]
+        end
+        for s in 1:S
+            need = plant_load[s] * rand(rng, Uniform(1.1, 1.3))
+            supplier_capacities[s] < need && (supplier_capacities[s] = round(need + 0.01; digits=2))
+        end
+        witness = TwoEchelonWitness(findall(is_open), size_choice, supply_flow, delivery_flow)
+    elseif feasibility_status == infeasible
+        center = customer_locations[rand(rng, 1:C)]
+        m = clamp(round(Int, rand(rng, Uniform(0.04, 0.12)) * C), 1, C)
+        region = sort!(partialsortperm([_fl_dist(p, center) for p in customer_locations], 1:m))
+        in_region = falses(C)
+        in_region[region] .= true
+        reach = sort!(unique(out_warehouse[l] for l in eachindex(out_customer) if in_region[out_customer[l]]))
+        surge = rand(rng, Uniform(1.3, 1.8))
+        for c in region
+            demands[c] = round(demands[c] * surge; digits=2)
+        end
+        region_demand = sum(demands[region])
+        margin = rand(rng, Uniform(1.1, 1.3))
+        max_capacity = sum(size_capacity[w, end] for w in reach)
+        if region_demand < margin * max_capacity
+            # Zoning limits on the DC footprint in the region's catchment.
+            g = region_demand / (margin * max_capacity)
+            for w in reach
+                size_capacity[w, :] .= floor.(size_capacity[w, :] .* g; digits=2)
+            end
+            max_capacity = sum(size_capacity[w, end] for w in reach)
+        end
+        certificate = TwoEchelonRegionalDeficit(region, reach, region_demand, max_capacity)
+    end
+
+    # Installation cost: concave in capacity with site-specific noise.
+    size_cost = [
+        round(
+            0.5 * site_factor[w] * delivery_rate * spacing * size_capacity[w, k]^0.85 *
+            max(base[w], 1.0)^0.15 * rand(rng, Uniform(0.9, 1.15));
+            digits=2,
+        ) for w in 1:W, k in 1:n_sizes
+    ]
 
     return TwoEchelonFacilityLocationProblem(
-        n_warehouses,
-        n_suppliers,
-        n_customers,
+        W,
+        S,
+        C,
         warehouse_locations,
         supplier_locations,
         customer_locations,
         supplier_capacities,
-        customer_demands,
+        demands,
         warehouse_fixed_costs,
-        warehouse_size_options,
-        warehouse_size_costs,
-        supplier_warehouse_costs,
-        warehouse_customer_costs,
+        size_capacity,
+        size_cost,
         handling_costs,
+        in_supplier,
+        in_warehouse,
+        in_cost,
+        out_warehouse,
+        out_customer,
+        out_cost,
+        witness,
+        certificate,
     )
 end
 
 """
     build_model(prob::TwoEchelonFacilityLocationProblem)
 
-Build a JuMP model for the two-echelon capacitated facility location and sizing
-problem. Deterministic — uses only data from the struct fields.
-
-# Returns
-
-  - `model`: The JuMP model
+Build the sparse two-echelon facility location and sizing model. Deterministic —
+uses only data from the struct fields.
 """
 function build_model(prob::TwoEchelonFacilityLocationProblem)
     model = Model()
+    W, S, C = prob.n_warehouses, prob.n_suppliers, prob.n_customers
+    K = size(prob.size_capacity, 2)
+    n_in = length(prob.in_supplier)
+    n_out = length(prob.out_customer)
 
-    W = prob.n_warehouses
-    S = prob.n_suppliers
-    C = prob.n_customers
-    K = length(prob.warehouse_size_options)
+    @variable(model, y[1:W], Bin)
+    @variable(model, z[1:W, 1:K], Bin)
+    @variable(model, f1[1:n_in] >= 0)
+    @variable(model, f2[1:n_out] >= 0)
 
-    # Decision variables
-    @variable(model, y[1:W], Bin)            # open warehouse w
-    @variable(model, z[1:W, 1:K], Bin)       # install size k at warehouse w
-    @variable(model, f1[1:S, 1:W] >= 0)      # supplier→warehouse flow
-    @variable(model, f2[1:W, 1:C] >= 0)      # warehouse→customer flow
+    inbound_of = [Int[] for _ in 1:W]
+    outbound_of = [Int[] for _ in 1:W]
+    supplier_lanes = [Int[] for _ in 1:S]
+    customer_lanes = [Int[] for _ in 1:C]
+    for l in 1:n_in
+        push!(inbound_of[prob.in_warehouse[l]], l)
+        push!(supplier_lanes[prob.in_supplier[l]], l)
+    end
+    for l in 1:n_out
+        push!(outbound_of[prob.out_warehouse[l]], l)
+        push!(customer_lanes[prob.out_customer[l]], l)
+    end
 
-    # Objective: total network cost
     @objective(
         model,
         Min,
         sum(prob.warehouse_fixed_costs[w] * y[w] for w in 1:W) +
-            sum(prob.warehouse_size_costs[k] * z[w, k] for w in 1:W, k in 1:K) +
-            sum(prob.supplier_warehouse_costs[s, w] * f1[s, w] for s in 1:S, w in 1:W) +
-            sum(prob.warehouse_customer_costs[w, c] * f2[w, c] for w in 1:W, c in 1:C) +
-            sum(prob.handling_costs[w] * sum(f1[s, w] for s in 1:S) for w in 1:W)
+            sum(prob.size_cost[w, k] * z[w, k] for w in 1:W, k in 1:K) +
+            sum(prob.in_cost[l] * f1[l] for l in 1:n_in) +
+            sum((prob.out_cost[l] + prob.handling_costs[prob.out_warehouse[l]]) * f2[l] for l in 1:n_out)
     )
 
-    # Exactly one size if opened, none otherwise: sum_k z[w,k] == y[w]
     for w in 1:W
         @constraint(model, sum(z[w, k] for k in 1:K) == y[w])
-    end
-
-    # Supplier supply limits
-    for s in 1:S
-        @constraint(model, sum(f1[s, w] for w in 1:W) <= prob.supplier_capacities[s])
-    end
-
-    # Customer demand satisfaction
-    for c in 1:C
-        @constraint(model, sum(f2[w, c] for w in 1:W) >= prob.customer_demands[c])
-    end
-
-    # Warehouse throughput bounded by chosen size
-    for w in 1:W
         @constraint(
             model,
-            sum(f1[s, w] for s in 1:S) <=
-                sum(prob.warehouse_size_options[k] * z[w, k] for k in 1:K)
+            sum(f1[l] for l in inbound_of[w]) <=
+                sum(prob.size_capacity[w, k] * z[w, k] for k in 1:K)
         )
+        @constraint(model, sum(f1[l] for l in inbound_of[w]) == sum(f2[l] for l in outbound_of[w]))
     end
-
-    # Flow conservation at warehouses: inflow >= outflow
-    for w in 1:W
-        @constraint(model, sum(f1[s, w] for s in 1:S) >= sum(f2[w, c] for c in 1:C))
+    for s in 1:S
+        isempty(supplier_lanes[s]) && continue
+        @constraint(model, sum(f1[l] for l in supplier_lanes[s]) <= prob.supplier_capacities[s])
     end
-
-    # Inbound flow only at opened warehouses
-    for w in 1:W, s in 1:S
-        @constraint(model, f1[s, w] <= prob.supplier_capacities[s] * y[w])
+    for c in 1:C
+        @constraint(model, sum(f2[l] for l in customer_lanes[c]) >= prob.customer_demands[c])
     end
-
+    for l in 1:n_out
+        c = prob.out_customer[l]
+        @constraint(model, f2[l] <= prob.customer_demands[c] * y[prob.out_warehouse[l]])
+    end
     return model
 end
 
-# Register the variant
 register_variant(
     :facility_location,
     :two_echelon,
     TwoEchelonFacilityLocationProblem,
-    "Two-echelon capacitated facility location with discrete warehouse sizing over a supplier→warehouse→customer network",
+    "Two-echelon plant→DC→customer facility location with discrete DC sizing, sparse nearest-site lanes, and strong delivery-lane linking",
 )

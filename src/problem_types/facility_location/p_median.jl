@@ -3,279 +3,236 @@ using Random
 using Distributions
 
 """
+    PMedianWitness
+
+Planted feasible plan for [`PMedianFacilityLocationProblem`](@ref): the `p`
+open facilities and the facility each customer is assigned to. Integral, so it
+is feasible for the MIP and its relaxation.
+"""
+struct PMedianWitness
+    open::Vector{Int}
+    assignment::Vector{Int}
+end
+
+"""
+    PMedianCapacityCertificate
+
+LP-row infeasibility certificate for [`PMedianFacilityLocationProblem`](@ref).
+Weighting each assignment row by `d_c` and summing gives
+`total_demand = Σ_w Σ_c d_c y[w,c] ≤ Σ_w Q_w z_w` (capacity rows), and with
+`Σ_w z_w = p`, `0 ≤ z ≤ 1` the right-hand side is at most the sum of the `p`
+largest capacities, `top_p_capacity`. The generator keeps
+`top_p_capacity ≤ total_demand / 1.05`.
+"""
+struct PMedianCapacityCertificate
+    top_p_capacity::Float64
+    total_demand::Float64
+end
+
+"""
     PMedianFacilityLocationProblem <: ProblemGenerator
 
-Generator for classic *p-median* facility location problems.
+Capacitated p-median (CPMP): open exactly `p` facilities and assign every
+customer to one open facility, minimizing demand-weighted distance, subject to
+demand-weighted facility capacities (the Osman–Christofides / Lorena–Senne
+benchmark family).
 
-# Overview
+# Formulation
 
-Models the textbook p-median problem: from a set of candidate facility sites,
-open **exactly `p`** of them and assign every customer to one open facility so
-as to minimize the total demand-weighted travel distance. There are no fixed
-opening costs, no budget, and no continuous shipping flows — this is the pure
-median objective, which makes it structurally distinct from the capacitated
-`standard` variant (fixed costs + budget + continuous shipments) and from the
-`two_echelon` variant (supplier→warehouse→customer flows with discrete sizing).
+  - `z[w] ∈ {0,1}` opens facility `w`; `y[w,c] ∈ {0,1}` assigns customer `c`;
+  - assignment `Σ_w y[w,c] = 1`;
+  - strong linking `y[w,c] ≤ z[w]` (disaggregated; keeps the relaxation tight);
+  - cardinality `Σ_w z[w] = p`;
+  - capacity `Σ_c d_c y[w,c] ≤ Q_w z[w]` with heterogeneous site capacities.
 
-A *service capacity in customer count* (`count_cap`) caps how many customers any
-single facility may serve. This count-based capacity is what enables a clean,
-relaxation-aware infeasibility mode: if the `p` open facilities cannot
-collectively absorb all `C` customers (`p * count_cap < C`), the assignment
-constraints are unsatisfiable even in the LP relaxation (pigeonhole on the
-aggregate assignment count).
-
-The model is a proper MIP (`z`, `y` binary); its LP relaxation is the standard
-p-median LP relaxation, with the disaggregated linking `y[w,c] <= z[w]` that
-keeps the relaxation tight (as opposed to the loose aggregate cover form, which
-degenerates).
+Distinct from `standard` (fixed costs + budget + continuous shipments) and
+`two_echelon` (sparse two-level flows with discrete sizing).
 
 # Fields
 
-  - `n_facilities::Int`: Number of candidate facility sites
-  - `n_customers::Int`: Number of customers
-  - `p::Int`: Number of facilities to open (exactly)
-  - `count_cap::Int`: Maximum number of customers a single facility may serve
-  - `facility_locs::Vector{Tuple{Float64,Float64}}`: Facility coordinates
-  - `customer_locs::Vector{Tuple{Float64,Float64}}`: Customer coordinates
-  - `demands::Vector{Float64}`: Customer demand (assignment weight)
-  - `distances::Matrix{Float64}`: Euclidean distance facility→customer (F×C)
+  - `n_facilities::Int`, `n_customers::Int`, `p::Int`
+  - `capacities::Vector{Float64}`: demand capacity `Q_w` of each site
+  - `facility_locs`, `customer_locs`: coordinates
+  - `demands::Vector{Float64}`
+  - `distances::Matrix{Float64}`: `F × C` Euclidean distances
+  - `feasible_witness::Union{Nothing,PMedianWitness}`
+  - `infeasibility_certificate::Union{Nothing,PMedianCapacityCertificate}`
 """
 struct PMedianFacilityLocationProblem <: ProblemGenerator
     n_facilities::Int
     n_customers::Int
     p::Int
-    count_cap::Int
+    capacities::Vector{Float64}
     facility_locs::Vector{Tuple{Float64, Float64}}
     customer_locs::Vector{Tuple{Float64, Float64}}
     demands::Vector{Float64}
     distances::Matrix{Float64}
+    feasible_witness::Union{Nothing, PMedianWitness}
+    infeasibility_certificate::Union{Nothing, PMedianCapacityCertificate}
 end
 
 """
     PMedianFacilityLocationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
-Construct a p-median facility location instance.
+Construct a capacitated p-median instance.
 
-# Arguments
+# Variable-count formula
 
-  - `target_variables`: Target number of decision variables
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
+    total = F · (C + 1)
 
-# Variable count
+(`F` opening plus `F·C` assignment variables), with a sampled customer/site
+ratio `r ∈ 1..3` (CPMP benchmarks use about as many sites as customers), `F = max(2, round(sqrt(target / r)))` and
+`C = max(2, round(target / F) - 1)`. `p ∈ [F/10, F/4]` (at least 1, at most `C - 1`).
+No size cap.
 
-The model has assignment variables `y[w,c]` (F×C) plus opening variables
-`z[w]` (F), so:
+# Feasibility
 
-    total_variables = n_facilities * n_customers + n_facilities
-                    = n_facilities * (n_customers + 1)
+Capacities are `Q_w = (total_demand / p) · ρ · U(0.8, 1.25)` with a sampled
+tightness `ρ ∈ [0.8, 1.3]`.
 
-Dimensions `n_facilities` and `n_customers` are sized in the constructor to hit
-`target_variables`. The number of facilities to open is `p ∈ [2, max(2, F/3)]`.
-
-# Feasibility (relaxation-aware)
-
-  - `feasible`/`unknown`: choose `count_cap` generously so that
-    `p * count_cap >= C` with a margin (the `p` open facilities can collectively
-    serve every customer). Assigning each customer to its nearest open facility is
-    then admissible; this point is also feasible for the LP relaxation. `unknown`
-    uses the same generous sizing (biased feasible without forcing).
-  - `infeasible`: set `count_cap = floor(C * f / p)` with `f ∈ [0.6, 0.9]`, so
-    `p * count_cap < C`. At most `p` facilities open, each serving at most
-    `count_cap` customers, so at most `p * count_cap < C` customers can be
-    assigned — yet every customer must be assigned exactly once. The aggregate
-    assignment count `sum_{w,c} y[w,c] = C` cannot be covered by the aggregate
-    service capacity `count_cap * sum_w z[w] = count_cap * p < C`, so the
-    relaxation is infeasible.
+  - `feasible`: `p` facilities are planted (greedy weighted p-median seeds),
+    every customer is assigned to its nearest planted site, and a planted site
+    whose load exceeds its drawn capacity is expanded to 1.02–1.12× that load.
+    Capacities therefore stay tight (many bind in the LP). Stored as a
+    [`PMedianWitness`](@ref).
+  - `infeasible`: capacities are scaled so the `p` largest sum to
+    `total_demand / (1.05..1.25)` ([`PMedianCapacityCertificate`](@ref)). The
+    proof aggregates every assignment and capacity row with the cardinality
+    row, so presolve does not see it.
+  - `unknown`: `ρ ∈ [0.8, 1.3]` as drawn. The LP is feasible whenever the `p`
+    largest capacities cover demand (usually, not always); the integer model
+    additionally faces a bin-packing question, so the instance is genuinely
+    undetermined.
 """
 function PMedianFacilityLocationProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
 
-    # Scale-tiered ranges
-    if target_variables <= 100
-        min_facilities, max_facilities = 2, 20
-        min_customers, max_customers = 2, 40
-        grid_width = rand(rng, 200.0:50.0:800.0)
-        grid_height = rand(rng, 200.0:50.0:800.0)
-        min_demand, max_demand = rand(rng, 5.0:1.0:20.0), rand(rng, 50.0:10.0:150.0)
-    elseif target_variables <= 1000
-        min_facilities, max_facilities = 3, 100
-        min_customers, max_customers = 5, 200
-        grid_width = rand(rng, 500.0:100.0:2000.0)
-        grid_height = rand(rng, 500.0:100.0:2000.0)
-        min_demand, max_demand = rand(rng, 10.0:2.0:30.0), rand(rng, 80.0:20.0:200.0)
-    else
-        min_facilities, max_facilities = 5, 500
-        min_customers, max_customers = 10, 2000
-        grid_width = rand(rng, 1000.0:200.0:5000.0)
-        grid_height = rand(rng, 1000.0:200.0:5000.0)
-        min_demand, max_demand = rand(rng, 20.0:5.0:60.0), rand(rng, 150.0:50.0:500.0)
-    end
+    ratio = rand(rng, 1:3)
+    F = max(2, round(Int, sqrt(target_variables / ratio)))
+    C = max(2, round(Int, target_variables / F) - 1)
+    p_lo = clamp(fld(F, 10), 1, F)
+    p_hi = clamp(fld(F, 4), max(p_lo, 2), F)
+    p = rand(rng, p_lo:p_hi)
+    p = min(p, C - 1, F)
+    p = max(p, 1)
 
-    # Size n_facilities, n_customers so F*(C+1) ~ target_variables.
-    best_n_facilities = min_facilities
-    best_n_customers = min_customers
-    best_error = Inf
+    span = rand(rng, 500.0:100.0:3000.0)
+    min_demand, max_demand = rand(rng, 5.0:5.0:30.0), rand(rng, 80.0:20.0:300.0)
+    facility_locs = [(span * rand(rng), span * rand(rng)) for _ in 1:F]
+    n_clusters = max(2, div(C, 15))
+    centers = [(span * rand(rng), span * rand(rng)) for _ in 1:n_clusters]
+    customer_locs = _fl_clustered_points(rng, C, centers, span / 10, span; rural_fraction=0.1)
 
-    for n_facilities in min_facilities:max_facilities
-        n_customers_exact = (target_variables / n_facilities) - 1
-        if n_customers_exact >= min_customers && n_customers_exact <= max_customers
-            n_customers = round(Int, n_customers_exact)
-            actual_vars = n_facilities * (n_customers + 1)
-            error = abs(actual_vars - target_variables) / target_variables
-            if error < best_error
-                best_error = error
-                best_n_facilities = n_facilities
-                best_n_customers = n_customers
-            end
-        end
-    end
-
-    if best_error > 0.1
-        n_facilities_approx = max(
-            min_facilities, min(max_facilities, round(Int, sqrt(target_variables / 4)))
-        )
-        n_customers_approx = max(
-            min_customers,
-            min(max_customers, round(Int, (target_variables / n_facilities_approx) - 1)),
-        )
-        best_n_facilities = n_facilities_approx
-        best_n_customers = n_customers_approx
-    end
-
-    n_facilities = best_n_facilities
-    n_customers = best_n_customers
-
-    # Number of facilities to open: p in [2, max(2, F/3)], capped below F.
-    p_hi = max(2, fld(n_facilities, 3))
-    p_hi = min(p_hi, n_facilities)
-    p_lo = min(2, p_hi)
-    p = p_lo == p_hi ? p_lo : rand(rng, p_lo:p_hi)
-
-    # For the infeasible mode the pigeonhole needs p < C (so that even
-    # count_cap=1 yields p*count_cap < C). Shrink p if necessary — allow p down to
-    # 1 (the 1-median), so the shrink still works when C is as small as 2. Flooring
-    # at p_lo (=2) would leave p == C == 2, and the later count_cap >= 1 clamp would
-    # then permit a fully feasible assignment despite an `infeasible` request.
-    if feasibility_status == infeasible && p >= n_customers
-        p = max(1, n_customers - 1)
-    end
-
-    # Facility candidate sites: uniform over the grid.
-    facility_locs = [(grid_width * rand(rng), grid_height * rand(rng)) for _ in 1:n_facilities]
-
-    # Customers clustered into "cities".
-    n_clusters = max(2, div(n_customers, 15))
-    cluster_centers = [(grid_width * rand(rng), grid_height * rand(rng)) for _ in 1:n_clusters]
-    customer_locs = Tuple{Float64, Float64}[]
-    for _ in 1:n_customers
-        center = rand(rng, cluster_centers)
-        x = clamp(center[1] + randn(rng) * (grid_width / 10), 0.0, grid_width)
-        y = clamp(center[2] + randn(rng) * (grid_height / 10), 0.0, grid_height)
-        push!(customer_locs, (x, y))
-    end
-
-    # Log-normal demands.
     log_mean = log(sqrt(min_demand * max_demand))
     log_std = log(max_demand / min_demand) / 4
     demands = [
-        clamp(exp(rand(rng, Normal(log_mean, log_std))), min_demand, max_demand) for
-        _ in 1:n_customers
+        round(clamp(exp(rand(rng, Normal(log_mean, log_std))), min_demand, max_demand); digits=2)
+        for _ in 1:C
     ]
-    demands = round.(demands; digits=2)
+    total_demand = sum(demands)
 
-    # Euclidean distances facility→customer.
-    distances = zeros(n_facilities, n_customers)
-    for w in 1:n_facilities, c in 1:n_customers
-        distances[w, c] = sqrt(
-            (facility_locs[w][1] - customer_locs[c][1])^2 +
-            (facility_locs[w][2] - customer_locs[c][2])^2,
-        )
+    distances = Matrix{Float64}(undef, F, C)
+    for c in 1:C, w in 1:F
+        distances[w, c] = round(_fl_dist(facility_locs[w], customer_locs[c]); digits=3)
     end
 
-    # --- Feasibility handling via the count-based service capacity ---
-    actual_status = feasibility_status == infeasible ? infeasible : feasible
+    # Capacity tightness: with F ≈ 4–10p sites drawn at U(0.8, 1.25) × total/p,
+    # the p largest sum to ≈ 1.2ρ × demand, so ρ ≈ 0.83 is the LP threshold.
+    rho = rand(rng, Uniform(0.8, 1.3))
+    capacities = [
+        round(total_demand / p * rho * rand(rng, Uniform(0.8, 1.25)); digits=2) for _ in 1:F
+    ]
 
-    if actual_status == feasible
-        # Generous capacity: the p open facilities can collectively serve all C
-        # customers with a margin. count_cap >= ceil(C / p) * slack, capped at C.
-        base = ceil(Int, n_customers / p)
-        slack = rand(rng, 1.2:0.1:1.8)
-        count_cap = min(n_customers, max(base, ceil(Int, base * slack)))
-        # Guarantee p * count_cap >= C with margin (defensive).
-        while p * count_cap < n_customers
-            count_cap += 1
+    witness = nothing
+    certificate = nothing
+    if feasibility_status == feasible
+        # Greedy weighted p-median seeds: each step opens the site that most
+        # reduces demand-weighted distance to the nearest open site.
+        best = fill(Inf, C)
+        open = Int[]
+        for _ in 1:p
+            gain_best, pick = -Inf, 0
+            for w in 1:F
+                w in open && continue
+                gain = 0.0
+                for c in 1:C
+                    gain += demands[c] * (min(best[c], 4span) - min(best[c], distances[w, c]))
+                end
+                gain > gain_best && ((gain_best, pick) = (gain, w))
+            end
+            push!(open, pick)
+            for c in 1:C
+                best[c] = min(best[c], distances[pick, c])
+            end
         end
-    else
-        # Pigeonhole infeasibility: p * count_cap < C.
-        f = rand(rng, 0.6:0.05:0.9)
-        count_cap = max(1, fld(round(Int, n_customers * f), p))
-        # Defensive: ensure strict shortfall p * count_cap < C.
-        while p * count_cap >= n_customers && count_cap > 1
-            count_cap -= 1
+        # Every customer goes to its nearest planted site; a planted site whose
+        # load exceeds its drawn capacity is expanded to just cover it (2-12%
+        # headroom), so capacities stay tight and binding in the LP.
+        assignment = [open[argmin([distances[w, c] for w in open])] for c in 1:C]
+        load = zeros(F)
+        for c in 1:C
+            load[assignment[c]] += demands[c]
         end
-        if p * count_cap >= n_customers
-            count_cap = max(1, fld(n_customers - 1, p))
+        for w in open
+            need = load[w] * rand(rng, Uniform(1.02, 1.12))
+            capacities[w] < need && (capacities[w] = ceil(need; digits=2))
         end
+        witness = PMedianWitness(sort!(open), assignment)
+    elseif feasibility_status == infeasible
+        top = sum(partialsort(capacities, 1:p; rev=true))
+        shrink = total_demand / rand(rng, Uniform(1.05, 1.25)) / top
+        capacities .= floor.(capacities .* shrink; digits=2)
+        top = sum(partialsort(capacities, 1:p; rev=true))
+        certificate = PMedianCapacityCertificate(top, total_demand)
     end
 
     return PMedianFacilityLocationProblem(
-        n_facilities, n_customers, p, count_cap, facility_locs, customer_locs, demands, distances
+        F,
+        C,
+        p,
+        capacities,
+        facility_locs,
+        customer_locs,
+        demands,
+        distances,
+        witness,
+        certificate,
     )
 end
 
 """
     build_model(prob::PMedianFacilityLocationProblem)
 
-Build a JuMP model for the p-median facility location problem. Deterministic —
-uses only data from the struct fields.
-
-# Returns
-
-  - `model`: The JuMP model
+Build the capacitated p-median model. Deterministic — uses only data from the
+struct fields.
 """
 function build_model(prob::PMedianFacilityLocationProblem)
     model = Model()
+    F, C = prob.n_facilities, prob.n_customers
 
-    F = prob.n_facilities
-    C = prob.n_customers
-
-    # Decision variables
-    @variable(model, z[1:F], Bin)            # open facility w
-    @variable(model, y[1:F, 1:C], Bin)       # assign customer c to facility w
-
-    # Objective: minimize total demand-weighted travel distance.
+    @variable(model, z[1:F], Bin)
+    @variable(model, y[1:F, 1:C], Bin)
     @objective(
         model, Min, sum(prob.distances[w, c] * prob.demands[c] * y[w, c] for w in 1:F, c in 1:C)
     )
-
-    # Each customer assigned to exactly one facility.
     for c in 1:C
         @constraint(model, sum(y[w, c] for w in 1:F) == 1)
     end
-
-    # Disaggregated (tight) linking: can only assign to an open facility.
-    for w in 1:F, c in 1:C
+    for c in 1:C, w in 1:F
         @constraint(model, y[w, c] <= z[w])
     end
-
-    # Open exactly p facilities.
-    @constraint(model, sum(z[w] for w in 1:F) == prob.p)
-
-    # Service capacity in customer count, active only at open facilities.
+    @constraint(model, sum(z) == prob.p)
     for w in 1:F
-        @constraint(model, sum(y[w, c] for c in 1:C) <= prob.count_cap * z[w])
+        @constraint(model, sum(prob.demands[c] * y[w, c] for c in 1:C) <= prob.capacities[w] * z[w])
     end
-
     return model
 end
 
-# Register the variant
 register_variant(
     :facility_location,
     :p_median,
     PMedianFacilityLocationProblem,
-    "Classic p-median: open exactly p facilities and assign every customer to minimize demand-weighted distance, with count-based service capacity",
+    "Capacitated p-median: open exactly p sites and assign every customer to one, minimizing demand-weighted distance under demand-weighted site capacities",
 )
