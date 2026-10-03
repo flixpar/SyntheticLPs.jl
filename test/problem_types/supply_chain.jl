@@ -27,7 +27,21 @@
         @test abs(num_variables(model) - target) <= 0.25 * target
         @test p.n_products >= 2
 
-        if status == infeasible
+        if status == infeasible && p.infeasibility_certificate isa SyntheticLPs.NetworkPlanningResourceCertificate
+            cert = p.infeasibility_certificate
+            tau = cert.period
+            @test cert.cumulative_demand ≈ [sum(p.demand[:, k, 1:tau]) for k in 1:p.n_products]
+            @test cert.initial_stock ≈ vec(sum(p.initial_inventory; dims=1))
+            @test cert.min_resource_use == [minimum(p.resource_use[:, k]) for k in 1:p.n_products]
+            required = sum(
+                cert.min_resource_use[k] * max(0.0, cert.cumulative_demand[k] - cert.initial_stock[k]) for
+                k in 1:p.n_products
+            )
+            @test cert.required_resource ≈ required
+            @test cert.available_resource ≈ sum(p.plant_capacity[:, 1:tau])
+            @test cert.margin ≈ required - cert.available_resource
+            @test cert.margin > 0.05 * required
+        elseif status == infeasible
             cert = p.infeasibility_certificate
             k, tau = cert.product, cert.period
             demand = sum(p.demand[:, k, 1:tau])
@@ -55,7 +69,23 @@
         @test 2 * P * K * T + A == maximum_target
         @test C > 0
     end
+    # Regression guard for the 50k presolve collapse: the degree target is
+    # absolute, so large instances keep several lanes per demand node instead
+    # of a handful of plants feeding thousands of singleton demand rows.
+    for target in (50_000, 100_000), profile in (:regional_stable, :seasonal_prebuild, :disruption)
+        P, C, K, T, A = SyntheticLPs._choose_network_planning_dimensions(target, profile)
+        @test 2 * P * K * T + A == target
+        @test A / (C * K * T) >= first(SyntheticLPs._network_degree_range(profile)) - 0.05
+        @test P >= 20
+    end
     large_problem = SyntheticLPs.SupplyChainNetworkPlanningProblem(100_000, unknown, 0)
+    node_degree = Dict{NTuple{3, Int}, Int}()
+    for (_, c, k, t) in large_problem.shipment_arcs
+        node_degree[(c, k, t)] = get(node_degree, (c, k, t), 0) + 1
+    end
+    @test length(node_degree) ==
+        large_problem.n_customers * large_problem.n_products * large_problem.n_periods
+    @test minimum(values(node_degree)) >= 2
     @test 2 * large_problem.n_plants * large_problem.n_products * large_problem.n_periods +
           length(large_problem.shipment_arcs) == 100_000
     large_error = try
@@ -155,8 +185,10 @@
                 1 <= a[3] <= p.n_products &&
                 1 <= a[4] <= p.n_periods for a in p.shipment_arcs
         )
-        _, density_hi = SyntheticLPs._network_density(p.profile)
-        max_degree = min(p.n_plants, max(2, ceil(Int, density_hi * p.n_plants)))
+        max_degree = SyntheticLPs._network_max_degree(p.profile, p.n_plants)
+        min_degree = SyntheticLPs._network_min_degree(
+            length(p.shipment_arcs), p.n_customers * p.n_products * p.n_periods, p.n_plants
+        )
         for customer in 1:p.n_customers, product in 1:p.n_products, period in 1:p.n_periods
             degree = count(
                 a -> a[2] == customer && a[3] == product && a[4] == period, p.shipment_arcs
@@ -166,7 +198,7 @@
             else
                 max_degree
             end
-            @test 1 <= degree <= period_max
+            @test min(min_degree, period_max) <= degree <= period_max
         end
         @test all(maximum(p.specialization[:, k]) > 1.2 for k in 1:p.n_products)
     end
@@ -318,7 +350,7 @@
         _, p = generate_problem("supply_chain/network_planning", target, unknown, seed)
         scenario = p.nominal_scenario
         push!(unknown_supply_factors, scenario.supply_factor)
-        @test 0.65 <= scenario.supply_factor <= 1.20
+        @test 0.66 <= scenario.supply_factor <= 1.14
         @test 0.92 <= scenario.lane_factor <= 1.14
         @test scenario.minimum_local_service >= 1.03 - 1e-12
         @test all(
@@ -391,29 +423,204 @@
     end
 end
 
+
+# Shared helpers for the multi-echelon network variants (standard, carbon,
+# multi_product): exact row formula and planted-plan evaluation.
+function scn_expected_rows(net)
+    T = net.n_periods
+    ship_keys = SyntheticLPs._scn_ship_keys(net)
+    line_rows = length(
+        unique(
+            (net.lanes[l][1], k, t) for
+            (l, k, t) in ship_keys if isfinite(net.line_capacity[net.lanes[l][1], k])
+        ),
+    )
+    lane_rows = count(isfinite, net.lane_capacity) * T
+    mode_rows = count(mi -> all(isfinite, net.mode_capacity[mi, :]), eachindex(net.modes)) * T
+    demand_rows = sum(length(net.customer_products[c]) for c in 1:net.n_customers) * T
+    return net.n_plants * T + line_rows + lane_rows + mode_rows + net.n_dcs * net.n_products * T +
+           2 * net.n_dcs * T + demand_rows + (net.design ? length(net.arcs) * T : 0)
+end
+
+function scn_witness_point(model, net, w)
+    point = Dict{VariableRef, Float64}()
+    if net.design
+        for d in 1:net.n_dcs
+            point[model[:open][d]] = w.open[d]
+        end
+    end
+    for (i, v) in enumerate(model[:ship])
+        point[v] = w.ship[i]
+    end
+    for (i, v) in enumerate(model[:deliver])
+        point[v] = w.deliver[i]
+    end
+    for I in CartesianIndices(w.stock)
+        point[model[:stock][I]] = w.stock[I]
+    end
+    return point
+end
+
+@testset "Supply-chain multi-echelon network variants" begin
+    @test Set(list_variants(:supply_chain)) ==
+        Set([:standard, :carbon, :multi_product, :network_planning, :single_source])
+    @test problem_info(:supply_chain)[:default_variant] == :standard
+
+    refs = ("supply_chain/standard", "supply_chain/carbon", "supply_chain/multi_product")
+
+    # Exact variable and row formulas, size fidelity, and design structure.
+    for ref in refs, target in (100, 1000, 6000), status in (feasible, infeasible, unknown), seed in 0:1
+        model, p = generate_problem(ref, target, status, seed; relax_integer=false)
+        net = p.network
+        @test num_variables(model) == SyntheticLPs._scn_num_variables(net)
+        extra_rows = ref == "supply_chain/carbon" ? net.n_periods : 0
+        @test num_constraints(model; count_variable_in_set_constraints=false) ==
+            scn_expected_rows(net) + extra_rows
+        tolerance = target >= 1000 ? max(0.02 * target, net.n_products * net.n_periods) : 0.3 * target
+        @test abs(num_variables(model) - target) <= tolerance
+        @test net.design == (ref != "supply_chain/multi_product")
+        @test count(is_binary, all_variables(model)) == (net.design ? net.n_dcs : 0)
+        # Every customer reaches at least two DCs, every DC is supplied with
+        # every product, and rows grow with the instance (no wide-thin LPs).
+        @test all(count(a -> a[2] == c, net.arcs) >= min(2, net.n_dcs) for c in 1:net.n_customers)
+        for d in 1:net.n_dcs, k in 1:net.n_products
+            @test any(l[2] == d && k in net.plant_products[l[1]] for l in net.lanes)
+        end
+        if target >= 1000
+            @test num_constraints(model; count_variable_in_set_constraints=false) >=
+                0.3 * num_variables(model)
+        end
+        @test (p.feasible_witness !== nothing) == (status == feasible)
+        @test (p.infeasibility_certificate !== nothing) == (status == infeasible)
+    end
+
+    # Large targets build quickly and land on the target.
+    for ref in refs
+        _, p = generate_problem(ref, 100_000, feasible, 0)
+        @test abs(SyntheticLPs._scn_num_variables(p.network) - 100_000) <= 0.01 * 100_000
+    end
+
+    # Planted plans satisfy every row of the unrelaxed model (binary opens).
+    for ref in refs, target in (60, 800, 4000), seed in 0:2
+        model, p = generate_problem(ref, target, feasible, seed; relax_integer=false)
+        w = p.feasible_witness
+        @test all(x -> x == 0.0 || x == 1.0, w.open)
+        point = scn_witness_point(model, p.network, w)
+        @test isempty(primal_feasibility_report(model, point; atol=1e-7))
+    end
+
+    # Regional throughput certificate (standard).
+    for seed in 0:5, target in (300, 3000)
+        _, p = generate_problem("supply_chain/standard", target, infeasible, seed)
+        net, cert = p.network, p.infeasibility_certificate
+        @test cert.customers == findall(==(cert.region), net.customer_region)
+        @test cert.dcs ==
+            sort(unique(d for (d, c) in net.arcs if net.customer_region[c] == cert.region))
+        demand = sum(
+            net.demand[c, k, cert.period] for c in cert.customers for k in net.customer_products[c]
+        )
+        @test cert.demand ≈ demand
+        @test cert.throughput ≈ sum(net.dc_throughput[d] for d in cert.dcs)
+        @test cert.margin ≈ demand - cert.throughput
+        @test cert.margin > 0.05 * demand
+    end
+
+    # Carbon lower bound recomputed independently.
+    for seed in 0:5, target in (300, 3000)
+        _, p = generate_problem("supply_chain/carbon", target, infeasible, seed)
+        net, cert = p.network, p.infeasibility_certificate
+        inbound = [
+            minimum(p.lane_emission[l] for l in eachindex(net.lanes) if net.lanes[l][2] == d) for
+            d in 1:net.n_dcs
+        ]
+        unit = [
+            minimum(
+                p.arc_emission[a] + inbound[net.arcs[a][1]] for
+                a in eachindex(net.arcs) if net.arcs[a][2] == c
+            ) for c in 1:net.n_customers
+        ]
+        bound =
+            sum(
+                net.demand[c, k, t] * unit[c] for c in 1:net.n_customers for
+                k in net.customer_products[c] for t in 1:net.n_periods
+            ) - sum(inbound[d] * net.initial_stock[d, k] for d in 1:net.n_dcs, k in 1:net.n_products)
+        @test cert.lower_bound ≈ bound
+        @test cert.budget ≈ sum(p.period_budget)
+        @test p.carbon_budget ≈ cert.budget
+        @test cert.margin ≈ bound - cert.budget
+        @test cert.margin > 0.05 * bound
+        @test all(>(0), p.period_budget)
+    end
+    # Feasible carbon budgets sit just above the planted plan's emissions.
+    for seed in 0:3
+        model, p = generate_problem("supply_chain/carbon", 1500, feasible, seed)
+        @test p.plan_emissions <= p.carbon_budget <= 1.05 * p.plan_emissions + 1e-6
+        @test length(model[:carbon_cap]) == p.network.n_periods
+    end
+
+    # Cumulative product-supply certificate (multi_product).
+    for seed in 0:5, target in (300, 3000)
+        _, p = generate_problem("supply_chain/multi_product", target, infeasible, seed)
+        net, cert = p.network, p.infeasibility_certificate
+        k, tau = cert.product, cert.period
+        @test cert.plants == [q for q in 1:net.n_plants if k in net.plant_products[q]]
+        @test cert.demand ≈ sum(net.demand[:, k, 1:tau])
+        @test cert.initial_stock ≈ sum(net.initial_stock[:, k])
+        bound =
+            cert.initial_stock + sum(
+                min(net.line_capacity[q, k], net.plant_capacity[q, t] / net.resource_use[q, k]) for
+                q in cert.plants, t in 1:tau
+            )
+        @test cert.supply_bound ≈ bound
+        @test cert.margin ≈ cert.demand - bound
+        @test cert.margin > 0.05 * cert.demand
+    end
+
+    # Unknown requests scale capacities by one recorded network-wide factor.
+    for ref in refs, seed in 0:5
+        _, p = generate_problem(ref, 800, unknown, seed)
+        @test 0.60 <= p.capacity_factor <= 1.05
+        @test p.feasible_witness === nothing && p.infeasibility_certificate === nothing
+    end
+
+    # Reproducibility of every stored datum.
+    for ref in refs
+        _, a = generate_problem(ref, 900, unknown, 11)
+        _, b = generate_problem(ref, 900, unknown, 11)
+        for name in fieldnames(typeof(a.network))
+            @test isequal(getfield(a.network, name), getfield(b.network, name))
+        end
+    end
+end
+
 @testset "Supply Chain Feasibility Contracts" begin
     if HAS_HIGHS
-        # supply_chain/standard reserves fallback routes within its variable budget.
-        # Capacity smoothing must use that same capped coverage count; otherwise
-        # tiny requested-feasible instances can remain infeasible.
-        for s in 1:10
-            m, _ = generate_problem("supply_chain/standard", 50, feasible, s)
-            @test num_variables(m) == 50
+        function sc_status(m)
             set_optimizer(m, HiGHS.Optimizer)
             set_silent(m)
             optimize!(m)
-            @test termination_status(m) == MOI.OPTIMAL
+            return termination_status(m)
+        end
+        for ref in ("supply_chain/standard", "supply_chain/carbon", "supply_chain/multi_product")
+            for target in (300, 2000), seed in 0:2
+                m, _ = generate_problem(ref, target, feasible, seed)
+                @test sc_status(m) == MOI.OPTIMAL
+                m, _ = generate_problem(ref, target, infeasible, seed)
+                @test sc_status(m) == MOI.INFEASIBLE
+            end
+            # Unknown is two-sided over a seed block.
+            outcomes = [sc_status(first(generate_problem(ref, 1000, unknown, s))) for s in 0:11]
+            @test count(==(MOI.OPTIMAL), outcomes) >= 2
+            @test count(==(MOI.INFEASIBLE), outcomes) >= 1
+            @test all(in((MOI.OPTIMAL, MOI.INFEASIBLE)), outcomes)
         end
 
         # The network-planning variant has a solver-independent planted plan for
-        # feasible requests and a cumulative product cut for infeasible requests.
+        # feasible requests and a resource or product cut for infeasible requests.
         for status in (feasible, infeasible), s in 0:5
             m, _ = generate_problem("supply_chain/network_planning", 240, status, s)
-            set_optimizer(m, HiGHS.Optimizer)
-            set_silent(m)
-            optimize!(m)
             expected = status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE
-            @test termination_status(m) == expected
+            @test sc_status(m) == expected
         end
 
         # Unknown is a mixed nominal distribution, not an implicit
@@ -432,10 +639,7 @@ end
                 )
                 unknown_singleton_cuts += incoming_capacity + 1e-10 < p.demand[c, k, t]
             end
-            set_optimizer(m, HiGHS.Optimizer)
-            set_silent(m)
-            optimize!(m)
-            ts = termination_status(m)
+            ts = sc_status(m)
             unknown_optimal += ts == MOI.OPTIMAL
             unknown_infeasible += ts in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
         end

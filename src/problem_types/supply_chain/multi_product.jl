@@ -1,569 +1,136 @@
 using JuMP
 using Random
-using StatsBase
 using Distributions
+
+"""
+Cumulative product-supply certificate. Through period `period`, deliveries of
+`product` must cover `demand` (its demand rows); DC balance rows with
+nonnegative stock limit deliveries to `initial_stock` plus linehaul inflow; and
+every capable plant's shipments of the product are limited each period by its
+product-line row and by its shared resource row divided by the product's
+resource use. Summing gives at most `supply_bound`, below `demand` by `margin`.
+"""
+struct SupplyChainProductCertificate
+    product::Int
+    period::Int
+    plants::Vector{Int}
+    demand::Float64
+    initial_stock::Float64
+    supply_bound::Float64
+    margin::Float64
+end
 
 """
     MultiProductSupplyChainProblem <: ProblemGenerator
 
-Generator for multi-commodity capacitated facility-location / supply-chain
-problems with several product types shipped over a shared transportation network.
-
-This is a multi-commodity extension of the standard supply-chain network design
-problem. Each (facility, customer, mode) arc carries a separate flow variable per
-product, demand is specified per (customer, product), facility capacity is
-specified per (facility, product) and linked to the facility-open decision, and
-transportation modes have a single shared capacity across all products.
+Multi-commodity, multi-echelon, multi-period production–distribution LP over an
+existing plant -> DC -> customer network (no design decisions).
 
 # Overview
 
-Models strategic multi-product supply-chain network design. The decisions open
-facilities (binary `y`) and ship per-product demand from open facilities to
-customers over available transportation modes (continuous `x[arc, product]`).
-The objective minimizes fixed facility cost plus transportation cost summed over
-all products. Constraints satisfy per-product customer demand, gate per-product
-shipments by per-(facility, product) capacity (only when the facility is open),
-limit total throughput at each facility by a shared per-facility capacity, and
-limit aggregate (cross-product) shipment volume on each transportation mode.
+3–12 products; plants are specialized (each makes a random subset, every
+product has at least one source) and each DC is linked to its nearest plants
+plus the nearest source of any product they miss. Variables: truck shipments
+per lane × product × period, DC stock per DC × product × period, and
+deliveries per arc × ordered product × period (customers order ~60% of the
+products). Coupling rows beyond the shared balance backbone
+([`_scn_build_model`](@ref)):
 
-# Fields
+  - product-line capacity: `Σ_{lanes from p} ship[·, k, t] ≤ line_capacity[p, k]`;
+  - shared plant resource: `Σ_k resource_use[p,k] Σ ship ≤ plant_capacity[p, t]`;
+  - **lane bundle capacity**: `Σ_k ship[lane, k, t] ≤ lane_capacity[lane]` — the
+    multicommodity coupling, since products compete for the same trucks;
+  - DC throughput and storage shared across products.
 
-  - `n_facilities::Int`: Number of potential facility locations
-  - `n_customers::Int`: Number of customer locations
-  - `n_products::Int`: Number of distinct product types (commodities)
-  - `transport_modes::Vector{String}`: Selected transport modes
-  - `facility_locs::Vector{Tuple{Float64,Float64}}`: Geographic facility locations
-  - `customer_locs::Vector{Tuple{Float64,Float64}}`: Geographic customer locations
-  - `cluster_centers::Vector{Tuple{Float64,Float64}}`: Cluster centers for customer distribution
-  - `cluster_weights::Vector{Float64}`: Weights for cluster importance
-  - `fixed_costs::Dict{Int, Float64}`: Fixed cost to open each facility
-  - `demands::Dict{Int, Float64}`: Aggregate demand at each customer (sum over products)
-  - `capacities::Dict{Int, Float64}`: Shared total capacity at each facility
-  - `transport_costs::Dict{Tuple{Int,Int,String}, Float64}`: Transport cost per (facility, customer, mode)
-  - `mode_capacities::Dict{String, Float64}`: Total (cross-product) capacity per transport mode
-  - `total_demand::Float64`: Total demand across all customers and products
-  - `product_demands::Dict{Tuple{Int,Int}, Float64}`: Demand per (customer, product)
-  - `product_capacities::Dict{Tuple{Int,Int}, Float64}`: Capacity per (facility, product)
+# Feasibility control
+
+  - `feasible`: the planted plan (see `standard`) with every capacity 8–40%
+    above its usage ([`SupplyChainNetworkWitness`](@ref)).
+  - `infeasible`: the product lines of one product are cut so its cumulative
+    supply through a late period is 10–20% short of cumulative demand
+    ([`SupplyChainProductCertificate`](@ref)); a sum over many rows.
+  - `unknown`: all capacities scaled by one supply factor `U(0.60, 1.05)`
+    (`capacity_factor`).
+
+# Size
+
+`Σ_lanes |products(plant)| T + n_dcs K T + Σ_arcs |products(customer)| T`
+variables, within half an arc's worth of the target (targets below 30 → 30).
 """
 struct MultiProductSupplyChainProblem <: ProblemGenerator
-    n_facilities::Int
-    n_customers::Int
-    n_products::Int
-    transport_modes::Vector{String}
-    facility_locs::Vector{Tuple{Float64, Float64}}
-    customer_locs::Vector{Tuple{Float64, Float64}}
-    cluster_centers::Vector{Tuple{Float64, Float64}}
-    cluster_weights::Vector{Float64}
-    fixed_costs::Dict{Int, Float64}
-    demands::Dict{Int, Float64}
-    capacities::Dict{Int, Float64}
-    transport_costs::Dict{Tuple{Int, Int, String}, Float64}
-    mode_capacities::Dict{String, Float64}
-    total_demand::Float64
-    product_demands::Dict{Tuple{Int, Int}, Float64}
-    product_capacities::Dict{Tuple{Int, Int}, Float64}
+    network::SupplyChainNetwork
+    capacity_factor::Float64
+    feasible_witness::Union{Nothing, SupplyChainNetworkWitness}
+    infeasibility_certificate::Union{Nothing, SupplyChainProductCertificate}
+    feasibility_status::FeasibilityStatus
 end
 
 """
-    MultiProductSupplyChainProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+    _multi_product_supply_bound(net, k, tau)
 
-Construct a multi-product (multi-commodity) supply-chain problem instance.
-
-# Variable count
-
-The model has `y[1:n_facilities]` (binary) plus `x[arc, product]` (continuous),
-where `arc` ranges over the available (facility, customer, mode) routes:
-
-    n_vars = n_facilities + n_arcs * n_products
-
-Because the per-product flow set multiplies the arc count by `n_products`, the
-dimensions are sized with `n_products` factored in so the instance hits the
-requested `target_variables`. We approximate
-`n_arcs ≈ n_facilities * n_customers * n_modes * density`, pick `n_products` and
-`n_modes` up front, then scale `n_facilities` / `n_customers` accordingly.
-
-# Sophisticated feasibility logic
-
-  - **Geographic clustering**: Customers clustered with Dirichlet-weighted clusters
-  - **Facility placement**: Beta-distributed strategic placement near markets
-  - **K-nearest connectivity**: feasible instances connect each customer to K nearest facilities via a fallback mode
-  - **Capacity smoothing**: feasible instances widen per-product, shared per-facility, and per-mode capacities to admit a flow
-
-# Arguments
-
-  - `target_variables`: Target number of variables (≈ n_facilities + n_arcs × n_products)
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
+Upper bound on cumulative supply of product `k` through `tau`: initial DC stock
+plus, for each capable plant and period, `min(line capacity, plant capacity /
+resource use)`.
 """
+function _multi_product_supply_bound(net::SupplyChainNetwork, k::Int, tau::Int)
+    plants = [p for p in 1:net.n_plants if k in net.plant_products[p]]
+    stock = sum(net.initial_stock[:, k])
+    production = sum(
+        min(net.line_capacity[p, k], net.plant_capacity[p, t] / net.resource_use[p, k]) for p in plants,
+        t in 1:tau
+    )
+    return plants, stock, stock + production
+end
+
 function MultiProductSupplyChainProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
-
-    # --- Pick products / modes / density first, then size the network ---
-    # n_vars = n_facilities + n_arcs * n_products,  n_arcs ≈ n_fac * n_cust * n_modes * density
-    if target_variables <= 250
-        n_products = rand(rng, 2:3)
-        n_transport_modes = rand(rng, DiscreteUniform(1, 2))
-        grid_width = rand(rng, Uniform(200.0, 800.0))
-        grid_height = rand(rng, Uniform(200.0, 800.0))
-        infrastructure_density = rand(rng, Beta(5, 2)) * 0.3 + 0.7  # 0.7-1.0
-        clustering_factor = rand(rng, Beta(3, 2)) * 0.6 + 0.25
-        min_fixed_cost = max(100000.0, rand(rng, LogNormal(log(300000), 0.5)))
-        max_fixed_cost = min_fixed_cost * rand(rng, Uniform(1.8, 3.5))
-        base_demand = rand(rng, Uniform(80.0, 150.0))
-        min_demand = base_demand
-        max_demand = base_demand * rand(rng, Uniform(3.0, 8.0))
-    elseif target_variables <= 1000
-        n_products = rand(rng, 2:4)
-        n_transport_modes = rand(rng, DiscreteUniform(2, 3))
-        grid_width = rand(rng, Uniform(800.0, 2000.0))
-        grid_height = rand(rng, Uniform(800.0, 2000.0))
-        infrastructure_density = rand(rng, Beta(3, 2)) * 0.4 + 0.5  # 0.5-0.9
-        clustering_factor = rand(rng, Beta(2, 3)) * 0.5 + 0.2
-        min_fixed_cost = max(300000.0, rand(rng, LogNormal(log(800000), 0.6)))
-        max_fixed_cost = min_fixed_cost * rand(rng, Uniform(2.0, 4.0))
-        base_demand = rand(rng, Uniform(150.0, 300.0))
-        min_demand = base_demand
-        max_demand = base_demand * rand(rng, Uniform(4.0, 12.0))
-    else
-        n_products = rand(rng, 3:4)
-        n_transport_modes = rand(rng, DiscreteUniform(3, 4))
-        grid_width = rand(rng, Uniform(2000.0, 5000.0))
-        grid_height = rand(rng, Uniform(2000.0, 5000.0))
-        infrastructure_density = rand(rng, Beta(2, 3)) * 0.4 + 0.4  # 0.4-0.8
-        clustering_factor = rand(rng, Beta(1, 3)) * 0.4 + 0.15
-        min_fixed_cost = max(500000.0, rand(rng, LogNormal(log(1500000), 0.7)))
-        max_fixed_cost = min_fixed_cost * rand(rng, Uniform(2.5, 5.0))
-        base_demand = rand(rng, Uniform(300.0, 600.0))
-        min_demand = base_demand
-        max_demand = base_demand * rand(rng, Uniform(6.0, 20.0))
-    end
-
-    # Effective per-arc density: only available routes get a flow variable.
-    # Transport modes and base costs (selected before sizing so the realized
-    # arc density can be calibrated for the actual chosen modes).
-    all_transport_modes = ["truck", "rail", "ship", "air"]
-    transport_base_costs = Dict(
-        "truck" => rand(rng, Gamma(4, 0.25)),
-        "rail" => rand(rng, Gamma(3, 0.2)),
-        "ship" => rand(rng, Gamma(2, 0.15)),
-        "air" => rand(rng, Gamma(6, 0.5)),
-    )
-    transport_modes = sample(
-        rng, all_transport_modes, min(n_transport_modes, length(all_transport_modes)); replace=false
-    )
-
-    capacity_factor = rand(rng, Uniform(1.2, 2.2))
-    mode_capacity_factor = rand(rng, Uniform(0.25, 0.65))
-
-    # --- Calibrate realized arc density ---
-    # An arc (f,c,m) gets a flow variable only if its infrastructure roll
-    # succeeds, and ship/air availability depends on geography, so the realized
-    # density is well below the raw infrastructure_density for non-truck modes.
-    # Estimate the expected number of available arcs PER (facility, customer)
-    # pair by Monte-Carlo over random locations with a throwaway RNG (the main
-    # RNG stream is untouched, preserving reproducibility).
-    function expected_arcs_per_pair()
-        rng = MersenneTwister(seed + 100003)
-        diag = sqrt(grid_width^2 + grid_height^2)
-        trials = 400
-        acc = 0.0
-        for _ in 1:trials
-            fx = grid_width * rand(rng)
-            fy = grid_height * rand(rng)
-            cx = grid_width * rand(rng)
-            cy = grid_height * rand(rng)
-            distance = sqrt((fx - cx)^2 + (fy - cy)^2)
-            for mode in transport_modes
-                prob_available = if mode == "truck"
-                    0.98
-                elseif mode == "rail"
-                    min(0.8, 0.3 + 0.5 * (distance / diag))
-                elseif mode == "ship"
-                    (abs(fy) < grid_height * 0.1 || abs(cy) < grid_height * 0.1) ? 0.8 : 0.0
-                else  # air
-                    distance > diag * 0.3 ? 0.7 : 0.2
-                end
-                acc += prob_available * infrastructure_density
-            end
-        end
-        return max(acc / trials, 0.05)
-    end
-
-    density_per_pair = expected_arcs_per_pair()
-
-    # Target arcs so that n_arcs * n_products ≈ target_variables (y vars are few).
-    target_arcs = max(n_products + 1, (target_variables - 1) / n_products)
-
-    # n_arcs ≈ (n_fac * n_cust) * density_per_pair.  Pick a facility:customer
-    # shape similar to the standard variant (more customers than facilities),
-    # solving n_fac * n_cust = target_arcs / density_per_pair.
-    fac_cust_product = target_arcs / density_per_pair
-    fac_cust_product = max(fac_cust_product, 9.0)
-
-    # Use roughly n_customers ≈ shape * n_facilities.
-    shape = 4.0
-    n_facilities = max(3, round(Int, sqrt(fac_cust_product / shape)))
-    n_customers = max(n_products, round(Int, fac_cust_product / n_facilities))
-
-    # Geographic clusters
-    n_clusters = max(2, round(Int, sqrt(n_customers) * clustering_factor))
-    cluster_centers = [(grid_width * rand(rng), grid_height * rand(rng)) for _ in 1:n_clusters]
-
-    # Facility locations
-    facility_locs = Vector{Tuple{Float64, Float64}}()
-    for _ in 1:n_facilities
-        if rand(rng) < 0.4
-            center = rand(rng, cluster_centers)
-            x = clamp(center[1] + rand(rng, Normal(0, grid_width * 0.12)), 0, grid_width)
-            y = clamp(center[2] + rand(rng, Normal(0, grid_height * 0.12)), 0, grid_height)
-        else
-            x = grid_width * rand(rng, Beta(1.5, 1.5))
-            y = grid_height * rand(rng, Beta(1.5, 1.5))
-        end
-        push!(facility_locs, (x, y))
-    end
-
-    # Customer locations
-    cluster_weights = rand(rng, Dirichlet(ones(n_clusters)))
-    customer_locs = Vector{Tuple{Float64, Float64}}()
-    for _ in 1:n_customers
-        cluster_idx = sample(rng, 1:n_clusters, Weights(cluster_weights))
-        center = cluster_centers[cluster_idx]
-        base_spread = grid_width * (1 - clustering_factor) * 0.08
-        spread = rand(rng, LogNormal(log(base_spread), 0.3))
-        x = clamp(center[1] + rand(rng, Normal(0, spread)), 0, grid_width)
-        y = clamp(center[2] + rand(rng, Normal(0, spread)), 0, grid_height)
-        push!(customer_locs, (x, y))
-    end
-
-    # Fixed costs (market-potential correlated)
-    fixed_costs = Dict{Int, Float64}()
-    for f in 1:n_facilities
-        distances = [
-            sqrt((facility_locs[f][1] - c[1])^2 + (facility_locs[f][2] - c[2])^2) for
-            c in customer_locs
+    net, witness, _ = _scn_instance(rng, target_variables, :multi_product)
+    capacity_factor = 1.0
+    certificate = nothing
+    if feasibility_status == infeasible
+        T = net.n_periods
+        k = rand(rng, 1:net.n_products)
+        tau = rand(rng, max(2, T - 2):T)
+        demand = sum(net.demand[:, k, 1:tau])
+        plants, stock, _ = _multi_product_supply_bound(net, k, tau)
+        goal = demand * rand(rng, Uniform(0.80, 0.90))
+        @assert goal > stock
+        # Per-plant effective rate (never above the plant's resource limit), then
+        # one common scale so the cumulative bound lands on the goal.
+        rate = [
+            min(net.line_capacity[p, k], minimum(net.plant_capacity[p, t] for t in 1:tau) / net.resource_use[p, k]) for
+            p in plants
         ]
-        market_potential = sum(exp.(-distances ./ (grid_width * 0.2)))
-        base_cost =
-            min_fixed_cost +
-            (max_fixed_cost - min_fixed_cost) * (0.2 + 0.5 * market_potential / n_customers)
-        fixed_costs[f] = base_cost * rand(rng, LogNormal(log(1.0), 0.25))
+        scale = (goal - stock) / (tau * sum(rate))
+        for (i, p) in enumerate(plants)
+            net.line_capacity[p, k] = scale * rate[i]
+        end
+        _, _, bound = _multi_product_supply_bound(net, k, tau)
+        certificate = SupplyChainProductCertificate(k, tau, plants, demand, stock, bound, demand - bound)
+        @assert certificate.margin > 0.05 * demand
+    elseif feasibility_status == unknown
+        capacity_factor = rand(rng, Uniform(0.60, 1.05))
+        _scn_scale_capacities!(net, capacity_factor)
     end
-
-    # Aggregate customer demands (cluster-size correlated)
-    demands = Dict{Int, Float64}()
-    for c in 1:n_customers
-        distances = [
-            sqrt((customer_locs[c][1] - center[1])^2 + (customer_locs[c][2] - center[2])^2) for
-            center in cluster_centers
-        ]
-        _, cluster_idx = findmin(distances)
-        base_demand_val =
-            min_demand + (max_demand - min_demand) * (0.2 + 0.8 * cluster_weights[cluster_idx])
-        demands[c] = base_demand_val * rand(rng, LogNormal(log(1.0), 0.4))
-    end
-
-    total_demand = sum(values(demands))
-    avg_capacity = (total_demand / n_facilities) * capacity_factor
-
-    # Shared per-facility capacities
-    capacities = Dict{Int, Float64}()
-    fc_min = minimum(values(fixed_costs))
-    fc_max = maximum(values(fixed_costs))
-    for f in 1:n_facilities
-        relative_cost = (fixed_costs[f] - fc_min) / max(1.0, fc_max - fc_min)
-        capacities[f] = avg_capacity * (0.6 + 0.8 * relative_cost) * rand(rng, Gamma(3, 1/3))
-    end
-
-    # Transport costs and infrastructure availability
-    transport_costs = Dict{Tuple{Int, Int, String}, Float64}()
-    infrastructure = Dict{Tuple{Int, Int, String}, Bool}()
-    max_demand_val = maximum(values(demands))
-    for f in 1:n_facilities
-        for c in 1:n_customers
-            distance = sqrt(
-                (facility_locs[f][1] - customer_locs[c][1])^2 +
-                (facility_locs[f][2] - customer_locs[c][2])^2,
-            )
-            for mode in transport_modes
-                prob_available = if mode == "truck"
-                    0.98
-                elseif mode == "rail"
-                    min(0.8, 0.3 + 0.5 * (distance / sqrt(grid_width^2 + grid_height^2)))
-                elseif mode == "ship"
-                    if any(loc -> abs(loc[2]) < grid_height * 0.1, [facility_locs[f], customer_locs[c]])
-                        0.8
-                    else
-                        0.0
-                    end
-                else  # air
-                    distance > sqrt(grid_width^2 + grid_height^2) * 0.3 ? 0.7 : 0.2
-                end
-                infrastructure[(f, c, mode)] = rand(rng) < prob_available * infrastructure_density
-                if infrastructure[(f, c, mode)]
-                    base_cost = get(transport_base_costs, mode, 1.0)
-                    terrain_factor = rand(rng, LogNormal(log(1.0), 0.15))
-                    volume_factor = 1.0 - 0.25 * (demands[c] / max_demand_val)
-                    efficiency_factor = rand(rng, Beta(3, 2)) * 0.4 + 0.8
-                    transport_costs[(f, c, mode)] =
-                        base_cost * distance * terrain_factor * volume_factor * efficiency_factor
-                end
-            end
-        end
-    end
-
-    # Mode capacities (shared across products)
-    mode_capacities = Dict{String, Float64}()
-    for mode in transport_modes
-        base_capacity = total_demand * mode_capacity_factor
-        mult = if mode == "truck"
-            rand(rng, Gamma(4, 0.25))
-        elseif mode == "rail"
-            rand(rng, Gamma(6, 0.33))
-        elseif mode == "ship"
-            rand(rng, Gamma(9, 0.33))
-        else
-            rand(rng, Gamma(2, 0.25))
-        end
-        mode_capacities[mode] = base_capacity * mult
-    end
-
-    transport_costs = Dict(k => v for (k, v) in transport_costs if infrastructure[k])
-
-    # Per-(customer, product) demands via a product split
-    product_split = rand(rng, Dirichlet(ones(n_products)))
-    product_demands = Dict{Tuple{Int, Int}, Float64}()
-    for c in 1:n_customers, p in 1:n_products
-        product_demands[(c, p)] = demands[c] * product_split[p] * rand(rng, Uniform(0.8, 1.2))
-    end
-
-    # Per-(facility, product) capacities
-    product_capacities = Dict{Tuple{Int, Int}, Float64}()
-    for f in 1:n_facilities, p in 1:n_products
-        product_capacities[(f, p)] = capacities[f] / n_products * rand(rng, Uniform(0.8, 1.2))
-    end
-
-    # --- Feasibility handling ---
-    if feasibility_status == feasible
-        # K-NEAREST CONNECTIVITY via fallback mode
-        fallback_mode = ("truck" in transport_modes) ? "truck" : transport_modes[1]
-        K = min(max(3, ceil(Int, n_facilities ÷ 3)), n_facilities)
-        customers_linked_to_facility = [Int[] for _ in 1:n_facilities]
-        for c in 1:n_customers
-            dvec = [
-                sqrt(
-                    (facility_locs[f][1] - customer_locs[c][1])^2 +
-                    (facility_locs[f][2] - customer_locs[c][2])^2,
-                ) for f in 1:n_facilities
-            ]
-            nearest_idxs = sortperm(dvec)[1:K]
-            for f in nearest_idxs
-                if !haskey(transport_costs, (f, c, fallback_mode))
-                    base_cost = get(transport_base_costs, fallback_mode, 1.0)
-                    terrain_factor = rand(rng, LogNormal(log(1.0), 0.15))
-                    volume_factor = 1.0 - 0.25 * (demands[c] / max_demand_val)
-                    efficiency_factor = rand(rng, Beta(3, 2)) * 0.4 + 0.8
-                    transport_costs[(f, c, fallback_mode)] =
-                        base_cost * dvec[f] * terrain_factor * volume_factor * efficiency_factor
-                end
-                push!(customers_linked_to_facility[f], c)
-            end
-        end
-
-        # Approximate demand share routed to each facility
-        approx_share = zeros(Float64, n_facilities)
-        for f in 1:n_facilities
-            for c in customers_linked_to_facility[f]
-                nlinks = length([
-                    ff for ff in 1:n_facilities if c in customers_linked_to_facility[ff]
-                ])
-                approx_share[f] += demands[c] / max(1, nlinks)
-            end
-        end
-
-        # Widen shared facility capacity to cover its routed share with margin
-        for f in 1:n_facilities
-            if capacities[f] < 1.1 * approx_share[f]
-                capacities[f] = 1.1 * approx_share[f]
-            end
-        end
-
-        # The model enforces the realized per-(customer, product) demands, whose
-        # total can drift above `total_demand` because of the U(0.8, 1.2) jitter
-        # on each product demand. Size all capacities against the ACTUAL realized
-        # demand, not `total_demand`, otherwise the requested-feasible instance
-        # can be genuinely infeasible.
-        effective_demand = sum(values(product_demands))
-
-        # Connectivity-aware capacity guarantee: a customer can only be served by
-        # the facilities it is linked to (via the fallback mode), so an aggregate
-        # per-product total is not enough — capacity could sit at facilities the
-        # customer cannot reach. Size each facility's per-product capacity to
-        # absorb ALL of its linked customers' demand for that product; then
-        # routing every customer to a single linked facility is always feasible.
-        for f in 1:n_facilities
-            for p in 1:n_products
-                linked_demand = if isempty(customers_linked_to_facility[f])
-                    0.0
-                else
-                    sum(product_demands[(c, p)] for c in customers_linked_to_facility[f])
-                end
-                needed = 1.1 * linked_demand
-                if product_capacities[(f, p)] < needed
-                    product_capacities[(f, p)] = needed
-                end
-            end
-        end
-
-        # Keep each shared facility capacity at least the sum of its per-product
-        # caps (so the per-facility constraint never undercuts the per-product ones).
-        for f in 1:n_facilities
-            sum_pp = sum(product_capacities[(f, p)] for p in 1:n_products)
-            if capacities[f] < sum_pp
-                capacities[f] = sum_pp
-            end
-        end
-
-        # Ensure total facility capacity covers the realized demand.
-        if sum(values(capacities)) < 1.05 * effective_demand
-            scale = 1.05 * effective_demand / max(sum(values(capacities)), eps())
-            for f in 1:n_facilities
-                capacities[f] *= scale
-                for p in 1:n_products
-                    product_capacities[(f, p)] *= scale
-                end
-            end
-        end
-
-        # Ensure mode capacities can move all realized demand (fallback alone is enough)
-        if mode_capacities[fallback_mode] < 1.1 * effective_demand
-            mode_capacities[fallback_mode] = 1.1 * effective_demand
-        end
-        if sum(mode_capacities[m] for m in transport_modes) < 1.05 * effective_demand
-            scale =
-                1.05 * effective_demand /
-                max(sum(mode_capacities[m] for m in transport_modes), eps())
-            for m in transport_modes
-                mode_capacities[m] *= scale
-            end
-        end
-
-    elseif feasibility_status == infeasible
-        # Deterministic contradiction: total facility throughput cannot meet
-        # total demand. Shrink shared per-facility capacities (and per-product
-        # caps) so their sum is strictly below total demand with a margin.
-        desired_ratio = rand(rng, Uniform(0.6, 0.8))
-        cur_total = sum(values(capacities))
-        scale = desired_ratio * total_demand / max(cur_total, eps())
-        for f in 1:n_facilities
-            capacities[f] *= scale
-            for p in 1:n_products
-                # Per-product caps also shrink and cannot exceed shared cap
-                product_capacities[(f, p)] = min(product_capacities[(f, p)] * scale, capacities[f])
-            end
-        end
-        # demand satisfaction requires sum_f throughput_f >= total_demand, but
-        # sum_f capacities[f] = desired_ratio * total_demand < total_demand.
-    end
-    # For unknown, leave as-is (natural instance, no forced infeasibility)
-
     return MultiProductSupplyChainProblem(
-        n_facilities,
-        n_customers,
-        n_products,
-        transport_modes,
-        facility_locs,
-        customer_locs,
-        cluster_centers,
-        cluster_weights,
-        fixed_costs,
-        demands,
-        capacities,
-        transport_costs,
-        mode_capacities,
-        total_demand,
-        product_demands,
-        product_capacities,
+        net,
+        capacity_factor,
+        feasibility_status == feasible ? witness : nothing,
+        certificate,
+        feasibility_status,
     )
 end
 
-"""
-    build_model(prob::MultiProductSupplyChainProblem)
-
-Build a JuMP model for the multi-product supply-chain problem (deterministic).
-
-# Returns
-
-  - `model`: The JuMP model
-"""
 function build_model(prob::MultiProductSupplyChainProblem)
-    model = Model()
-
-    # Open-facility decisions
-    @variable(model, y[1:prob.n_facilities], Bin)
-
-    # Available (facility, customer, mode) arcs
-    valid_combinations = [
-        (f, c, m) for
-        f in 1:prob.n_facilities, c in 1:prob.n_customers, m in prob.transport_modes if
-        haskey(prob.transport_costs, (f, c, m))
-    ]
-
-    # Per-arc, per-product flow.  n_vars = n_facilities + n_arcs * n_products
-    @variable(model, x[valid_combinations, 1:prob.n_products] >= 0)
-
-    # Objective: fixed facility cost + transport cost summed over products
-    @objective(
-        model,
-        Min,
-        sum(prob.fixed_costs[f] * y[f] for f in 1:prob.n_facilities) + sum(
-            prob.transport_costs[combo] * x[combo, p] for
-            combo in valid_combinations, p in 1:prob.n_products
-        )
-    )
-
-    # Per-(customer, product) demand satisfaction
-    for c in 1:prob.n_customers, p in 1:prob.n_products
-        combos = filter(combo -> combo[2] == c, valid_combinations)
-        @constraint(model, sum(x[combo, p] for combo in combos) >= prob.product_demands[(c, p)])
-    end
-
-    # Per-(facility, product) capacity, gated by facility-open decision
-    for f in 1:prob.n_facilities, p in 1:prob.n_products
-        combos = filter(combo -> combo[1] == f, valid_combinations)
-        @constraint(
-            model, sum(x[combo, p] for combo in combos) <= prob.product_capacities[(f, p)] * y[f]
-        )
-    end
-
-    # Shared per-facility total-capacity constraint (across all products)
-    for f in 1:prob.n_facilities
-        combos = filter(combo -> combo[1] == f, valid_combinations)
-        @constraint(
-            model,
-            sum(x[combo, p] for combo in combos, p in 1:prob.n_products) <=
-                prob.capacities[f] * y[f]
-        )
-    end
-
-    # Shared per-mode capacity (across all products)
-    for m in prob.transport_modes
-        combos = filter(combo -> combo[3] == m, valid_combinations)
-        @constraint(
-            model,
-            sum(x[combo, p] for combo in combos, p in 1:prob.n_products) <= prob.mode_capacities[m]
-        )
-    end
-
+    model, _, _ = _scn_build_model(prob.network)
     return model
 end
 
-# Register the variant
 register_variant(
     :supply_chain,
     :multi_product,
     MultiProductSupplyChainProblem,
-    "Multi-commodity capacitated supply-chain network design with per-product flows, demands, and facility capacities over a shared transport network",
+    "Multi-commodity, multi-echelon, multi-period production-distribution LP: specialized plants with product-line and shared resource capacity, lane bundle capacity shared by products, DC inventory, throughput and storage limits",
 )
