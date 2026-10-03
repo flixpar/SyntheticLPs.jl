@@ -207,6 +207,9 @@ load, capacity, and positive excess. The helper
 `SyntheticLPs._stochastic_overbooking_certificate_is_valid(problem)` verifies the
 certificate without solving the LP.
 
-For either variant, an `unknown` request resolves reproducibly to a feasible or
-infeasible profile. The actual choice is recorded in `resolved_status`, and exactly
-one corresponding audit artifact is present.
+An `unknown` request is a natural instance (it used to be a 70/30 coin flip into
+one of the planted profiles): one leg receives heavy group commitments (15–45% of
+demand) and a capacity of `U(0.85, 1.25)` times the committed service load of its
+worst show-up scenario. Below that load the instance is infeasible; above it the
+denied-service caps and the other legs decide. `resolved_status` is `unknown` and
+neither a witness nor a certificate is stored.

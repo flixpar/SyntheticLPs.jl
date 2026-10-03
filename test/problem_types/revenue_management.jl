@@ -313,17 +313,13 @@ end
             @test certificate.excess > 0
         end
 
-        statuses = Set{FeasibilityStatus}()
-        for seed in 0:63
+        # `unknown` is a natural instance: nothing planted, nothing recorded.
+        for seed in 0:15
             _, problem = generate_problem(REVENUE_OVERBOOKING, 500, unknown, seed)
-            push!(statuses, problem.resolved_status)
-            @test if problem.resolved_status == feasible
-                SyntheticLPs._stochastic_overbooking_witness_is_valid(problem)
-            else
-                SyntheticLPs._stochastic_overbooking_certificate_is_valid(problem)
-            end
+            @test problem.resolved_status == unknown
+            @test problem.feasible_witness === nothing
+            @test problem.infeasibility_certificate === nothing
         end
-        @test statuses == Set((feasible, infeasible))
     end
 
     @testset "build_model is deterministic" begin
@@ -360,6 +356,17 @@ end
                 expected = status == feasible ? REVENUE_MOI.OPTIMAL : REVENUE_MOI.INFEASIBLE
                 @test termination_status(model) == expected
             end
+        end
+        @testset "overbooking unknown is two-sided" begin
+            outcomes = map(0:15) do seed
+                model, _ = generate_problem(REVENUE_OVERBOOKING, 1000, unknown, seed)
+                set_optimizer(model, HiGHS.Optimizer)
+                set_silent(model)
+                optimize!(model)
+                termination_status(model)
+            end
+            @test count(==(REVENUE_MOI.OPTIMAL), outcomes) >= 2
+            @test count(==(REVENUE_MOI.INFEASIBLE), outcomes) >= 2
         end
         @testset "standard unknown is two-sided" begin
             outcomes = map(0:11) do seed

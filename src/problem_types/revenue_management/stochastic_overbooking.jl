@@ -137,11 +137,9 @@ function StochasticOverbookingRevenueProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
-    resolved_status = if feasibility_status == unknown
-        (rand(rng) < 0.70 ? feasible : infeasible)
-    else
-        feasibility_status
-    end
+    # `unknown` is a natural instance (see the end of the constructor), not a
+    # coin flip into one of the planted profiles.
+    resolved_status = feasibility_status
     n_products, n_scenarios = _plan_overbooking_dimensions(target_variables)
     resource_ratio = rand(rng, Uniform(3.0, 5.5))
     n_resources = clamp(round(Int, n_products / resource_ratio), 2, min(n_products, 80))
@@ -217,6 +215,25 @@ function StochasticOverbookingRevenueProblem(
         served = show_rate .* reshape(commitment, n_products, 1)
         denied = zeros(Float64, n_products, n_scenarios)
         feasible_witness = StochasticOverbookingWitness(copy(commitment), served, denied)
+    elseif resolved_status == unknown
+        # A group-heavy leg whose capacity sits around the committed service
+        # load of its worst show-up scenario: below it the instance is
+        # infeasible, above it the denied-service caps and the other legs
+        # decide. Nothing is planted or recorded.
+        heavy_resource = rand(rng, 1:n_resources)
+        heavy_products = resource_products[heavy_resource]
+        for j in heavy_products
+            commitment[j] = max(
+                commitment[j], round(demand[j] * rand(rng, Uniform(0.15, 0.45)); digits=3)
+            )
+        end
+        heavy_load = maximum(
+            sum(
+                (1.0 - max_denied_fraction[j]) * show_rate[j, s] * commitment[j] for
+                j in heavy_products
+            ) for s in 1:n_scenarios
+        )
+        capacity[heavy_resource] = heavy_load * rand(rng, Uniform(0.85, 1.25))
     else
         critical_resource = rand(rng, 1:n_resources)
         affected_products = resource_products[critical_resource]
@@ -271,7 +288,7 @@ function StochasticOverbookingRevenueProblem(
     )
     if resolved_status == feasible
         @assert _stochastic_overbooking_witness_is_valid(problem)
-    else
+    elseif resolved_status == infeasible
         @assert _stochastic_overbooking_certificate_is_valid(problem)
     end
     return problem
