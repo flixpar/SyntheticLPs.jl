@@ -2,8 +2,10 @@
 #
 # These transforms operate on the finished model produced by `build_model`,
 # so they apply uniformly to every category/variant without each generator
-# having to implement them. They are the bounds-to-constraints counterpart of
-# JuMP's `relax_integrality`, and are wired into `generate_problem` the same way.
+# having to implement them: `bounds_to_constraints!` and `dualize_model` (wired
+# into `generate_problem` like JuMP's `relax_integrality`), and the practitioner-
+# style reformulations configured by `ModelTransforms` (unit scaling, aggregate
+# rows, elastic rows, permutation) further down.
 
 """
     bounds_to_constraints!(model)
@@ -22,10 +24,11 @@ After this transform the converted bounds are genuine affine constraints and so
     Every converted bound is a *singleton row* (one variable, one coefficient),
     and every LP presolver — HiGHS included — turns singleton rows straight back
     into variable bounds. Measured with HiGHS on 15 variants at ~10k variables,
-    the presolved model is the same size with or without this transform, so it
-    changes the instance a solver actually sees only when presolve is off. Use it
-    to exercise a reader/modeling pipeline or a presolve-free solver path, not to
-    make an instance harder.
+    the presolved model had the same size with or without this transform (to
+    within 0.3%) and iteration counts barely moved, so it changes the instance a
+    solver actually sees only when presolve is off. Use it to exercise a
+    reader/modeling pipeline or a presolve-free solver path, not to make an
+    instance harder; [`ModelTransforms`](@ref) lists transforms that do survive.
 
 Returns the (mutated) `model`.
 """
@@ -146,17 +149,20 @@ end
 # models differ in ways that matter to a simplex code, and the transforms below
 # reproduce the ones that (1) practitioners actually do, (2) measurably change
 # what an LP solver does, and (3) survive presolve. Each was kept only after
-# measuring HiGHS presolved sizes and dual/primal simplex iteration counts on a
-# sample of 15 variants at ~10k-20k variables against the untransformed model and
-# against a pure row/column permutation (the noise floor for "same LP, different
-# presentation"). Candidates that were measured and rejected:
+# measuring, with HiGHS 1.13 (presolve on, one thread), presolved sizes and dual/
+# primal simplex iteration counts on 15 diverse variants at 10k and 20k variables
+# (3k for the two dense ones), against the untransformed model and against a pure
+# row/column permutation — the noise floor for "same LP, different presentation"
+# (mean |log2| iteration change 0.13 dual / 0.16 primal). Measured and rejected:
 #
 # - `bounds_to_constraints!`: singleton rows; presolve turns them back into bounds
-#   (presolved size identical on every sampled variant).
+#   (presolved size identical on all 15 sampled variants).
 # - Objective accounting rows (`cost_g == Σ c_j x_j` per variable family with the
 #   objective `Σ cost_g`): the defined variables are free column singletons, which
-#   presolve substitutes out (presolved size identical, iterations identical).
-# - Free-variable splitting (`x = x⁺ - x⁻`): survives presolve, but it is a solver-
+#   presolve substitutes out (presolved size and iteration counts identical on all
+#   15).
+# - Free-variable splitting (`x = x⁺ - x⁻`): survives presolve (energy/dc_opf at
+#   10k: +2,333 presolved columns, +29% dual iterations), but it is a solver-
 #   internal standard-form step rather than something modelers write, and it only
 #   touches the handful of variants that have free variables.
 # - ε-constraints for a secondary objective: a safe ε needs a solve of the source
@@ -208,23 +214,19 @@ struct ModelTransforms
         elastic_penalty::Real,
         permute::Bool,
     )
-        0 <= unit_scale_decades <= 6 || throw(
-            ArgumentError("unit_scale_decades must be in 0:6 (got $unit_scale_decades)."),
-        )
+        0 <= unit_scale_decades <= 6 ||
+            throw(ArgumentError("unit_scale_decades must be in 0:6 (got $unit_scale_decades)."))
         0 <= aggregate_probability <= 1 || throw(
-            ArgumentError(
-                "aggregate_probability must be in [0, 1] (got $aggregate_probability).",
-            ),
+            ArgumentError("aggregate_probability must be in [0, 1] (got $aggregate_probability)."),
         )
         aggregate_max_block >= 2 || throw(
-            ArgumentError("aggregate_max_block must be at least 2 (got $aggregate_max_block)."),
+            ArgumentError("aggregate_max_block must be at least 2 (got $aggregate_max_block).")
         )
         0 <= elastic_probability <= 1 || throw(
-            ArgumentError("elastic_probability must be in [0, 1] (got $elastic_probability)."),
+            ArgumentError("elastic_probability must be in [0, 1] (got $elastic_probability).")
         )
-        elastic_penalty > 0 || throw(
-            ArgumentError("elastic_penalty must be positive (got $elastic_penalty)."),
-        )
+        elastic_penalty > 0 ||
+            throw(ArgumentError("elastic_penalty must be positive (got $elastic_penalty)."))
         return new(
             unit_scale_decades,
             scale_objective,
@@ -364,7 +366,7 @@ end
 
 # A variable family is the JuMP base name (`flow[1,2]` → `flow`): all members of
 # one `@variable` container share a physical unit.
-_variable_family(x::VariableRef) = (n = name(x); isempty(n) ? "_anonymous" : _base_name(n))
+_variable_family(x::VariableRef) = (n=name(x); isempty(n) ? "_anonymous" : _base_name(n))
 
 _set_kind(::MOI.LessThan) = "<="
 _set_kind(::MOI.GreaterThan) = ">="
@@ -377,9 +379,8 @@ function _linear_rows(model::Model)
     rows = ConstraintRef[]
     for (F, S) in list_of_constraint_types(model)
         F <: AbstractVariableRef && continue
-        (F <: GenericAffExpr && S in _LINEAR_ROW_SETS) || throw(
-            ArgumentError("Model transforms support linear models only (found $F-in-$S)."),
-        )
+        (F <: GenericAffExpr && S in _LINEAR_ROW_SETS) ||
+            throw(ArgumentError("Model transforms support linear models only (found $F-in-$S)."))
         append!(rows, all_constraints(model, F, S))
     end
     return rows
@@ -395,6 +396,16 @@ function _row_family(cref, f::MOI.ScalarAffineFunction, set, var_family)
     isempty(n) || return _set_kind(set) * ":" * _base_name(n)
     families = sort!(unique!([var_family[t.variable] for t in f.terms]))
     return _set_kind(set) * "(" * join(families, ",") * ")"
+end
+
+# Index prefix that keeps generated names unique when two families share a base
+# name (a named family with rows of two senses splits into two families): empty
+# for the first family with that base, `"<ordinal>_"` afterwards.
+function _family_tag!(seen::Set{String}, base::AbstractString, ordinal::Integer)
+    isempty(base) && return ""
+    tag = base in seen ? "$(ordinal)_" : ""
+    push!(seen, base)
+    return tag
 end
 
 # Row families in first-appearance order: `(keys, key => [(cref, f, set), ...])`.
@@ -503,13 +514,18 @@ solvers drop as zero and so silently change the problem.
 model has the same feasibility status and its optima map one-to-one to the
 original's (see [`UnitScaling`](@ref)). Feasibility labels are preserved.
 
-**Effect on a solver.** Presolve does not undo unit choices (presolved row,
-column and nonzero counts are unchanged), and although HiGHS equilibrates the
-matrix internally, its power-of-two scaling only partly compensates: the
-coefficient, cost and bound ranges, the meaning of absolute feasibility and
-optimality tolerances, and pricing all change. Measured on 15 variants at ~10k
-variables (`decades=2`), dual-simplex iterations moved by -45%…+20% and primal
-simplex by -62%…+180%, well beyond the ±15% a pure permutation causes.
+**Effect on a solver.** Presolve does not undo unit choices, and although HiGHS
+equilibrates the matrix internally, its power-of-two scaling only partly
+compensates: the coefficient, cost and bound ranges, the meaning of absolute
+feasibility and optimality tolerances, and pricing all change. Measured with
+HiGHS (presolve on) on 15 variants at 20k variables, three draws each with
+`decades=2`: presolved row/column counts were unchanged on every instance, the
+matrix coefficient range widened by a median 2.5 decades (up to 7), and simplex
+iterations changed by a mean |log2| ratio of 0.24 (dual) / 0.33 (primal) against
+0.13 / 0.16 for a pure permutation — from ×0.26 (`tsp/flow`, primal, consistently
+across draws) to ×2.8 (`process_planning/refinery`, primal) and ×2.9
+(`hub_location/p_hub_median`, dual). `decades=3` widens the effect (primal
+0.41) at the cost of harsher numerics.
 
 Returns the [`UnitScaling`](@ref) record (also stored in
 `model.ext[:SyntheticLPs_unit_scaling]`).
@@ -570,8 +586,7 @@ function scale_units!(
         r = 10.0^row_exponents[row_keys[i]]
         f = functions[i]
         terms = [
-            MOI.ScalarAffineTerm(t.coefficient * r / col[t.variable], t.variable) for
-            t in f.terms
+            MOI.ScalarAffineTerm(t.coefficient * r / col[t.variable], t.variable) for t in f.terms
         ]
         ci = index(cref)
         MOI.set(moi, MOI.ConstraintFunction(), ci, MOI.ScalarAffineFunction(terms, f.constant * r))
@@ -590,8 +605,9 @@ function scale_units!(
                 _widen!(spans, "after", log10(abs(c) / col[index(x)]))
             end
             if haskey(spans, "after")
-                objective_exponent =
-                    _admissible_exponent(objective_exponent, spans["before"], spans["after"])
+                objective_exponent = _admissible_exponent(
+                    objective_exponent, spans["before"], spans["after"]
+                )
             end
             sigma = 10.0^objective_exponent
         end
@@ -629,8 +645,9 @@ each block gets one new row equal to the exact sum of its rows — `≤` rows su
 a `≤` row with the summed right-hand side, likewise `≥`, `==` and ranges.
 Coefficients that cancel exactly are dropped, and an aggregate with no terms is
 skipped. Aggregates of a named family are named `base[total<k>]` (same base, so
-they share the family's units under scaling); aggregates of anonymous rows stay
-anonymous (same signature, same effect).
+they share the family's units under scaling; a second family with the same base,
+i.e. the same name used with another sense, gets `base[total<ordinal>_<k>]`);
+aggregates of anonymous rows stay anonymous (same signature, same effect).
 
 **Equivalence.** Every aggregate is implied by its block, so the feasible region,
 optimal value and feasibility label are unchanged. Because the right-hand side is
@@ -639,11 +656,14 @@ degeneracy — the central difficulty for simplex codes — rather than a slack 
 
 **Presolve survival.** Presolve removes rows that are redundant by variable
 bounds, parallel rows and (in HiGHS) linearly dependent equalities, but not
-general implied inequalities. Measured with HiGHS on 15 variants at ~10k
-variables, inequality aggregates survive (e.g. `unit_commitment/standard`
-+4,242 presolved rows, `process_planning/refinery` +197) while many equality
-aggregates are removed (`inventory/multi_item`: +851 rows before, +2 after);
-dual-simplex iterations moved by -21%…+67%.
+general implied inequalities. Measured with HiGHS on 15 variants at 20k
+variables, inequality aggregates survive (`probability=0.5`:
+`facility_location/p_median` +10,000 presolved rows, `unit_commitment/standard`
++5,193, `tsp/flow` +5,050) while equality aggregates are mostly removed again
+(`inventory/multi_item` at `probability=1`: +1,488 rows before presolve, +6
+after). Simplex iterations changed by a mean |log2| ratio of 0.26 (dual) /
+0.15 (primal), from ×0.63 (`network_flow/standard`, dual) to ×2.1
+(`hub_location/p_hub_median`, dual).
 
 Returns the number of rows added.
 """
@@ -656,7 +676,8 @@ function aggregate_rows!(
     moi = backend(model)
     order, families, _ = _row_families(model)
     added = 0
-    for key in order
+    seen = Set{String}()
+    for (ordinal, key) in enumerate(order)
         rows = families[key]
         # Draw for every family so the stream does not depend on family sizes.
         selected = rand(rng) < probability
@@ -664,6 +685,7 @@ function aggregate_rows!(
         (selected && length(rows) >= 2) || continue
         base = name(first(rows)[1])
         base = isempty(base) ? "" : _base_name(base)
+        tag = _family_tag!(seen, base, ordinal)
         for (k, lo) in enumerate(1:block:length(rows))
             members = rows[lo:min(lo + block - 1, end)]
             length(members) >= 2 || continue
@@ -672,14 +694,12 @@ function aggregate_rows!(
                 acc[t.variable] = get(acc, t.variable, 0.0) + t.coefficient
             end
             largest = maximum(abs, values(acc); init=0.0)
-            terms = [
-                MOI.ScalarAffineTerm(c, v) for (v, c) in acc if abs(c) > 1e-12 * largest
-            ]
+            terms = [MOI.ScalarAffineTerm(c, v) for (v, c) in acc if abs(c) > 1e-12 * largest]
             isempty(terms) && continue
             sort!(terms; by=t -> t.variable.value)
             set = _sum_sets([s for (_, _, s) in members])
             ci = MOI.add_constraint(moi, MOI.ScalarAffineFunction(terms, 0.0), set)
-            isempty(base) || MOI.set(moi, MOI.ConstraintName(), ci, "$(base)[total$(k)]")
+            isempty(base) || MOI.set(moi, MOI.ConstraintName(), ci, "$(base)[total$(tag)$(k)]")
             added += 1
         end
     end
@@ -698,8 +718,9 @@ selected family gets nonnegative violation columns — `a·x - v ≤ b` for `≤
 at `penalty × max_j |c_j|` per unit (`penalty` alone when the objective has no
 terms), with the sign that makes violation costly under the model's sense. A
 feasibility model becomes a minimization of total violation. Violation columns
-are named `<base>_over[i]` / `<base>_under[i]` (or `elastic<k>_…` for anonymous
-families), so [`scale_units!`](@ref) gives each family's slacks one unit.
+are named `<base>_over[i]` / `<base>_under[i]` (`elastic<ordinal>_…` for
+anonymous families; the index gains an `<ordinal>_` prefix when two families
+share a base), so [`scale_units!`](@ref) gives each family's slacks one unit.
 
 **Semantics — a relaxation, not an equivalence.**
   - Feasible stays feasible: the original solution with zero violation remains.
@@ -713,17 +734,21 @@ families), so [`scale_units!`](@ref) gives each family's slacks one unit.
 
 **Presolve survival.** A violation column is a column singleton with a positive
 cost on an inequality or equality row; HiGHS cannot remove it without dual
-bounds it does not have. Measured on 15 variants at ~10k variables, most added
-columns survive presolve (e.g. `energy/dc_opf` +8,691 presolved columns, primal
-simplex iterations ×2.1), and softening the capacity rows of
-`supply_chain/network_planning` prevents presolve from collapsing them into
-bounds (1,977 → 26,090 presolved columns).
+bounds it does not have. Measured with HiGHS on 15 variants at 20k variables
+with `probability=1`, presolved columns grew by a median 56% (softened singleton
+capacity rows also stop collapsing into bounds: `supply_chain/network_planning`
+15,879 → 36,172 presolved columns, dual iterations ×1.9, primal ×2.2), simplex
+iterations changed by a mean |log2| ratio of 0.28 (dual) / 0.35 (primal), e.g.
+`multi_commodity_flow/standard` dual ×0.31, and the optimal objective was
+unchanged (relative difference ≤ 1e-10) on every sampled variant.
+
+Selection is per family, so the size effect is lumpy: softening a large family
+(e.g. one capacity row per arc) can double the column count, and
+[`generate_dataset`](@ref) records and size-matches the transformed size.
 
 Returns the number of violation columns added.
 """
-function elasticize_rows!(
-    model::Model, rng::AbstractRNG; probability::Real=0.25, penalty::Real=1e3
-)
+function elasticize_rows!(model::Model, rng::AbstractRNG; probability::Real=0.25, penalty::Real=1e3)
     0 <= probability <= 1 ||
         throw(ArgumentError("probability must be in [0, 1] (got $probability)."))
     penalty > 0 || throw(ArgumentError("penalty must be positive (got $penalty)."))
@@ -738,20 +763,22 @@ function elasticize_rows!(
     objective_sense(model) == MAX_SENSE && (cost = -cost)
 
     added = 0
-    for (k, key) in enumerate(order)
+    seen = Set{String}()
+    for (ordinal, key) in enumerate(order)
         rand(rng) < probability || continue
         rows = families[key]
         base = name(first(rows)[1])
-        base = isempty(base) ? "elastic$(k)" : _base_name(base)
+        base = isempty(base) ? "elastic$(ordinal)" : _base_name(base)
+        tag = _family_tag!(seen, base, ordinal)
         for (i, (cref, _, set)) in enumerate(rows)
             if !(set isa MOI.GreaterThan)
-                v = @variable(model, lower_bound = 0, base_name = "$(base)_over[$i]")
+                v = @variable(model, lower_bound = 0, base_name = "$(base)_over[$(tag)$i]")
                 set_normalized_coefficient(cref, v, -1.0)
                 add_to_expression!(obj, cost, v)
                 added += 1
             end
             if !(set isa MOI.LessThan)
-                w = @variable(model, lower_bound = 0, base_name = "$(base)_under[$i]")
+                w = @variable(model, lower_bound = 0, base_name = "$(base)_under[$(tag)$i]")
                 set_normalized_coefficient(cref, w, 1.0)
                 add_to_expression!(obj, cost, w)
                 added += 1
@@ -779,9 +806,11 @@ important when the instances train or tune a pivot rule that could otherwise
 learn the generator's index order.
 
 **Equivalence.** Exact: the same LP. It survives presolve trivially, and on its
-own it is a *presentation* change: measured on 15 variants at ~10k variables it
-moved simplex iteration counts by roughly ±15%, which is the noise floor the
-other transforms were compared against.
+own it is a *presentation* change: measured with HiGHS on 15 variants at 20k
+variables it changed simplex iteration counts by a mean |log2| ratio of 0.13
+(dual) / 0.16 (primal) — typically within ±10%, occasionally up to ×2.5
+(`hub_location/p_hub_median`, dual) — the noise floor the other transforms were
+compared against.
 """
 function permute_model(model::Model, rng::AbstractRNG)
     permuted = Model()

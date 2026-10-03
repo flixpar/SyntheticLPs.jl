@@ -33,7 +33,7 @@ _set_values(s) = (MOI.constant(s),)
         @test !SyntheticLPs.is_identity(ModelTransforms(; unit_scale_decades=1))
         @test SyntheticLPs._as_transforms(nothing) == t
         @test SyntheticLPs._as_transforms((unit_scale_decades=2, permute=true)) ==
-              ModelTransforms(; unit_scale_decades=2, permute=true)
+            ModelTransforms(; unit_scale_decades=2, permute=true)
         @test_throws ArgumentError ModelTransforms(; unit_scale_decades=-1)
         @test_throws ArgumentError ModelTransforms(; unit_scale_decades=7)
         @test_throws ArgumentError ModelTransforms(; aggregate_probability=1.5)
@@ -101,7 +101,8 @@ _set_values(s) = (MOI.constant(s),)
         end
         # scale_objective=false keeps the objective's units.
         m2 = _transform_test_model()
-        @test scale_units!(m2, MersenneTwister(5); decades=2, scale_objective=false).objective_scale == 1.0
+        @test scale_units!(m2, MersenneTwister(5); decades=2, scale_objective=false).objective_scale ==
+            1.0
         # decades = 0 is an exact no-op on values.
         m3 = _transform_test_model()
         sc3 = scale_units!(m3, MersenneTwister(1); decades=0)
@@ -130,7 +131,9 @@ _set_values(s) = (MOI.constant(s),)
             @test all(c -> c >= 1e-6 * (1 - 1e-9), values(costs))
         end
         # Unicode base names (energy/dc_opf's θ) are handled.
-        dc, _ = generate_problem("energy/dc_opf", 300, feasible, 2; transforms=(unit_scale_decades=2,))
+        dc, _ = generate_problem(
+            "energy/dc_opf", 300, feasible, 2; transforms=(unit_scale_decades=2,)
+        )
         @test haskey(dc.ext[:SyntheticLPs_unit_scaling].column_exponents, "θ")
     end
 
@@ -142,7 +145,10 @@ _set_values(s) = (MOI.constant(s),)
         # the two balance equalities (1 block), the range (single, skipped).
         @test added == 3
         @test _row_count(m) == before + 3
-        totals = [c for c in all_constraints(m, AffExpr, MOI.LessThan{Float64}) if startswith(name(c), "cap[total")]
+        totals = [
+            c for c in all_constraints(m, AffExpr, MOI.LessThan{Float64}) if
+            startswith(name(c), "cap[total")
+        ]
         @test length(totals) == 2
         x, y = m[:x], m[:y]
         t1 = constraint_object(only(c for c in totals if name(c) == "cap[total1]"))
@@ -196,6 +202,21 @@ _set_values(s) = (MOI.constant(s),)
         elasticize_rows!(f, MersenneTwister(1); probability=1.0)
         @test objective_sense(f) == MIN_SENSE
         @test elasticize_rows!(_transform_test_model(), MersenneTwister(1); probability=0.0) == 0
+        # One base name used with two senses forms two families; generated
+        # column and row names stay unique.
+        dup = Model()
+        @variable(dup, q[1:4] >= 0)
+        @constraint(dup, bal[i = 1:2], q[i] + q[i + 2] <= 5)
+        @constraint(dup, bal2[i = 1:2], q[i] - q[i + 2] >= -1)
+        for c in bal2
+            set_name(c, replace(name(c), "bal2" => "bal"))
+        end
+        aggregate_rows!(dup, MersenneTwister(2); probability=1.0, max_block=2)
+        elasticize_rows!(dup, MersenneTwister(2); probability=1.0)
+        totals = filter(startswith("bal[total"), name.(SyntheticLPs._linear_rows(dup)))
+        @test length(totals) == 2 && allunique(totals)
+        @test allunique(name.(all_variables(dup)))
+        @test num_variables(dup) == 4 + 4 + 2  # 2 ≤ + 2 ≥ rows + 2 aggregates
         @test_throws ArgumentError elasticize_rows!(f, MersenneTwister(1); penalty=-1)
         # Elastic rows cannot honor an `infeasible` request.
         @test_throws ArgumentError generate_problem(
@@ -247,15 +268,22 @@ _set_values(s) = (MOI.constant(s),)
         @test rand() == expected
         # Each transform has its own stream: turning on permutation does not
         # change which unit exponents the families receive.
-        s1, _ = generate_problem("energy/dc_opf", 300, unknown, 4; transforms=(unit_scale_decades=3,))
+        s1, _ = generate_problem(
+            "energy/dc_opf", 300, unknown, 4; transforms=(unit_scale_decades=3,)
+        )
         s2, _ = generate_problem(
             "energy/dc_opf", 300, unknown, 4; transforms=(unit_scale_decades=3, permute=true)
         )
         @test s1.ext[:SyntheticLPs_unit_scaling].column_exponents ==
-              s2.ext[:SyntheticLPs_unit_scaling].column_exponents
+            s2.ext[:SyntheticLPs_unit_scaling].column_exponents
         # Applied before dualization: the dual of a transformed primal.
         d, _ = generate_problem(
-            "transportation/standard", 100, feasible, 2; transforms=(aggregate_probability=1.0,), dualize=true
+            "transportation/standard",
+            100,
+            feasible,
+            2;
+            transforms=(aggregate_probability=1.0,),
+            dualize=true,
         )
         d0, _ = generate_problem("transportation/standard", 100, feasible, 2; dualize=true)
         @test is_dual_reformulation(d)
@@ -335,11 +363,17 @@ _set_values(s) = (MOI.constant(s),)
                 # Elastic rows relax: never worse, and with the default penalty
                 # unchanged on these instances.
                 m = solve_lp(
-                    first(generate_problem(ref, n, feasible, 5; transforms=(elastic_probability=1.0,)))
+                    first(
+                        generate_problem(ref, n, feasible, 5; transforms=(elastic_probability=1.0,))
+                    ),
                 )
                 @test termination_status(m) == MOI.OPTIMAL
                 sense = objective_sense(base)
-                @test sense == MIN_SENSE ? objective_value(m) <= z + tol : objective_value(m) >= z - tol
+                @test if sense == MIN_SENSE
+                    objective_value(m) <= z + tol
+                else
+                    objective_value(m) >= z - tol
+                end
                 @test objective_value(m) ≈ z atol = tol
             end
 
