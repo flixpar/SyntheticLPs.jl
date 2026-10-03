@@ -1,8 +1,10 @@
 # Focused quality contracts for the airline_crew category: registry shape,
 # exact sizing, an independent re-validation of every generated pairing against
-# the five operational legality properties, schedule data conventions, witness
-# and certificate arithmetic, the credit-hour cost formula, reproducibility, and
-# HiGHS feasibility contracts on the LP relaxation and the integer model.
+# the five operational legality properties, dense flight coverage (the guard
+# against the old presolve fixing cascade), schedule data conventions, witness
+# and crew-shortage certificate arithmetic, the credit-hour cost formula,
+# reproducibility, and HiGHS feasibility contracts on the LP relaxation and the
+# integer model.
 @testset "Airline Crew" begin
     @test :airline_crew in list_categories()
     @test list_variants(:airline_crew) == [:standard]
@@ -84,15 +86,46 @@
     end
 
     # Sizing: one variable per pairing column, and the generator emits exactly
-    # the requested number of columns. One covering equality per flight.
+    # the requested number of columns. Rows: one covering equality per flight,
+    # one crew-availability row per emitted (base, day), one block-hour band
+    # per base that owns a column.
     for target in (50, 100, 500, 1000, 5000), status in (feasible, infeasible, unknown), seed in 0:2
         m, p = generate_problem(:airline_crew, target, status, seed)
         @test num_variables(m) == target
         @test num_variables(m) ==
             length(p.pairing_costs) ==
             length(p.flights_in_pairing) ==
-            length(p.pairing_bases)
-        @test num_constraints(m; count_variable_in_set_constraints=false) == p.num_flights
+            length(p.pairing_bases) ==
+            length(p.pairing_first_day) ==
+            length(p.pairing_block_hours)
+        n_band = length(unique(p.pairing_bases))
+        @test num_constraints(m; count_variable_in_set_constraints=false) ==
+            p.num_flights + length(p.crew_rows) + n_band
+        # Flights scale with the column budget (about 0.35 per column).
+        target >= 1000 && @test 0.30 * target <= p.num_flights <= 0.45 * target
+    end
+
+    # Large targets build quickly and keep their shape.
+    for target in (20_000, 100_000)
+        t = @elapsed m, p = generate_problem(:airline_crew, target, feasible, 3)
+        @test num_variables(m) == target
+        @test t < 60
+        @test 0.30 * target <= p.num_flights <= 0.45 * target
+        @test num_constraints(m; count_variable_in_set_constraints=false) > 0.3 * target
+    end
+
+    # Dense coverage: every flight is in several pairings, so no singleton
+    # covering row can seed a presolve fixing cascade (the old generator's
+    # collapse), and the average flight sits in well over ten pairings.
+    for seed in 0:3
+        _, p = generate_problem(:airline_crew, 4000, unknown, seed)
+        cover = zeros(Int, p.num_flights)
+        for legs in p.flights_in_pairing, f in legs
+            cover[f] += 1
+        end
+        @test all(cover .>= 1)
+        @test count(>=(3), cover) >= 0.97 * p.num_flights
+        @test sum(cover) / p.num_flights >= 10
     end
 
     # Schedule and rule conventions.
@@ -121,10 +154,43 @@
         @test r.max_duty_minutes >= 2 * 240 + r.min_connect
         @test r.min_connect <= r.max_sit
         @test 1 <= r.max_duties && 1 <= r.max_legs_per_duty
+        # Calendar bookkeeping of each column.
+        for (i, legs) in enumerate(p.flights_in_pairing)
+            @test p.pairing_first_day[i] == fld(p.departure_times[legs[1]], 1440) + 1
+            @test p.pairing_last_day[i] == fld(p.arrival_times[legs[end]], 1440) + 1
+            @test p.pairing_block_hours[i] ≈
+                round(sum(p.arrival_times[f] - p.departure_times[f] for f in legs) / 60; digits=2)
+        end
+        # Emitted crew rows can bind: more columns than crews.
+        for (k, (b, d)) in enumerate(p.crew_rows)
+            members = count(
+                i -> p.pairing_bases[i] == b && p.pairing_first_day[i] <= d <= p.pairing_last_day[i],
+                eachindex(p.pairing_bases),
+            )
+            @test members > p.crew_capacity[k] >= 0
+        end
+        @test all(p.base_block_lower .<= p.base_block_upper)
     end
 
-    # Feasible: the planted witness is an exact cover of the flight set, so the
-    # set-partitioning model has an integral solution.
+    # Recompute every side row's activity at an integral column selection.
+    function side_rows_hold(p, chosen)
+        for (k, (b, d)) in enumerate(p.crew_rows)
+            used = count(
+                i -> p.pairing_bases[i] == b && p.pairing_first_day[i] <= d <= p.pairing_last_day[i],
+                chosen,
+            )
+            used <= p.crew_capacity[k] || return false
+        end
+        for b in p.bases
+            hours = sum((p.pairing_block_hours[i] for i in chosen if p.pairing_bases[i] == b); init=0.0)
+            p.base_block_lower[b] - 1e-9 <= hours <= p.base_block_upper[b] + 1e-9 || return false
+        end
+        return true
+    end
+
+    # Feasible: the planted witness is an exact cover of the flight set that
+    # also respects every crew-availability row and block-hour band, so the
+    # model has an integral solution.
     for target in (60, 200, 1500), seed in 0:3
         _, p = generate_problem(:airline_crew, target, feasible, seed)
         w = p.feasible_witness
@@ -137,57 +203,43 @@
         end
         @test sort(covered) == collect(1:p.num_flights)   # partition, exactly once
         @test all(isempty(pairing_violations(p, i)) for i in w.pairings)
+        @test side_rows_hold(p, w.pairings)
     end
 
-    # Infeasible: exactly one flight is coverable by no pairing, and the
-    # certificate's structural argument recomputes independently.
-    for target in (60, 200, 1500), seed in 0:3
+    # Infeasible: the crew-shortage certificate recomputes independently from
+    # the schedule, the columns and the crew rows.
+    for target in (60, 200, 1500, 6000), seed in 0:3
         _, p = generate_problem(:airline_crew, target, infeasible, seed)
         cert = p.infeasibility_certificate
         @test cert !== nothing
         @test p.feasible_witness === nothing
+        day = cert.day
+        on_day(f) = fld(p.departure_times[f], 1440) + 1 == day
+        @test cert.flights_on_day == count(on_day, 1:p.num_flights)
+        legs_on_day = [count(on_day, legs) for legs in p.flights_in_pairing]
+        @test cert.max_legs_on_day == maximum(legs_on_day)
+        # The certificate rows are exactly that day's crew rows ...
+        @test cert.rows == [k for (k, (_, d)) in enumerate(p.crew_rows) if d == day]
+        @test cert.crew_capacity == sum(p.crew_capacity[cert.rows])
+        # ... and they cover every pairing flying that day.
+        row_bases = Set(p.crew_rows[k][1] for k in cert.rows)
+        @test all(p.pairing_bases[i] in row_bases for i in eachindex(legs_on_day) if legs_on_day[i] > 0)
+        # Farkas arithmetic with a 10% margin.
+        @test cert.max_legs_on_day * cert.crew_capacity <= 0.9 * cert.flights_on_day
+        # No single row is trivially contradictory: every flight is covered.
         covered = falses(p.num_flights)
         for legs in p.flights_in_pairing, f in legs
             covered[f] = true
         end
-        @test count(!, covered) == 1
-        @test !covered[cert.flight]
-        @test p.flight_origins[cert.flight] == cert.origin
-        @test p.flight_destinations[cert.flight] == cert.destination
-        # It cannot open a pairing (non-base origin) and cannot follow another
-        # leg (nothing arrives at its origin inside a sit or rest window).
-        @test !(cert.origin in p.bases)
-        r = p.rules
-        dep = p.departure_times[cert.flight]
-        predecessors = count(
-            f ->
-                f != cert.flight &&
-                p.flight_destinations[f] == cert.origin &&
-                (
-                    r.min_connect <= dep - p.arrival_times[f] <= r.max_sit ||
-                    r.min_rest <= dep - p.arrival_times[f] <= r.max_rest
-                ),
-            1:p.num_flights,
-        )
-        @test cert.predecessors == predecessors == 0
+        @test all(covered)
     end
 
-    # Unknown promises nothing, so it carries no status metadata; it is still a
-    # genuine mix of constructions rather than one branch in disguise.
-    coverable = 0
-    orphaned = 0
-    for seed in 0:19
+    # Unknown promises nothing, so it carries no status metadata.
+    for seed in 0:4
         _, p = generate_problem(:airline_crew, 200, unknown, seed)
         @test p.feasible_witness === nothing
         @test p.infeasibility_certificate === nothing
-        covered = falses(p.num_flights)
-        for legs in p.flights_in_pairing, f in legs
-            covered[f] = true
-        end
-        all(covered) ? (coverable += 1) : (orphaned += 1)
     end
-    @test coverable > 0
-    @test orphaned > 0
 
     # Credit-hour cost arithmetic, recomputed from the schedule: crews are paid
     # the largest of block time, the duty guarantee and the daily minimum, plus
@@ -265,6 +317,15 @@
             expected = status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE
             @test termination_status(m) == expected
         end
+
+        # The default infeasibility is not a presolve one-liner: HiGHS needs
+        # simplex iterations to refute the crew-shortage aggregation.
+        m, _ = generate_problem(:airline_crew, 2000, infeasible, 0)
+        set_optimizer(m, HiGHS.Optimizer)
+        set_silent(m)
+        optimize!(m)
+        @test termination_status(m) == MOI.INFEASIBLE
+        @test MOI.get(m, MOI.SimplexIterations()) > 0
 
         # Unknown is a genuine mix, not an implicit always-one-way branch.
         optimal = 0
