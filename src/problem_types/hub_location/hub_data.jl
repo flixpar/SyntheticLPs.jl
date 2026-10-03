@@ -289,3 +289,57 @@ function _hub_nearest_assignment(dist::Matrix{Float64}, hubs::Vector{Int})
     n = size(dist, 1)
     return [hubs[argmin([dist[i, k] for k in hubs])] for i in 1:n]
 end
+
+"""
+    _hub_island_geography(rng, n, q; min_members=3, spread_frac=0.12)
+    -> (locations, groups, min_sep)
+
+`q` well-separated island regions (ring centers, see `_hub_ring_centers`) with
+`n` cities: nodes `1..q` sit on the region centers, every region then receives
+`min_members - 1` further cities round-robin (fewer when `n` is too small), and
+the rest are assigned at random. Cities scatter uniformly within
+`± spread_frac * min_sep` of their center, so with `spread_frac ≤ 0.14` every
+pair inside a region is closer than `0.4 * min_sep` (the reach used by the
+disjoint-region certificates) while regions stay more than
+`(1 - 2√2·spread_frac) * min_sep > 0.6 * min_sep` apart.
+
+Guaranteeing several members per region matters for presolve: a region whose
+only admissible hub is a single node forces that hub open by bound
+propagation alone, and enough such forced hubs let presolve refute the
+instance without any simplex work. With `min_members` cities per region, each
+region's covering requirement is a genuine aggregate over several rows.
+"""
+function _hub_island_geography(
+    rng::AbstractRNG, n::Int, q::Int; min_members::Int=3, spread_frac::Float64=0.12
+)
+    centers = _hub_ring_centers(rng, q)
+    min_sep = minimum(
+        hypot(centers[a][1] - centers[b][1], centers[a][2] - centers[b][2]) for a in 1:q for
+        b in (a + 1):q
+    )
+    extra = clamp(min(min_members, n ÷ q) - 1, 0, n)
+    node_group = vcat(collect(1:q), repeat(collect(1:q), extra))
+    append!(node_group, rand(rng, 1:q, max(0, n - length(node_group))))
+    node_group = node_group[1:n]
+    spread = spread_frac * min_sep
+    locations = Tuple{Float64, Float64}[]
+    for g in 1:n
+        c = centers[node_group[g]]
+        if g <= q
+            push!(locations, c)
+        else
+            push!(
+                locations,
+                (
+                    clamp(c[1] + rand(rng, Uniform(-spread, spread)), 0.0, 100.0),
+                    clamp(c[2] + rand(rng, Uniform(-spread, spread)), 0.0, 100.0),
+                ),
+            )
+        end
+    end
+    groups = [Int[] for _ in 1:q]
+    for g in 1:n
+        push!(groups[node_group[g]], g)
+    end
+    return locations, groups, min_sep
+end

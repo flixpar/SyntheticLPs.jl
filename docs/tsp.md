@@ -10,7 +10,7 @@ delivery, field service, sales, and pickup-and-delivery planning.
 | Variant | Application | Natural formulation |
 | --- | --- | --- |
 | `standard` | Symmetric courier tour | Lifted MTZ |
-| `asymmetric` | Courier routing on one-way streets | Lifted MTZ with directed shortest-path times |
+| `asymmetric` | Large urban courier route, one-way streets and hills | Sparse candidate-arc graph (thousands of stops), lifted MTZ |
 | `flow` | Symmetric courier tour | Single-commodity flow |
 | `assignment_relaxation` | Fast lower bound / LP test instance | Continuous degree relaxation with pairwise two-cycle cuts |
 | `time_windows` | Appointment delivery | Time propagation, route budget, shift return time |
@@ -28,11 +28,19 @@ the center of a scale-tiered service region; most customers are drawn from town
 clusters and roughly 20% are rural outliers. One per-instance road-circuity
 factor converts straight-line distance into a positive symmetric road metric.
 
-`asymmetric` instead places stops on an explicit street grid. Odd horizontal
-streets run west, even streets run east, vertical avenues are two-way, and every
-street has a sampled congestion weight. Costs between stops are directed
-shortest-path times, so they satisfy the directed triangle inequality and model
-one-way detours without independent pairwise noise.
+`asymmetric` is the category's sparse, large-`n` member. Instead of pricing
+every ordered pair of a few hundred stops, it keeps a **candidate-arc graph**
+the way large-scale routing does: each stop keeps its `m ∈ 6:10` cheapest
+outgoing legs among its `2m` geometrically nearest neighbours (found by grid
+bucketing, so construction is near-linear). Travel times are directional for
+physical reasons — a smooth terrain of a few hills charges extra minutes per
+metre of ascent, and about a quarter of neighbouring pairs are joined by a
+one-way street that costs a 1.3–2.0× detour against the flow — so the support
+itself is asymmetric. Stops with fewer than two incoming candidates receive arcs
+from their nearest neighbours. At 100k variables this gives about 10,000 stops
+(versus about 316 for `standard`), very sparse degree rows, and an MTZ block
+whose big-M equals the large stop count — a different LP from `standard`, not
+the same dense model with another cost matrix.
 
 Prize values are log-normal with correlated omission penalties. Precedence
 pairs form a sampled acyclic task graph in natural instances.
@@ -45,11 +53,18 @@ With `n` total stops, including the depot:
 
 | Variant | Variable count |
 | --- | ---: |
-| `standard`, `asymmetric`, `precedence`, `multiple_salespersons` | `n^2 - 1` |
+| `standard`, `precedence`, `multiple_salespersons` | `n^2 - 1` |
+| `asymmetric` | `|arcs| + n - 1` (≈ `(m + 1.15) n`) |
 | `flow` | `2n(n-1)` |
 | `assignment_relaxation` | `n(n-1)` |
 | `time_windows` | `n^2` |
 | `prize_collecting` | `2n(n-1) + (n-1)` |
+
+Infeasible Hall-district instances delete `k(n-k)` arcs (and their flow
+variables where the formulation has them) and size `n` against the delivered
+count. `time_windows` omits propagation rows whose big-M would be non-positive
+(the row is then implied by the window bounds — roughly half of all stop pairs
+when windows are narrow), so its row count is data-dependent.
 
 All natural MIP variants declare binary arc or visit variables. The package
 defaults to `relax_integer=true`, producing their LP relaxations. Only
@@ -69,9 +84,9 @@ the route's customer count.
 Every requested status is valid for the model returned by the default relaxed
 API:
 
-- `feasible` plants or exhibits an integer witness: a complete tour, a schedule enclosed by its windows, full prize collection, an acyclic precedence order, or a balanced partition across the fleet.
-- `infeasible` uses an algebraic certificate that survives relaxation. Core arc formulations use a Hall-deficit access restriction: `k` blocked stops can receive arcs only from `k-1` gate nodes, contradicting the degree rows. Time windows use a travel budget below the sum of each node's cheapest outgoing arc. Prize collection requests more than the total available prize. Multiple salespersons set aggregate fleet route capacity below the customer count. Precedence creates a directed three-task cycle.
-- `unknown` samples natural operational settings without promising a status.
+- `feasible` plants or exhibits an integer witness: a complete tour (for `asymmetric`, a Hilbert-curve tour whose legs are added to the candidate graph), a schedule enclosed by its windows, full prize collection, an acyclic precedence order, or a balanced partition across the fleet.
+- `infeasible` uses an algebraic certificate that survives relaxation. Core arc formulations use a Hall-deficit **district**: the `k` stops nearest a random anchor can be entered only from the next `k-1` nearest stops (the gateways), contradicting the degree rows (`k = Σ_S indeg ≤ Σ_T outdeg = k-1`). The district scales with the instance (`k ≈ 6–12%` of the nodes, at least 3; `≈ 0.4–0.8·√n` in the sparse `asymmetric` variant), so the deficit is spread over `2k-1` dense degree rows and HiGHS presolve does not detect it — refuting the instance takes simplex work (with the former `k ∈ {2,3}` presolve alone proved infeasibility). Multiple salespersons and prize collection use the district too in about 75% of infeasible instances (for prize collection the quota is set between the LP maximum `total − min_{j∈S} prize_j` and the total prize); the rest keep their classical certificates — fleet route capacity below the customer count, or a quota above the total prize — which presolve does detect. Time windows use a travel budget below the sum of each node's cheapest outgoing arc. Precedence creates a directed three-task cycle.
+- `unknown` samples natural operational settings without promising a status (for `asymmetric`, the bare candidate graph without a planted tour, repaired so its degree rows admit a successor assignment; its relaxation is genuinely two-sided, since the sparse MTZ rows sometimes cut off every fractional assignment).
 
 These constructions avoid empty degree rows and contradictory variable bounds,
 so infeasible instances retain meaningful routing structure for presolve and LP

@@ -101,7 +101,7 @@ function TSPAssignmentRelaxationProblem(
     dist = _tsp_distance(rng, locations)
 
     # --- Resolve feasibility intent ---
-    arc_ok, S, T = _tsp_arc_support(rng, n, k, feasibility_status)
+    arc_ok, S, T = _tsp_arc_support(rng, n, k, feasibility_status, locations)
 
     return TSPAssignmentRelaxationProblem(n, locations, dist, arc_ok, S, T)
 end

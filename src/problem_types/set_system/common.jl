@@ -19,7 +19,13 @@ function _set_random_column(
     else
         rand(rng, 1:effective_max)
     end
-    return sort!(randperm(rng, n_elements)[1:size])
+    # Rejection sampling keeps this O(size) rather than O(n_elements).
+    column = Int[]
+    while length(column) < size
+        i = rand(rng, 1:n_elements)
+        i in column || push!(column, i)
+    end
+    return sort!(column)
 end
 
 # Start with a shuffled exact partition, then add random columns. The leading
