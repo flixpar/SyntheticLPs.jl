@@ -56,8 +56,8 @@ Kuhn/Leduc poker game.
 and receive a private card. One or two fixed-limit betting rounds follow; before
 round two a public board card is revealed and pairing it beats any unpaired
 card. Each round has 1-4 bet sizes (multiples of a unit that doubles in round
-two) and a raise cap of 1-4 (at most 81 all-raise lines per round). Folds pay the folder's contribution; showdowns pay
-the stronger hand, ties split. The full game tree is enumerated with
+two) and a raise cap of 1-4 (at most 81 all-raise lines per round). Folds
+pay the folder's contribution; showdowns pay the stronger hand, ties split. The full game tree is enumerated with
 suit-isomorphic deals merged, so information sets are `(private rank, [board
 rank], public betting history)`. Kuhn poker (3 ranks, 1 suit, 1 round, 1 bet,
 cap 1) and Leduc hold'em (3 ranks, 2 suits, bets 2/4, cap 2) are members of the
@@ -100,9 +100,9 @@ rows      = |I_seat| + 1 + |S_opp| (+ |S_seat| - 1 tremble rows)
 ```
 
 The generator picks uniformly among all games within 3% of the target (falling
-back to the closest; below ~200 variables the grid is coarser, within ~5%), subject to a payoff block of at most about 10 nonzeros
-per variable. Minimum 20 variables (Kuhn); maximum 1,000,000 (`ArgumentError`
-above). CFR+ runs `clamp(2e8 / nnz(A), 16, 300)` iterations, so 100k-variable
+back to the closest; below ~200 variables the grid is coarser, within ~5%),
+subject to a payoff block of at most about 10 nonzeros per variable. Minimum
+20 variables (Kuhn); maximum 1,000,000 (`ArgumentError` above). CFR+ runs `clamp(2e8 / nnz(A), 16, 300)` iterations, so 100k-variable
 games build in a few seconds.
 
 ## `colonel_blotto`
