@@ -48,15 +48,18 @@ the feed — non-unimodular coupling that survives the LP relaxation.
     2 = leach, 0 = dump).
   - `infeasible`: a [`MineClosureCertificate`](@ref) in one of two modes,
     drawn 50/50: `:ramp_up` (start-up mill feed above the closure bound on
-    reachable mill-eligible tonnage, with a reduced start-up fleet when
-    needed; `:exhaustion` as last resort), or `:head_grade` (minimum feed in
+    reachable mill-eligible tonnage, with a reduced start-up fleet or an
+    enlarged mill when needed; `:exhaustion` over the whole horizon 20% of the
+    time and as last resort), or `:head_grade` (minimum feed in
     the first one or two periods at a head grade the reachable ore cannot
     sustain: the head-grade spec is raised to `tau + (1 + margin) * bound /
     feed` for a threshold grade `tau`, but kept below 80% of the richest
     eligible grade, so no row is trivially contradictory).
   - `unknown`: natural specs (head grade 70-110% of the average ore grade,
-    arsenic limit 100-180% of the average ore arsenic, feed contract at 60-90%
-    of mill capacity), no claim.
+    arsenic limit 100-180% of the average ore arsenic, a feed contract of
+    60-125% of the mill-eligible reserve capped at 50-90% of mill capacity,
+    start-up periods at 60-120% of the closure bound on reachable mill feed),
+    no claim — a two-sided boundary.
 
 # Sizing
 

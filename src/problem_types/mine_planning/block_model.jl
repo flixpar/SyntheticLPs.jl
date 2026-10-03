@@ -675,10 +675,11 @@ function _mine_rebudget(closure, old_budget::Float64, new_budget::Float64)
 end
 
 """
-    _mine_certificate(bm, mode, k, budget, weights, threshold, multiplier, requirement)
+    _mine_certificate(mode, k, budget, weights, threshold, multiplier, closure, requirement)
 
-Build a [`MineClosureCertificate`](@ref) for periods `1..k` and check its
-contradiction.
+Build a [`MineClosureCertificate`](@ref) for periods `1..k` from a
+`closure = (bound, lambda, source_flow, sink_flow, arc_flow)` tuple, erroring
+if the requirement does not exceed the bound.
 """
 function _mine_certificate(
     mode::Symbol,

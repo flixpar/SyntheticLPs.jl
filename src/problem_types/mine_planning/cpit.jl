@@ -43,11 +43,14 @@ window of periods.
     capacity — a [`MineClosureCertificate`](@ref) (Lagrangian max-closure flow
     bound, 10-35% margin) that combines precedence, chain, capacity and feed
     rows, so no single row exposes it. `k` is 1-3 (`:ramp_up`: the ore is
-    buried under too much overburden for the contracted start-up) or the
-    whole horizon (`:exhaustion`).
-  - `unknown`: the natural contract (60-90% of mill capacity over a window
-    starting in period 1 or 2), with no planted claim — feasibility depends on
-    pre-strip and deposit life.
+    buried under too much overburden for the contracted start-up fleet; the
+    fleet may be reduced to no less than 30% of steady state, or mill and
+    contract enlarged together by at most 1.6x) or the whole horizon
+    (`:exhaustion`, 20% of the time and as fallback).
+  - `unknown`: the natural contract (60-125% of the ore reserve spread over a
+    window of periods, capped at 50-90% of mill capacity), with the start-up
+    periods drawn at 60-120% of the closure bound on reachable ore — a genuine
+    two-sided boundary (pre-strip and deposit life decide), no planted claim.
 
 # Sizing
 

@@ -50,7 +50,8 @@ Rows per period `t` (plus chain and precedence):
     [`MineClosureCertificate`](@ref)); stockpiles only defer ore (reclaim never
     exceeds what was stockpiled from mined blocks, and the initial inventory is
     zero), so the closure bound covers direct feed plus reclaim.
-  - `unknown`: natural specs, no claim.
+  - `unknown`: natural specs and contract as in `pcpsp` (start-up feed at
+    60-120% of the closure bound on reachable mill feed), no claim.
 
 # Sizing
 
