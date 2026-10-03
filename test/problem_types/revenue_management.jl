@@ -57,42 +57,63 @@ end
     @test ProblemVariant(:revenue_management) == ProblemVariant(:revenue_management, :standard)
     @test problem_info(:revenue_management)[:default_variant] == :standard
 
-    @testset "standard sizing, network data, and deterministic construction" begin
-        for target in (-5, 0, 1, 2, 3, 50, 120, 500, 2_000)
+    @testset "standard choice-based network: sizing and schedule data" begin
+        for target in (-5, 0, 1, 2, 3, 10, 50, 120, 500, 2_000, 20_000)
             model, problem = generate_problem(REVENUE_STANDARD, target, feasible, 17)
-            @test num_variables(model) == max(2, target)
-            @test problem.n_products == max(2, target)
-            check_revenue_network(problem)
-            @test all(problem.fare .> 0)
-            @test all(problem.demand .>= 2)
-            @test all(0 .<= problem.commitment .<= problem.demand)
-            @test all(problem.capacity .> 0)
+            n_products, n_markets = length(problem.products), length(problem.markets)
+            @test num_variables(model) == n_products + n_markets
+            @test abs(num_variables(model) - max(2, target)) <= 1
+            @test num_constraints(model; count_variable_in_set_constraints=false) ==
+                n_products + n_markets + length(problem.flights) + length(problem.contracted_flights)
+            @test all(>(0), problem.fare)
+            @test all(>(0), problem.attraction)
+            @test all(>(0), problem.no_purchase_attraction)
+            @test all(>(0), problem.market_size)
+            @test all(>(0), problem.capacity)
+            # Every flight carries at least one product; itineraries are 1-2
+            # flights on the market's day, connecting at a hub in one bank.
+            used = falses(length(problem.flights))
+            for product in problem.products
+                market = problem.markets[product.market]
+                legs = [problem.flights[f] for f in product.flights]
+                @test length(legs) in (1, 2)
+                @test legs[1].origin == market.origin && legs[end].destination == market.destination
+                @test all(leg.day == market.day for leg in legs)
+                if length(legs) == 2
+                    @test legs[1].destination == legs[2].origin <= problem.n_hubs
+                    @test legs[1].bank == legs[2].bank
+                end
+                used[product.flights] .= true
+            end
+            @test all(used)
+            @test issorted(problem.contracted_flights) && allunique(problem.contracted_flights)
+            @test all(problem.min_load[f] > 0 for f in problem.contracted_flights)
         end
 
-        _, first = generate_problem(REVENUE_STANDARD, 240, infeasible, 12_345)
-        _, second = generate_problem(REVENUE_STANDARD, 240, infeasible, 12_345)
-        @test first.n_resources == second.n_resources
-        @test first.n_nodes == second.n_nodes
-        @test revenue_product_signature.(first.products) ==
-            revenue_product_signature.(second.products)
-        @test first.product_resources == second.product_resources
-        @test first.resource_products == second.resource_products
-        @test first.resource_names == second.resource_names
-        @test first.resource_origin == second.resource_origin
-        @test first.resource_destination == second.resource_destination
-        @test first.fare == second.fare
-        @test first.demand == second.demand
-        @test first.commitment == second.commitment
-        @test first.capacity == second.capacity
-        @test first.market_profile == second.market_profile
-        @test first.resolved_status == second.resolved_status
-        first_certificate = something(first.infeasibility_certificate)
-        second_certificate = something(second.infeasibility_certificate)
-        @test first_certificate.resource == second_certificate.resource
-        @test first_certificate.committed_load == second_certificate.committed_load
-        @test first_certificate.capacity == second_certificate.capacity
-        @test first_certificate.excess == second_certificate.excess
+        # Product columns are not parallel: each has its own scale row.
+        model, problem = generate_problem(REVENUE_STANDARD, 800, feasible, 3)
+        @test length(model[:scale]) == length(problem.products)
+        for j in (1, length(problem.products))
+            m = problem.products[j].market
+            row = model[:scale][j]
+            @test normalized_coefficient(row, model[:sales][j]) == 1.0
+            @test normalized_coefficient(row, model[:no_purchase][m]) ≈
+                -problem.attraction[j] / problem.no_purchase_attraction[m]
+        end
 
+        # Determinism and local RNG.
+        _, first = generate_problem(REVENUE_STANDARD, 1500, infeasible, 12_345)
+        _, second = generate_problem(REVENUE_STANDARD, 1500, infeasible, 12_345)
+        function rm_stored_equal(a, b)
+            typeof(a) == typeof(b) || return false
+            if a === nothing || a isa Number || a isa Symbol || a isa Tuple || a isa AbstractString
+                return isequal(a, b)
+            elseif a isa AbstractArray
+                return size(a) == size(b) && all(rm_stored_equal(x, y) for (x, y) in zip(a, b))
+            end
+            return all(rm_stored_equal(getfield(a, n), getfield(b, n)) for n in fieldnames(typeof(a)))
+        end
+        @test rm_stored_equal(first, second)
         Random.seed!(68_731)
         expected_first = rand()
         expected_second = rand()
@@ -101,73 +122,68 @@ end
         generate_problem(REVENUE_STANDARD, 120, feasible, 99)
         @test rand() == expected_second
 
-        markets = Set{Symbol}()
-        fare_classes = Set{Symbol}()
-        found_connection = false
-        for seed in 0:31
-            _, problem = generate_problem(REVENUE_STANDARD, 500, feasible, seed)
-            push!(markets, problem.market_profile)
-            union!(fare_classes, (product.fare_class for product in problem.products))
-            found_connection |= any(length(product.resources) == 2 for product in problem.products)
-        end
-        @test markets == Set((:regional_airline, :network_airline, :intercity_rail))
-        @test fare_classes == Set((:economy, :premium, :business))
-        @test found_connection
+        # Schedules grow with the target: more days, fare classes, hubs.
+        _, small = generate_problem(REVENUE_STANDARD, 500, feasible, 1)
+        _, large = generate_problem(REVENUE_STANDARD, 50_000, feasible, 1)
+        @test large.n_days > small.n_days
+        @test large.n_hubs > small.n_hubs
+        @test length(unique(p.fare_class for p in large.products)) == 5
+        @test any(length(p.flights) == 2 for p in large.products)
     end
 
-    @testset "standard constructive status guarantees" begin
-        for target in (2, 50, 120, 500, 2_000), seed in 0:11
-            model, problem = generate_problem(REVENUE_STANDARD, target, feasible, seed)
-            @test problem.resolved_status == feasible
-            @test problem.feasible_witness !== nothing
-            @test problem.infeasibility_certificate === nothing
-            @test SyntheticLPs._revenue_management_witness_is_valid(problem)
-            @test model[:x] === model[:acceptance]
-
-            witness = something(problem.feasible_witness)
-            @test witness.acceptance == problem.commitment
-            @test start_value(model[:acceptance][1]) == witness.acceptance[1]
-            @test length(model[:resource_capacity]) == problem.n_resources
-            for r in 1:problem.n_resources
-                row = model[:resource_capacity][r]
-                object = constraint_object(row)
-                @test object.set isa REVENUE_MOI.LessThan{Float64}
-                @test object.set.upper == problem.capacity[r]
-                @test all(
-                    normalized_coefficient(row, model[:acceptance][j]) == 1.0 for
-                    j in problem.resource_products[r]
-                )
+    @testset "standard witness and certificate arithmetic" begin
+        for target in (50, 500, 4_000), seed in 0:5
+            _, problem = generate_problem(REVENUE_STANDARD, target, feasible, seed)
+            w = problem.feasible_witness
+            @test w !== nothing && problem.infeasibility_certificate === nothing
+            @test all(0 .< w.offer_fraction .<= 1)
+            n_markets = length(problem.markets)
+            sold = zeros(n_markets)
+            for (j, product) in enumerate(problem.products)
+                m = product.market
+                sold[m] += w.sales[j]
+                @test w.sales[j] >= 0
+                @test w.sales[j] <=
+                    problem.attraction[j] / problem.no_purchase_attraction[m] * w.no_purchase[m] + 1e-9
             end
+            @test all(isapprox.(sold .+ w.no_purchase, problem.market_size; atol=1e-8))
+            load = zeros(length(problem.flights))
+            for (j, product) in enumerate(problem.products), f in product.flights
+                load[f] += w.sales[j]
+            end
+            @test all(load .<= problem.capacity .+ 1e-8)
+            @test all(load[f] >= problem.min_load[f] - 1e-8 for f in problem.contracted_flights)
         end
 
-        for target in (2, 50, 120, 500, 2_000), seed in 0:11
+        for target in (50, 500, 4_000), seed in 0:5
             _, problem = generate_problem(REVENUE_STANDARD, target, infeasible, seed)
-            @test problem.resolved_status == infeasible
-            @test problem.feasible_witness === nothing
-            @test problem.infeasibility_certificate !== nothing
-            @test SyntheticLPs._revenue_management_certificate_is_valid(problem)
-
-            certificate = something(problem.infeasibility_certificate)
-            mandatory = sum(
-                problem.commitment[j] for j in problem.resource_products[certificate.resource]
-            )
-            @test certificate.committed_load ≈ mandatory
-            @test certificate.capacity == problem.capacity[certificate.resource]
-            @test certificate.excess ≈ mandatory - certificate.capacity
-            @test certificate.excess > 0
-        end
-
-        statuses = Set{FeasibilityStatus}()
-        for seed in 0:63
-            _, problem = generate_problem(REVENUE_STANDARD, 120, unknown, seed)
-            push!(statuses, problem.resolved_status)
-            @test if problem.resolved_status == feasible
-                SyntheticLPs._revenue_management_witness_is_valid(problem)
-            else
-                SyntheticLPs._revenue_management_certificate_is_valid(problem)
+            c = problem.infeasibility_certificate
+            @test c !== nothing && problem.feasible_witness === nothing
+            @test c.flight in problem.contracted_flights
+            @test c.min_load == problem.min_load[c.flight]
+            by_market = Dict{Int, Float64}()
+            for (j, product) in enumerate(problem.products)
+                c.flight in product.flights || continue
+                by_market[product.market] = get(by_market, product.market, 0.0) + problem.attraction[j]
             end
+            @test c.markets == sort!(collect(keys(by_market)))
+            for (k, m) in enumerate(c.markets)
+                V = by_market[m]
+                @test c.market_bounds[k] ≈ problem.market_size[m] * V / (V + problem.no_purchase_attraction[m])
+            end
+            @test c.sellable_bound ≈ sum(c.market_bounds)
+            @test c.margin ≈ c.min_load - c.sellable_bound
+            @test c.margin >= 0.05 * c.sellable_bound - 1e-9
+            # The contract fits the cabin, so no single row is contradictory.
+            @test c.min_load <= problem.capacity[c.flight]
         end
-        @test statuses == Set((feasible, infeasible))
+
+        for seed in 0:5
+            _, problem = generate_problem(REVENUE_STANDARD, 800, unknown, seed)
+            @test problem.feasible_witness === nothing
+            @test problem.infeasibility_certificate === nothing
+            @test all(problem.min_load[f] <= problem.capacity[f] for f in problem.contracted_flights)
+        end
     end
 
     @testset "stochastic overbooking sizing and scenario data" begin
@@ -334,7 +350,7 @@ end
     if HAS_REVENUE_HIGHS
         @testset "direct HiGHS status contracts (no retries)" begin
             for reference in (REVENUE_STANDARD, REVENUE_OVERBOOKING),
-                status in (feasible, infeasible), target in (50, 150, 500),
+                status in (feasible, infeasible), target in (50, 150, 500, 3000),
                 seed in 0:5
 
                 model, _ = generate_problem(reference, target, status, seed)
@@ -344,6 +360,18 @@ end
                 expected = status == feasible ? REVENUE_MOI.OPTIMAL : REVENUE_MOI.INFEASIBLE
                 @test termination_status(model) == expected
             end
+        end
+        @testset "standard unknown is two-sided" begin
+            outcomes = map(0:11) do seed
+                model, _ = generate_problem(REVENUE_STANDARD, 2000, unknown, seed)
+                set_optimizer(model, HiGHS.Optimizer)
+                set_silent(model)
+                optimize!(model)
+                termination_status(model)
+            end
+            @test count(==(REVENUE_MOI.OPTIMAL), outcomes) >= 2
+            @test count(==(REVENUE_MOI.INFEASIBLE), outcomes) >= 2
+            @test all(in((REVENUE_MOI.OPTIMAL, REVENUE_MOI.INFEASIBLE)), outcomes)
         end
     else
         @info "HiGHS unavailable; skipping revenue-management solve checks"
