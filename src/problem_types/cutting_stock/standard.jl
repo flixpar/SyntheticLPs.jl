@@ -52,7 +52,7 @@ has 2-7 nonzeros. Generation is near-linear (hash-set deduplication).
     times `U(1.05, 1.35)` (rounded up). Mixed patterns are cheaper per piece,
     so the LP optimum uses fewer bars and the cheap stock types bind.
   - `infeasible`: the same availabilities scaled down so the ordered material
-    exceeds the total stock length by `U(4%, 12%)`
+    exceeds the total stock length by `U(8%, 20%)`
     (`MaterialShortageCertificate`, a Farkas combination of every row).
   - `unknown`: availabilities proportional to the single-item plan, scaled so
     total stock length is `U(0.97, 1.10)` times the ordered material — around
@@ -129,7 +129,7 @@ function CuttingStockProblem(
         base = [per_stock[k] * (1.05 + 0.30 * rand(rng)) + 1.0 for k in 1:n_stock]
         supply = sum(stock_lengths[k] * base[k] for k in 1:n_stock)
         ratio = if feasibility_status == infeasible
-            1.0 / (1.04 + 0.08 * rand(rng))
+            1.0 / (1.08 + 0.12 * rand(rng))
         else
             0.97 + 0.13 * rand(rng)
         end

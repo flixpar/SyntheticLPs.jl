@@ -73,7 +73,7 @@ Patterns come from a hash-deduplicated greedy enumerator (near-linear).
   - `feasible`: single-item strips and single-class sheets
     (`TwoStagePlanWitness`); availabilities `U(1.05, 1.35)` x plan usage.
   - `infeasible`: availabilities scaled so the item area exceeds the sheet
-    area by `U(4%, 12%)` (`AreaShortageCertificate`).
+    area by `U(8%, 20%)` (`AreaShortageCertificate`).
   - `unknown`: sheet area `U(0.98, 1.18)` x item area — around the two-stage
     trim-loss threshold; the LP decides.
 """
@@ -276,7 +276,7 @@ function TwoDimensionalBinPackingProblem(
     else
         base = [usage[s] * (1.05 + 0.30 * rand(rng)) + 1.0 for s in 1:S]
         area = sum(Float64(sheet_widths[s]) * sheet_heights[s] * base[s] for s in 1:S)
-        ratio = feasibility_status == infeasible ? 1.0 / (1.04 + 0.08 * rand(rng)) : 0.98 + 0.20 * rand(rng)
+        ratio = feasibility_status == infeasible ? 1.0 / (1.08 + 0.12 * rand(rng)) : 0.98 + 0.20 * rand(rng)
         availability = [floor(Int, base[s] * ratio * demand_area / area) for s in 1:S]
         if feasibility_status == infeasible
             supply = sum(Float64(sheet_widths[s]) * sheet_heights[s] * availability[s] for s in 1:S)

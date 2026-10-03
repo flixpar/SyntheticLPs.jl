@@ -70,6 +70,6 @@ non-overlap row slack at the fractional point) and had `O(n²)` variables.
 - `feasible`: single-item strips and single-class sheets
   (`TwoStagePlanWitness`), availability `U(1.05, 1.35)` × plan sheets.
 - `infeasible`: availability scaled so item area exceeds sheet area by
-  `U(4%, 12%)` (`AreaShortageCertificate`; multipliers `w_i h_i`, `W_s H_c`,
+  `U(8%, 20%)` (`AreaShortageCertificate`; multipliers `w_i h_i`, `W_s H_c`,
   `W_s H_s`).
 - `unknown`: sheet area `U(0.98, 1.18)` × item area.

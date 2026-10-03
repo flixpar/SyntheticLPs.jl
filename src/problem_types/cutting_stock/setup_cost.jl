@@ -56,7 +56,7 @@ Sizing: `Q = target_variables ÷ 2` pairs (columns `2Q`), patterns
   - `feasible`: single-item plan (`SetupPlanWitness`); stock availability
     `U(1.05, 1.35)` and machine minutes `U(1.02, 1.15)` times the plan's usage.
   - `infeasible`: stock availabilities scaled so ordered material exceeds the
-    total stock length by `U(4%, 12%)` (`MaterialShortageCertificate`).
+    total stock length by `U(8%, 20%)` (`MaterialShortageCertificate`).
   - `unknown`: stock length `U(0.97, 1.10)` times the ordered material, machine
     minutes as for `feasible`; the LP decides.
 """
@@ -183,7 +183,7 @@ function SetupCostCuttingStockProblem(
     else
         base = [per_stock[k] * (1.05 + 0.30 * rand(rng)) + 1.0 for k in 1:n_stock]
         supply = sum(stock_lengths[k] * base[k] for k in 1:n_stock)
-        ratio = feasibility_status == infeasible ? 1.0 / (1.04 + 0.08 * rand(rng)) : 0.97 + 0.13 * rand(rng)
+        ratio = feasibility_status == infeasible ? 1.0 / (1.08 + 0.12 * rand(rng)) : 0.97 + 0.13 * rand(rng)
         availability = [floor(Int, base[k] * ratio * material / supply) for k in 1:n_stock]
         if feasibility_status == infeasible
             supply = sum(Float64(stock_lengths[k]) * availability[k] for k in 1:n_stock)

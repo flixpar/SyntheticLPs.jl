@@ -64,9 +64,15 @@ Sizing: `T = clamp(round(2 log10 n), 4, 12)` periods (fewer for tiny targets),
 
   - `feasible`: just-in-time single-item plan (`DueDatePlanWitness`);
     deliveries are its per-period usage times `U(1.05, 1.35)`, rounded up.
-  - `infeasible`: deliveries in periods `1..t*` (`t*` in the second half of the
-    horizon) scaled so the material due by `t*` exceeds the stock delivered by
-    then by `U(4%, 12%)` (`CumulativeShortageCertificate`).
+  - `infeasible`: the opening delivery is short (a delayed supplier
+    shipment): period-1 stock is scaled so the material due in period 1
+    exceeds it by `U(8%, 20%)` (`CumulativeShortageCertificate` with
+    `period = 1`; nothing carries into period 1, so the proof combines every
+    item's period-1 balance row with the period-1 availability rows). Later
+    cut-off periods are equally valid certificates, but at 100k columns
+    HiGHS's dual simplex intermittently failed to verify the resulting
+    multi-period dual ray (status UNKNOWN, while IPM proves infeasibility), so
+    the generator uses the robust first-period form.
   - `unknown`: deliveries proportional to the plan's usage, scaled per period
     to `U(0.95, 1.12) * U(0.85, 1.15)` times that period's due material; with
     carryover the outcome depends on the cumulative profile, decided by the LP.
@@ -164,10 +170,10 @@ function DueDatesCuttingStockProblem(
         for k in 1:n_stock, t in 1:T
             availability[k, t] = ceil(Int, per_stock[k, t] * (1.05 + 0.30 * rand(rng)))
         end
-        tstar = rand(rng, cld(T, 2):T)
+        tstar = 1   # see the docstring: robust ray verification at scale
         due = sum(material[1:tstar])
         supply = sum(Float64(stock_lengths[k]) * availability[k, t] for k in 1:n_stock, t in 1:tstar)
-        scale = due / ((1.04 + 0.08 * rand(rng)) * supply)
+        scale = due / ((1.08 + 0.12 * rand(rng)) * supply)
         for k in 1:n_stock, t in 1:tstar
             availability[k, t] = floor(Int, availability[k, t] * scale)
         end

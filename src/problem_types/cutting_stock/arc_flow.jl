@@ -75,7 +75,7 @@ the integer graph allows (within a few percent above ~400 arcs). Rows: one per i
 
   - `feasible`: single-item plan, `S = U(1.05, 1.30)` times its rolls
     (`ArcFlowWitness`).
-  - `infeasible`: `S = floor(material / (L * U(1.04, 1.12)))`
+  - `infeasible`: `S = floor(material / (L * U(1.08, 1.20)))`
     (`ArcFlowMaterialCertificate`).
   - `unknown`: `S = round(U(0.97, 1.10) * material / L)`, around the trim-loss
     threshold of the best patterns; the LP decides.
@@ -231,7 +231,7 @@ function ArcFlowCuttingStockProblem(
         end
         feasible_witness = ArcFlowWitness(flow, rolls)
     elseif feasibility_status == infeasible
-        stock_limit = floor(Int, material / (L * (1.04 + 0.08 * rand(rng))))
+        stock_limit = floor(Int, material / (L * (1.08 + 0.12 * rand(rng))))
         infeasibility_certificate = ArcFlowMaterialCertificate(material, Float64(L) * stock_limit)
     else
         stock_limit = round(Int, (0.97 + 0.13 * rand(rng)) * material / L)

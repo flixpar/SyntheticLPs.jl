@@ -226,6 +226,16 @@ function BoundedKnapsackProblem(
         end
         rho = 0.30 + 0.35 * rand(rng)
         capacity = [full_load[k] * rho * (0.9 + 0.2 * rand(rng)) for k in 1:K]
+        # No single commitment may exceed half of what its own lanes can
+        # carry: a lone over-committed lot is a contradiction presolve sees
+        # by bound propagation, not the kind of joint shortage `unknown` is
+        # meant to probe.
+        for i in 1:N
+            commitment[i] > 0 || continue
+            lane_cap = sum(capacity[knapsack_of[j]] for j in cols_of[i])
+            minw = minimum(unit_weight[j] for j in cols_of[i])
+            commitment[i] = min(commitment[i], floor(Int, 0.5 * lane_cap / minw))
+        end
     end
 
     return BoundedKnapsackProblem(

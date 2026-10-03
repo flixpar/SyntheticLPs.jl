@@ -122,7 +122,7 @@ end
             _, p = generate_problem("cutting_stock/due_dates", target, infeasible, seed)
             c = p.infeasibility_certificate
             t = c.period
-            @test cld(p.n_periods, 2) <= t <= p.n_periods
+            @test t == 1
             @test c.demand_length ≈ sum(p.piece_lengths .* vec(sum(p.demands[:, 1:t]; dims=2)))
             @test c.supply_length ≈ sum(p.stock_lengths .* vec(sum(p.availability[:, 1:t]; dims=2)))
             @test c.demand_length >= 1.04 * c.supply_length

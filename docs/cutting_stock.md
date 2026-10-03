@@ -42,7 +42,7 @@ Exactly `n` patterns; `n_stock = clamp(round(log10 n), 1, 5)`,
 - `feasible`: single-item plan (`StockPlanWitness`), availabilities
   `U(1.05, 1.35)` × its usage per stock type.
 - `infeasible`: availabilities scaled so ordered material exceeds the stock
-  length by `U(4%, 12%)` (`MaterialShortageCertificate`).
+  length by `U(8%, 20%)` (`MaterialShortageCertificate`).
 - `unknown`: total stock length `U(0.97, 1.10)` × the ordered material — around
   the trim-loss threshold of the best patterns.
 
@@ -62,9 +62,13 @@ period. `n_types = round(n / (16 T))`, `n_patterns = n ÷ T - n_types`; columns
 
 - `feasible`: just-in-time single-item plan (`DueDatePlanWitness`), deliveries
   `U(1.05, 1.35)` × its per-period usage.
-- `infeasible`: deliveries in periods `1..t*` (`t*` in the second half) scaled
-  so the material due by `t*` exceeds what was delivered by `U(4%, 12%)`
-  (`CumulativeShortageCertificate`, summing all balance rows up to `t*`).
+- `infeasible`: the opening delivery is short — material due in period 1
+  exceeds period-1 stock by `U(8%, 20%)` (`CumulativeShortageCertificate`
+  with `period = 1`, combining every item's period-1 balance row with the
+  period-1 availability rows). A later cut-off period is an equally valid
+  proof, but at 100k columns HiGHS's dual simplex intermittently returned
+  UNKNOWN on the longer multi-period ray (IPM proves infeasibility), so the
+  robust first-period form is used.
 - `unknown`: per-period stock length `U(0.95, 1.12) × U(0.85, 1.15)` × that
   period's due material; carryover decides.
 
@@ -115,6 +119,6 @@ replaces `integer_patterns`, whose relaxation was the same pattern LP as
 
 - `feasible`: superposed single-item paths (`ArcFlowWitness`),
   `S = U(1.05, 1.30)` × its rolls.
-- `infeasible`: `S = floor(material / (L U(1.04, 1.12)))`
+- `infeasible`: `S = floor(material / (L U(1.08, 1.20)))`
   (`ArcFlowMaterialCertificate`, node potentials `pi_u = u`).
 - `unknown`: `S = round(U(0.97, 1.10) material / L)`.
