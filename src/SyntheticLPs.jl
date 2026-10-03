@@ -32,6 +32,8 @@ export list_tags, register_tag, variant_tags, model_class, supports_target
 export model_statistics
 export bounds_to_constraints!
 export dualize_model, dual_reformulation, is_dual_reformulation
+export ModelTransforms, apply_transforms, UnitScaling
+export scale_units!, aggregate_rows!, elasticize_rows!, permute_model
 export generate_dataset, plan_dataset, merge_manifests
 export GeneratedInstance, GeneratedDataset, DatasetFailure, PlannedInstance
 export QualityCriteria, QualityResult, check_quality
@@ -364,12 +366,14 @@ function build_model end
 
 """
     _generate_problem_verified([ref_or_type], target_variables, feasibility_status, seed;
-                               relax_integer, bounds_to_constraints, dualize, optimizer,
+                               relax_integer, bounds_to_constraints, dualize, transforms,
+                               optimizer,
                                max_feasibility_retries, feasibility_timeout)
 
 Internal builder used by [`generate_problem`](@ref). Constructs the problem and its
 JuMP model, applies `relax_integer` and `bounds_to_constraints`, optionally
-verifies that primal model, and finally applies `dualize` before returning.
+verifies that primal model, then applies `transforms` (seeded by the resolved
+seed) and finally `dualize` before returning.
 
 When `optimizer` is supplied and `feasibility_status` is `feasible` or `infeasible`,
 the model is solved once to verify the feasibility contract — a `feasible` request
@@ -404,6 +408,7 @@ function _generate_problem_verified(
     relax_integer::Bool=true,
     bounds_to_constraints::Bool=false,
     dualize::Bool=false,
+    transforms=ModelTransforms(),
     optimizer=nothing,
     max_feasibility_retries::Int=10,
     feasibility_timeout::Float64=10.0,
@@ -411,6 +416,8 @@ function _generate_problem_verified(
 ) where {T <: ProblemGenerator}
     max_feasibility_retries >= 1 ||
         error("max_feasibility_retries must be >= 1 (got $max_feasibility_retries).")
+    transforms = _as_transforms(transforms)
+    _check_transforms_status(transforms, feasibility_status)
     needs_check = optimizer !== nothing && feasibility_status !== unknown
 
     current_seed = seed
@@ -428,14 +435,14 @@ function _generate_problem_verified(
             info[:attempts] = attempt
         end
         if !needs_check
-            return dualize ? dualize_model(model) : model, problem, current_seed
+            return _finalize_model(model, transforms, current_seed, dualize), problem, current_seed
         end
         verdict, ts = _check_feasibility_contract(
             model, optimizer, feasibility_status; timeout=feasibility_timeout
         )
         info === nothing || (info[:verification_status] = ts)
         if verdict === :holds
-            return dualize ? dualize_model(model) : model, problem, current_seed
+            return _finalize_model(model, transforms, current_seed, dualize), problem, current_seed
         elseif verdict === :inconclusive
             # The solve certified nothing, so we have no evidence against this
             # instance and rebuilding would just re-ask an unanswerable question.
@@ -459,6 +466,13 @@ function _generate_problem_verified(
         "after $max_feasibility_retries attempts " *
         "(seeds $seed through $current_seed); no model was returned.",
     )
+end
+
+# Post-verification steps: the practitioner-style transforms (seeded by the
+# resolved instance seed), then optional dualization of the transformed primal.
+function _finalize_model(model::Model, transforms::ModelTransforms, seed::Int, dualize::Bool)
+    model = apply_transforms(model, transforms, seed)
+    return dualize ? dualize_model(model) : model
 end
 
 # Ref-based overload delegating to the type-based builder above.
@@ -530,6 +544,7 @@ end
 """
     generate_problem(::Type{T}, target_variables, feasibility_status, seed;
                      relax_integer=true, bounds_to_constraints=false, dualize=false,
+                     transforms=ModelTransforms(),
                      optimizer=nothing, max_feasibility_retries=10,
                      feasibility_timeout=10.0)
 
@@ -547,6 +562,16 @@ reformulation. Set `relax_integer=false` only for models that are continuous by
 construction; integer and binary variables cannot be dualized. If feasibility
 verification is enabled, it checks the source primal before dualization because
 an infeasible primal's dual may be either infeasible or unbounded.
+
+`transforms` (a [`ModelTransforms`](@ref), or a `NamedTuple` of its keyword
+arguments) applies practitioner-style reformulations — unit scaling, redundant
+aggregate rows, elastic rows, row/column permutation — after integrality
+relaxation, bound reformulation and feasibility verification, and before
+dualization, so a dualized instance is the dual of the transformed primal. They
+are seeded by the instance seed. The default is the identity. Scaling, aggregation
+and permutation preserve the feasibility label exactly; elastic rows are a
+relaxation and are refused for `infeasible` requests (see
+[`apply_transforms`](@ref)).
 
 When `optimizer` is supplied (e.g. `HiGHS.Optimizer`) and `feasibility_status` is
 `feasible` or `infeasible`, the model is solved to verify the feasibility contract
@@ -568,6 +593,7 @@ function generate_problem(
     relax_integer::Bool=true,
     bounds_to_constraints::Bool=false,
     dualize::Bool=false,
+    transforms=ModelTransforms(),
     optimizer=nothing,
     max_feasibility_retries::Int=10,
     feasibility_timeout::Float64=10.0,
@@ -580,6 +606,7 @@ function generate_problem(
         relax_integer=relax_integer,
         bounds_to_constraints=bounds_to_constraints,
         dualize=dualize,
+        transforms=transforms,
         optimizer=optimizer,
         max_feasibility_retries=max_feasibility_retries,
         feasibility_timeout=feasibility_timeout,
@@ -590,6 +617,7 @@ end
 """
     generate_problem(ref::ProblemVariant, target_variables, feasibility_status, seed;
                      relax_integer=true, bounds_to_constraints=false, dualize=false,
+                     transforms=ModelTransforms(),
                      optimizer=nothing, max_feasibility_retries=10,
                      feasibility_timeout=10.0)
 
@@ -603,6 +631,7 @@ function generate_problem(
     relax_integer::Bool=true,
     bounds_to_constraints::Bool=false,
     dualize::Bool=false,
+    transforms=ModelTransforms(),
     optimizer=nothing,
     max_feasibility_retries::Int=10,
     feasibility_timeout::Float64=10.0,
@@ -615,6 +644,7 @@ function generate_problem(
         relax_integer=relax_integer,
         bounds_to_constraints=bounds_to_constraints,
         dualize=dualize,
+        transforms=transforms,
         optimizer=optimizer,
         max_feasibility_retries=max_feasibility_retries,
         feasibility_timeout=feasibility_timeout,
@@ -624,6 +654,7 @@ end
 """
     generate_problem(ref::AbstractString, target_variables, feasibility_status, seed;
                      relax_integer=true, bounds_to_constraints=false, dualize=false,
+                     transforms=ModelTransforms(),
                      optimizer=nothing, max_feasibility_retries=10,
                      feasibility_timeout=10.0)
 
@@ -638,6 +669,7 @@ function generate_problem(
     relax_integer::Bool=true,
     bounds_to_constraints::Bool=false,
     dualize::Bool=false,
+    transforms=ModelTransforms(),
     optimizer=nothing,
     max_feasibility_retries::Int=10,
     feasibility_timeout::Float64=10.0,
@@ -650,6 +682,7 @@ function generate_problem(
         relax_integer=relax_integer,
         bounds_to_constraints=bounds_to_constraints,
         dualize=dualize,
+        transforms=transforms,
         optimizer=optimizer,
         max_feasibility_retries=max_feasibility_retries,
         feasibility_timeout=feasibility_timeout,
@@ -659,7 +692,7 @@ end
 """
     generate_problem(category::Symbol, target_variables, feasibility_status, seed;
                      variant=nothing, relax_integer=true, bounds_to_constraints=false,
-                     dualize=false,
+                     dualize=false, transforms=ModelTransforms(),
                      optimizer=nothing, max_feasibility_retries=10,
                      feasibility_timeout=10.0)
 
@@ -677,6 +710,8 @@ variant is used; pass `variant=:name` to select a specific variant.
   - `bounds_to_constraints`: Reformulate variable bounds (other than `x ≥ 0`) as
     explicit affine constraints
   - `dualize`: Replace the continuous generated model with its dual formulation
+  - `transforms`: Practitioner-style reformulations ([`ModelTransforms`](@ref)),
+    applied before dualization; the identity by default
   - `optimizer`: Optional solver used to verify the feasibility contract (see
     [`_generate_problem_verified`](@ref)). `nothing` disables verification.
   - `max_feasibility_retries`: Maximum number of rebuild attempts when verification
@@ -699,6 +734,7 @@ function generate_problem(
     relax_integer::Bool=true,
     bounds_to_constraints::Bool=false,
     dualize::Bool=false,
+    transforms=ModelTransforms(),
     optimizer=nothing,
     max_feasibility_retries::Int=10,
     feasibility_timeout::Float64=10.0,
@@ -712,6 +748,7 @@ function generate_problem(
         relax_integer=relax_integer,
         bounds_to_constraints=bounds_to_constraints,
         dualize=dualize,
+        transforms=transforms,
         optimizer=optimizer,
         max_feasibility_retries=max_feasibility_retries,
         feasibility_timeout=feasibility_timeout,
@@ -1102,7 +1139,8 @@ end
 """
     generate_random_problem(target_variables; feasibility_status=unknown,
                             relax_integer=true, bounds_to_constraints=false,
-                            dualize=false, dualize_probability=0.0, seed=0,
+                            dualize=false, dualize_probability=0.0,
+                            transforms=ModelTransforms(), seed=0,
                             problem_types=nothing, variant_weighting=:category,
                             optimizer=nothing, max_feasibility_retries=10,
                             feasibility_timeout=10.0)
@@ -1115,8 +1153,9 @@ that supports `target_variables`) with weights from
 categories, then over each category's variants. Dualization is off by default. Set
 `dualize_probability` to a value in `[0, 1]` to randomly dualize the selected
 model, reproducibly from `seed`; `dualize=true` forces dualization regardless of
-the probability. When `optimizer` is supplied and `feasibility_status` is
-`feasible`/`infeasible`, the feasibility contract is verified (see
+the probability. `transforms` is applied as in [`generate_problem`](@ref). When
+`optimizer` is supplied and `feasibility_status` is `feasible`/`infeasible`, the
+feasibility contract is verified (see
 [`generate_problem`](@ref)).
 
 # Returns
@@ -1132,6 +1171,7 @@ function generate_random_problem(
     bounds_to_constraints::Bool=false,
     dualize::Bool=false,
     dualize_probability::Real=0.0,
+    transforms=ModelTransforms(),
     seed::Int=0,
     problem_types=nothing,
     variant_weighting=:category,
@@ -1157,6 +1197,7 @@ function generate_random_problem(
         relax_integer=relax_integer,
         bounds_to_constraints=bounds_to_constraints,
         dualize=apply_dualization,
+        transforms=transforms,
         optimizer=optimizer,
         max_feasibility_retries=max_feasibility_retries,
         feasibility_timeout=feasibility_timeout,

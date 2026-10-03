@@ -84,6 +84,25 @@ function parse_commandline()
         "--bounds-to-constraints"
         help = "Reformulate variable bounds (other than x >= 0) as explicit affine constraints"
         action = :store_true
+        "--scale-units"
+        help = "Rescale variable/row families and the objective by random powers of ten in 10^-D..10^D (0 = off)"
+        arg_type = Int
+        default = 0
+        "--aggregate-rows"
+        help = "Probability of adding redundant block-total rows to each row family (0 = off)"
+        arg_type = Float64
+        default = 0.0
+        "--elastic-rows"
+        help = "Probability of softening each row family with penalized violation columns (0 = off)"
+        arg_type = Float64
+        default = 0.0
+        "--elastic-penalty"
+        help = "Violation penalty per unit, as a multiple of the largest objective coefficient"
+        arg_type = Float64
+        default = 1000.0
+        "--permute"
+        help = "Shuffle column and row order"
+        action = :store_true
         "--dualize"
         help = "Force every generated continuous model to use its dual formulation"
         action = :store_true
@@ -272,6 +291,13 @@ function main()
         plan_kwargs...,
         output_dir=args["output-dir"],
         bounds_to_constraints=args["bounds-to-constraints"],
+        transforms=ModelTransforms(;
+            unit_scale_decades=args["scale-units"],
+            aggregate_probability=args["aggregate-rows"],
+            elastic_probability=args["elastic-rows"],
+            elastic_penalty=args["elastic-penalty"],
+            permute=args["permute"],
+        ),
         dualize=args["dualize"],
         dualize_probability=args["dualize-probability"],
         size_match_tolerance=args["size-match-tolerance"],

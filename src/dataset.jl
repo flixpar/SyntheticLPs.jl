@@ -220,7 +220,9 @@ end
 
 Metadata describing a single instance produced by [`generate_dataset`](@ref). Rebuild
 it exactly with `generate_problem(ProblemVariant(inst), inst.requested_variables,
-inst.feasibility_status, inst.seed; <transforms>, dualize=inst.dualized)`.
+inst.feasibility_status, inst.seed; <transforms>, dualize=inst.dualized)`, where
+`<transforms>` are the run's `relax_integer`/`bounds_to_constraints` flags and its
+`transforms=ModelTransforms(...)` (both recorded in the manifest `config`).
 
 # Fields
 
@@ -236,7 +238,7 @@ inst.feasibility_status, inst.seed; <transforms>, dualize=inst.dualized)`.
   - `seed::Int`: resolved generator seed (reproduces this exact instance).
   - `dualized::Bool`: whether the returned model is a dual reformulation.
   - `transforms::Vector{String}`: model transforms applied, in order (e.g.
-    `["relax_integer", "dualize"]`).
+    `["relax_integer", "aggregate_rows", "scale_units", "dualize"]`).
   - `verified_status::Union{FeasibilityStatus,Nothing}`: the status a solve
     established (feasibility verification or the quality filter's solve), or
     `nothing` when no solve ran or it was inconclusive.
@@ -670,7 +672,8 @@ function _generate_entry(entry::PlannedInstance, cfg)
                 request,
                 status,
                 problem_seed;
-                cfg.transforms...,
+                cfg.transform_flags...,
+                transforms=cfg.model_transforms,
                 dualize=dualized,
                 optimizer=cfg.verify_optimizer,
                 max_feasibility_retries=cfg.max_feasibility_retries,
@@ -762,7 +765,8 @@ function _generate_entry(entry::PlannedInstance, cfg)
             )
             write_to_file(cand.model, joinpath(cfg.output_dir, filename))
         end
-        transforms = [string(k) for (k, v) in pairs(cfg.transforms) if v === true]
+        transforms = [string(k) for (k, v) in pairs(cfg.transform_flags) if v === true]
+        append!(transforms, _transform_names(cfg.model_transforms))
         cand.dualized && push!(transforms, "dualize")
         return GeneratedInstance(;
             index=entry.index,
@@ -1033,6 +1037,13 @@ index) carrying `failures` and the `manifest`.
   - `relax_integer::Bool = true`, `bounds_to_constraints::Bool = false`: model
     transforms, as in [`generate_problem`](@ref). Converted bounds become rows and
     count toward `num_constraints`.
+  - `transforms = ModelTransforms()`: practitioner-style reformulations (unit
+    scaling, aggregate rows, elastic rows, permutation; see [`ModelTransforms`](@ref)
+    or pass a `NamedTuple` of its keywords), seeded by each instance's seed. Added
+    rows/columns count toward recorded sizes and size matching. Recorded in the
+    manifest `config["transforms"]`; non-identity steps appear in each instance's
+    `transforms` list. Elastic rows are refused when any `infeasible` instance is
+    requested.
   - `dualize::Bool = false`, `dualize_probability::Real = 0.0`: force, or
     independently sample per instance, the dual reformulation.
 
@@ -1092,6 +1103,7 @@ function generate_dataset(;
     feasible_only::Bool=false,
     relax_integer::Bool=true,
     bounds_to_constraints::Bool=false,
+    transforms=ModelTransforms(),
     dualize::Bool=false,
     dualize_probability::Real=0.0,
     seed::Int=0,
@@ -1152,12 +1164,25 @@ function generate_dataset(;
     output_dir === nothing || mkpath(output_dir)
 
     # Model transforms applied to every instance before (optional) dualization. Every
-    # entry is forwarded to `generate_problem` and recorded in the manifest; Boolean
-    # entries that are `true` are listed in each instance's `transforms`.
-    transforms = (; relax_integer=relax_integer, bounds_to_constraints=bounds_to_constraints)
+    # flag is forwarded to `generate_problem` and recorded in the manifest; flags that
+    # are `true` are listed in each instance's `transforms`. The practitioner-style
+    # `ModelTransforms` follow them (then `dualize`), and their non-identity steps are
+    # listed too.
+    transform_flags = (; relax_integer=relax_integer, bounds_to_constraints=bounds_to_constraints)
+    model_transforms = _as_transforms(transforms)
+    if model_transforms.elastic_probability > 0 &&
+       any(((st, w),) -> st == infeasible && w > 0, zip(plan.statuses, plan.status_weights))
+        throw(
+            ArgumentError(
+                "elastic_probability > 0 cannot be combined with `infeasible` " *
+                "instances: softening rows can make them feasible.",
+            ),
+        )
+    end
 
     cfg = (;
-        transforms,
+        transform_flags,
+        model_transforms,
         dualize,
         dualize_probability=validated_dualize_probability,
         # Skip separate verification when the quality filter is on: `check_quality`
@@ -1206,6 +1231,8 @@ function generate_dataset(;
             ),
         )
         bounds_to_constraints && println("  Bounds → constraints: enabled")
+        is_identity(model_transforms) ||
+            println("  Model transforms: $(join(_transform_names(model_transforms), ", "))")
         if dualize
             println("  Dual reformulation: forced for every instance")
         elseif validated_dualize_probability > 0
@@ -1293,9 +1320,10 @@ function generate_dataset(;
         "max_retries" => max_retries,
         "max_feasibility_retries" => max_feasibility_retries,
     )
-    for (k, v) in pairs(transforms)
+    for (k, v) in pairs(transform_flags)
         config[string(k)] = _jsonable(v)
     end
+    config["transforms"] = _transforms_config(model_transforms)
 
     manifest = Dict{String, Any}(
         "format_version" => 2,
