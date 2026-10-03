@@ -81,8 +81,8 @@ Construct a capacitated p-median instance.
     total = F · (C + 1)
 
 (`F` opening plus `F·C` assignment variables), with a sampled customer/site
-ratio `r ∈ 2..8`, `F = max(2, round(sqrt(target / r)))` and
-`C = max(2, round(target / F) - 1)`. `p ∈ [2, max(2, F/3)]` (at most `C - 1`).
+ratio `r ∈ 1..3` (CPMP benchmarks use about as many sites as customers), `F = max(2, round(sqrt(target / r)))` and
+`C = max(2, round(target / F) - 1)`. `p ∈ [F/10, F/4]` (at least 1, at most `C - 1`).
 No size cap.
 
 # Feasibility
@@ -90,12 +90,10 @@ No size cap.
 Capacities are `Q_w = (total_demand / p) · ρ · U(0.8, 1.25)` with a sampled
 tightness `ρ ∈ [0.8, 1.3]`.
 
-  - `feasible`: `p` facilities are planted (greedy weighted p-median seeds) and
-    their capacities raised so `Σ_open Q_w ≥ total_demand + p · max_c d_c`;
-    customers, largest first, go to the nearest planted facility with spare
-    capacity. That sufficient condition guarantees the greedy never gets stuck
-    (a stuck customer would leave every open site with residual `< d_max`,
-    i.e. load `> Σ Q_w − p·d_max ≥ total_demand`). Stored as a
+  - `feasible`: `p` facilities are planted (greedy weighted p-median seeds),
+    every customer is assigned to its nearest planted site, and a planted site
+    whose load exceeds its drawn capacity is expanded to 1.02–1.12× that load.
+    Capacities therefore stay tight (many bind in the LP). Stored as a
     [`PMedianWitness`](@ref).
   - `infeasible`: capacities are scaled so the `p` largest sum to
     `total_demand / (1.05..1.25)` ([`PMedianCapacityCertificate`](@ref)). The
@@ -111,11 +109,12 @@ function PMedianFacilityLocationProblem(
 )
     rng = MersenneTwister(seed)
 
-    ratio = rand(rng, 2:8)
+    ratio = rand(rng, 1:3)
     F = max(2, round(Int, sqrt(target_variables / ratio)))
     C = max(2, round(Int, target_variables / F) - 1)
-    p_hi = clamp(fld(F, 3), 2, F)
-    p = rand(rng, min(2, p_hi):p_hi)
+    p_lo = clamp(fld(F, 10), 1, F)
+    p_hi = clamp(fld(F, 4), max(p_lo, 2), F)
+    p = rand(rng, p_lo:p_hi)
     p = min(p, C - 1, F)
     p = max(p, 1)
 
@@ -139,8 +138,8 @@ function PMedianFacilityLocationProblem(
         distances[w, c] = round(_fl_dist(facility_locs[w], customer_locs[c]); digits=3)
     end
 
-    # Capacity tightness: with F ≈ 3p sites drawn at U(0.8, 1.25) × total/p,
-    # the p largest sum to ≈ 1.17ρ × demand, so ρ ≈ 0.85 is the LP threshold.
+    # Capacity tightness: with F ≈ 4–10p sites drawn at U(0.8, 1.25) × total/p,
+    # the p largest sum to ≈ 1.2ρ × demand, so ρ ≈ 0.83 is the LP threshold.
     rho = rand(rng, Uniform(0.8, 1.3))
     capacities = [
         round(total_demand / p * rho * rand(rng, Uniform(0.8, 1.25)); digits=2) for _ in 1:F
@@ -168,22 +167,17 @@ function PMedianFacilityLocationProblem(
                 best[c] = min(best[c], distances[pick, c])
             end
         end
-        needed = total_demand + p * maximum(demands)
-        have = sum(capacities[open])
-        if have < needed
-            capacities[open] .= ceil.(capacities[open] .* (needed / have); digits=2)
+        # Every customer goes to its nearest planted site; a planted site whose
+        # load exceeds its drawn capacity is expanded to just cover it (2-12%
+        # headroom), so capacities stay tight and binding in the LP.
+        assignment = [open[argmin([distances[w, c] for w in open])] for c in 1:C]
+        load = zeros(F)
+        for c in 1:C
+            load[assignment[c]] += demands[c]
         end
-        residual = capacities[open]
-        assignment = zeros(Int, C)
-        for c in sortperm(demands; rev=true)
-            for i in sortperm([distances[w, c] for w in open])
-                if residual[i] >= demands[c]
-                    assignment[c] = open[i]
-                    residual[i] -= demands[c]
-                    break
-                end
-            end
-            @assert assignment[c] != 0
+        for w in open
+            need = load[w] * rand(rng, Uniform(1.02, 1.12))
+            capacities[w] < need && (capacities[w] = ceil(need; digits=2))
         end
         witness = PMedianWitness(sort!(open), assignment)
     elseif feasibility_status == infeasible

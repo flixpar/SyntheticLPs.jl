@@ -58,7 +58,8 @@ to `throughput / cap_w`.
 Capacitated p-median (Osman–Christofides / Lorena–Senne family). Sites uniform,
 customers clustered, log-normal demands, Euclidean distances.
 
-Sizing: `total = F · (C + 1)` with ratio `r ∈ 2..8`, `p ∈ [2, max(2, F/3)]`.
+Sizing: `total = F · (C + 1)` with ratio `r ∈ 1..3` (CPMP benchmarks use about
+as many candidate sites as customers) and `p ∈ [F/10, F/4]`.
 
 ```text
 min  Σ_{w,c} dist_{w,c} d_c y_{w,c}
@@ -70,12 +71,12 @@ s.t. Σ_w y_{w,c} = 1                      ∀c
 ```
 
 Capacities `Q_w = total_demand / p · ρ · U(0.8, 1.25)` with tightness
-`ρ ∈ [0.8, 1.3]` (≈ 0.85 is the LP threshold).
+`ρ ∈ [0.8, 1.3]` (≈ 0.83 is the LP threshold).
 
-- `feasible`: greedy weighted p-median seeds are opened and their capacities
-  lifted to `Σ_open Q ≥ total_demand + p · max d`; customers, largest first, go
-  to the nearest open site with room (that margin guarantees the greedy never
-  gets stuck) → `PMedianWitness(open, assignment)`.
+- `feasible`: greedy weighted p-median seeds are opened, every customer goes to
+  its nearest planted site, and a planted site whose load exceeds its drawn
+  capacity is expanded to 1.02–1.12× that load (capacities stay tight) →
+  `PMedianWitness(open, assignment)`.
 - `infeasible`: capacities scaled so the `p` largest sum to
   `total_demand / (1.05..1.25)` → `PMedianCapacityCertificate(top_p_capacity,
   total_demand)`.
