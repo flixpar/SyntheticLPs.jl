@@ -482,6 +482,7 @@ function _attempt_candidate(
     feasibility::FeasibilityStatus,
     relax_integer::Bool,
     bounds_to_constraints::Bool,
+    transforms::ModelTransforms,
     dualize::Bool,
     dualize_probability::Float64,
     quality_filter::Bool,
@@ -516,6 +517,7 @@ function _attempt_candidate(
             problem_seed;
             relax_integer=relax_integer,
             bounds_to_constraints=bounds_to_constraints,
+            transforms=transforms,
             dualize=dualized,
             optimizer=verify_optimizer,
             max_feasibility_retries=10,
@@ -586,6 +588,7 @@ function _fill_candidate_pool!(
     feasibility::FeasibilityStatus,
     relax_integer::Bool,
     bounds_to_constraints::Bool,
+    transforms::ModelTransforms,
     dualize::Bool,
     dualize_probability::Float64,
     quality_filter::Bool,
@@ -611,6 +614,7 @@ function _fill_candidate_pool!(
             feasibility,
             relax_integer,
             bounds_to_constraints,
+            transforms,
             dualize,
             dualize_probability,
             quality_filter,
@@ -659,6 +663,7 @@ function _generate_matched_group(
     feasibility::FeasibilityStatus,
     relax_integer::Bool,
     bounds_to_constraints::Bool,
+    transforms::ModelTransforms,
     dualize::Bool,
     dualize_probability::Float64,
     quality_filter::Bool,
@@ -696,6 +701,7 @@ function _generate_matched_group(
                 feasibility,
                 relax_integer,
                 bounds_to_constraints,
+                transforms,
                 dualize,
                 dualize_probability,
                 quality_filter,
@@ -744,6 +750,7 @@ function _generate_unmatched_candidates(
     feasibility::FeasibilityStatus,
     relax_integer::Bool,
     bounds_to_constraints::Bool,
+    transforms::ModelTransforms,
     dualize::Bool,
     dualize_probability::Float64,
     quality_filter::Bool,
@@ -770,6 +777,7 @@ function _generate_unmatched_candidates(
             feasibility,
             relax_integer,
             bounds_to_constraints,
+            transforms,
             dualize,
             dualize_probability,
             quality_filter,
@@ -824,6 +832,7 @@ function _materialize_instances(
     feasibility::FeasibilityStatus,
     relax_integer::Bool,
     bounds_to_constraints::Bool,
+    transforms::ModelTransforms,
     verbose::Bool,
 )
     instances = GeneratedInstance[]
@@ -838,6 +847,7 @@ function _materialize_instances(
                 candidate.seed;
                 relax_integer=relax_integer,
                 bounds_to_constraints=bounds_to_constraints,
+                transforms=transforms,
                 dualize=candidate.dualized,
             )
             actual_vars = num_variables(model)
@@ -932,6 +942,11 @@ Returns metadata for every kept instance as a `Vector{GeneratedInstance}`.
     integrality relaxation. Note: converted bounds become genuine constraint rows,
     so they raise the `num_constraints` recorded for each instance and feed into
     size matching and the quality filter's constraint-based thresholds.
+  - `transforms = ModelTransforms()`: practitioner-style reformulations (unit
+    scaling, aggregate rows, elastic rows, permutation; see
+    [`ModelTransforms`](@ref)) applied to every instance, seeded by its recorded
+    seed. Added rows/columns count toward the recorded sizes and size matching.
+    The configuration is recorded in the manifest under `"transforms"`.
   - `dualize::Bool = false`: replace each continuous model by its dual after the
     preceding transforms. This forces dualization for every instance.
   - `dualize_probability::Real = 0.0`: independently dualize each instance with
@@ -985,6 +1000,7 @@ function generate_dataset(;
     feasible_only::Bool=false,
     relax_integer::Bool=true,
     bounds_to_constraints::Bool=false,
+    transforms=ModelTransforms(),
     dualize::Bool=false,
     dualize_probability::Real=0.0,
     seed::Int=0,
@@ -1017,6 +1033,7 @@ function generate_dataset(;
         !match_size_distribution &&
         error("match_size_by_type=true requires match_size_distribution=true.")
     validated_dualize_probability = _validate_dualize_probability(dualize_probability)
+    transforms = _as_transforms(transforms)
 
     types = resolve_problem_types(problem_types)
     feasibility = feasible_only ? feasible : unknown
@@ -1037,6 +1054,7 @@ function generate_dataset(;
         )
         println("  Feasibility: $(feasible_only ? "feasible only" : "unknown")")
         bounds_to_constraints && println("  Bounds → constraints: enabled")
+        is_identity(transforms) || println("  Model transforms: $(_transforms_config(transforms))")
         if dualize
             println("  Dual reformulation: forced for every instance")
         elseif validated_dualize_probability > 0
@@ -1080,6 +1098,7 @@ function generate_dataset(;
                 feasibility,
                 relax_integer,
                 bounds_to_constraints,
+                transforms,
                 dualize,
                 validated_dualize_probability,
                 quality_filter,
@@ -1111,6 +1130,7 @@ function generate_dataset(;
             feasibility,
             relax_integer,
             bounds_to_constraints,
+            transforms,
             dualize,
             validated_dualize_probability,
             quality_filter,
@@ -1140,6 +1160,7 @@ function generate_dataset(;
             feasibility,
             relax_integer,
             bounds_to_constraints,
+            transforms,
             dualize,
             validated_dualize_probability,
             quality_filter,
@@ -1161,6 +1182,7 @@ function generate_dataset(;
         feasibility,
         relax_integer,
         bounds_to_constraints,
+        transforms,
         verbose,
     )
 
@@ -1188,6 +1210,7 @@ function generate_dataset(;
             var_max=var_max,
             feasible_only=feasible_only,
             bounds_to_constraints=bounds_to_constraints,
+            transforms=_transforms_config(transforms),
             dualize=dualize,
             dualize_probability=validated_dualize_probability,
             quality_filter=quality_filter,

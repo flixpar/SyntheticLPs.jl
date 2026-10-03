@@ -249,6 +249,9 @@ end
         end
     end
 
+    # Practitioner-style model transforms (framework-level: always runs).
+    include("transforms.jl")
+
     # Focused per-category quality contracts live in separate files so a
     # generator's source, documentation, and regression coverage can evolve as
     # one reviewable unit.
