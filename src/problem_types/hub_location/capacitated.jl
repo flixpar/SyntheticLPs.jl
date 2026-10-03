@@ -120,7 +120,13 @@ function _build_capacitated(
     certificate = nothing
     if feasibility_status == infeasible
         target = total_flow * rand(rng, Uniform(0.55, 0.92))
-        capacity = _hub_split_capacity(rng, target, h)
+        capacity = _hub_floored_capacity(rng, target, hubs, outvolume)
+        if sum(capacity) >= 0.97 * total_flow
+            # Hub cities alone carry nearly all the volume: the floors cannot
+            # be honoured below total flow, so fall back to a plain split
+            # (still a valid certificate, just one presolve may spot).
+            capacity = _hub_split_capacity(rng, target, h)
+        end
         certificate = CapacityShortfallCertificate(total_flow, sum(capacity))
     else
         if feasibility_status == feasible
@@ -130,13 +136,11 @@ function _build_capacitated(
         else
             target =
                 total_flow *
-                (profile == :loose ? rand(rng, Uniform(1.0, 1.25)) : rand(rng, Uniform(0.97, 1.06)))
+                (profile == :loose ? rand(rng, Uniform(1.0, 1.25)) : rand(rng, Uniform(0.93, 1.06)))
         end
-        capacity = _hub_split_capacity(rng, target, h)
+        capacity = _hub_floored_capacity(rng, target, hubs, outvolume)
         if feasibility_status == feasible
-            # Make room for the largest single origin at the roomiest hub,
-            # then scale up until the integral best-fit assignment succeeds.
-            capacity[argmax(capacity)] = max(maximum(capacity), 1.05 * maximum(outvolume))
+            # Then scale up until the integral best-fit assignment succeeds.
             witness = _hub_capacitated_assignment(dist, hubs, outvolume, capacity)
             while witness === nothing
                 capacity .*= 1.1
@@ -175,6 +179,34 @@ function _hub_split_capacity(rng::AbstractRNG, target::Float64, h::Int)
     shares = exp.(rand(rng, Normal(0.0, 0.30), h))
     shares ./= sum(shares)
     return round.(target .* shares; digits=3)
+end
+
+"""
+    _hub_floored_capacity(rng, target, hubs, outvolume) -> Vector{Float64}
+
+Split `target` across the candidate hubs like `_hub_split_capacity`, but give
+every sorting centre room for its own city's volume plus 10%
+(`Gamma_k >= 1.1 * O_k`) and the roomiest centre room for the largest single
+origin (`>= 1.05 * max_i O_i`). A real facility is never sized below its home
+city's own throughput, and the floors keep presolve from closing hubs (or
+ruling out every hub for a heavy spoke) by single-row bound reasoning: without
+them, `z_kk = y_k` with `O_k > Gamma_k` forces `y_k = 0`, and a few such
+closures let presolve refute an instance - or turn an `unknown` one
+infeasible - without any simplex work. When the floors exceed `target`, the
+total grows accordingly (callers check the resulting sum).
+"""
+function _hub_floored_capacity(
+    rng::AbstractRNG, target::Float64, hubs::Vector{Int}, outvolume::Vector{Float64}
+)
+    h = length(hubs)
+    floors = [1.1 * outvolume[k] for k in hubs]
+    shares = exp.(rand(rng, Normal(0.0, 0.30), h))
+    shares ./= sum(shares)
+    free = max(target - sum(floors), 0.0)
+    capacity = floors .+ free .* shares
+    big = argmax(capacity)
+    capacity[big] = max(capacity[big], 1.05 * maximum(outvolume))
+    return round.(capacity; digits=3)
 end
 
 """
@@ -245,8 +277,14 @@ target.
   - `infeasible`: total capacity strictly below total flow
     (`CapacityShortfallCertificate`); summing the capacity rows against the
     single-allocation rows contradicts already in the relaxation.
-  - `unknown`: total capacity is sampled near total flow (tight profile) or
-    moderately above it (loose profile), so capacity may or may not suffice.
+  - `unknown`: total capacity is sampled near total flow (tight profile,
+    0.93-1.06x) or moderately above it (loose profile, 1.0-1.25x), so capacity
+    may or may not suffice.
+
+Every status floors each hub's capacity at 1.1x its own city's outbound volume
+and the roomiest hub at 1.05x the largest origin (`_hub_floored_capacity`),
+so the infeasible shortfall is an aggregate over all capacity rows rather than
+a hub that presolve can close by itself.
 """
 function CapacitatedHubLocationProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int

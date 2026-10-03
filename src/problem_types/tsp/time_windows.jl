@@ -31,11 +31,16 @@ Key structural couplings:
 
   - **Degree constraints**: one in-arc and one out-arc per node.
   - **Time propagation with per-arc big-M**: `t_j ≥ t_i + s_i + τ_ij − M_ij(1−x_ij)`
-    where `M_ij = max(0, b_i + s_i + τ_ij − a_j)` is the smallest value that makes
+    where `M_ij = b_i + s_i + τ_ij − a_j` is the smallest value that makes
     the row non-binding when `x_ij = 0` (at `t_i = b_i` it reduces to
-    `t_j ≥ a_j`, already a variable bound). The `max(0, ·)` clamp matters: a raw
-    negative `M` would make the row *more* binding on unused arcs and cut off
-    genuine tours.
+    `t_j ≥ a_j`, already a variable bound). Rows with `M_ij ≤ 0` are implied
+    by the time-window bounds for every `x` and are not emitted (a raw negative
+    `M` would make the row *more* binding on unused arcs and cut off genuine
+    tours; a zero `M` would only add a redundant row). With narrow windows on a
+    long horizon about half of the ordered stop pairs fall in this class, so
+    the delivered row count is data-dependent (`2n` degree rows, the budget
+    row, `n-1` return rows, and one propagation row per stop or depot arc with
+    `M > 0`); the variable count is unaffected.
   - **Budget row** `Σ τ_ij x_ij ≤ F`: total route (travel) time fits the vehicle's
     charge/planned duration.
   - **Shift row** `r ≤ L` with return propagation `r ≥ t_j + s_j + τ_j1 − M_j(1−x_j1)`.
@@ -240,16 +245,27 @@ function build_model(prob::TSPTimeWindowsProblem)
     )
 
     # --- Time propagation, stop -> stop (waiting allowed; M is the smallest
-    # value that makes the row non-binding at x = 0; clamped at 0) ---
+    # value that makes the row non-binding at x = 0) ---
+    # When `M ≤ 0`, i.e. `b_i + s_i + τ_ij ≤ a_j`, stop `j`'s window opens only
+    # after stop `i`'s latest possible departure reaches it: the row
+    # `t_j ≥ t_i + s_i + τ_ij` is then implied by the bounds
+    # (`t_j ≥ a_j ≥ b_i + s_i + τ_ij ≥ t_i + s_i + τ_ij`) whatever `x_ij` is,
+    # so it is not emitted. With narrow windows over a long horizon this is
+    # roughly half of all ordered stop pairs — rows presolve would delete
+    # anyway. (Clamping such an `M` at 0 instead would keep a row that is
+    # redundant; a raw negative `M` would cut off genuine tours.)
     for i in stops, j in stops
         i == j && continue
-        M = max(0.0, b[i] + s[i] + tau[i, j] - a[j])
+        M = b[i] + s[i] + tau[i, j] - a[j]
+        M > 0 || continue
         @constraint(model, t[j] >= t[i] + s[i] + tau[i, j] - M * (1 - x[i, j]))
     end
 
-    # --- Time propagation, depot -> stop (the base departs at time 0) ---
+    # --- Time propagation, depot -> stop (the base departs at time 0); the row
+    # is implied by `t_j ≥ a_j` when `τ_1j ≤ a_j`, and skipped then ---
     for j in stops
-        M = max(0.0, tau[1, j] - a[j])
+        M = tau[1, j] - a[j]
+        M > 0 || continue
         @constraint(model, t[j] >= tau[1, j] - M * (1 - x[1, j]))
     end
 
