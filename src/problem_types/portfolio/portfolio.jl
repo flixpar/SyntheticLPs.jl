@@ -11,9 +11,10 @@
 # where `F` holds the returns of a handful of common factors (market, styles,
 # and one industry factor per sector), `B` the asset exposures (dense for market
 # and styles, a 0/1 sector indicator for industries), and `E` sparse
-# idiosyncratic shocks: each scenario draws shocks for a random subset of
-# `J ≪ n` assets, scaled by `√(n/J)` so every asset's idiosyncratic variance is
-# preserved in expectation. The LPs then use *factor exposure variables*
+# idiosyncratic *jump events*: each scenario hits a random subset of `J ≪ n`
+# assets with an earnings-surprise / credit-event style jump of realistic size
+# ((1.5 + |t₃|)× the monthly idiosyncratic volatility, capped at ±60%, skewed
+# negative). The LPs then use *factor exposure variables*
 # `f = Bᵀx`, so each scenario row has `K + J + O(1)` nonzeros instead of `n` — a
 # 100k-variable instance has a few million nonzeros rather than the
 # `n_scenarios × n_assets` dense block (6+ GB) of a naive formulation.
@@ -35,7 +36,7 @@ Factor-structured scenario market shared by the portfolio variants.
   - `factor_returns::Matrix{Float64}`: `n_scenarios × n_factors` with columns
     ordered market, styles, sectors (`n_factors = 1 + n_styles + n_sectors`)
   - `idiosyncratic::SparseMatrixCSC{Float64,Int}`: `n_assets × n_scenarios`
-    sparse shocks (one column per scenario)
+    sparse idiosyncratic jump events (one column per scenario)
   - `expected_returns::Vector{Float64}`: forecast (factor premia + alpha)
   - `benchmark::Vector{Float64}`: cap-weighted benchmark weights (sum to one)
 """
@@ -258,7 +259,7 @@ Keyword arguments:
   - `market_beta`: per-asset market betas (default `Normal(1, 0.25)`)
   - `idio_vol`: per-asset idiosyncratic volatility (default `U(0.04, 0.10)`)
   - `crash_probability`: probability of a market-crash regime per scenario
-  - `shocks_per_scenario`: idiosyncratic shocks per scenario `J`
+  - `shocks_per_scenario`: idiosyncratic jump events per scenario `J`
   - `style_scale`: per-asset multiplier on style loadings (default ones)
 """
 function _portfolio_market(
@@ -304,9 +305,12 @@ function _portfolio_market(
         end
     end
 
-    # Sparse idiosyncratic shocks with variance-preserving scaling.
+    # Factor returns below 1e-5 in magnitude are stored as exact zeros
+    # (negligible returns that would only widen the coefficient range).
+    F[abs.(F) .< 1e-5] .= 0.0
+
+    # Sparse idiosyncratic jump events of realistic size.
     J = min(n, shocks_per_scenario)
-    inflate = sqrt(n / J)
     I = Vector{Int}(undef, J * S)
     Jc = Vector{Int}(undef, J * S)
     V = Vector{Float64}(undef, J * S)
@@ -316,7 +320,8 @@ function _portfolio_market(
             q += 1
             I[q] = i
             Jc[q] = s
-            V[q] = inflate * vols[i] * rand(rng, TDist(4)) / sqrt(2.0)
+            size = min(0.6, vols[i] * (1.5 + abs(rand(rng, TDist(3)))))
+            V[q] = (rand(rng) < 0.55 ? -1.0 : 1.0) * size
         end
     end
     E = sparse(I, Jc, V, n, S)

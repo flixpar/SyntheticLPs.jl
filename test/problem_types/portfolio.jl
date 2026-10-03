@@ -132,6 +132,7 @@ end
             @test cvar ≈ w.cvar
             c = 1 / ((1 - prob.cvar_level) * mk.n_scenarios)
             @test w.alpha + c * sum(max.(losses .- w.alpha, 0)) ≈ w.cvar
+            @test -1 < w.alpha < 1
             @test w.cvar < prob.cvar_limit
         else
             @test prob.feasible_witness === nothing

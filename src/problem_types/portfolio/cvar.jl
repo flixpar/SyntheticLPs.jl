@@ -90,7 +90,7 @@ A multi-asset universe (developed/emerging equity, government bonds, credit,
 alternatives — class-specific betas, idiosyncratic volatilities, and trading
 costs) on the factor-structured scenario market of `portfolio.jl`: a fat-tailed
 market factor with a crash regime, style factors, one industry factor per
-sector, and sparse variance-preserving idiosyncratic shocks. The benchmark is
+sector, and sparse idiosyncratic jump events. The benchmark is
 cap-weighted.
 
 # Formulation
@@ -346,7 +346,7 @@ function build_model(prob::PortfolioProblem)
     @variable(model, prob.exposure_lower[k] <= style_exposure[k=1:n_style_cols] <= prob.exposure_upper[k])
     @variable(model, 0 <= sector_exposure[g=1:G] <= prob.sector_upper[g])
     @variable(model, z[1:S] >= 0)
-    @variable(model, alpha)
+    @variable(model, -1.0 <= alpha <= 1.0)          # VaR level: a monthly loss fraction
     @variable(model, buy[1:n] >= 0)
     @variable(model, sell[1:n] >= 0)
 

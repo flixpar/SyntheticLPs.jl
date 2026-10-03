@@ -22,9 +22,13 @@ r[s, i] = Σ_k F[s, k] · B[i, k] + E[i, s]
   crash.
 - **Exposures `B`**: market beta and style loadings are dense; industry
   exposure is the 0/1 sector indicator.
-- **Idiosyncratic shocks `E`** are *sparse*: each scenario draws Student-t
-  shocks for a random subset of `J` assets (12–32), scaled by `√(n/J)` so each
-  asset's idiosyncratic variance is preserved in expectation.
+- **Idiosyncratic shocks `E`** are *sparse jump events*: each scenario hits a
+  random subset of `J` assets (12–32) with an earnings-surprise / credit-event
+  jump of `(1.5 + |t₃|)×` the asset's monthly idiosyncratic volatility
+  (capped at ±60%, 55% negative). Diffusive idiosyncratic noise is not
+  sampled — for diversified portfolios it is second order, and sampling it
+  densely is exactly what made the old formulation `n_scenarios × n_assets`.
+  Factor returns below `1e-5` are stored as zeros.
 - Forecast returns are factor premia plus a small alpha; the benchmark is
   cap-weighted (log-normal caps).
 
@@ -59,8 +63,12 @@ s.t. style_k − Σ_i B[i,k] x_i = 0            market and style exposures (band
      Σ_{i∈region} x_i ≤ region_upper
      class_lower ≤ Σ_{i∈class} x_i ≤ class_upper
      buy_i − sell_i − x_i = −b_i,   Σ (buy + sell) ≤ turnover_limit
-     0 ≤ x_i ≤ max_position_i,  z, buy, sell ≥ 0,  α free
+     0 ≤ x_i ≤ max_position_i,  z, buy, sell ≥ 0,  −1 ≤ α ≤ 1
 ```
+
+The VaR level `α` is a monthly loss fraction, so it is boxed to `[−1, 1]`; left
+free, HiGHS failed to confirm about half of the 10k crash-tail infeasible
+instances (status Unknown after first proving infeasibility).
 
 `β ∈ {0.90, 0.95, 0.975, 0.99}`.
 
