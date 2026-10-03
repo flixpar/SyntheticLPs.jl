@@ -2,7 +2,7 @@
 #
 # `common.jl` builds the shared refinery flowsheet — crude assays, distillation
 # cuts, conversion units with per-mode yields, and specification-constrained
-# finished grades — together with the planted operation and two structural
+# finished grades — together with the planted operation and three structural
 # infeasibility certificates. `refinery` is the pure LP over a fixed operating
 # mode; `mode_switching` leaves modes, starts, and minimum runs to the solver;
 # `hydrogen_network` couples hydroprocessing to H2, sulfur, and carbon;
