@@ -533,8 +533,14 @@ unit of total demand:
   - `capacity_cut`: minimises `crossing capacity / crossing demand share`; the
     reciprocal-scaled value `cut_scale` is the smallest total demand that provably
     cannot be routed;
-  - `budget_cut`: maximises `crossing demand share * min_{a in cut} c_a / cap_a`,
-    the strongest per-unit-demand lower bound on installation spend.
+  - `budget_cut`: among balanced cuts (each side at least a quarter of the
+    nodes, at least four crossing links; `nothing` if none), maximises
+    `crossing demand share * min_{a in cut} c_a / cap_a`, the strongest
+    per-unit-demand lower bound on installation spend;
+  - `regional_cut`: the capacity-tightest cut with at least three nodes on each
+    side and at least three crossing links (`nothing` on tiny networks). Requested-infeasible capacity instances
+    use it: a singleton cut is a single node's flow-balance rows against its
+    incident links, which HiGHS presolve refutes without simplex work.
 
 Each entry is `(side, crossing_links, crossing_capacity, crossing_share, cost_per_capacity)`.
 """
@@ -553,6 +559,8 @@ function _telecom_cut_bounds(
     best_capacity_value = Inf
     best_budget = nothing
     best_budget_value = -Inf
+    best_regional = nothing
+    best_regional_value = Inf
 
     mask = falses(n_nodes)
     function evaluate!(side_mask::BitVector)
@@ -580,7 +588,19 @@ function _telecom_cut_bounds(
             best_capacity_value = cap / share
             best_capacity = (side, links, cap, share, ratio)
         end
-        if share * ratio > best_budget_value
+        if length(side) >= 3 && n_nodes - length(side) >= 3 && length(crossing) >= 3 &&
+           cap / share < best_regional_value
+            best_regional_value = cap / share
+            best_regional = (side, links, cap, share, ratio)
+        end
+        # Budget certificates use balanced cuts only (a quarter of the nodes on
+        # each side, at least four crossing links): on a small side, presolve's
+        # forcing-row and bound propagation from the few incident links already
+        # implies the spend, so the instance is refuted without simplex work.
+        balanced =
+            4 * length(side) >= n_nodes && 4 * (n_nodes - length(side)) >= n_nodes &&
+            length(crossing) >= 4
+        if balanced && share * ratio > best_budget_value
             best_budget_value = share * ratio
             best_budget = (side, links, cap, share, ratio)
         end
@@ -621,7 +641,7 @@ function _telecom_cut_bounds(
         evaluate!(mask)
     end
 
-    return best_capacity, best_budget
+    return best_capacity, best_budget, best_regional
 end
 
 # ---------------------------------------------------------------------------
@@ -645,10 +665,14 @@ Construct a telecommunication network design problem instance.
   - `feasible`: total demand is set to 55-90% of `routable_scale`, so the planted
     nominal design routes everything inside the installed capacities, and the
     budget exceeds that design's cost. Stored as `feasible_witness`.
-  - `infeasible`: either a *capacity* shortfall (demand pushed 15-80% past the
-    tightest cut, `TelecomCapacityCutCertificate`) or a *budget* shortfall
-    (routable demand but a budget below the cut-implied minimum spend,
-    `TelecomBudgetCertificate`). Both certificates only use `0 <= y <= 1`, so the
+  - `infeasible`: demand stays routable on the planted design (40-80% of
+    `routable_scale`) and one of two shortfalls is planted. *Budget* (default, 3
+    in 4 when a balanced cut exists): the budget is 80-92% of the spend implied
+    by a balanced cut, kept above the spend that degree-1 nodes force,
+    `TelecomBudgetCertificate`. *Capacity*: the links of the tightest regional
+    cut (at least three nodes on each side and three crossing links) are
+    degraded to 10-25% below the traffic that must cross it,
+    `TelecomCapacityCutCertificate`. Both certificates only use `0 <= y <= 1`, so the
     instance stays infeasible after `relax_integrality`.
   - `unknown`: total demand is placed in a +-35% log band just above
     `routable_scale`, which brackets the true routing threshold at every scale,
@@ -739,7 +763,7 @@ function TelecomNetworkDesignProblem(
     )
     routable_scale = congestion > TELECOM_EPS ? 1.0 / congestion : 1.0
 
-    capacity_cut, budget_cut = _telecom_cut_bounds(
+    capacity_cut, budget_cut, regional_cut = _telecom_cut_bounds(
         arcs, capacity, install_cost, n_nodes, node_locations, sources, sinks, shares, rng
     )
     # A connected topology carrying at least one commodity always yields a
@@ -756,12 +780,18 @@ function TelecomNetworkDesignProblem(
     if feasibility_status == feasible
         total_demand = routable_scale * rand(rng, Uniform(0.55, 0.9))
     elseif feasibility_status == infeasible
-        mode = rand(rng, Bool) ? :capacity : :budget
-        total_demand = if mode == :capacity
-            cut_scale * rand(rng, Uniform(1.15, 1.8))
-        else
-            routable_scale * rand(rng, Uniform(0.4, 0.8))
+        # The budget mode (default, 3 in 4) needs simplex work far more often
+        # than the capacity mode, which presolve frequently refutes.
+        mode = budget_cut !== nothing && rand(rng) < 0.75 ? :budget : :capacity
+        if mode == :capacity && regional_cut !== nothing
+            # Certify with a multi-node (regional) cut whenever one exists.
+            capacity_cut = regional_cut
         end
+        # Both modes keep the traffic comfortably routable on the planted
+        # design; the capacity mode then degrades the links of one regional
+        # cut. (Pushing the demand past a cut also pushed it past the tighter
+        # single-node cuts, which presolve refutes on its own.)
+        total_demand = routable_scale * rand(rng, Uniform(0.4, 0.8))
     else
         # `routable_scale` brackets the true routing threshold from below and
         # `cut_scale` from above, and the planted routing is tight: solving the
@@ -795,16 +825,26 @@ function TelecomNetworkDesignProblem(
             demands = [round(d / (overflow * 1.001); digits=4) for d in demands]
         end
     elseif feasibility_status == infeasible && mode == :capacity
+        # Degraded regional links (aging fibre, a damaged duct): the crossing
+        # capacity of the regional cut drops 10-25% below the traffic that
+        # must cross it.
         side_set = Set(capacity_cut[1])
         crossing_demand = sum(
             demands[k] for
             k in 1:n_commodities if (sources[k] in side_set) != (sinks[k] in side_set);
             init=0.0,
         )
-        if crossing_demand <= capacity_cut[3] * 1.05
-            factor = capacity_cut[3] * 1.15 / max(crossing_demand, TELECOM_EPS)
-            demands = [round(d * factor; digits=4) for d in demands]
+        crossing = [a for a in 1:n_arcs if (arcs[a][1] in side_set) != (arcs[a][2] in side_set)]
+        goal = crossing_demand / rand(rng, Uniform(1.10, 1.25))
+        current = sum(capacity[a] for a in crossing)
+        if current > goal
+            for a in crossing
+                capacity[a] *= goal / current
+            end
         end
+        capacity_cut = (
+            capacity_cut[1], capacity_cut[2], sum(capacity[a] for a in crossing), capacity_cut[4], capacity_cut[5]
+        )
     end
 
     total_demand = sum(demands)
@@ -864,7 +904,25 @@ function TelecomNetworkDesignProblem(
             init=0.0,
         )
         implied_minimum = crossing_demand * budget_cut[5]
-        budget = implied_minimum * rand(rng, Uniform(0.45, 0.85))
+        # Close to the cut-implied minimum: a budget far below it caps every
+        # link's fractional install level so hard that presolve's bound
+        # propagation alone refutes the instance. Degree-1 nodes force their
+        # single link's install level (all their traffic uses it), so the
+        # budget also stays above that forced spend whenever the margin allows.
+        degree = zeros(Int, n_nodes)
+        for (i, j) in arcs
+            degree[i] += 1
+            degree[j] += 1
+        end
+        forced_spend = 0.0
+        for (a, (i, j)) in enumerate(arcs)
+            leaf = degree[i] == 1 ? i : (degree[j] == 1 ? j : 0)
+            leaf == 0 && continue
+            through = sum(demands[k] for k in 1:n_commodities if sources[k] == leaf || sinks[k] == leaf; init=0.0)
+            forced_spend += install_cost[a] * min(1.0, through / capacity[a])
+        end
+        budget = implied_minimum * rand(rng, Uniform(0.80, 0.92))
+        budget = min(max(budget, 1.15 * forced_spend), 0.97 * implied_minimum)
         certificate = TelecomBudgetCertificate(
             budget_cut[1], budget_cut[2], crossing_demand, budget_cut[5], implied_minimum, budget
         )
