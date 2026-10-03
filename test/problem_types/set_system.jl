@@ -12,7 +12,6 @@
         size_distribution=Uniform(2, 3),
         problem_types=[:set_system],
         seed=1,
-        max_candidate_multiplier=3,
     )
     @test length(tiny) == 4
 end

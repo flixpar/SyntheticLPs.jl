@@ -42,3 +42,51 @@ println("  - Solution status: ", termination_status(model))
 # Example 6: Generate an infeasible problem for testing
 model, problem = generate_problem(:diet_problem, 100, infeasible, 123)
 println("\nGenerated infeasible diet problem with ~100 variables")
+
+# Example 7: Query the registry — tags, size caps, and model class
+println("\nNetwork-structured variants that are continuous by construction:")
+for ref in list_problems(; tags=:network, model_class=:lp)
+    info = problem_info(ref)
+    println("  - ", ref, " (tags: ", join(info[:tags], ", "), ")")
+end
+
+# Example 8: Plan, then generate, a balanced LP-only dataset spanning 1k–20k variables
+kwargs = (
+    num_problems=12,
+    size_distribution=:loguniform,
+    var_min=1_000,
+    var_max=20_000,
+    model_class=:lp,                 # continuous build_model only
+    exclude=[:knapsack],
+    variant_weighting=:category,     # uniform over categories (the default)
+    feasibility_status=Dict(feasible => 0.75, infeasible => 0.25),
+    seed=7,
+)
+for p in plan_dataset(; kwargs...)
+    println(
+        "  planned #",
+        p.index,
+        ": ",
+        p.ref,
+        " [",
+        p.feasibility_status,
+        "] ~",
+        p.target_variables,
+        " vars",
+    )
+end
+dataset = generate_dataset(; kwargs..., on_failure=:skip)
+println("Generated ", length(dataset), " instances (", length(dataset.failures), " failed)")
+for inst in dataset[1:3]
+    println(
+        "  ",
+        ProblemVariant(inst),
+        ": ",
+        inst.num_variables,
+        " vars, ",
+        inst.num_nonzeros,
+        " nonzeros, built in ",
+        round(inst.build_time; digits=2),
+        "s",
+    )
+end
