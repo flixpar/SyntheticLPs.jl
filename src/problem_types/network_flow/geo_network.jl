@@ -498,59 +498,85 @@ function _flow_max_flow(
     n_nodes::Int, source::Int, sink::Int, arcs::Vector{Tuple{Int, Int}}, capacities::Vector{Float64}
 )
     m = length(arcs)
+    n = n_nodes
     tol = 1e-9
 
-    # Residual graph: arc k contributes forward edge 2k-1 (capacity) and reverse
-    # edge 2k (initially zero); `edge_rev` maps an edge to its counterpart.
-    neighbors = [Int[] for _ in 1:n_nodes]
+    # CSR residual graph: arc k contributes forward edge 2k-1 (capacity) and
+    # reverse edge 2k (initially zero); an edge's partner is `e ± 1`.
+    deg = zeros(Int, n)
+    for (u, v) in arcs
+        deg[u] += 1
+        deg[v] += 1
+    end
+    first = Vector{Int}(undef, n + 1)
+    first[1] = 1
+    for v in 1:n
+        first[v + 1] = first[v] + deg[v]
+    end
+    fillpos = first[1:n]
+    adj = Vector{Int}(undef, 2m)
     edge_head = Vector{Int}(undef, 2m)
     edge_cap = Vector{Float64}(undef, 2m)
-    edge_rev = Vector{Int}(undef, 2m)
     for k in 1:m
         u, v = arcs[k]
         f, r = 2k - 1, 2k
-        push!(neighbors[u], f)
-        edge_head[f], edge_cap[f], edge_rev[f] = v, capacities[k], r
-        push!(neighbors[v], r)
-        edge_head[r], edge_cap[r], edge_rev[r] = u, 0.0, f
+        edge_head[f], edge_cap[f] = v, capacities[k]
+        edge_head[r], edge_cap[r] = u, 0.0
+        adj[fillpos[u]] = f
+        fillpos[u] += 1
+        adj[fillpos[v]] = r
+        fillpos[v] += 1
     end
+    partner(e) = isodd(e) ? e + 1 : e - 1
 
     value = 0.0
-    level = Vector{Int}(undef, n_nodes)
-    next_arc = Vector{Int}(undef, n_nodes)
-    queue = Int[]
+    level = Vector{Int}(undef, n)
+    next_arc = Vector{Int}(undef, n)
+    queue = Vector{Int}(undef, n)
+    path_nodes = Int[]
+    path_edges = Int[]
     while true
-        # BFS: level graph over edges with usable residual capacity.
+        # BFS level graph over edges with usable residual capacity; nodes at or
+        # beyond the sink's level are never expanded (they cannot be on a
+        # shortest augmenting path).
         fill!(level, -1)
         level[source] = 0
-        empty!(queue)
-        push!(queue, source)
-        head = 1
-        while head <= length(queue)
-            u = queue[head]
-            head += 1
-            for e in neighbors[u]
+        qh, qt = 1, 1
+        queue[1] = source
+        while qh <= qt
+            u = queue[qh]
+            qh += 1
+            level[sink] >= 0 && level[u] >= level[sink] && break
+            for i in first[u]:(first[u + 1] - 1)
+                e = adj[i]
                 v = edge_head[e]
-                if edge_cap[e] > tol && level[v] < 0
+                if level[v] < 0 && edge_cap[e] > tol
                     level[v] = level[u] + 1
-                    push!(queue, v)
+                    qt += 1
+                    queue[qt] = v
                 end
             end
         end
         level[sink] < 0 && break
 
         # Iterative blocking-flow DFS with current-arc pointers.
-        fill!(next_arc, 1)
-        path_nodes = [source]
-        path_edges = Int[]
+        for v in 1:n
+            next_arc[v] = first[v]
+        end
+        empty!(path_nodes)
+        empty!(path_edges)
+        push!(path_nodes, source)
         while true
             if path_nodes[end] == sink
                 # Augment along the whole path by its bottleneck ...
-                bottleneck = minimum(edge_cap[e] for e in path_edges)
+                bottleneck = Inf
+                for e in path_edges
+                    bottleneck = min(bottleneck, edge_cap[e])
+                end
                 value += bottleneck
                 for e in path_edges
                     edge_cap[e] -= bottleneck
-                    edge_cap[edge_rev[e]] += bottleneck
+                    edge_cap[partner(e)] += bottleneck
                 end
                 # ... then retreat to just before the first saturated edge.
                 saturated = findfirst(e -> edge_cap[e] <= tol, path_edges)
@@ -559,8 +585,8 @@ function _flow_max_flow(
             else
                 u = path_nodes[end]
                 advanced = false
-                while next_arc[u] <= length(neighbors[u])
-                    e = neighbors[u][next_arc[u]]
+                while next_arc[u] < first[u + 1]
+                    e = adj[next_arc[u]]
                     v = edge_head[e]
                     if edge_cap[e] > tol && level[v] == level[u] + 1
                         push!(path_edges, e)
@@ -583,12 +609,13 @@ function _flow_max_flow(
     end
 
     # Minimum cut: nodes still reachable from the source in the residual graph.
-    side = falses(n_nodes)
+    side = falses(n)
     side[source] = true
     stack = [source]
     while !isempty(stack)
         u = pop!(stack)
-        for e in neighbors[u]
+        for i in first[u]:(first[u + 1] - 1)
+            e = adj[i]
             v = edge_head[e]
             if edge_cap[e] > tol && !side[v]
                 side[v] = true
