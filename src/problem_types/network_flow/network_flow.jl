@@ -6,5 +6,6 @@
 # explicitly to give the category its own description). Add a variant by
 # creating a file in this folder and including it below.
 
+include("geo_network.jl")
 include("standard.jl")
 include("generalized_flow.jl")
