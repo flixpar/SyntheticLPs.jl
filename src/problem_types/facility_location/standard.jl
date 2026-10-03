@@ -3,265 +3,240 @@ using Random
 using Distributions
 
 """
+    FacilityLocationWitness
+
+Planted feasible plan for [`FacilityLocationProblem`](@ref): the facilities to
+open and a shipment plan as `(facility, customer, quantity)` triplets (absent
+pairs ship zero). Integral in `y`, so it is feasible for the MIP and its
+relaxation.
+"""
+struct FacilityLocationWitness
+    open::Vector{Int}
+    shipments::Vector{Tuple{Int, Int, Float64}}
+end
+
+"""
+    FacilityBudgetCertificate
+
+LP-row infeasibility certificate for [`FacilityLocationProblem`](@ref). Summing
+the demand rows and the capacity rows gives
+`total_demand ≤ Σ_c Σ_w x[w,c] ≤ Σ_w cap_w y_w`, and the budget row with
+`0 ≤ y ≤ 1` caps the right-hand side at the fractional-knapsack optimum
+`fundable_capacity = max {Σ cap_w y_w : Σ fixed_w y_w ≤ budget, 0 ≤ y ≤ 1}`.
+The generator keeps `fundable_capacity ≤ 0.95 · total_demand`.
+"""
+struct FacilityBudgetCertificate
+    budget::Float64
+    fundable_capacity::Float64
+    total_demand::Float64
+end
+
+"""
     FacilityLocationProblem <: ProblemGenerator
 
-Generator for facility location problems.
+Single-source-free capacitated facility location (CFLP) with an opening budget,
+in the strong formulation.
 
 # Overview
 
-Models capacitated facility location. The decisions are which facilities to
-open and how much to ship from each facility to each customer. The objective
-minimizes fixed opening cost plus distance-based shipping cost. Constraints
-require customer demand to be served, gate each facility's shipping by its
-capacity and open decision, and limit total fixed opening cost by a budget.
+A distribution planner chooses which candidate facilities to open and how much
+each open facility ships to each customer, minimizing fixed opening cost plus
+distance-based shipping cost. Rows:
+
+  - demand `Σ_w x[w,c] ≥ d_c`;
+  - aggregate capacity `Σ_c x[w,c] ≤ cap_w · y_w`;
+  - strong linking `x[w,c] ≤ d_c · y_w` for every facility–customer pair — the
+    disaggregated inequalities of the textbook strong CFLP formulation
+    (Cornuéjols, Sridharan & Thizy 1991), which keep the opening decisions
+    binding under LP relaxation instead of letting `y_w` shrink to
+    `throughput / cap_w`;
+  - an opening budget `Σ_w fixed_w y_w ≤ budget`.
+
+Customers are clustered in towns, facilities are spread uniformly, shipping
+costs are distance-based with lane noise, and fixed costs grow with capacity
+and location (OR-Library `cap`-style instances: tens to hundreds of facilities,
+roughly 4–15× as many customers).
 
 # Fields
 
-  - `n_facilities::Int`: Number of potential facility locations
-  - `n_customers::Int`: Number of customers
-  - `facility_locs::Vector{Tuple{Float64,Float64}}`: Facility coordinates
-  - `customer_locs::Vector{Tuple{Float64,Float64}}`: Customer coordinates
-  - `demands::Dict{Int,Float64}`: Customer demand
-  - `fixed_costs::Dict{Int,Float64}`: Fixed cost to open each facility
-  - `capacities::Dict{Int,Float64}`: Capacity of each facility
-  - `shipping_costs::Dict{Tuple{Int,Int},Float64}`: Shipping cost from facility to customer
-  - `budget::Float64`: Total budget for opening facilities
+  - `n_facilities::Int`, `n_customers::Int`
+  - `facility_locs`, `customer_locs`: coordinates
+  - `demands::Vector{Float64}`, `fixed_costs::Vector{Float64}`,
+    `capacities::Vector{Float64}`
+  - `shipping_costs::Matrix{Float64}`: `F × C` per-unit shipping cost
+  - `budget::Float64`
+  - `feasible_witness::Union{Nothing,FacilityLocationWitness}`
+  - `infeasibility_certificate::Union{Nothing,FacilityBudgetCertificate}`
 """
 struct FacilityLocationProblem <: ProblemGenerator
     n_facilities::Int
     n_customers::Int
     facility_locs::Vector{Tuple{Float64, Float64}}
     customer_locs::Vector{Tuple{Float64, Float64}}
-    demands::Dict{Int, Float64}
-    fixed_costs::Dict{Int, Float64}
-    capacities::Dict{Int, Float64}
-    shipping_costs::Dict{Tuple{Int, Int}, Float64}
+    demands::Vector{Float64}
+    fixed_costs::Vector{Float64}
+    capacities::Vector{Float64}
+    shipping_costs::Matrix{Float64}
     budget::Float64
+    feasible_witness::Union{Nothing, FacilityLocationWitness}
+    infeasibility_certificate::Union{Nothing, FacilityBudgetCertificate}
+end
+
+# Fractional-knapsack capacity reachable within `budget` (open in decreasing
+# capacity/cost order, the last one fractionally): the exact LP maximum of
+# Σ cap_w y_w subject to Σ fixed_w y_w ≤ budget and 0 ≤ y ≤ 1.
+function _fl_fundable_capacity(capacities::Vector{Float64}, fixed::Vector{Float64}, budget::Float64)
+    order = sortperm(capacities ./ fixed; rev=true)
+    remaining = budget
+    total = 0.0
+    for w in order
+        if fixed[w] <= remaining
+            total += capacities[w]
+            remaining -= fixed[w]
+        else
+            total += capacities[w] * max(remaining, 0.0) / fixed[w]
+            break
+        end
+    end
+    return total
 end
 
 """
     FacilityLocationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
-Construct a facility location problem instance.
+Construct a capacitated facility location instance.
 
-# Arguments
+# Variable-count formula
 
-  - `target_variables`: Target number of variables (n_facilities × (n_customers + 1))
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
+    total = F · (C + 1)
+
+(`F` opening variables plus `F·C` shipments). The customer-to-facility ratio
+`r ∈ 4..15` is sampled, `F = max(2, round(sqrt(target / r)))` and
+`C = max(1, round(target / F) - 1)`, so the count is within `F/2` of the target
+(well under 1% above ~1,000 variables). No size cap.
+
+# Feasibility
+
+  - `feasible`: capacities are scaled up when the total falls below 1.05×
+    demand; facilities are opened greedily in decreasing capacity/cost order
+    until they cover demand, and the budget is at least 1.02–1.25× that
+    subset's cost. Customers are then served by their nearest open facilities
+    with spare capacity, recorded as a [`FacilityLocationWitness`](@ref).
+  - `infeasible`: the budget is set to 75–95% of the fractional-knapsack cost
+    of reaching total demand, so even fractional openings fund less capacity
+    than demand ([`FacilityBudgetCertificate`](@ref)). The argument aggregates
+    every demand and capacity row plus the budget row, so presolve does not
+    detect it.
+  - `unknown`: the sampled budget (60–95% of the total fixed cost) and
+    capacities (1.3–2.0× demand overall) are kept as drawn — usually, but not
+    always, enough.
 """
 function FacilityLocationProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
 
-    # Determine scale and ranges
-    if target_variables <= 100
-        min_facilities, max_facilities = 2, 20
-        min_customers, max_customers = 1, 40
-        grid_width = rand(rng, 200.0:50.0:800.0)
-        grid_height = rand(rng, 200.0:50.0:800.0)
-        transport_cost_per_km = rand(rng, 0.5:0.1:1.2)
-        min_demand, max_demand = rand(rng, 5.0:1.0:20.0), rand(rng, 50.0:10.0:150.0)
-        fixed_cost_min, fixed_cost_max = rand(rng, 20000.0:5000.0:80000.0),
-        rand(rng, 100000.0:20000.0:300000.0)
-        capacity_factor = rand(rng, 1.1:0.05:1.6)
-        budget_factor = rand(rng, 0.4:0.05:0.8)
-    elseif target_variables <= 1000
-        min_facilities, max_facilities = 3, 100
-        min_customers, max_customers = 5, 200
-        grid_width = rand(rng, 500.0:100.0:2000.0)
-        grid_height = rand(rng, 500.0:100.0:2000.0)
-        transport_cost_per_km = rand(rng, 0.8:0.1:1.8)
-        min_demand, max_demand = rand(rng, 10.0:2.0:30.0), rand(rng, 80.0:20.0:200.0)
-        fixed_cost_min, fixed_cost_max = rand(rng, 50000.0:10000.0:150000.0),
-        rand(rng, 250000.0:50000.0:600000.0)
-        capacity_factor = rand(rng, 1.2:0.05:1.8)
-        budget_factor = rand(rng, 0.5:0.05:0.9)
-    else
-        min_facilities, max_facilities = 5, 500
-        min_customers, max_customers = 10, 2000
-        grid_width = rand(rng, 1000.0:200.0:5000.0)
-        grid_height = rand(rng, 1000.0:200.0:5000.0)
-        transport_cost_per_km = rand(rng, 1.0:0.2:3.0)
-        min_demand, max_demand = rand(rng, 20.0:5.0:60.0), rand(rng, 150.0:50.0:500.0)
-        fixed_cost_min, fixed_cost_max = rand(rng, 100000.0:20000.0:300000.0),
-        rand(rng, 500000.0:100000.0:1500000.0)
-        capacity_factor = rand(rng, 1.3:0.1:2.0)
-        budget_factor = rand(rng, 0.6:0.05:0.95)
-    end
+    ratio = rand(rng, 4:15)
+    F = max(2, round(Int, sqrt(target_variables / ratio)))
+    C = max(1, round(Int, target_variables / F) - 1)
 
-    # Find optimal n_facilities and n_customers
-    best_n_facilities = min_facilities
-    best_n_customers = min_customers
-    best_error = Inf
+    span = rand(rng, 500.0:100.0:3000.0)
+    transport_cost_per_km = rand(rng, 0.8:0.1:2.5)
+    min_demand, max_demand = rand(rng, 10.0:5.0:40.0), rand(rng, 100.0:25.0:400.0)
+    fixed_cost_min = rand(rng, 50000.0:10000.0:200000.0)
+    fixed_cost_max = fixed_cost_min * rand(rng, 3.0:0.5:6.0)
+    capacity_factor = rand(rng, 1.3:0.1:2.0)
+    budget_factor = rand(rng, 0.6:0.05:0.95)
 
-    for n_facilities in min_facilities:max_facilities
-        n_customers_exact = (target_variables / n_facilities) - 1
+    facility_locs = [(span * rand(rng), span * rand(rng)) for _ in 1:F]
+    n_clusters = max(2, div(C, 20))
+    centers = [(span * rand(rng), span * rand(rng)) for _ in 1:n_clusters]
+    customer_locs = _fl_clustered_points(rng, C, centers, span / 10, span; rural_fraction=0.0)
 
-        if n_customers_exact >= min_customers && n_customers_exact <= max_customers
-            n_customers = round(Int, n_customers_exact)
+    demands = [
+        exp(rand(rng, Normal(log((min_demand + max_demand) / 2), 0.5))) for _ in 1:C
+    ]
+    total_demand = sum(demands)
+    avg_capacity = total_demand / F * capacity_factor
 
-            actual_vars = n_facilities * (n_customers + 1)
-            error = abs(actual_vars - target_variables) / target_variables
-
-            if error < best_error
-                best_error = error
-                best_n_facilities = n_facilities
-                best_n_customers = n_customers
-            end
-        end
-    end
-
-    if best_error > 0.1
-        n_facilities_approx = max(
-            min_facilities, min(max_facilities, round(Int, sqrt(target_variables / 4)))
-        )
-        n_customers_approx = max(
-            min_customers,
-            min(max_customers, round(Int, (target_variables / n_facilities_approx) - 1)),
-        )
-
-        best_n_facilities = n_facilities_approx
-        best_n_customers = n_customers_approx
-    end
-
-    n_facilities = best_n_facilities
-    n_customers = best_n_customers
-
-    # Generate locations
-    facility_locs = [(grid_width * rand(rng), grid_height * rand(rng)) for _ in 1:n_facilities]
-
-    n_clusters = max(2, div(n_customers, 20))
-    cluster_centers = [(grid_width * rand(rng), grid_height * rand(rng)) for _ in 1:n_clusters]
-    customer_locs = Tuple{Float64, Float64}[]
-    for _ in 1:n_customers
-        center = rand(rng, cluster_centers)
-        x = clamp(center[1] + randn(rng) * (grid_width/10), 0, grid_width)
-        y = clamp(center[2] + randn(rng) * (grid_height/10), 0, grid_height)
-        push!(customer_locs, (x, y))
-    end
-
-    # Generate demands
-    demands = Dict{Int, Float64}()
-    for c in 1:n_customers
-        demands[c] = exp(rand(rng, Normal(log((min_demand + max_demand)/2), 0.5)))
-    end
-
-    total_demand = sum(values(demands))
-    avg_facility_capacity = (total_demand / n_facilities) * capacity_factor
-
-    # Generate costs and capacities
-    fixed_costs = Dict{Int, Float64}()
-    capacities = Dict{Int, Float64}()
-
-    for w in 1:n_facilities
-        capacity = avg_facility_capacity * (0.8 + 0.4 * rand(rng))
-        capacities[w] = capacity
-
-        location_factor =
-            1.0 + 0.2 * (facility_locs[w][1] / grid_width + facility_locs[w][2] / grid_height)
+    capacities = Vector{Float64}(undef, F)
+    fixed_costs = Vector{Float64}(undef, F)
+    for w in 1:F
+        capacities[w] = avg_capacity * (0.8 + 0.4 * rand(rng))
+        location_factor = 1.0 + 0.2 * (facility_locs[w][1] + facility_locs[w][2]) / span
         fixed_costs[w] = clamp(
             location_factor *
-            (fixed_cost_min + (capacity/avg_facility_capacity) * (fixed_cost_max - fixed_cost_min)),
+            (fixed_cost_min + capacities[w] / avg_capacity * (fixed_cost_max - fixed_cost_min) / 2),
             fixed_cost_min,
             fixed_cost_max,
         )
     end
 
-    # Shipping costs
-    shipping_costs = Dict{Tuple{Int, Int}, Float64}()
-    for w in 1:n_facilities
-        for c in 1:n_customers
-            distance = sqrt(
-                (facility_locs[w][1] - customer_locs[c][1])^2 +
-                (facility_locs[w][2] - customer_locs[c][2])^2,
-            )
-            shipping_costs[(w, c)] = distance * transport_cost_per_km * (0.9 + 0.2 * rand(rng))
-        end
+    shipping_costs = Matrix{Float64}(undef, F, C)
+    for c in 1:C, w in 1:F
+        d = _fl_dist(facility_locs[w], customer_locs[c])
+        shipping_costs[w, c] = d * transport_cost_per_km * (0.9 + 0.2 * rand(rng))
     end
 
-    # Initial budget
-    budget = sum(values(fixed_costs)) * budget_factor
-    original_budget = budget
-
-    # Adjust for feasibility
-    solution_status = if feasibility_status == feasible
-        :feasible
+    budget = sum(fixed_costs) * budget_factor
+    witness = nothing
+    certificate = nothing
+    if feasibility_status == feasible
+        if sum(capacities) < 1.05 * total_demand
+            capacities .*= 1.05 * total_demand / sum(capacities)
+        end
+        order = sortperm(capacities ./ fixed_costs; rev=true)
+        open = Int[]
+        covered = 0.0
+        for w in order
+            push!(open, w)
+            covered += capacities[w]
+            covered >= total_demand && break
+        end
+        budget = max(budget, sum(fixed_costs[open]) * (1.02 + 0.23 * rand(rng)))
+        # Serve customers (largest first) from their nearest open facilities
+        # with spare capacity, splitting where needed. Open capacity covers
+        # total demand, so every customer is served in full.
+        residual = Dict(w => capacities[w] for w in open)
+        shipments = Tuple{Int, Int, Float64}[]
+        for c in sortperm(demands; rev=true)
+            need = demands[c]
+            for w in sort(open; by=w -> shipping_costs[w, c])
+                need <= 0 && break
+                q = min(need, residual[w])
+                q <= 0 && continue
+                push!(shipments, (w, c, q))
+                residual[w] -= q
+                need -= q
+            end
+        end
+        witness = FacilityLocationWitness(sort!(open), shipments)
     elseif feasibility_status == infeasible
-        :infeasible
-    else
-        :all
-    end
-
-    caps_vec = [capacities[w] for w in 1:n_facilities]
-    costs_vec = [fixed_costs[w] for w in 1:n_facilities]
-    ratios = [caps_vec[i] / max(costs_vec[i], eps()) for i in 1:n_facilities]
-    order_desc = sortperm(ratios; rev=true)
-    total_capacity = sum(caps_vec)
-
-    function fractional_budget_to_reach(cap_target::Float64)
-        cum_cap = 0.0
-        cum_cost = 0.0
-        for idx in order_desc
-            cap_i = caps_vec[idx]
-            cost_i = costs_vec[idx]
-            if cum_cap + cap_i >= cap_target
-                rem = cap_target - cum_cap
-                frac_cost = cost_i * (rem / cap_i)
-                return cum_cost + frac_cost
-            else
-                cum_cap += cap_i
-                cum_cost += cost_i
+        # Smallest budget that funds capacity == total demand fractionally.
+        order = sortperm(capacities ./ fixed_costs; rev=true)
+        threshold = 0.0
+        reached = 0.0
+        for w in order
+            if reached + capacities[w] >= total_demand
+                threshold += fixed_costs[w] * (total_demand - reached) / capacities[w]
+                reached = total_demand
+                break
             end
+            reached += capacities[w]
+            threshold += fixed_costs[w]
         end
-        return Inf
-    end
-
-    function greedy_integer_subset_for(cap_target::Float64)
-        selected = Int[]
-        cum_cap = 0.0
-        cum_cost = 0.0
-        for idx in order_desc
-            push!(selected, idx)
-            cum_cap += caps_vec[idx]
-            cum_cost += costs_vec[idx]
-            if cum_cap + 1e-9 >= cap_target
-                return selected, cum_cost
-            end
+        if reached < total_demand
+            # Even opening everything falls short; any budget is infeasible.
+            threshold = sum(fixed_costs)
         end
-        return selected, cum_cost
-    end
-
-    if solution_status == :feasible
-        if total_capacity < total_demand
-            scale = (1.05 * total_demand) / max(total_capacity, eps())
-            for w in 1:n_facilities
-                capacities[w] *= scale
-            end
-            total_capacity = sum(values(capacities))
-            caps_vec = [capacities[w] for w in 1:n_facilities]
-            ratios = [caps_vec[i] / max(costs_vec[i], eps()) for i in 1:n_facilities]
-            order_desc = sortperm(ratios; rev=true)
-        end
-        selected_idxs, min_int_budget = greedy_integer_subset_for(total_demand)
-        slack_factor = 1.02 + 0.23 * rand(rng)
-        budget = max(original_budget, min_int_budget * slack_factor)
-    elseif solution_status == :infeasible
-        b_thresh = fractional_budget_to_reach(total_demand)
-        if isfinite(b_thresh)
-            tighten = rand(rng, 0.75:0.01:0.95)
-            budget = min(original_budget, b_thresh * tighten)
-        else
-            budget = min(original_budget, sum(values(fixed_costs)) * rand(rng, 0.4:0.01:0.8))
-        end
-    else
-        budget = original_budget
+        budget = min(budget, threshold * rand(rng, 0.75:0.01:0.95))
+        fundable = _fl_fundable_capacity(capacities, fixed_costs, budget)
+        certificate = FacilityBudgetCertificate(budget, fundable, total_demand)
     end
 
     return FacilityLocationProblem(
-        n_facilities,
-        n_customers,
+        F,
+        C,
         facility_locs,
         customer_locs,
         demands,
@@ -269,59 +244,47 @@ function FacilityLocationProblem(
         capacities,
         shipping_costs,
         budget,
+        witness,
+        certificate,
     )
 end
 
 """
     build_model(prob::FacilityLocationProblem)
 
-Build a JuMP model for the facility location problem.
-
-# Arguments
-
-  - `prob`: FacilityLocationProblem instance
-
-# Returns
-
-  - `model`: The JuMP model
+Build the strong capacitated facility location model. Deterministic — uses only
+data from the struct fields.
 """
 function build_model(prob::FacilityLocationProblem)
     model = Model()
+    F, C = prob.n_facilities, prob.n_customers
 
-    # Variables
-    @variable(model, y[1:prob.n_facilities], Bin)
-    @variable(model, x[1:prob.n_facilities, 1:prob.n_customers] >= 0)
+    @variable(model, y[1:F], Bin)
+    @variable(model, x[1:F, 1:C] >= 0)
 
-    # Objective
     @objective(
         model,
         Min,
-        sum(prob.fixed_costs[w] * y[w] for w in 1:prob.n_facilities) + sum(
-            prob.shipping_costs[(w, c)] * x[w, c] for
-            w in 1:prob.n_facilities, c in 1:prob.n_customers
-        )
+        sum(prob.fixed_costs[w] * y[w] for w in 1:F) +
+            sum(prob.shipping_costs[w, c] * x[w, c] for w in 1:F, c in 1:C)
     )
-
-    # Customer demand
-    for c in 1:prob.n_customers
-        @constraint(model, sum(x[w, c] for w in 1:prob.n_facilities) >= prob.demands[c])
+    for c in 1:C
+        @constraint(model, sum(x[w, c] for w in 1:F) >= prob.demands[c])
     end
-
-    # Facility capacity
-    for w in 1:prob.n_facilities
-        @constraint(model, sum(x[w, c] for c in 1:prob.n_customers) <= prob.capacities[w] * y[w])
+    for w in 1:F
+        @constraint(model, sum(x[w, c] for c in 1:C) <= prob.capacities[w] * y[w])
     end
-
-    # Budget
-    @constraint(model, sum(prob.fixed_costs[w] * y[w] for w in 1:prob.n_facilities) <= prob.budget)
-
+    for c in 1:C, w in 1:F
+        @constraint(model, x[w, c] <= prob.demands[c] * y[w])
+    end
+    @constraint(model, sum(prob.fixed_costs[w] * y[w] for w in 1:F) <= prob.budget)
     return model
 end
 
-# Register the variant
 register_variant(
     :facility_location,
     :standard,
     FacilityLocationProblem,
-    "Facility location problem that minimizes the cost of opening facilities and shipping to customers while meeting demand",
+    "Budgeted capacitated facility location in the strong formulation: open facilities and ship to clustered customers with disaggregated x ≤ d·y linking";
+    default=true,
 )

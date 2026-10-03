@@ -1,123 +1,134 @@
 # Facility Location
 
-Generates capacitated facility location instances with fixed opening costs, customer demand, shipping costs, and an opening budget.
+The `facility_location` category generates distribution-network design
+instances: which sites to open (and how big), and how customer demand is routed
+through them. All three variants are MIPs whose defining structure survives the
+default `relax_integer=true` because they use strong (disaggregated) linking.
 
-## Overview
+## Variants
 
-This generator represents a distribution network design problem. A planner chooses which candidate facilities to open and how much demand to serve from each open facility. The model minimizes fixed facility costs plus customer shipping costs while satisfying all customer demand, respecting facility capacities, and staying within an opening budget.
+| Variant | Application | Natural formulation |
+| --- | --- | --- |
+| `standard` (default) | Budgeted capacitated facility location (CFLP) | Dense shipments, aggregate capacity, strong `x ≤ d·y` linking, budget row |
+| `p_median` | Capacitated p-median (CPMP) | Exactly `p` sites, single assignment, `y ≤ z` linking, demand-weighted capacity |
+| `two_echelon` | Plant → DC → customer network with DC sizing | Sparse nearest-site lanes, discrete size ladder, cross-dock conservation, strong linking |
 
-## Generator Data and Sizing
+Every variant stores a typed `feasible_witness` for `feasible` requests and a
+typed `infeasibility_certificate` for `infeasible` ones (neither for
+`unknown`). Neither mechanism is a single impossible row: each infeasibility
+proof aggregates many demand/assignment rows with capacity rows, so HiGHS
+presolve does not detect it and simplex has to work.
 
-`target_variables` is interpreted as:
+## `standard`
 
-```text
-n_facilities * (n_customers + 1)
-```
+Facilities are uniform over a square region, customers clustered in towns,
+demands log-normal, shipping cost = distance × per-km rate × lane noise, fixed
+costs grow with capacity and location (OR-Library `cap`-style).
 
-This matches one open variable per facility plus one shipping variable for every facility-customer pair.
-
-Scale-dependent ranges:
-
-| Scale condition | Facilities | Customers | Grid size | Transport cost/km | Capacity factor | Budget factor |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `target_variables <= 100` | 2-20 | 1-40 | 200-800 by 200-800 | 0.5-1.2 | 1.1-1.6 | 0.4-0.8 |
-| `target_variables <= 1000` | 3-100 | 5-200 | 500-2000 by 500-2000 | 0.8-1.8 | 1.2-1.8 | 0.5-0.9 |
-| otherwise | 5-500 | 10-2000 | 1000-5000 by 1000-5000 | 1.0-3.0 | 1.3-2.0 | 0.6-0.95 |
-
-The constructor searches over facility counts and chooses the customer count with the lowest relative variable-count error. If no combination is within 10%, it uses a square-root heuristic.
-
-Random data generation:
-
-- Facility locations are uniform on the sampled rectangle.
-- Customer locations are clustered around `max(2, div(n_customers, 20))` random centers with normal offsets and clamping to the grid.
-- Customer demands are log-normal around the midpoint of sampled min/max demand ranges.
-- Average facility capacity is `(total_demand / n_facilities) * capacity_factor`.
-- Individual capacities vary by a factor in `[0.8, 1.2]`.
-- Fixed costs depend on sampled fixed-cost ranges, relative capacity, and a location factor.
-- Shipping costs are Euclidean distance times sampled transport cost per km times random noise in `[0.9, 1.1]`.
-- Initial budget is `sum(fixed_costs) * budget_factor`.
-
-The stored struct fields are:
-
-- `n_facilities`
-- `n_customers`
-- `facility_locs`
-- `customer_locs`
-- `demands`
-- `fixed_costs`
-- `capacities`
-- `shipping_costs`
-- `budget`
-
-The constructor calls `Random.seed!(seed)`, so generation is reproducible for a fixed seed but resets Julia's global RNG state.
-
-## LP Formulation
-
-Sets and indices:
-
-- `W = {1, ..., n_facilities}`: candidate facilities.
-- `C = {1, ..., n_customers}`: customers.
-
-Decision variables:
+Sizing: `total = F · (C + 1)` with a sampled customer/facility ratio
+`r ∈ 4..15`, `F = max(2, round(sqrt(target / r)))`,
+`C = max(1, round(target / F) − 1)` — within `F/2` of the target, no cap.
 
 ```text
-y_w in {0, 1}
-x_{w,c} >= 0
+min  Σ_w fixed_w y_w + Σ_{w,c} ship_{w,c} x_{w,c}
+s.t. Σ_w x_{w,c} ≥ d_c                    ∀c   (demand)
+     Σ_c x_{w,c} ≤ cap_w y_w              ∀w   (capacity)
+     x_{w,c} ≤ d_c y_w                    ∀w,c (strong linking)
+     Σ_w fixed_w y_w ≤ budget                  (budget)
+     y ∈ {0,1}, x ≥ 0
 ```
 
-`y_w = 1` means facility `w` is opened. `x_{w,c}` is the amount shipped from facility `w` to customer `c`.
+Rows ≈ columns. The strong linking rows (Cornuéjols, Sridharan & Thizy 1991)
+keep `y` binding in the relaxation; the aggregate-only model lets `y_w` shrink
+to `throughput / cap_w`.
 
-Objective:
+- `feasible`: capacities lifted to ≥ 1.05× demand if needed; a greedy
+  capacity/cost-ordered subset covering demand is opened, the budget is ≥
+  1.02–1.25× its cost, and customers are served from their nearest open
+  facilities with spare capacity → `FacilityLocationWitness(open, shipments)`.
+- `infeasible`: budget = 75–95% of the fractional-knapsack cost of reaching
+  total demand → `FacilityBudgetCertificate(budget, fundable_capacity,
+  total_demand)`; summing demand and capacity rows and bounding `Σ cap_w y_w`
+  by the budget row gives `total_demand ≤ fundable_capacity`, false.
+- `unknown`: budget 60–95% of total fixed cost and capacity 1.3–2.0× demand as
+  drawn — usually feasible, sometimes not.
+
+## `p_median`
+
+Capacitated p-median (Osman–Christofides / Lorena–Senne family). Sites uniform,
+customers clustered, log-normal demands, Euclidean distances.
+
+Sizing: `total = F · (C + 1)` with ratio `r ∈ 2..8`, `p ∈ [2, max(2, F/3)]`.
 
 ```text
-minimize
-    sum_{w in W} fixed_cost_w y_w
-  + sum_{w in W} sum_{c in C} shipping_cost_{w,c} x_{w,c}
+min  Σ_{w,c} dist_{w,c} d_c y_{w,c}
+s.t. Σ_w y_{w,c} = 1                      ∀c
+     y_{w,c} ≤ z_w                        ∀w,c
+     Σ_w z_w = p
+     Σ_c d_c y_{w,c} ≤ Q_w z_w            ∀w
+     z, y ∈ {0,1}
 ```
 
-Constraints:
+Capacities `Q_w = total_demand / p · ρ · U(0.8, 1.25)` with tightness
+`ρ ∈ [0.8, 1.3]` (≈ 0.85 is the LP threshold).
 
-Demand:
+- `feasible`: greedy weighted p-median seeds are opened and their capacities
+  lifted to `Σ_open Q ≥ total_demand + p · max d`; customers, largest first, go
+  to the nearest open site with room (that margin guarantees the greedy never
+  gets stuck) → `PMedianWitness(open, assignment)`.
+- `infeasible`: capacities scaled so the `p` largest sum to
+  `total_demand / (1.05..1.25)` → `PMedianCapacityCertificate(top_p_capacity,
+  total_demand)`.
+- `unknown`: `ρ` as drawn; the integer model additionally faces a bin-packing
+  question.
+
+## `two_echelon`
+
+Plants (suppliers) in a few manufacturing zones, candidate DCs near metro
+clusters (35% rural), customers in metros. Lanes are sparse and local: each
+customer has `K_c ∈ 3..6` delivery lanes to its nearest DCs, each DC `L ∈ 2..3`
+inbound lanes from its nearest plants (bucket-grid nearest-site search, so the
+build is near-linear). Each DC has a size ladder of `K ∈ {3,4}` capacities
+scaled to its forecast catchment, with concave-plus-noise installation costs.
+Inbound (full-truckload) and delivery (less-than-truckload) costs are
+distance-based; handling cost is charged per unit delivered.
+
+Sizing: `total = W(1 + K) + W·L + Σ_c K_c`, exact for every target above ~15
+(customer count and per-customer lane counts are solved for). No size cap
+(previously silently capped at 20,600 columns).
 
 ```text
-sum_{w in W} x_{w,c} >= demand_c    for each c in C
+min  Σ fixed_w y_w + Σ sizecost_{w,k} z_{w,k} + Σ in_l f1_l + Σ (out_l + handling_w) f2_l
+s.t. Σ_k z_{w,k} = y_w                                    ∀w
+     Σ_{l∈in(w)} f1_l ≤ Σ_k cap_{w,k} z_{w,k}             ∀w (throughput)
+     Σ_{l∈in(w)} f1_l = Σ_{l∈out(w)} f2_l                 ∀w (cross-dock)
+     Σ_{l∈out(s)} f1_l ≤ supply_s                         ∀s
+     Σ_{l∈lanes(c)} f2_l ≥ d_c                            ∀c
+     f2_l ≤ d_c y_w        for every delivery lane l = (w,c)
 ```
 
-Facility capacity:
+- `feasible`: 50–80% of DCs open (plus each customer's nearest DC if none of
+  its lanes is open); customers fully served by their nearest open DC; each
+  open DC buys the smallest size covering its throughput with a 5–15% margin;
+  each DC is replenished from its nearest plant, whose capacity is lifted to
+  1.1–1.3× its load where needed → `TwoEchelonWitness(open, size_choice,
+  supply_flow, delivery_flow)`.
+- `infeasible`: a compact region `R` (4–12% of customers around a random
+  customer) gets a 30–80% demand surge and zoning limits on the DCs `N(R)`
+  that can reach it, so `Σ_R d ≥ 1.1–1.3 × Σ_{N(R)} max_k cap` →
+  `TwoEchelonRegionalDeficit(customers, warehouses, region_demand,
+  max_capacity)`. The proof sums `|R|` demand rows and the throughput,
+  cross-dock and size rows of `N(R)` — a Hall-type regional deficit, not a
+  single row.
+- `unknown`: ladders and plant capacities are planned against a forecast;
+  realized demand has 1–3 regional shocks of 1.2–2.8×. About 80% of instances
+  are feasible across seeds and sizes.
 
-```text
-sum_{c in C} x_{w,c} <= capacity_w y_w    for each w in W
-```
+## Notes
 
-Opening budget:
-
-```text
-sum_{w in W} fixed_cost_w y_w <= budget
-```
-
-Bounds:
-
-```text
-y_w binary
-x_{w,c} >= 0
-```
-
-At the package API level, `generate_problem(...; relax_integer=true)` is the default, so the binary open variables are relaxed unless the caller sets `relax_integer=false`.
-
-## Feasibility Controls
-
-- `feasible`: If total capacity is below total demand, all capacities are scaled so total capacity is at least `1.05 * total_demand`. Facilities are sorted by capacity-per-fixed-cost ratio. A greedy integer subset is selected until total demand can be covered, and budget is set to at least that subset cost times a random slack factor from `1.02` to `1.25`.
-- `infeasible`: The same ratio ordering is used to compute a fractional lower bound on the minimum opening cost needed to reach total demand capacity. If the bound is finite, budget is tightened to `75%` to `95%` of that threshold. If the bound is infinite, budget is set below a fraction of total fixed cost.
-- `unknown`: The original sampled budget is retained without capacity scaling or budget tightening guarantees.
-
-## Model Characteristics
-
-- Variables: `n_facilities * n_customers` shipment variables plus `n_facilities` open variables.
-- Constraints: `n_customers` demand constraints, `n_facilities` capacity constraints, and one budget constraint.
-- Density: demand rows touch all facilities for one customer; capacity rows touch all customer shipments for one facility plus that facility's open variable; the budget row touches only open variables.
-- Intended model class: mixed-integer capacitated facility location.
-- Default generated LP: with the package default `relax_integer=true`, facility open decisions become continuous in `[0, 1]`, yielding a capacitated facility-location relaxation.
-
-## Practical Notes
-
-The model allows overserving customers because demand constraints are `>=`, not equality. Shipping variables represent quantities rather than assignment fractions. The infeasible mode is designed around a fractional capacity-cost threshold, so it is especially relevant to the default LP relaxation as well as to the integer model.
+- With the default `relax_integer=true`, `y`, `z` (and `p_median`'s `y`) are
+  relaxed; the strong linking rows are what keep the relaxation non-trivial.
+- All randomness is drawn from a constructor-local `MersenneTwister(seed)`.
+- Tests: `test/problem_types/facility_location.jl` checks the sizing formulas,
+  lane structure, witnesses row by row via `primal_feasibility_report`, the
+  certificate arithmetic, and HiGHS contracts.
