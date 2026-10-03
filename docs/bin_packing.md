@@ -14,11 +14,15 @@ two-dimensional non-overlap.
 ## Common Sizing and Data
 
 Both variants use assignment variables `x[i,b]`, bin-use variables `y[b]`, and
-category-presence variables `z[c,b]`. Their emitted variable count is therefore
+category-presence variables `z[c,b]`. In `standard` every pair exists, so the
+emitted variable count is
 
 ```math
 n_{bins}(n_{items}+n_{categories}+1).
 ```
+
+In `heterogeneous` only eligible pairs exist (see below); its exact count is
+`_heterogeneous_variable_count`, and its dimension search targets that count.
 
 The constructor searches directly over integer dimensions that produce this
 count, typically with two to six items per bin (the smallest model has three
@@ -204,14 +208,19 @@ equipment therefore have materially different feasible assignments and
 economics.
 
 The item-assignment, activation, presence, and conflict constraints have the
-same meaning as in `standard`, with two additions. Ineligible assignments are
-fixed to zero:
+same meaning as in `standard`, but the model is sparse: `x[i,b]` exists only
+when type(b) can handle category(i), `z[c,b]` only when type(b) can handle `c`,
+and a conflict row only when both categories are eligible in the slot. (The
+previous version created every pair and emitted `x[i,b] == 0` rows for the
+ineligible ones; HiGHS presolve stripped 38% of the columns and 54% of the
+rows.) Slot availability per type is deterministic (`div` plus the remainder
+on the first types), so the exact variable count
 
 ```math
-x_{ib}=0 \quad\text{if type}(b)\text{ cannot handle category}(i),
+n_{bins} + \sum_c (n_c + 1)\sum_{t \ni c} availability_t
 ```
 
-and capacity depends on the slot type:
+is known before any data is sampled. Capacity depends on the slot type:
 
 ```math
 \sum_i s_i x_{ib}\le C_{type(b)}y_b.

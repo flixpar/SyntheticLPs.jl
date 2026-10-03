@@ -2,7 +2,7 @@
 
 register_category(
     :container_loading,
-    "Binary multi-container loading and orthogonal two-dimensional packing formulations",
+    "Container loading on a heterogeneous ISO fleet and two-stage guillotine two-dimensional packing",
 )
 
 include("standard.jl")
