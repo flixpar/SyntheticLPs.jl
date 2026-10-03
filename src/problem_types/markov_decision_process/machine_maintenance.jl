@@ -147,7 +147,9 @@ end
 
 Sample a condition-based maintenance MDP with about `target_variables`
 state-action pairs (exact count `_maintenance_mdp_pairs`). Targets above
-`MDP_MAX_PAIRS` raise an `ArgumentError`.
+`MDP_MAX_PAIRS` raise an `ArgumentError`. The keyword `service_row` forces the
+optional service row on (`true`) or off (`false`) instead of sampling it
+(`nothing`); `ConstrainedMDP` builds its base model with `service_row=false`.
 """
 function MachineMaintenanceMDP(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int;
     service_row::Union{Nothing, Bool}=nothing,

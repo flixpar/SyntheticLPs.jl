@@ -192,7 +192,9 @@ end
 Sample a seasonal pricing-and-replenishment MDP with about `target_variables`
 state-action pairs (exact count `_inventory_mdp_pairs`, typically within a few
 percent of the target). Targets above `MDP_MAX_PAIRS` raise an
-`ArgumentError`.
+`ArgumentError`. The keyword `service_row` forces the
+optional service row on (`true`) or off (`false`) instead of sampling it
+(`nothing`); `ConstrainedMDP` builds its base model with `service_row=false`.
 """
 function InventoryControlMDP(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int;
     service_row::Union{Nothing, Bool}=nothing,

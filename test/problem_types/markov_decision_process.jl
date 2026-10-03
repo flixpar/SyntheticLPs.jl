@@ -128,6 +128,7 @@
         end
         @test p.normalization == m.n_states
         @test length(p.budgets) == length(p.budget_streams)
+        @test all(>=(0.0), p.budgets)          # never a sign-trivial budget row
         if v == :constrained
             @test p.base_model in SL.CONSTRAINED_MDP_BASES
             @test 1 in p.budget_streams && 2 <= length(p.budget_streams) <= 3

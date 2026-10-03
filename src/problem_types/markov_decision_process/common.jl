@@ -420,8 +420,13 @@ function _mdp_occupation(
         end
         y .*= normalization / sum(y)
     end
-    minimum(y) >= -1e-9 * normalization ||
+    all(isfinite, y) && minimum(y) >= -1e-9 * normalization ||
         error("occupation measure has a negative entry $(minimum(y)); policy is not unichain")
+    # The solve must reproduce the balance rows (guards against a numerically
+    # singular factorization ever becoming a witness).
+    residual = At * y .- (criterion == :discounted ? rhs : 0.0)
+    maximum(abs, residual) <= 1e-9 * normalization ||
+        error("occupation measure solve is inaccurate (residual $(maximum(abs, residual)))")
     tol = 1e-12 * normalization
     y = [abs(yi) <= tol ? 0.0 : max(yi, 0.0) for yi in y]
     x = zeros(_mdp_npairs(m))
@@ -512,7 +517,8 @@ Plant budget rows `Σ_k streams_j[k] x_k <= B_j` for the stream indices
     combination is refuted.
   - `unknown`: `B_j = L_j + u_j * max(R_j - L_j, 0.3 L_j)` between each stream's
     own optimum `L_j` and the reference policy's value `R_j`, with `u` drawn on
-    both sides of 0 for a single row (`[-0.5, 1]`) and in `[0.4, 1.4]` for
+    both sides of 0 for a single row (`[-0.5, 1]`; a negative draw gives
+    `B = (1 + u/2) L`, at most 25% under the optimum) and in `[0.4, 1.4]` for
     several rows, where the rows' conflict decides; no witness or certificate.
 """
 function _mdp_plant_budgets(
@@ -579,7 +585,13 @@ function _mdp_plant_budgets(
 
     if status == unknown
         for i in 1:nb
-            budgets[i] = L[i] + us[i] * max(R[i] - L[i], 0.3 * abs(L[i]))
+            # Below the optimum the budget goes at most 25% under it (never
+            # negative); above it, up to the reference value (or 30% over).
+            budgets[i] = if us[i] < 0
+                L[i] * (1.0 + 0.5 * us[i])
+            else
+                L[i] + us[i] * max(R[i] - L[i], 0.3 * abs(L[i]))
+            end
         end
         return budgets, nothing, nothing
     end
