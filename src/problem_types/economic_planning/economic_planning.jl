@@ -12,3 +12,4 @@ register_category(
 )
 
 include("dynamic_leontief.jl")
+include("energy_system.jl")
