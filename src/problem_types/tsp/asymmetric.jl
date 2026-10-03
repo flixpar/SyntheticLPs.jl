@@ -160,6 +160,85 @@ function _tsp_hilbert_order(locations::Vector{Tuple{Float64, Float64}}, idx::Vec
     return idx[sortperm(collect(zip(hkey, idx)))]
 end
 
+# Make the candidate graph admit a perfect "successor assignment" (a
+# bipartite matching of every node's out-side to a distinct in-side), the
+# condition for the degree rows — and hence the LP relaxation's assignment
+# core — to be feasible. A sparse nearest-neighbour graph occasionally has a
+# small Hall violation (a few stops whose in-arcs all come from fewer stops),
+# which makes an `unknown` instance trivially infeasible. Greedy matching plus
+# BFS augmenting paths finds a maximum matching; each tail left unmatched is
+# then joined to the nearest unmatched head. Deterministic (sorted adjacency).
+function _tsp_repair_assignment!(
+    arcset::Set{Tuple{Int, Int}}, n::Int, xs::Vector{Float64}, ys::Vector{Float64}
+)
+    adj = [Int[] for _ in 1:n]
+    for (i, j) in sort!(collect(arcset))
+        push!(adj[i], j)
+    end
+    match_tail = zeros(Int, n)   # tail -> head
+    match_head = zeros(Int, n)   # head -> tail
+    for i in 1:n, j in adj[i]
+        if match_head[j] == 0
+            match_tail[i] = j
+            match_head[j] = i
+            break
+        end
+    end
+    parent_tail = zeros(Int, n)   # head -> tail that reached it in the BFS
+    queue = Int[]
+    seen = falses(n)
+    for root in 1:n
+        match_tail[root] == 0 || continue
+        fill!(seen, false)
+        empty!(queue)
+        push!(queue, root)
+        free_head = 0
+        qi = 1
+        while qi <= length(queue) && free_head == 0
+            u = queue[qi]
+            qi += 1
+            for j in adj[u]
+                seen[j] && continue
+                seen[j] = true
+                parent_tail[j] = u
+                if match_head[j] == 0
+                    free_head = j
+                    break
+                end
+                push!(queue, match_head[j])
+            end
+        end
+        free_head == 0 && continue
+        j = free_head
+        while j != 0
+            u = parent_tail[j]
+            previous = match_tail[u]
+            match_tail[u] = j
+            match_head[j] = u
+            j = previous
+        end
+    end
+    open_heads = [j for j in 1:n if match_head[j] == 0]
+    for i in 1:n
+        match_tail[i] == 0 || continue
+        candidates = [j for j in open_heads if j != i]
+        if isempty(candidates)
+            # Only i's own head is free: splice i into a matched pair a -> b.
+            a = findfirst(t -> t != i && match_tail[t] != 0 && match_tail[t] != i, 1:n)
+            b = match_tail[a]
+            push!(arcset, (i, b), (a, i))
+            match_tail[i], match_head[b] = b, i
+            match_tail[a], match_head[i] = i, a
+        else
+            j = candidates[argmin([((xs[j] - xs[i])^2 + (ys[j] - ys[i])^2, j) for j in candidates])]
+            push!(arcset, (i, j))
+            match_tail[i], match_head[j] = j, i
+        end
+        filter!(h -> match_head[h] == 0, open_heads)
+    end
+    return arcset
+end
+
 """
     TSPAsymmetricProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
@@ -191,8 +270,14 @@ with complete support.
     `k−1` unit out-degrees of `T` — infeasible from the degree rows alone, so
     also in the LP relaxation; the deficit is spread over `2k−1` rows, which
     presolve does not aggregate.
-  - `unknown`: the bare candidate graph (no planted tour). Whether it contains a
-    Hamiltonian cycle is not known; its LP relaxation is almost always feasible.
+  - `unknown`: the bare candidate graph (no planted tour), repaired so its
+    degree rows admit a successor assignment (a maximum bipartite matching
+    plus nearest-stop arcs for any stop left unmatched — otherwise a small Hall
+    violation in the sparse graph occasionally made the instance trivially
+    infeasible). Whether it contains a Hamiltonian cycle is not known, and the
+    relaxation is genuinely two-sided: the sparse lifted-MTZ rows sometimes
+    cut off every fractional assignment (observed in roughly a quarter of
+    large instances), a refutation that takes thousands of simplex iterations.
 """
 function TSPAsymmetricProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
@@ -292,6 +377,9 @@ function TSPAsymmetricProblem(
             end
         end
     end
+
+    # --- Assignment repair (unknown): no trivial Hall violation ---
+    feasibility_status == unknown && _tsp_repair_assignment!(arcset, n, xs, ys)
 
     # --- Hall-deficit district (infeasible) ---
     S = Int[]
