@@ -13,6 +13,23 @@ struct HubBackupWitness
 end
 
 """
+Relaxation-proof infeasibility certificate for r-allocation: node `groups`
+whose admissible hub windows are pairwise disjoint (each window lies inside its
+own group). For any node `i` of group `g`, the allocation row
+`sum_{k in A_i} z_ik = r` and the linking rows `z_ik <= y_k` give
+`sum_{k in g} y_k >= r`, so every group needs `r` open hubs and
+`sum_k y_k >= r * length(groups) > p` - contradicting the exact-`p` row, in the
+LP relaxation as well. Unlike the one-hub-per-group argument of
+`DisjointRegionCertificate`, the deficit comes from the backup requirement
+itself (`length(groups) = floor(p / r) + 1`).
+"""
+struct BackupRegionCertificate
+    groups::Vector{Vector{Int}}
+    p::Int
+    r::Int
+end
+
+"""
     RAllocationHubProblem <: ProblemGenerator
 
 Generator for the **uncapacitated r-allocation p-hub median problem**
@@ -53,7 +70,7 @@ struct RAllocationHubProblem <: ProblemGenerator
     reach::Float64
     admissible::Vector{Vector{Int}}
     feasible_witness::Union{Nothing, HubBackupWitness}
-    infeasibility_certificate::Union{Nothing, DisjointRegionCertificate}
+    infeasibility_certificate::Union{Nothing, BackupRegionCertificate}
     feasibility_status::FeasibilityStatus
 end
 
@@ -64,38 +81,17 @@ function _build_r_allocation(n_nodes::Int, feasibility_status::FeasibilityStatus
     r = max(2, min(p, n - 2, 2 + (rand(rng) < 0.25 ? 1 : 0)))
 
     if feasibility_status == infeasible
-        q = p + 1
-        centers = _hub_ring_centers(rng, q)
-        node_group = vcat(collect(1:q), rand(rng, 1:q, max(0, n - q)))
-        min_sep = minimum(
-            hypot(centers[a][1] - centers[b][1], centers[a][2] - centers[b][2]) for a in 1:q for
-            b in (a + 1):q
-        )
-        spread = 0.15 * min_sep
-        locations = [
-            if g <= q
-                centers[g]
-            else
-                (
-                    clamp(
-                        centers[node_group[g]][1] + rand(rng, Uniform(-spread, spread)), 0.0, 100.0
-                    ),
-                    clamp(
-                        centers[node_group[g]][2] + rand(rng, Uniform(-spread, spread)), 0.0, 100.0
-                    ),
-                )
-            end for g in 1:n
-        ]
+        # q = floor(p/r) + 1 mutually unreachable island regions. Every node
+        # must keep r hubs inside its own region, so each region needs r open
+        # hubs: q*r > p (see BackupRegionCertificate). Regions get at least
+        # r + 2 cities so no node's window is exactly r wide (which would let
+        # presolve force hubs open by bounds alone and refute the instance
+        # without simplex work).
+        q = min(fld(p, r) + 1, n)
+        locations, groups, min_sep = _hub_island_geography(rng, n, q; min_members=r + 2)
         dist = _hub_distance_matrix(locations)
-        groups = [Int[] for _ in 1:q]
-        for g in 1:n
-            push!(groups[node_group[g]], g)
-        end
-        # Nodes only reach candidates inside their own group, and each group
-        # needs at least one hub of its own - more than the p allowed, which
-        # refutes feasibility regardless of r.
         reach = 0.40 * min_sep
-        certificate = DisjointRegionCertificate(groups, p)
+        certificate = BackupRegionCertificate(groups, p, r)
         hubs = Int[]
         assignments = [Int[] for _ in 1:n]
     else
@@ -169,9 +165,15 @@ Construct an r-allocation p-hub median instance. The variable count matches
 
     vars = sum_{i<j} |A_i| * |A_j| + sum_i |A_i| + |union_i A_i|
 
-Feasibility handling mirrors `p_hub_median` (cover witness / disjoint-region
-certificate), except that feasible requests also guarantee `|A_i| >= r` for
-every node.
+Feasibility:
+
+  - `feasible`: a `p`-hub cover whose `r` nearest hubs lie within reach of every
+    node (`HubBackupWitness`); feasible requests also guarantee `|A_i| >= r`.
+  - `infeasible`: `floor(p/r) + 1` disjoint island regions, each needing `r`
+    hubs of its own (`BackupRegionCertificate`). Every region has at least
+    `r + 2` cities, so the deficit is an aggregate over many allocation and
+    linking rows rather than a bound that presolve propagates.
+  - `unknown`: reach sampled at 0.8-1.25x the cover radius.
 """
 function RAllocationHubProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int

@@ -181,9 +181,12 @@ function _build_multiple_allocation(
         # Smallest reach at which every node still sees its nearest candidate
         # (no empty windows), then sampled just above it.
         cover_reach = maximum(minimum(dist[i, k] for k in hubs) for i in 1:n)
+        # `unknown` stays above the cover reach too: a reach below it leaves
+        # some city with an empty window, an infeasibility presolve finds
+        # from one empty supply row.
         reach =
             cover_reach *
-            rand(rng, feasibility_status == feasible ? Uniform(1.05, 1.2) : Uniform(0.99, 1.1))
+            rand(rng, feasibility_status == feasible ? Uniform(1.05, 1.2) : Uniform(1.03, 1.25))
         admissible = _hub_reach_admissible(dist, reach; candidates=hubs)
         hub_set = copy(hubs)
         groups = Vector{Int}[]
@@ -217,6 +220,16 @@ function _build_multiple_allocation(
         total_cost = sum(fixed_cost)
         factor = feasibility_status == feasible ? Uniform(1.05, 1.35) : Uniform(0.8, 1.15)
         budget = min(total_cost, cover_cost * rand(rng, factor))
+        if feasibility_status == unknown
+            # A city with a single admissible candidate forces that hub open
+            # (its supply and linking rows give y_k >= 1). Keep the budget
+            # above the cost of these forced hubs, so a shortfall - if any -
+            # comes from the fractional covering trade-off, not from a few
+            # bound propagations presolve performs on its own.
+            forced = unique([only(A) for A in admissible if length(A) == 1])
+            forced_cost = sum(fixed_cost[position[k]] for k in forced; init=0.0)
+            budget = max(budget, min(total_cost, 1.05 * forced_cost))
+        end
         witness = feasibility_status == feasible ? HubCoverWitness(cover, reach) : nothing
     end
 
@@ -264,9 +277,11 @@ follows it) to land near the target.
   - `infeasible`: disjoint island groups with a budget below
     `groups * min_k f_k` (`BudgetCoverCertificate`) - the budget row conflicts
     with the covering forced by the supply and linking rows in the relaxation.
-  - `unknown`: the budget is sampled around the greedy cover cost, which may or
-    may not be enough once cheaper (including fractional) covers exist, leaving
-    feasibility undecided.
+  - `unknown`: the reach sits 3-25% above the smallest window that leaves no
+    city without a candidate, and the budget is sampled at 0.8-1.15x the greedy
+    cover cost (never below 1.05x the hubs forced open by single-candidate
+    windows), which may or may not be enough once cheaper (including
+    fractional) covers exist, leaving feasibility undecided.
 """
 function MultipleAllocationHubProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int

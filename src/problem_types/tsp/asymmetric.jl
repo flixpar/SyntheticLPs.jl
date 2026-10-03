@@ -4,270 +4,381 @@ using Random
 """
     TSPAsymmetricProblem <: ProblemGenerator
 
-Generator for the asymmetric travelling-salesman problem (ATSP) with
-traffic-dependent travel times, formulated with the Miller–Tucker–Zemlin (MTZ)
-subtour-elimination constraints as a mixed-integer program with a meaningful
-continuous relaxation.
+Generator for the **sparse asymmetric travelling-salesman problem** (ATSP) — a
+large urban courier route over a hilly street network with one-way streets —
+formulated with lifted Miller–Tucker–Zemlin (MTZ) constraints over a sparse
+candidate-arc graph.
 
 # Overview
 
-An urban courier must visit every stop exactly once and return to the home base
-(node 1). Unlike the symmetric `tsp/standard` variant, travel times here are
-**direction-dependent**: one-way streets and peak-period congestion make
-`time[i,j] ≠ time[j,i]` in general, so the natural data is a directed matrix.
+The dense variants (`standard`, `flow`, `precedence`, …) price every ordered
+pair of a few hundred stops. Real large-scale routing instead works on a
+**candidate-arc graph**: each stop keeps only the few onward legs a dispatcher
+would ever consider (its cheapest directed connections to nearby stops). This
+variant generates that structure directly, so at a given variable budget it has
+roughly `target / (m + 1)` stops (≈ 10,000 at 100k variables, versus ≈ 316 for
+`standard`), very sparse degree rows, and an MTZ block whose big-M equals the
+large stop count — a genuinely different LP from `standard` rather than the
+same dense model with another cost matrix.
 
-Travel times are shortest paths on an explicit urban street grid. Horizontal
-streets are one-way and alternate direction by row; vertical avenues are
-two-way. Each street has a sampled positive congestion weight. The resulting
-directed shortest-path matrix is strongly connected, satisfies the directed
-triangle inequality exactly, and is genuinely asymmetric rather than being an
-independent perturbation of every city pair.
+Travel times are direction-dependent for physical reasons:
 
-The formulation is the same MTZ model as `tsp/standard` (it applies verbatim to
-asymmetric costs):
+  - **Elevation**: a smooth terrain of a few hills; climbing costs extra time
+    (`κ` minutes per metre of ascent), descending does not.
+  - **One-way streets**: about a quarter of neighbouring stop pairs are joined by
+    a one-way street; driving against it means a detour around the block
+    (`1.3–2.0×` the direct time).
 
-  - Binary arc variables `x[i,j] ∈ {0,1}` select which arcs are traversed.
-  - Continuous order variables `u[j] ∈ [1, n-1]` for stops `j = 2..n`.
-  - Degree constraints (one in-arc, one out-arc per node) and lifted MTZ
-    constraints using both directions of each stop pair.
+Candidate arcs: every stop keeps its `m` cheapest outgoing legs (`m ∈ 6:10`,
+by directed travel time) among its `2m` geometrically nearest neighbours, so
+the support itself is asymmetric. Stops left with fewer than two incoming
+candidates receive arcs from their nearest neighbours, so no degree row is a
+singleton.
 
-This is a MIP whose continuous relaxation is a genuine tour relaxation: the
-relaxed model is a useful LP test instance, but a fractional `x` is not an
-implementable tour.
+The formulation is the lifted MTZ model restricted to candidate arcs:
+
+  - Binary `x[a]` per candidate arc, continuous order `u[j] ∈ [1, n-1]` per stop.
+  - Degree rows (one in-arc and one out-arc per node).
+  - `u_i − u_j + (n−1)x_ij + (n−3)x_ji ≤ n−2` when both directions are
+    candidates, `u_i − u_j + (n−1)x_ij ≤ n−2` otherwise (stop-to-stop arcs).
+
+This is a MIP whose continuous relaxation is a sparse tour relaxation: a useful
+LP test instance, but a fractional `x` is not an implementable tour.
 
 # Fields
 
-  - `n_stops::Int`: Total node count `n` (node 1 = home base, nodes `2..n` = stops)
-  - `locations::Vector{Tuple{Float64,Float64}}`: Street-grid coordinates (index 1 = home base)
-  - `grid_side::Int`: Side length of the one-way street grid
-  - `row_weight::Vector{Int}`: Congestion weight for each one-way horizontal street
-  - `col_weight::Vector{Int}`: Congestion weight for each two-way vertical avenue
-  - `dist::Matrix{Float64}`: Asymmetric travel-time matrix over nodes `1..n`
-    (minutes); `dist[i,i] = 0`, satisfies the directed triangle inequality exactly,
-    generically `dist[i,j] ≠ dist[j,i]`
-  - `arc_ok::Matrix{Bool}`: Allowed-arc mask; `arc_ok[i,j]` is true iff the model
-    creates a variable for arc `(i,j)` (always false on the diagonal)
-  - `blocked_set::Vector{Int}`: The Hall-deficit set `S` (empty unless infeasible)
-  - `gate_set::Vector{Int}`: The gate set `T` with `|T| = |S| - 1` (empty unless infeasible)
+  - `n_stops::Int`: node count `n` (node 1 = home base / depot)
+  - `out_degree::Int`: candidate out-arcs kept per stop (`m`)
+  - `locations::Vector{Tuple{Float64,Float64}}`: coordinates (km)
+  - `elevation::Vector{Float64}`: terrain height at each node (m)
+  - `arcs::Vector{Tuple{Int,Int}}`: candidate arcs `(i, j)`, sorted, no loops
+  - `travel_time::Vector{Float64}`: directed travel time (min) per arc
+  - `planted_tour::Vector{Int}`: the planted `[1, …, 1]` tour whose arcs are all
+    candidates (empty for `unknown`)
+  - `blocked_set::Vector{Int}`: Hall-deficit district `S` (empty unless infeasible)
+  - `gate_set::Vector{Int}`: gateway stops `T`, `|T| = |S| − 1` (empty unless infeasible)
 """
 struct TSPAsymmetricProblem <: ProblemGenerator
     n_stops::Int
+    out_degree::Int
     locations::Vector{Tuple{Float64, Float64}}
-    grid_side::Int
-    row_weight::Vector{Int}
-    col_weight::Vector{Int}
-    dist::Matrix{Float64}
-    arc_ok::Matrix{Bool}
+    elevation::Vector{Float64}
+    arcs::Vector{Tuple{Int, Int}}
+    travel_time::Vector{Float64}
+    planted_tour::Vector{Int}
     blocked_set::Vector{Int}
     gate_set::Vector{Int}
 end
 
-"""
-Shortest paths from one vertex of the alternating one-way street grid.
-
-`distances` and `buckets` are caller-owned scratch buffers, refilled on every
-call so one pair can be reused across the per-source calls of a single
-instance; the defaults allocate a fresh pair. Returning `distances` hands back
-the shared buffer, so copy out any values before the next call.
-"""
-function _tsp_street_shortest_paths(
-    S::Int,
-    row_weight::Vector{Int},
-    col_weight::Vector{Int},
-    source::Int,
-    distances::Vector{Int}=fill(typemax(Int), S * S),
-    buckets::Vector{Vector{Int}}=[Int[] for _ in 0:(3 * (S * S - 1))],
-)
-    infinity = typemax(Int)
-    fill!(distances, infinity)
-    foreach(empty!, buckets)
-    distances[source] = 0
-
-    # Positive weights are at most three, so a Dial bucket queue is simpler and
-    # faster than repeatedly scanning the full grid. A shortest simple path has
-    # at most n_vertices - 1 edges.
-    max_distance = 3 * (S * S - 1)
-    push!(buckets[1], source)
-
-    for distance in 0:max_distance
-        while !isempty(buckets[distance + 1])
-            vertex = pop!(buckets[distance + 1])
-            distances[vertex] == distance || continue
-            row = div(vertex - 1, S) + 1
-            col = rem(vertex - 1, S) + 1
-
-            # Odd rows run west, even rows east.
-            next_col = col + (iseven(row) ? 1 : -1)
-            if 1 <= next_col <= S
-                next_vertex = (row - 1) * S + next_col
-                candidate = distance + row_weight[row]
-                if candidate <= max_distance && candidate < distances[next_vertex]
-                    distances[next_vertex] = candidate
-                    push!(buckets[candidate + 1], next_vertex)
-                end
-            end
-
-            # Avenues are traversable in both directions.
-            for next_row in (row - 1, row + 1)
-                1 <= next_row <= S || continue
-                next_vertex = (next_row - 1) * S + col
-                candidate = distance + col_weight[col]
-                if candidate <= max_distance && candidate < distances[next_vertex]
-                    distances[next_vertex] = candidate
-                    push!(buckets[candidate + 1], next_vertex)
-                end
-            end
-        end
+# `K` nearest neighbours of every point (excluding itself), by uniform-grid
+# bucketing with expanding rings: O(n·K) expected for the clustered stop
+# layouts used here, instead of the O(n²) all-pairs scan.
+function _tsp_nearest_neighbors(locations::Vector{Tuple{Float64, Float64}}, K::Int)
+    n = length(locations)
+    K = min(K, n - 1)
+    xs = first.(locations)
+    ys = last.(locations)
+    xmin, xmax = extrema(xs)
+    ymin, ymax = extrema(ys)
+    span = max(xmax - xmin, ymax - ymin, 1e-9)
+    side = max(1, floor(Int, sqrt(n / 2)))
+    cell = span / side * (1 + 1e-9)
+    cell_of(i) = (
+        clamp(floor(Int, (xs[i] - xmin) / cell) + 1, 1, side),
+        clamp(floor(Int, (ys[i] - ymin) / cell) + 1, 1, side),
+    )
+    buckets = [Int[] for _ in 1:side, _ in 1:side]
+    for i in 1:n
+        cx, cy = cell_of(i)
+        push!(buckets[cx, cy], i)
     end
-    return distances
+    neighbors = Vector{Vector{Int}}(undef, n)
+    cand = Int[]
+    for i in 1:n
+        cx, cy = cell_of(i)
+        empty!(cand)
+        ring = 0
+        while true
+            for gx in (cx - ring):(cx + ring), gy in (cy - ring):(cy + ring)
+                (max(abs(gx - cx), abs(gy - cy)) == ring) || continue
+                (1 <= gx <= side && 1 <= gy <= side) || continue
+                for j in buckets[gx, gy]
+                    j != i && push!(cand, j)
+                end
+            end
+            # Every point within `ring * cell` of i lies in rings 0..ring, so
+            # once K candidates are no farther than that, the search is exact.
+            if length(cand) >= K
+                d2(j) = (xs[j] - xs[i])^2 + (ys[j] - ys[i])^2
+                partialsort!(cand, K; by=j -> (d2(j), j))
+                d2(cand[K]) <= (ring * cell)^2 && break
+            end
+            ring > 2 * side && break
+            ring += 1
+        end
+        d2b(j) = (xs[j] - xs[i])^2 + (ys[j] - ys[i])^2
+        sort!(cand; by=j -> (d2b(j), j))
+        neighbors[i] = cand[1:min(K, length(cand))]
+    end
+    return neighbors
+end
+
+# Order points along a Hilbert curve (resolution 2^10): consecutive points are
+# spatially close, so the order is a plausible, short-legged planted tour.
+function _tsp_hilbert_order(locations::Vector{Tuple{Float64, Float64}}, idx::Vector{Int})
+    xs = [locations[i][1] for i in idx]
+    ys = [locations[i][2] for i in idx]
+    xmin, xmax = extrema(xs)
+    ymin, ymax = extrema(ys)
+    span = max(xmax - xmin, ymax - ymin, 1e-9)
+    order_bits = 10
+    side = 2^order_bits
+    function hilbert_d(x::Int, y::Int)
+        d = 0
+        s = side ÷ 2
+        while s > 0
+            rx = (x & s) > 0 ? 1 : 0
+            ry = (y & s) > 0 ? 1 : 0
+            d += s * s * ((3 * rx) ⊻ ry)
+            if ry == 0
+                if rx == 1
+                    x = s - 1 - x
+                    y = s - 1 - y
+                end
+                x, y = y, x
+            end
+            s ÷= 2
+        end
+        return d
+    end
+    hkey = [
+        hilbert_d(
+            clamp(floor(Int, (xs[t] - xmin) / span * (side - 1)), 0, side - 1),
+            clamp(floor(Int, (ys[t] - ymin) / span * (side - 1)), 0, side - 1),
+        ) for t in eachindex(idx)
+    ]
+    return idx[sortperm(collect(zip(hkey, idx)))]
 end
 
 """
     TSPAsymmetricProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
-Construct an asymmetric TSP instance with the MTZ formulation.
+Construct a sparse ATSP instance.
 
-# Variable-count formula
+# Variable count
 
-Identical to `tsp/standard`: one binary `x` per arc plus one continuous order
-variable per stop over a complete directed graph on `n` nodes:
+One binary per candidate arc plus one order variable per stop:
 
-    total = n*(n-1) + (n-1) = n^2 - 1
+    total = |arcs| + (n - 1)
 
-So `n = max(5, round(Int, sqrt(target_variables + 1)))` (the infeasible branch
-sizes `n` against the *delivered* count after the Hall block deletes
-`k*(n-k)` arc variables).
-
-# Arguments
-
-  - `target_variables`: Target number of decision variables (`x` plus `u`)
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
+With `m` out-candidates per stop, `|arcs| ≈ m·n` (plus a few planted-tour and
+in-degree repair arcs), so `n = round(target / (m + 1.15))`; the delivered
+count lands within a few percent of the target. Tiny targets clamp to `n = 5`
+with complete support.
 
 # Feasibility
 
-Identical mechanism to `tsp/standard`; asymmetry of the cost matrix plays no
-role in feasibility.
-
-  - `feasible`: complete arc support — any permutation is a tour, and the
-    relaxation is nonempty (witness `x[i,j] = 1/(n-1)` with every `u ≡ 1`).
-  - `infeasible`: Hall-deficit arc block (a set `S` of `k` stops keeps only the
-    in-arcs from `k-1` gates `T`), which contradicts the degree rows alone —
-    `k = Σ_{j∈S} indeg(j) ≤ Σ_{i∈T} outdeg(i) = k-1` — so the model is infeasible
-    even in the LP relaxation.
-  - `unknown`: a natural instance, identical to the feasible branch.
+  - `feasible`: a Hilbert-curve tour through all stops (starting at the depot)
+    is planted into the candidate set, so it is an integer witness; with
+    `u_j` = visit position it satisfies every lifted MTZ row, and it survives
+    relaxation verbatim.
+  - `infeasible`: the planted tour is added as for `feasible`, then a
+    Hall-deficit district (`S`: the `k ≈ 0.4–0.8·√n` stops nearest an anchor;
+    `T`: the next `k−1` nearest, the gateways) loses every in-arc whose tail is
+    not a gateway, and each district stop receives in-arcs from its three
+    nearest gateways and out-arcs to its three nearest stops outside the
+    district (its candidate legs mostly pointed inside it). The in-degree rows of `S` sum to `k` but draw only on the
+    `k−1` unit out-degrees of `T` — infeasible from the degree rows alone, so
+    also in the LP relaxation; the deficit is spread over `2k−1` rows, which
+    presolve does not aggregate.
+  - `unknown`: the bare candidate graph (no planted tour). Whether it contains a
+    Hamiltonian cycle is not known; its LP relaxation is almost always feasible.
 """
 function TSPAsymmetricProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
 
-    # --- Dimension sizing (same law as tsp/standard) ---
-    n0 = max(5, round(Int, sqrt(target_variables + 1)))
+    # --- Dimension sizing ---
+    m = rand(rng, 6:10)
+    n = max(5, round(Int, target_variables / (m + 1.15)))
+    m = min(m, n - 1)
 
-    # Block size k is drawn unconditionally (RNG alignment across statuses);
-    # the infeasible branch sizes n against the delivered count.
-    n, k = _tsp_plan_dimensions(
-        rng, n0, target_variables, feasibility_status, (m, kk) -> m^2 - 1 - kk * (m - kk)
-    )
+    # --- Geography: clustered stops, smooth hilly terrain ---
+    locations = _tsp_stops(rng, n)
+    xs = first.(locations)
+    ys = last.(locations)
+    xmin, xmax = extrema(xs)
+    ymin, ymax = extrema(ys)
+    span = max(xmax - xmin, ymax - ymin, 1.0)
+    hills = [
+        (
+            xmin + span * rand(rng),
+            ymin + span * rand(rng),
+            20.0 + 60.0 * rand(rng),            # height (m)
+            span * (0.08 + 0.2 * rand(rng)),     # width (km)
+        ) for _ in 1:rand(rng, 2:4)
+    ]
+    elevation = [
+        round(
+            sum(
+                H * exp(-((x - cx)^2 + (y - cy)^2) / (2 * w^2)) for (cx, cy, H, w) in hills
+            );
+            digits=1,
+        ) for (x, y) in locations
+    ]
+    circuity = 1.2 + 0.2 * rand(rng)
+    pace = 1.2 + 0.8 * rand(rng)               # min per km
+    climb = 0.02 + 0.03 * rand(rng)            # min per metre of ascent
+    one_way_share = 0.2 + 0.1 * rand(rng)
 
-    # --- Explicit one-way street geography ---
-    grid_side = 2 * n
-    depot_vertex = (div(grid_side, 2) - 1) * grid_side + div(grid_side, 2)
-    fixed_vertices = [depot_vertex, 1, grid_side]
-    remaining = [v for v in 1:(grid_side * grid_side) if !(v in fixed_vertices)]
-    city_vertices = vcat(fixed_vertices, shuffle(rng, remaining)[1:(n - 3)])
-    city_coords = [(div(v - 1, grid_side) + 1, rem(v - 1, grid_side) + 1) for v in city_vertices]
-    locations = [(Float64(row), Float64(col)) for (row, col) in city_coords]
-    row_weight = rand(rng, 1:3, grid_side)
-    col_weight = rand(rng, 1:3, grid_side)
+    # One-way streets are a property of the unordered pair: the pair (i, j)
+    # with i < j is one-way with probability `one_way_share`, in the direction
+    # `forward` (i -> j) or backward; driving against it costs a detour factor.
+    # Pairs are evaluated lazily and memoised so every pair gets exactly one
+    # draw, in a deterministic (sorted) order.
+    K = min(2 * m, n - 1)
+    neighbors = _tsp_nearest_neighbors(locations, K)
+    pairs = Set{Tuple{Int, Int}}()
+    for i in 1:n, j in neighbors[i]
+        push!(pairs, minmax(i, j))
+    end
+    street = Dict{Tuple{Int, Int}, Tuple{Bool, Bool, Float64}}()  # (one_way, forward, detour)
+    for pr in sort!(collect(pairs))
+        street[pr] = (rand(rng) < one_way_share, rand(rng) < 0.5, 1.3 + 0.7 * rand(rng))
+    end
+    function leg_time(i::Int, j::Int)
+        d = hypot(xs[i] - xs[j], ys[i] - ys[j])
+        t = max(circuity * d, 0.05) * pace + climb * max(0.0, elevation[j] - elevation[i])
+        pr = minmax(i, j)
+        info = get(street, pr, (false, true, 1.0))
+        if info[1]
+            with_flow = (i < j) == info[2]
+            with_flow || (t *= info[3])
+        end
+        return round(t; digits=2)
+    end
 
-    # Directed shortest-path closure of the street network. The two fixed
-    # endpoints on row 1 make asymmetry deterministic; the central depot and
-    # remaining random stops retain realistic spatial variety.
-    dist = zeros(n, n)
-    infinity = typemax(Int)
-    street_distances = fill(infinity, grid_side * grid_side)
-    buckets = [Int[] for _ in 0:(3 * (grid_side ^ 2 - 1))]
+    # --- Candidate arcs: m cheapest outgoing legs among the 2m nearest ---
+    arcset = Set{Tuple{Int, Int}}()
     for i in 1:n
-        _tsp_street_shortest_paths(
-            grid_side, row_weight, col_weight, city_vertices[i], street_distances, buckets
-        )
-        for j in 1:n
-            d = street_distances[city_vertices[j]]
-            d == infinity && error("tsp/asymmetric street grid unexpectedly disconnected")
-            dist[i, j] = Float64(d)
+        cands = neighbors[i]
+        order = sortperm([(leg_time(i, j), j) for j in cands])
+        for t in order[1:min(m, length(order))]
+            push!(arcset, (i, cands[t]))
         end
     end
-    @assert any(dist[i, j] != dist[j, i] for i in 1:n for j in (i + 1):n)
 
-    # --- Resolve feasibility intent ---
-    arc_ok, blocked_set, gate_set = _tsp_arc_support(rng, n, k, feasibility_status)
+    # --- Planted tour (feasible and infeasible requests) ---
+    planted = Int[]
+    if feasibility_status != unknown
+        planted = vcat(1, _tsp_hilbert_order(locations, collect(2:n)), 1)
+        for t in 2:length(planted)
+            push!(arcset, (planted[t - 1], planted[t]))
+        end
+    end
 
-    return TSPAsymmetricProblem(
-        n, locations, grid_side, row_weight, col_weight, dist, arc_ok, blocked_set, gate_set
-    )
+    # --- In-degree repair: no stop with fewer than two incoming candidates ---
+    indeg = zeros(Int, n)
+    for (_, j) in arcset
+        indeg[j] += 1
+    end
+    for j in 1:n
+        for i in neighbors[j]
+            indeg[j] >= 2 && break
+            if !((i, j) in arcset)
+                push!(arcset, (i, j))
+                indeg[j] += 1
+            end
+        end
+    end
+
+    # --- Hall-deficit district (infeasible) ---
+    S = Int[]
+    T = Int[]
+    if feasibility_status == infeasible
+        f = 0.4 + 0.4 * rand(rng)
+        k = n < 8 ? 2 : clamp(round(Int, sqrt(n) * f), 3, (n - 1) ÷ 2)
+        anchor = rand(rng, 2:n)
+        ax, ay = locations[anchor]
+        by_distance = sort(collect(2:n); by=j -> ((xs[j] - ax)^2 + (ys[j] - ay)^2, j))
+        S = sort(by_distance[1:k])
+        T = sort(by_distance[(k + 1):(2k - 1)])
+        in_S = falses(n)
+        in_S[S] .= true
+        in_T = falses(n)
+        in_T[T] .= true
+        filter!(a -> !(in_S[a[2]] && !in_T[a[1]]), arcset)
+        outside = [v for v in 1:n if !in_S[v]]
+        for j in S
+            near(v) = ((xs[v] - xs[j])^2 + (ys[v] - ys[j])^2, v)
+            gates = sort(T; by=near)
+            for t in gates[1:min(3, length(gates))]
+                push!(arcset, (t, j))
+            end
+            # Most of an interior district stop's candidate legs pointed at
+            # its district neighbours and were just deleted; give it legs out
+            # to the three nearest stops outside the district so no out-degree
+            # row is left empty or a singleton.
+            for v in partialsort(outside, 1:min(3, length(outside)); by=near)
+                push!(arcset, (j, v))
+            end
+        end
+    end
+
+    arcs = sort!(collect(arcset))
+    travel_time = [leg_time(i, j) for (i, j) in arcs]
+    return TSPAsymmetricProblem(n, m, locations, elevation, arcs, travel_time, planted, S, T)
 end
 
 """
     build_model(prob::TSPAsymmetricProblem)
 
-Build a JuMP model for the asymmetric TSP using the lifted
-Miller–Tucker–Zemlin (MTZ) formulation. Deterministic — uses only data from the
-struct fields.
+Build the sparse lifted-MTZ ATSP model over the candidate arcs. Deterministic —
+uses only data from the struct fields.
 
-Node indexing: node `1` is the home base; nodes `2..n` are stops. An arc `(i,j)`
-has a variable only where `arc_ok[i, j]` is true (the complete graph minus any
-Hall block).
-
-Decision variables (one per allowed arc, one per stop):
-
-  - `x[i,j] ∈ {0,1}`: arc `(i,j)` is traversed
-  - `u[j] ∈ [1, n-1]`: visit position of stop `j` along the tour
-
-# Returns
-
-  - `model`: The JuMP model
+  - `x[(i,j)] ∈ {0,1}` per candidate arc, `u[j] ∈ [1, n-1]` per stop `j = 2..n`
+  - degree rows: one in-arc and one out-arc per node
+  - lifted MTZ rows on stop-to-stop arcs (using the reverse arc when it is also
+    a candidate)
 """
 function build_model(prob::TSPAsymmetricProblem)
     model = Model()
-
     n = prob.n_stops
-    nodes = 1:n
+    arcs = prob.arcs
     stops = 2:n
-    ok(i, j) = prob.arc_ok[i, j]
 
-    # --- Variables: one binary x per allowed arc, one order var per stop ---
-    @variable(model, x[i in nodes, j in nodes; ok(i, j)], Bin)
+    @variable(model, x[arcs], Bin)
     @variable(model, 1 <= u[j in stops] <= n - 1)
+    @objective(model, Min, sum(prob.travel_time[a] * x[arcs[a]] for a in eachindex(arcs)))
 
-    # --- Objective: minimize total travel time ---
-    @objective(model, Min, sum(prob.dist[i, j] * x[i, j] for i in nodes, j in nodes if ok(i, j)))
-
-    # --- Degree constraints: exactly one in-arc and one out-arc per node ---
-    for j in nodes
-        @constraint(model, sum(x[i, j] for i in nodes if ok(i, j)) == 1)   # in
-        @constraint(model, sum(x[j, k] for k in nodes if ok(j, k)) == 1)   # out
+    out_arcs = [Tuple{Int, Int}[] for _ in 1:n]
+    in_arcs = [Tuple{Int, Int}[] for _ in 1:n]
+    for a in arcs
+        push!(out_arcs[a[1]], a)
+        push!(in_arcs[a[2]], a)
+    end
+    for v in 1:n
+        @constraint(model, sum(x[a] for a in in_arcs[v]; init=0.0) == 1)
+        @constraint(model, sum(x[a] for a in out_arcs[v]; init=0.0) == 1)
     end
 
-    # --- Lifted MTZ subtour elimination over stop-to-stop arcs ---
-    for i in stops, j in stops
-        (i != j && ok(i, j)) || continue
-        if ok(j, i)
-            @constraint(model, u[i] - u[j] + (n - 1) * x[i, j] + (n - 3) * x[j, i] <= n - 2)
+    arc_lookup = Set(arcs)
+    for (i, j) in arcs
+        (i == 1 || j == 1) && continue
+        if (j, i) in arc_lookup
+            @constraint(model, u[i] - u[j] + (n - 1) * x[(i, j)] + (n - 3) * x[(j, i)] <= n - 2)
         else
-            @constraint(model, u[i] - u[j] + (n - 1) * x[i, j] <= n - 2)
+            @constraint(model, u[i] - u[j] + (n - 1) * x[(i, j)] <= n - 2)
         end
     end
-
     return model
 end
 
-# Register the variant (standard remains the category default; do NOT pass
-# default = true here).
+# Register the variant (standard remains the category default).
 register_variant(
     :tsp,
     :asymmetric,
     TSPAsymmetricProblem,
-    "Asymmetric travelling-salesman problem with shortest-path travel times on an alternating one-way street grid and lifted MTZ subtour elimination; a MIP whose continuous relaxation is a compact big-M tour relaxation",
+    "Sparse asymmetric TSP for large urban courier routes: candidate-arc graph over thousands of stops with one-way detours and uphill penalties, lifted MTZ subtour elimination",
 )

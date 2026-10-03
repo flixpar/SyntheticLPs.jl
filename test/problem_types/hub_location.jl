@@ -102,22 +102,45 @@
         @test p.outvolume == vec(sum(p.flow; dims=2))
         @test p.involume == vec(sum(p.flow; dims=1))
 
-        _, q = generate_problem("hub_location/compact_single_allocation", 150, infeasible, s)
+        # The reach window admits every witness allocation.
+        @test all(p.dist[i, w.assignment[i]] <= p.reach for i in 1:p.n_nodes)
+
+        # Infeasible: p + 1 island regions; every node's reach window stays in
+        # its own region and holds at least two candidates (no single-candidate
+        # window that presolve could force open).
+        _, q = generate_problem("hub_location/compact_single_allocation", 1000, infeasible, s)
         cert = q.infeasibility_certificate
         @test cert !== nothing
-        @test cert.requested_hubs > cert.candidates
-        @test q.p == q.n_nodes + 1
+        @test q.feasible_witness === nothing
+        @test length(cert.groups) == q.p + 1
+        @test sort(vcat(cert.groups...)) == collect(1:q.n_nodes)
+        region = Dict(v => g for (g, members) in enumerate(cert.groups) for v in members)
+        for i in 1:q.n_nodes
+            window = [k for k in 1:q.n_nodes if q.dist[i, k] <= q.reach]
+            @test all(region[k] == region[i] for k in window)
+            @test length(window) >= 2
+        end
     end
 
-    # Disjoint-region certificate: p + 1 groups, pairwise disjoint
-    # admissible sets, every window nonempty.
+    # Disjoint-region certificates: pairwise disjoint admissible sets, every
+    # window nonempty. p_hub_median needs one hub per group (p + 1 groups);
+    # r_allocation needs r hubs per group (floor(p/r) + 1 groups), and every
+    # window holds more than r candidates so no hub is forced by bounds.
     group_admissibles(q, g) = union(q.admissible[i] for i in g)
     for v in (:p_hub_median, :r_allocation), s in 0:2
-        _, p = generate_problem(ProblemVariant(:hub_location, v), 150, infeasible, s)
+        target = v == :r_allocation ? 1000 : 150
+        _, p = generate_problem(ProblemVariant(:hub_location, v), target, infeasible, s)
         cert = p.infeasibility_certificate
         @test cert !== nothing
         @test p.feasible_witness === nothing
-        @test length(cert.groups) == p.p + 1
+        if v == :p_hub_median
+            @test length(cert.groups) == p.p + 1
+        else
+            @test cert.r == p.r && cert.p == p.p
+            @test length(cert.groups) == fld(p.p, p.r) + 1
+            @test length(cert.groups) * p.r > p.p
+            @test all(length(p.admissible[i]) > p.r for i in 1:p.n_nodes)
+        end
         @test all(!isempty(g) for g in cert.groups)
         @test sort(vcat(cert.groups...)) == collect(1:p.n_nodes)
         for a in 1:length(cert.groups), b in (a + 1):length(cert.groups)
@@ -206,6 +229,10 @@
         @test cert.total_flow == sum(q.outvolume)
         @test cert.total_capacity == sum(q.capacity)
         @test cert.total_capacity < cert.total_flow
+        # Each hub has room for its own city's volume (no hub closed by its
+        # own capacity row) and the roomiest fits the largest origin.
+        @test all(q.capacity[t] >= q.outvolume[k] for (t, k) in enumerate(q.hubs))
+        @test maximum(q.capacity) >= maximum(q.outvolume)
     end
 
     # Hub network: backbone witness carries the planted routing, and the
@@ -237,20 +264,35 @@
         @test cert.crossing_capacity < cert.crossing_flow
     end
 
-    # Hub covering: an all-open witness covers every OD pair, while the
-    # infeasible mode exhibits a concrete OD pair with no admissible path.
+    # Hub covering: the pruned witness keeps an open path for every OD pair
+    # within budget; the infeasible budget certificate's in-region pairs only
+    # use their own (disjoint) hub sets, and the budget is below the sum of
+    # those sets' cheapest hubs. No covering row is empty.
     for s in 0:2
         _, p = generate_problem("hub_location/hub_covering", 150, feasible, s)
-        @test p.feasible_witness !== nothing
-        @test p.feasible_witness.open_hubs == collect(1:p.n_nodes)
-        @test all(!isempty(paths) for paths in values(p.covering_sets))
+        w = p.feasible_witness
+        @test w !== nothing
+        open_set = Set(w.open_hubs)
+        @test all(
+            any(k in open_set && m in open_set for (k, m) in paths) for
+            paths in values(p.covering_sets)
+        )
+        @test w.opening_cost ≈ sum(p.fixed_cost[w.open_hubs])
+        @test p.budget >= w.opening_cost
         @test p.profile in (:passenger, :freight, :express)
 
-        _, q = generate_problem("hub_location/hub_covering", 150, infeasible, s)
+        _, q = generate_problem("hub_location/hub_covering", 1000, infeasible, s)
         cert = q.infeasibility_certificate
-        @test cert !== nothing
-        @test isempty(q.covering_sets[(cert.origin, cert.destination)])
-        @test cert.minimum_route_cost > cert.threshold
+        @test cert isa SyntheticLPs.HubCoveringBudgetCertificate
+        @test all(!isempty(paths) for paths in values(q.covering_sets))
+        for (od, hs) in zip(cert.pairs, cert.hub_sets)
+            @test issubset(vcat(first.(q.covering_sets[od]), last.(q.covering_sets[od])), hs)
+        end
+        for a in 1:length(cert.hub_sets), b in (a + 1):length(cert.hub_sets)
+            @test isempty(intersect(cert.hub_sets[a], cert.hub_sets[b]))
+        end
+        @test cert.minimum_cost ≈ sum(minimum(q.fixed_cost[hs]) for hs in cert.hub_sets)
+        @test cert.budget == q.budget < cert.minimum_cost
     end
 
     # Budgeted backbone: the planted hubs form a complete selected-hub
@@ -333,5 +375,19 @@
         end
         @test optimal > 0
         @test infeasible_count > 0
+
+        # The default infeasible modes need simplex work: HiGHS presolve alone
+        # does not refute them (it used to for these four variants, through
+        # an impossible single row or bound-propagated hub closures).
+        for v in (:capacitated, :compact_single_allocation, :r_allocation, :hub_covering),
+            s in 0:1
+
+            m, _ = generate_problem(ProblemVariant(:hub_location, v), 2000, infeasible, s)
+            set_optimizer(m, HiGHS.Optimizer)
+            set_silent(m)
+            optimize!(m)
+            @test termination_status(m) == MOI.INFEASIBLE
+            @test MOI.get(m, MOI.SimplexIterations()) > 0
+        end
     end
 end
