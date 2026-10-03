@@ -187,6 +187,76 @@ function _geo_knn(positions::Vector{Tuple{Float64, Float64}}, k::Int)
     return result
 end
 
+"""
+    _geo_knn_query(ref_positions, query_positions, k) -> Vector{Vector{Int}}
+
+For every query point, the indices of its `k` nearest REFERENCE points
+(ascending distance, ties by index) — e.g. the nearest plants of each customer.
+Same bucket-grid ring search as `_geo_knn`, built over the reference set.
+Deterministic.
+"""
+function _geo_knn_query(
+    ref_positions::Vector{Tuple{Float64, Float64}},
+    query_positions::Vector{Tuple{Float64, Float64}},
+    k::Int,
+)
+    nr = length(ref_positions)
+    k = min(k, nr)
+    k <= 0 && return [Int[] for _ in query_positions]
+    xs = vcat([p[1] for p in ref_positions], [p[1] for p in query_positions])
+    ys = vcat([p[2] for p in ref_positions], [p[2] for p in query_positions])
+    xmin, xmax = extrema(xs)
+    ymin, ymax = extrema(ys)
+    extent = max(xmax - xmin, ymax - ymin, 1e-9)
+    G = max(1, floor(Int, sqrt(nr / 2)))
+    h = extent / G * (1 + 1e-9)
+    cell(p) = (
+        clamp(floor(Int, (p[1] - xmin) / h) + 1, 1, G),
+        clamp(floor(Int, (p[2] - ymin) / h) + 1, 1, G),
+    )
+    buckets = [Int[] for _ in 1:G, _ in 1:G]
+    for i in 1:nr
+        cx, cy = cell(ref_positions[i])
+        push!(buckets[cx, cy], i)
+    end
+    result = Vector{Vector{Int}}(undef, length(query_positions))
+    best_d = Float64[]
+    best_i = Int[]
+    for (q, qp) in enumerate(query_positions)
+        empty!(best_d)
+        empty!(best_i)
+        cx, cy = cell(qp)
+        r = 0
+        while true
+            for gx in (cx - r):(cx + r), gy in (cy - r):(cy + r)
+                (1 <= gx <= G && 1 <= gy <= G) || continue
+                max(abs(gx - cx), abs(gy - cy)) == r || continue
+                for j in buckets[gx, gy]
+                    d = hypot(qp[1] - ref_positions[j][1], qp[2] - ref_positions[j][2])
+                    if length(best_d) < k || (d, j) < (best_d[end], best_i[end])
+                        pos = length(best_d) + 1
+                        while pos > 1 && (d, j) < (best_d[pos - 1], best_i[pos - 1])
+                            pos -= 1
+                        end
+                        insert!(best_d, pos, d)
+                        insert!(best_i, pos, j)
+                        if length(best_d) > k
+                            pop!(best_d)
+                            pop!(best_i)
+                        end
+                    end
+                end
+            end
+            if (length(best_d) == k && best_d[end] <= r * h) || r > G
+                break
+            end
+            r += 1
+        end
+        result[q] = copy(best_i)
+    end
+    return result
+end
+
 # Union-find with path halving.
 function _geo_find!(parent::Vector{Int}, i::Int)
     while parent[i] != i
