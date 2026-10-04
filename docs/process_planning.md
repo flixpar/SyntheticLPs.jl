@@ -306,9 +306,23 @@ W_{i,t} \le Q_{i,t}
 
 with a balance row per chemical and period,
 `Σ_i μ_{i,j} W_{i,t} + pur_{j,t} - sell_{j,t} = 0`, purchases under market
-availability, sales inside a demand window, and a discounted net-present-value
-objective of revenue less feedstock, operating and investment cost (a fixed
-charge on `y` plus a linear cost on `QE`), at 7-15% per period.
+availability, sales inside a demand window, one capital-budget row over the
+whole programme,
+
+```math
+\sum_{i,t} \left( f_i y_{i,t} + v_i QE_{i,t} \right) \le B,
+```
+
+and a discounted net-present-value objective of revenue less feedstock,
+operating and investment cost (a fixed charge on `y` plus a linear cost on
+`QE`), at 7-15% per period. Finished chemicals are sold forward at 75-97% of the
+reference plan's sales; intermediates and byproducts move on a spot market
+(every saleable chemical has a spot ceiling, even one the plan does not sell). A
+process the reference plan never runs is offered as a greenfield option sized
+like a typical unit rather than with a degenerate window. HiGHS presolve keeps
+about 0.67-0.70 of the columns and rows; what it removes is mostly the capacity
+variables, which the recursion defines (`Q_t = Q_0 + Σ_{s≤t} QE_s`) and the
+aggregator substitutes out.
 
 ## Feasibility Controls
 
@@ -327,49 +341,64 @@ operation is stored as `feasible_witness` and re-checked row by row —
 `process_expansion_plan_satisfies` for the investment model — by arithmetic
 alone.
 
-**`infeasible`.** One of three structural refutations (the third, the default, is described after the first two), stored in
-`infeasibility_certificate` and re-derivable from the instance data:
+**`infeasible`.** One of two structural refutations, stored in
+`infeasibility_certificate` and re-derivable from the instance data. Both are
+aggregate potential arguments: give each stream a potential `M` — the largest
+volume of finished product a barrel of it can ever become, computed backwards
+through the flowsheet, taking each feed's best mode. Multiplying the stream
+balances by `M` and summing telescopes into an upper bound on total finished
+production from what the crude menu, the crude unit and the purchased
+blendstocks can supply.
 
-- *contract above the conversion bound*. Give each stream a potential `M` — the
-  largest volume of finished product a barrel of it can ever become, computed
-  backwards through the flowsheet, taking each feed's best mode. Multiplying the
-  stream balances by `M` and summing telescopes into an upper bound on total
-  finished production from what the crude menu, the crude unit and the purchased
-  blendstocks can supply. The contracted volume is set above it.
-- *specification outside the component range*. One grade's published window is
-  tightened past every component that may enter it, and the grade is contracted
-  out of an empty opening tank. All the coefficients of that quality row are then
-  one-signed, so with nonnegative blend volumes the row pins the whole blend at
-  zero and the contract cannot be met.
+- *crude supply below contracts* (`refinery_crude_supply_below_contracts`, the
+  default, about 80% of requests): the requested-infeasible instance starts from
+  the plan-sized (`feasible`) data and a crude supply disruption scales every
+  crude availability and blendstock purchase limit by one factor until the
+  potential-weighted supply sits 6-20% below the contracted volume, which stays
+  where a feasible plan put it. Minimum rates are scaled down with the supply.
+- *contract above the conversion bound*: the contracted volume is raised above
+  the bound instead.
 
-A third refutation, `refinery_crude_supply_below_contracts`, is the default (about
-70% of requests): the requested-infeasible instance starts from the plan-sized
-(`feasible`) data and a crude supply disruption scales every crude availability
-and blendstock purchase limit by one factor until the potential-weighted supply
-sits 6-20% below the contracted volume, which stays where a feasible plan put
-it. Minimum rates are scaled down with the supply. Every grade can still be made
-on its own; only the aggregation of every stream balance over every period
-refutes the instance, so HiGHS presolve cannot (the contract-above-bound and
-specification modes, about 15% each, are visible to presolve).
+Every grade can still be made on its own; only the aggregation of every stream
+balance over every period refutes the instance, so HiGHS presolve cannot, and
+simplex has to do the work. (An earlier third mode tightened one grade's quality
+window past every admissible component; that contradiction lives in a single
+blend row and presolve refuted it without simplex work, so it is no longer
+planted.)
 
-`capacity_expansion` has the matching pair. The default (80%) is a feedstock
-curtailment: each chemical carries its least raw-material content (one on every
-raw, the leanest recipe over its makers for a main product, zero on byproducts —
-a valid dual since no process creates content), and every raw is offered only
-`kappa_star / (1.06-1.20)` times what the reference plan buys, where
-`kappa_star` is the level at which the content-weighted contracts meet the
-market. The minority mode puts one chemical's contracts above what the processes
-making it could produce under the largest permitted expansion in every period.
-Only finished chemicals are sold forward; intermediates and byproducts move on
-the spot market without a floor.
+`capacity_expansion` plants a *capital squeeze*
+(`expansion_capital_below_requirement`): the budget row is set 6-20% below the
+investment the contracts certifiably need. The certificate gives every process
+its least LP-relaxed investment per unit of new capacity,
+`γ_i = v_i + f_i / \overline{E}_i` (the window row makes `y ≥ QE / \overline{E}`),
+and every chemical a capital potential `π` — zero on raw materials and
+byproducts, and for a main product the cheapest maker's `γ` plus its input
+potentials, so no process creates more potential than `γ_i` (a valid dual).
+Multiplying one period's balance rows by `π`, bounding operating levels by
+existing plus new capacity, and telescoping the capacity recursion bounds the
+spend from below by `Σ_j π_j d^{min}_{j,t} − Σ_i max(d_i, 0) Q^0_i`, which
+exceeds the budget. The argument chains every process layer, every contracted
+product, the capacity recursion and the budget row, so bound propagation cannot
+reproduce it. (The earlier feedstock-curtailment and single-chemical capacity
+modes are gone: the model has no inventories, so each period's feedstock
+shortfall was a per-period argument presolve decided for most large instances.)
 
-`campaign` defaults (80%) to a feedstock-pool shortfall: each material carries
-its least content of one pooled raw material (one on the pool's raws, zero on
-other raws, each task's feed content spread over its output mass), and the
-pool's supply is curtailed until the content-weighted term contracts of every
-site exceed opening stocks plus the pool's supply over the horizon by 6-15%. The
-minority mode stores a cumulative contract above both the producing task's
-capacity bound and its direct raw-feed bound.
+`campaign` plants a feedstock-pool shortfall: each material carries its least
+content of one pooled raw material (one on the pool's raws, zero on other raws,
+each task's feed content spread over its output mass), and the pool's supply is
+curtailed until the content-weighted term contracts of every site exceed opening
+stocks plus the pool's supply over the horizon by 6-15%. Two choices keep the
+refutation out of presolve's reach: the curtailed pool is one serving the
+broadest contracted product slate (an effective product count
+`1 / Σ share²` within 85% of the broadest), and its supply is allocated in
+proportion to each period's contracted need rather than to the planted
+schedule's bursty campaign purchases, so no product chain and no short window of
+periods is short on its own. A cumulative single-product bottleneck (the
+contract above the producing task's capacity and direct raw-feed bounds) is only
+the fallback when no pool carries enough contracted demand. The campaign
+horizon is chosen with a mild preference for 4√(target/200) periods, so a small
+request is a small complex over a quarter to a year rather than a one-chain
+plant stretched over a hundred weeks.
 
 Every certificate uses only linear rows (and each feed's best mode), so it
 refutes the LP relaxation and every mode or campaign assignment at once, and is
@@ -384,10 +413,15 @@ supports, sometimes just inside it and sometimes just outside. A low-discrepancy
 position derived from the seed moves refinery supply, demand, specification
 slack, and H2/environmental capacity together from stressed to accommodating
 conditions. `campaign` and `capacity_expansion` place every local row around a
-planted plan exactly as for a feasible request, then set the feedstock market
-(every regional pool, or every raw material) between its critical level — where
-the content bound meets the contracts — and the plan's own purchases, by a
-share that follows the same seed position (`market_scenario`). A negative share
+planted plan exactly as for a feasible request, then move one resource by a
+share that follows the same seed position. In `campaign` (`market_scenario`,
+share in [-0.35, 0.95]) it is the broadest regional feedstock pools: a negative
+share puts them below their critical need-proportional profile (infeasible by
+the certificate argument), a positive one raises each period above it and toward
+the plan's own purchases; narrower pools keep plan-sized supply, because a
+narrow pool's shortfall is visible to presolve. In `capacity_expansion`
+(`budget_scenario`, share in [-0.15, 0.95]) it is the capital budget, between
+the certified requirement and the plan's LP-relaxed investment. A negative share
 is infeasible by the certificate argument; a share near one nearly restores the
 plan; in between, capacity, campaign, co-product and inventory rows decide.
 No grade is made unmakeable on its own (that is the requested-infeasible branch's

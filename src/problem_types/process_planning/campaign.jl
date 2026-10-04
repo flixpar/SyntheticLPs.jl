@@ -51,7 +51,8 @@ to `[0, 1]`), and the raw-material side cannot supply more than
 variable bounds only, so the certificate refutes the LP relaxation of the
 campaign model as well as the integer model. Single-product bottlenecks are
 easy for presolve to spot by bound propagation along the product's inventory
-chain; this is the minority infeasibility mode.
+chain, so this is only the fallback mode, used when no feedstock pool carries
+enough contracted demand for a credible curtailment.
 """
 struct CampaignCapacityCertificate
     material::Int
@@ -82,9 +83,12 @@ and periods cancels the task rates and leaves
 because closing inventories are nonnegative and the pooled purchases in period
 `t` cannot exceed `min(supply_cap[group, t], sum of the pool members' tier
 caps)`. The sales floors make the left side at least `demand`, which exceeds
-`upper_bound` by `margin`. The argument combines every product, every site and
-every period that draws on the pool, so no single row or bound propagation
-along one product chain exposes it; only the LP aggregation does.
+`upper_bound` by `margin`. The curtailed pool is the one serving the broadest
+contracted product slate, and its supply is allocated in proportion to each
+period's contracted need, so no product chain and no short window of periods is
+short on its own: the argument combines every product, every site and every
+period that draws on the pool, which bound propagation cannot reproduce; only
+the LP aggregation does.
 """
 struct CampaignFeedstockCertificate
     group::Int
@@ -99,16 +103,22 @@ end
 """
 The correlated market condition applied to an unknown-status instance. Every
 local row is placed around a planted schedule exactly as for a requested-feasible
-instance; then every regional feedstock pool is set between its critical level
-`kappa_star` (the supply at which the pool's potential bound exactly meets the
-term contracts) and the planted schedule's own purchases: a pool's supply is
-`kappa_star + (1 - kappa_star) * supply_factor` times the planted purchases
-(with a small per-pool jitter). A negative `supply_factor` puts a pool below its
-critical level, so the instance is infeasible by the feedstock-pool argument;
-near one the planted schedule nearly fits; in between, whether capacity,
+instance; then every regional feedstock pool is placed relative to its critical
+level - the contracted need of each period (the potential-weighted sales floors)
+scaled by `(demand - inventory) / demand`, at which the pool's potential bound
+exactly meets the term contracts. A negative `supply_factor` puts a pool
+`|supply_factor|` below that critical profile, so the instance is infeasible by
+the feedstock-pool argument; a positive one raises each period that fraction
+above the critical level and that fraction of the way up to the planted
+schedule's own purchases, so near one the planted schedule nearly fits and in between whether capacity,
 campaign, co-product and inventory rows still let the contracts be served is
-genuinely open. `supply_factor` follows the golden-ratio position of the seed,
-so blocks of seeds produce a genuine feasibility mix.
+genuinely open. Each pool gets a small jitter. Only the pools serving the
+broadest contracted slates (breadth within `_CP_BREADTH_SHORTLIST` of the
+broadest, see [`_cp_pool_breadth`](@ref)) take part; the others keep the
+plan-sized supply of a feasible request, since a narrow pool's shortfall runs
+down few product chains and is visible to presolve's bound propagation.
+`supply_factor` lies in `[-0.35, 0.95]` and follows the golden-ratio position of
+the seed, so blocks of seeds produce a genuine feasibility mix.
 """
 struct CampaignMarketScenario
     supply_factor::Float64
@@ -845,6 +855,10 @@ Up to `_CP_SINGLE_SITE_LIMIT` a single complex is used: chain combinations are
 sampled from the rng and scored by the exact per-period variable count with the
 horizon solved in closed form and scanned; the minimal LDPE plant and the
 complete seven-chain complex are always offered so both ends stay reachable.
+Candidates are scored by their relative size error plus
+`0.02 max(|log(T / T_pref)| - log 2, 0)` with `T_pref = 4 sqrt(target / 200)`,
+so a horizon more than twice off the preferred one costs a few percent of size
+error.
 Larger targets add complexes, each with its own sampled portfolio of two to
 seven chains, until the company fills the target over a one-to-three-year weekly
 horizon; the horizon is then solved for the exact count.
@@ -862,6 +876,7 @@ function _cp_choose_dimensions(rng::AbstractRNG, target_variables::Int)
 
     best = nothing
     best_score = (Inf, Inf, Inf)
+    single_score = (Inf, Inf)
     if target > _CP_SINGLE_SITE_LIMIT
         horizon_pref = clamp(round(Int, 4 * sqrt(target / 200)), 52, 156)
         for _ in 1:6
@@ -931,9 +946,13 @@ function _cp_choose_dimensions(rng::AbstractRNG, target_variables::Int)
             size = per_period * n_periods
             error = abs(size - target) / target
             shape = abs(log(n_periods / clamp(4 * sqrt(target / 200), 3, 52)))
-            score = (error, shape, rand(rng))
-            if score < best_score
-                best_score = score
+            # The size error dominates, but a horizon more than twice off the
+            # preferred one costs a few percent: a small target is a small complex over a
+            # quarter to a year rather than a one-chain plant stretched over a
+            # hundred weeks.
+            score = (error + 0.02 * max(shape - log(2.0), 0.0), rand(rng))
+            if score < single_score
+                single_score = score
                 best = ([chains], n_tiers, n_periods)
             end
         end
@@ -995,6 +1014,33 @@ function _cp_pool_bound_parts(prob, g::Int)
     supply = sum(_cp_pool_period_supply(prob, g, τ) for τ in 1:T)
     return y, demand, inventory, supply
 end
+
+"""Contracted need of a pool in period `τ`: the potential-weighted sales floors."""
+_cp_pool_need(prob, y::Vector{Float64}, τ::Int) = sum(
+    y[m] * prob.sales_floor[m, τ] for m in eachindex(y) if prob.material_kind[m] == :final;
+    init=0.0,
+)
+
+"""
+Effective number of contracted products drawing on a pool, `1 / sum(share^2)`
+over the products' shares of its potential-weighted contracted demand (zero when
+nothing contracted draws on it). A pool feeding one product chain scores about 1.
+"""
+function _cp_pool_breadth(prob, y::Vector{Float64})
+    weights = [
+        y[m] * sum(view(prob.sales_floor, m, :)) for
+        m in eachindex(y) if prob.material_kind[m] == :final && y[m] > 0
+    ]
+    total = sum(weights; init=0.0)
+    total > 0 || return 0.0
+    return 1 / sum((w / total)^2 for w in weights)
+end
+
+"""
+Pools whose breadth is at least this fraction of the broadest pool's are the
+ones a shortage scenario may push below their critical level.
+"""
+const _CP_BREADTH_SHORTLIST = 0.85
 
 function CampaignPlanningProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
@@ -1125,41 +1171,65 @@ function CampaignPlanningProblem(
         return problem
     end
 
-    # Critical pool supply: below `kappa_star` times the planted pool purchases
-    # the potential bound sits under the term contracts.
+    # Contracted pool need per period: the potential-weighted sales floors. A
+    # pool's critical supply is that need less what the opening tanks already
+    # hold (the certificate's `demand - inventory`); below it the term
+    # contracts cannot all be served.
     reference = build(nothing, nothing, nothing)
     parts = [_cp_pool_bound_parts(reference, g) for g in 1:G]
-    pool_total = [sum(view(pool_plan, g, :)) for g in 1:G]
-    kappa_star = [
-        pool_total[g] > 0 ? max(parts[g][2] - parts[g][3], 0.0) / pool_total[g] : 0.0 for g in 1:G
-    ]
+    need = [_cp_pool_need(reference, parts[g][1], τ) for g in 1:G, τ in 1:T]
+    breadth = [_cp_pool_breadth(reference, parts[g][1]) for g in 1:G]
+    critical = [parts[g][2] > 0 ? max(parts[g][2] - parts[g][3], 0.0) / parts[g][2] : 0.0 for g in 1:G]
+
+    # Pools broad enough to be curtailed: the broadest contracted slates.
+    widest = maximum(breadth; init=0.0)
+    broad = [breadth[g] >= _CP_BREADTH_SHORTLIST * widest && parts[g][2] > 0 for g in 1:G]
 
     if feasibility_status == unknown
         position = _pp_seed_position(seed)
-        supply_factor = -0.15 + 1.10 * position
+        supply_factor = -0.35 + 1.30 * position
         for g in 1:G
             share = supply_factor + rand(rng, Uniform(-0.03, 0.03))
-            kappa = max(kappa_star[g] + (1 - kappa_star[g]) * share, 0.30)
-            supply_cap[g, :] .= max.(kappa .* view(pool_plan, g, :), 1e-3)
+            # Only the broadest pools take part in the shortage: a narrow pool's
+            # shortfall runs down few product chains, which bound propagation
+            # can follow, so an infeasible draw there would be decided by
+            # presolve rather than by the multi-product aggregation. Narrow pools
+            # keep the plan-sized supply of a feasible request.
+            broad[g] || continue
+            for τ in 1:T
+                floor_level = critical[g] * need[g, τ]
+                # Below zero the profile sits `|share|` under the critical one;
+                # above zero every period gains `share` of headroom on the
+                # critical level plus `share` of the way up to the planted
+                # purchases (the critical profile ignores co-products and
+                # campaign timing, so it is a floor, not the true threshold).
+                supply_cap[g, τ] =
+                    floor_level * (1 + share) + max(share, 0.0) * max(pool_plan[g, τ] - floor_level, 0.0)
+                supply_cap[g, τ] = max(supply_cap[g, τ], 0.05 * pool_plan[g, τ], 1e-3)
+            end
         end
         return build(nothing, nothing, CampaignMarketScenario(supply_factor, position))
     end
 
-    # Requested infeasible. Default: curtail one regional feedstock pool below
-    # what the company's term contracts need (an aggregate, multi-product,
-    # multi-period argument presolve cannot see). Minority: a single-product
-    # capacity bottleneck.
+    # Requested infeasible (default): curtail one regional feedstock pool below
+    # what the company's term contracts need. The pool serving the broadest
+    # contracted product slate is chosen and its supply is allocated in
+    # proportion to the contracted need of each period, so no single product
+    # chain and no short window of periods is short on its own - only the
+    # aggregation of every product, site and period that draws on the pool
+    # exposes the shortfall. Fallback (no pool with enough contracted
+    # demand): a single-product capacity bottleneck.
     margin_factor = 1 + rand(rng, Uniform(0.06, 0.15))
     eligible = [
-        g for g in 1:G if
-        pool_total[g] > 0 && parts[g][2] / margin_factor - parts[g][3] >= 0.25 * pool_total[g]
+        g for g in 1:G if parts[g][2] > 0 && parts[g][2] / margin_factor - parts[g][3] >= 0.25 * parts[g][2]
     ]
-    if !isempty(eligible) && rand(rng) < 0.8
-        sort!(eligible; by=g -> -kappa_star[g])
-        g = eligible[rand(rng, 1:min(3, length(eligible)))]
+    if !isempty(eligible)
+        widest_eligible = maximum(breadth[g] for g in eligible)
+        shortlist = [g for g in eligible if breadth[g] >= _CP_BREADTH_SHORTLIST * widest_eligible]
+        g = shortlist[rand(rng, 1:length(shortlist))]
         _, demand, inventory, _ = parts[g]
-        kappa = (demand / margin_factor - inventory) / pool_total[g]
-        supply_cap[g, :] .= kappa .* view(pool_plan, g, :)
+        allocation = (demand / margin_factor - inventory) / demand
+        supply_cap[g, :] .= max.(allocation .* view(need, g, :), 1e-3)
         problem = build(nothing, nothing, nothing)
         y, demand, inventory, supply = _cp_pool_bound_parts(problem, g)
         upper = inventory + supply

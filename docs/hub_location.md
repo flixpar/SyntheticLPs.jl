@@ -121,10 +121,14 @@ Every certificate refutes the LP relaxation, not only the MIP:
   admissible sets. Each group needs its own open hub (disaggregated linking
   rows force `sum_{k in A_i} y_k >= 1`), contradicting the exact-`p` row.
 - `r_allocation` **infeasible**: `floor(p/r) + 1` island groups, each with at
-  least `r + 2` cities. The allocation row `sum_{k in A_i} z_ik = r` with
-  `z_ik <= y_k` makes every group open `r` hubs, so `r * groups > p`
-  (`BackupRegionCertificate`). No window is exactly `r` wide, so presolve
-  cannot force hubs open by bounds.
+  least `r + 2` hub-capable cities (a random subset of the group). The
+  allocation row `sum_{k in A_i} z_ik = r` with `z_ik <= y_k` makes every
+  group open `r` hubs, so `r * groups > p` (`BackupRegionCertificate`). Every
+  window is padded to at least `r + 2` in-group candidates (the reach is drawn
+  inside the group diameter, so it is a lower bound on the window here), so
+  presolve cannot force hubs open by bounds. `p` is drawn anywhere from 3 up to
+  the usual level, so groups — and window sizes — vary between draws and the
+  sizing loop can land near the target.
 - `multiple_allocation` **infeasible**: disjoint groups plus an opening
   budget strictly below `groups * min_k f_k`, contradicting the budget row.
 - `capacitated` **infeasible**: total capacity strictly below total flow;
@@ -160,11 +164,30 @@ a greedily pruned minimal hub cover within the opening budget, or a sized
 backbone whose exact routed loads fit under its capacities.
 Unknown requests use nominal valid data or sample near the corresponding
 feasibility boundary (reach/service windows, opening or link budgets,
-capacities, and crossing cuts). `multiple_allocation` keeps its reach above
-the smallest window that leaves no city without a candidate and its budget
-above the hubs forced open by single-candidate windows, so its unknown
-instances are not refuted by presolve. Across the family this yields a genuine mix of
+capacities, and crossing cuts). Across the family this yields a genuine mix of
 outcomes rather than a hidden always-infeasible mode.
+
+**Window floors (presolve survival).** A city whose window holds a single
+candidate fixes its supply/path columns and forces that hub open; presolve then
+turns every linking row of the hub into a bound and strips it, and with only
+two candidates every supply row becomes a doubleton equation that presolve
+substitutes away. Small instances (~1k variables, ~10–20 cities) were losing
+up to 60% of their rows this way. For `feasible` and `unknown` requests the
+reach is therefore floored so that every city sees:
+
+- `p_hub_median`: at least two hubs (itself and its nearest neighbour);
+- `r_allocation`: at least `r + 1` hubs (itself and its `r` nearest
+  neighbours) — this also stopped unknown instances from being settled by
+  presolve alone;
+- `multiple_allocation`: at least two candidates (its budget also stays above
+  the cost of any hubs forced open by single-candidate windows);
+- `hub_network`: up to three gateway candidates of its own region — each
+  region now gets about three candidates (`n_regions = round(h / 3)`, extras
+  taken round-robin from each region's largest cities), and in-region
+  distances are below cross-region ones, so windows never leave the region.
+
+Presolve now keeps ≥ 0.6 of rows and columns on these variants from 1k
+variables up (it previously dropped to 0.37–0.56 at 1k).
 
 ## Variable counts
 
@@ -185,6 +208,10 @@ With `A_i` the admissible hub list of node `i`, `h` the candidate count and
 
 Direct dimension searches and iterative re-sizing adjust node/candidate hints
 and sparse thresholds so counts satisfy the package's target-size tolerance.
+`p_hub_median`'s and `r_allocation`'s path counts grow like `n^2 |A|^2` and
+vary two- to threefold between draws at the same node count, so both spend up
+to 120 fresh draws (stopping within 2.5%; each draw costs milliseconds) and
+land within about ±5% of the target from 500 variables up.
 
 ## References
 

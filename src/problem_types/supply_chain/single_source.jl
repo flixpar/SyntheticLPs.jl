@@ -79,14 +79,15 @@ and connectivity logic.
 The built model has three variable blocks:
 
   - `y[1:n_facilities]`                            -> `n_facilities`
-  - `x[valid_combinations]`                        -> `≈ n_facilities * n_customers * n_modes * density`
+  - `x[valid_combinations]`                        -> `n_lanes` (available (facility, customer, mode) lanes)
   - `z[1:n_facilities, 1:n_customers]` (Bin)       -> `n_facilities * n_customers`
 
-Total `≈ n_facilities + n_facilities * n_customers * (1 + n_modes * density)`.
-The O(n_facilities * n_customers) binary `z` block is the dominant extra term and
-is accounted for here so the instance hits `target_variables`. Given a chosen
-`n_facilities`, `n_modes`, and an estimated infrastructure `density`, the number of
-customers is solved from the formula above.
+Total `n_facilities * (1 + n_customers) + n_lanes`. Customers are generated one
+at a time — location, demand, and lane availability per (facility, mode) — and
+generation stops at whichever customer count lands the exact total closest to
+`target_variables` (at least 4 customers), so the realised size tracks the
+target within about one customer's worth of columns (`n_facilities + ` its
+lanes; ≲ 2% from 1k up).
 
 # Sophisticated Feasibility Logic
 
@@ -109,9 +110,7 @@ function SingleSourceSupplyChainProblem(
 )
     rng = MersenneTwister(seed)
 
-    # --- Dimension sizing ---
-    # Total vars ≈ n_facilities + n_facilities * n_customers * (1 + n_modes * density)
-    # Choose n_facilities, n_modes, and an estimated density, then solve for n_customers.
+    # --- Regime by scale (facility count, modes, geography, costs) ---
     if target_variables <= 250
         n_facilities = rand(rng, DiscreteUniform(3, 6))
         n_transport_modes = rand(rng, DiscreteUniform(1, 2))
@@ -150,16 +149,6 @@ function SingleSourceSupplyChainProblem(
         max_demand = base_demand * rand(rng, Uniform(6.0, 20.0))
     end
 
-    # Solve for n_customers from the variable-count formula.
-    # target ≈ n_facilities + n_facilities * n_customers * (1 + eff)
-    # where the z block contributes exactly n_facilities per customer and the x block
-    # contributes ≈ n_facilities * eff per customer. The realized lane density is well
-    # below n_modes * infrastructure_density (non-truck modes are often unavailable),
-    # so a calibrated effective coefficient is used.
-    eff = 0.6 * n_transport_modes * infrastructure_density
-    per_customer_vars = n_facilities * (1.0 + eff)
-    n_customers = max(4, round(Int, (target_variables - n_facilities) / per_customer_vars))
-
     # Additional parameters
     capacity_factor = rand(rng, Uniform(1.2, 2.2))
     mode_capacity_factor = rand(rng, Uniform(0.25, 0.65))
@@ -176,10 +165,18 @@ function SingleSourceSupplyChainProblem(
     transport_modes = sample(
         rng, all_transport_modes, min(n_transport_modes, length(all_transport_modes)); replace=false
     )
+    # Feasible requests guarantee every customer a lane on one fallback mode to
+    # its K nearest facilities, so a single-source assignment is buildable.
+    fallback_mode = ("truck" in transport_modes) ? "truck" : transport_modes[1]
+    K = min(max(3, ceil(Int, n_facilities ÷ 3)), n_facilities)
 
-    # Geographic clusters
-    n_clusters = max(2, round(Int, sqrt(n_customers) * clustering_factor))
+    # Geographic clusters, sized from a first estimate of the customer count
+    # (the exact count is settled while customers are generated below).
+    eff = 0.6 * n_transport_modes * infrastructure_density
+    n_customers_hint = max(4, round(Int, (target_variables - n_facilities) / (n_facilities * (1.0 + eff))))
+    n_clusters = max(2, round(Int, sqrt(n_customers_hint) * clustering_factor))
     cluster_centers = [(grid_width * rand(rng), grid_height * rand(rng)) for _ in 1:n_clusters]
+    cluster_weights = rand(rng, Dirichlet(ones(n_clusters)))
 
     # Facility locations (more dispersed)
     facility_locs = Vector{Tuple{Float64, Float64}}()
@@ -197,19 +194,72 @@ function SingleSourceSupplyChainProblem(
         push!(facility_locs, (x, y))
     end
 
-    # Customer locations (clustered)
+    # --- Customers, generated one at a time until the variable count lands on
+    # the target. Each customer brings one assignment column per facility plus
+    # its available lanes, so the realised size is known exactly as we go:
+    #   vars = n_facilities + n_facilities * n_customers + n_lanes.
     customer_locs = Vector{Tuple{Float64, Float64}}()
-    cluster_weights = rand(rng, Dirichlet(ones(n_clusters)))
-
-    for _ in 1:n_customers
+    demand_multipliers = Float64[]
+    # Lane data: (f, c, mode) => (distance, terrain factor, efficiency factor)
+    lane_draws = Dict{Tuple{Int, Int, String}, NTuple{3, Float64}}()
+    diag_len = sqrt(grid_width^2 + grid_height^2)
+    base_spread = grid_width * (1 - clustering_factor) * 0.08
+    total_vars = n_facilities
+    while true
+        c = length(customer_locs) + 1
         cluster_idx = sample(rng, 1:n_clusters, Weights(cluster_weights))
         center = cluster_centers[cluster_idx]
-        base_spread = grid_width * (1 - clustering_factor) * 0.08
         spread = rand(rng, LogNormal(log(base_spread), 0.3))
-        x = clamp(center[1] + rand(rng, Normal(0, spread)), 0, grid_width)
-        y = clamp(center[2] + rand(rng, Normal(0, spread)), 0, grid_height)
-        push!(customer_locs, (x, y))
+        loc = (
+            clamp(center[1] + rand(rng, Normal(0, spread)), 0, grid_width),
+            clamp(center[2] + rand(rng, Normal(0, spread)), 0, grid_height),
+        )
+        multiplier = rand(rng, LogNormal(log(1.0), 0.4))
+        dvec = [hypot(facility_locs[f][1] - loc[1], facility_locs[f][2] - loc[2]) for f in 1:n_facilities]
+        lanes = Tuple{Int, Int, String}[]
+        draws = NTuple{3, Float64}[]
+        for f in 1:n_facilities, mode in transport_modes
+            prob_available = if mode == "truck"
+                0.98
+            elseif mode == "rail"
+                min(0.8, 0.3 + 0.5 * (dvec[f] / diag_len))
+            elseif mode == "ship"
+                any(l -> abs(l[2]) < grid_height * 0.1, (facility_locs[f], loc)) ? 0.8 : 0.0
+            else  # air
+                dvec[f] > diag_len * 0.3 ? 0.7 : 0.2
+            end
+            if rand(rng) < prob_available * infrastructure_density
+                push!(lanes, (f, c, mode))
+                push!(
+                    draws,
+                    (dvec[f], rand(rng, LogNormal(log(1.0), 0.15)), rand(rng, Beta(3, 2)) * 0.4 + 0.8),
+                )
+            end
+        end
+        if feasibility_status == feasible
+            for f in sortperm(dvec)[1:K]
+                (f, c, fallback_mode) in lanes && continue
+                push!(lanes, (f, c, fallback_mode))
+                push!(
+                    draws,
+                    (dvec[f], rand(rng, LogNormal(log(1.0), 0.15)), rand(rng, Beta(3, 2)) * 0.4 + 0.8),
+                )
+            end
+        end
+        next_total = total_vars + n_facilities + length(lanes)
+        # Stop at whichever of "without" / "with" this customer is closer to
+        # the target (at least 4 customers).
+        if c > 4 && abs(next_total - target_variables) >= abs(total_vars - target_variables)
+            break
+        end
+        push!(customer_locs, loc)
+        push!(demand_multipliers, multiplier)
+        for (lane, d) in zip(lanes, draws)
+            lane_draws[lane] = d
+        end
+        total_vars = next_total
     end
+    n_customers = length(customer_locs)
 
     # Facility fixed costs (correlated with market access and location)
     fixed_costs = Dict{Int, Float64}()
@@ -228,7 +278,7 @@ function SingleSourceSupplyChainProblem(
         fixed_costs[f] = base_cost * cost_multiplier
     end
 
-    # Customer demands (correlated with cluster size)
+    # Customer demands (correlated with the weight of the nearest cluster)
     demands = Dict{Int, Float64}()
     for c in 1:n_customers
         distances_to_clusters = [
@@ -238,8 +288,7 @@ function SingleSourceSupplyChainProblem(
         _, cluster_idx = findmin(distances_to_clusters)
         cluster_influence = cluster_weights[cluster_idx]
         base_demand_val = min_demand + (max_demand - min_demand) * (0.2 + 0.8 * cluster_influence)
-        demand_multiplier = rand(rng, LogNormal(log(1.0), 0.4))
-        demands[c] = base_demand_val * demand_multiplier
+        demands[c] = base_demand_val * demand_multipliers[c]
     end
 
     # Facility capacities
@@ -255,43 +304,14 @@ function SingleSourceSupplyChainProblem(
         capacities[f] = base_capacity * capacity_multiplier
     end
 
-    # Transport costs and infrastructure availability
+    # Transport costs on the available lanes
+    max_demand_realised = maximum(values(demands))
     transport_costs = Dict{Tuple{Int, Int, String}, Float64}()
-    infrastructure = Dict{Tuple{Int, Int, String}, Bool}()
-
-    for f in 1:n_facilities
-        for c in 1:n_customers
-            distance = sqrt(
-                (facility_locs[f][1] - customer_locs[c][1])^2 +
-                (facility_locs[f][2] - customer_locs[c][2])^2,
-            )
-            for mode in transport_modes
-                prob_available = if mode == "truck"
-                    0.98
-                elseif mode == "rail"
-                    min(0.8, 0.3 + 0.5 * (distance / sqrt(grid_width^2 + grid_height^2)))
-                elseif mode == "ship"
-                    if any(loc -> abs(loc[2]) < grid_height * 0.1, [facility_locs[f], customer_locs[c]])
-                        0.8
-                    else
-                        0.0
-                    end
-                else  # air
-                    distance > sqrt(grid_width^2 + grid_height^2) * 0.3 ? 0.7 : 0.2
-                end
-
-                infrastructure[(f, c, mode)] = rand(rng) < prob_available * infrastructure_density
-
-                if infrastructure[(f, c, mode)]
-                    base_cost = get(transport_base_costs, mode, 1.0)
-                    terrain_factor = rand(rng, LogNormal(log(1.0), 0.15))
-                    volume_factor = 1.0 - 0.25 * (demands[c] / maximum(values(demands)))
-                    efficiency_factor = rand(rng, Beta(3, 2)) * 0.4 + 0.8
-                    transport_costs[(f, c, mode)] =
-                        base_cost * distance * terrain_factor * volume_factor * efficiency_factor
-                end
-            end
-        end
+    for ((f, c, mode), (distance, terrain_factor, efficiency_factor)) in lane_draws
+        base_cost = get(transport_base_costs, mode, 1.0)
+        volume_factor = 1.0 - 0.25 * (demands[c] / max_demand_realised)
+        transport_costs[(f, c, mode)] =
+            base_cost * distance * terrain_factor * volume_factor * efficiency_factor
     end
 
     # Mode capacities
@@ -310,37 +330,10 @@ function SingleSourceSupplyChainProblem(
         mode_capacities[mode] = base_capacity * capacity_multiplier
     end
 
-    # Keep only available routes
-    transport_costs = Dict(k => v for (k, v) in transport_costs if infrastructure[k])
-
     # --- Feasibility enforcement ---
     if feasibility_status == feasible
-        # Pick a single fallback mode and guarantee every customer has a route to its
-        # K nearest facilities on that mode (so a single-source assignment is buildable).
-        fallback_mode = ("truck" in transport_modes) ? "truck" : transport_modes[1]
-        K = min(max(3, ceil(Int, n_facilities ÷ 3)), n_facilities)
-
-        for c in 1:n_customers
-            dvec = [
-                sqrt(
-                    (facility_locs[f][1] - customer_locs[c][1])^2 +
-                    (facility_locs[f][2] - customer_locs[c][2])^2,
-                ) for f in 1:n_facilities
-            ]
-            nearest_idxs = sortperm(dvec)[1:K]
-            for f in nearest_idxs
-                if !haskey(transport_costs, (f, c, fallback_mode))
-                    distance = dvec[f]
-                    base_cost = get(transport_base_costs, fallback_mode, 1.0)
-                    terrain_factor = rand(rng, LogNormal(log(1.0), 0.15))
-                    volume_factor = 1.0 - 0.25 * (demands[c] / maximum(values(demands)))
-                    efficiency_factor = rand(rng, Beta(3, 2)) * 0.4 + 0.8
-                    transport_costs[(f, c, fallback_mode)] =
-                        base_cost * distance * terrain_factor * volume_factor * efficiency_factor
-                end
-            end
-        end
-
+        # Every customer already has a fallback-mode lane to its K nearest
+        # facilities (added while customers were generated).
         # Build an explicit single-source assignment: greedily assign each customer
         # (largest demand first) to the nearest facility that still has residual
         # capacity and a valid route. Bump capacities/mode capacity so this fits.
@@ -365,14 +358,9 @@ function SingleSourceSupplyChainProblem(
                 end
             end
             if chosen === nothing
-                # No facility has room: assign to nearest routed facility and grow its capacity.
-                chosen = isempty(routed) ? order[1] : routed[1]
-                # ensure a route exists for the chosen facility
-                if !haskey(transport_costs, (chosen, c, fallback_mode))
-                    base_cost = get(transport_base_costs, fallback_mode, 1.0)
-                    transport_costs[(chosen, c, fallback_mode)] =
-                        base_cost * dvec[chosen] * rand(rng, Uniform(0.9, 1.1))
-                end
+                # No facility has room: assign to the nearest routed facility
+                # (K >= 3 fallback lanes exist) and grow its capacity.
+                chosen = routed[1]
                 capacities[chosen] += 1.05 * demands[c]
                 residual[chosen] =
                     capacities[chosen] -
@@ -480,24 +468,30 @@ function build_model(prob::SingleSourceSupplyChainProblem)
         @constraint(model, x[(f, c, m)] <= prob.demands[c] * z[f, c])
     end
 
+    by_customer = [Tuple{Int, Int, String}[] for _ in 1:prob.n_customers]
+    by_facility = [Tuple{Int, Int, String}[] for _ in 1:prob.n_facilities]
+    by_mode = Dict(m => Tuple{Int, Int, String}[] for m in prob.transport_modes)
+    for combo in valid_combinations
+        push!(by_facility[combo[1]], combo)
+        push!(by_customer[combo[2]], combo)
+        push!(by_mode[combo[3]], combo)
+    end
+
     # Customer demand satisfaction
     for c in 1:prob.n_customers
-        combos_for_customer = filter(combo -> combo[2] == c, valid_combinations)
-        @constraint(model, sum(x[combo] for combo in combos_for_customer) >= prob.demands[c])
+        @constraint(model, sum(x[combo] for combo in by_customer[c]; init=0.0) >= prob.demands[c])
     end
 
     # Facility capacity (also links opening decision y)
     for f in 1:prob.n_facilities
-        combos_for_facility = filter(combo -> combo[1] == f, valid_combinations)
         @constraint(
-            model, sum(x[combo] for combo in combos_for_facility) <= prob.capacities[f] * y[f]
+            model, sum(x[combo] for combo in by_facility[f]; init=0.0) <= prob.capacities[f] * y[f]
         )
     end
 
     # Transport mode capacity (restored for consistency with the standard SC model)
     for m in prob.transport_modes
-        combos_for_mode = filter(combo -> combo[3] == m, valid_combinations)
-        @constraint(model, sum(x[combo] for combo in combos_for_mode) <= prob.mode_capacities[m])
+        @constraint(model, sum(x[combo] for combo in by_mode[m]; init=0.0) <= prob.mode_capacities[m])
     end
 
     return model

@@ -361,41 +361,22 @@
                 @test PP.refinery_certificate_holds(p.flowsheet, p.data, certificate)
                 push!(kinds, certificate.kind)
 
-                if certificate.kind in (
-                    PP.refinery_contract_above_conversion_bound,
-                    PP.refinery_crude_supply_below_contracts,
+                # Both kinds are the aggregate potential argument: the contracted
+                # volume is strictly above the bound, and the bound is what the
+                # potential argument recomputes.
+                @test certificate.required > certificate.achievable
+                @test isapprox(
+                    certificate.achievable,
+                    PP._pp_production_bound(p.flowsheet, p.data);
+                    rtol=1e-9,
                 )
-                    # The contracted volume is strictly above the bound, and the
-                    # bound is what the potential argument recomputes.
-                    @test certificate.required > certificate.achievable
-                    @test isapprox(
-                        certificate.achievable,
-                        PP._pp_production_bound(p.flowsheet, p.data);
-                        rtol=1e-9,
-                    )
-                    @test isapprox(certificate.required, sum(p.data.demand_min); rtol=1e-9)
-                else
-                    # Every component of the named grade sits on the wrong side
-                    # of the named bound, so the blend row pins the grade at zero.
-                    grade = p.flowsheet.products[certificate.product]
-                    values = [
-                        p.flowsheet.qualities[s, certificate.quality] for s in grade.components
-                    ]
-                    if certificate.is_maximum_specification
-                        @test all(values .> certificate.required)
-                        @test certificate.required == grade.spec_max[certificate.quality]
-                    else
-                        @test all(values .< certificate.required)
-                        @test certificate.required == grade.spec_min[certificate.quality]
-                    end
-                    @test sum(view(p.data.demand_min, certificate.product, :)) >
-                        p.data.product_initial_inventory[certificate.product]
-                end
+                @test isapprox(certificate.required, sum(p.data.demand_min); rtol=1e-9)
             end
-            # The crude-supply curtailment is the default; the minority modes
-            # appear across seeds too.
+            # The crude-supply curtailment is the default; contracts above the
+            # conversion bound appear across seeds too. (The single-row
+            # specification refutation is no longer planted: presolve decides it.)
             @test PP.refinery_crude_supply_below_contracts in kinds
-            @test length(kinds) >= 2
+            @test kinds == Set(instances(PP.RefineryInfeasibilityKind))
 
             # A certificate only exists for a requested-infeasible instance, and
             # a feasible instance's data does not support one.
@@ -507,18 +488,28 @@
                 @test opening + supply ≈ cert.upper_bound rtol = 1e-9
                 # A planted margin, not a knife edge.
                 @test cert.margin >= 0.05 * cert.demand
+                # The curtailed supply follows the contracted need of every
+                # period (no short window), and the pool is among the broadest.
+                need = [PP._cp_pool_need(p, y, τ) for τ in 1:p.n_periods]
+                busy = findall(>(1e-3), need)
+                ratios = [p.supply_cap[cert.group, τ] / need[τ] for τ in busy]
+                @test maximum(ratios) - minimum(ratios) <= 1e-9 * maximum(ratios)
+                breadths = [
+                    PP._cp_pool_breadth(p, PP._cp_pool_bound_parts(p, g)[1]) for
+                    g in eachindex(p.supply_groups)
+                ]
+                @test PP._cp_pool_breadth(p, y) >= 0.5 * maximum(breadths)
             end
         end
-        # The feedstock pool is the default argument; the bottleneck appears too.
-        @test certificate_types ==
-            Set([PP.CampaignFeedstockCertificate, PP.CampaignCapacityCertificate])
+        # The feedstock pool is the default argument.
+        @test PP.CampaignFeedstockCertificate in certificate_types
 
         for seed in 0:4
             _, p = generate_problem(:process_planning, 700, unknown, seed; variant=:campaign)
             @test p.feasible_witness === nothing
             @test p.infeasibility_certificate === nothing
             @test p.market_scenario !== nothing
-            @test -0.15 <= p.market_scenario.supply_factor <= 0.95
+            @test -0.35 <= p.market_scenario.supply_factor <= 0.95
         end
     end
 
@@ -551,14 +542,22 @@
         end
 
         for target in (150, 900, 5000), seed in 0:2
-            _, p = generate_problem(
+            m, p = generate_problem(
                 :process_planning, target, feasible, seed; variant=:capacity_expansion
             )
             @test p.feasible_witness !== nothing
             @test p.infeasibility_certificate === nothing
+            @test p.budget_scenario === nothing
             @test PP.process_expansion_plan_satisfies(p)
             # The plan really invests: capacity grows somewhere over the horizon.
-            @test sum(p.feasible_witness.expansion) > 0
+            w = p.feasible_witness
+            @test sum(w.expansion) > 0
+            # The capital budget is a real row with room above the plan's spend.
+            @test constraint_by_name(m, "capital_budget") !== nothing
+            spend = PP._pp_expansion_capital_spend(p.technologies, w.expansion, w.expand)
+            @test 1.10 * spend - 1e-6 <= p.capital_budget <= 1.50 * spend + 1e-6
+            # A process the plan never runs is still a buildable option.
+            @test all(t.max_expansion > 1e-2 for t in p.technologies)
         end
 
         kinds = Set{PP.ProcessExpansionInfeasibilityKind}()
@@ -567,36 +566,47 @@
                 :process_planning, target, infeasible, seed; variant=:capacity_expansion
             )
             @test p.feasible_witness === nothing
-            @test p.market_scenario === nothing
+            @test p.budget_scenario === nothing
             @test PP.process_expansion_certificate_holds(p)
             certificate = p.infeasibility_certificate
             push!(kinds, certificate.kind)
-            @test certificate.required > certificate.achievable
-            if certificate.kind == PP.expansion_demand_above_feedstock_bound
-                # The content vector is a valid dual: no process creates
-                # feedstock content, every raw carries one, and the content-
-                # weighted contracts exceed the whole market by a real margin.
-                content = PP._pp_expansion_content(p.chemicals, p.technologies)
-                @test all(content[j] == 1.0 for j in p.raw_chemicals)
-                for technology in p.technologies
-                    made = sum(c * content[j] for (j, c) in technology.outputs)
-                    fed = sum(c * content[j] for (j, c) in technology.inputs)
-                    @test made <= fed + 1e-9
-                end
-                @test certificate.achievable ≈ sum(p.availability[p.raw_chemicals, :])
-                @test certificate.required >= 1.05 * certificate.achievable
-            end
+            # The capital potential is a valid dual by hand: zero on raws, never
+            # negative, and no process creates more potential than one unit of
+            # new capacity costs it in the relaxation.
+            potential = certificate.potential
+            @test all(potential[j] == 0.0 for j in p.raw_chemicals)
+            @test all(>=(0.0), potential)
+            unit_costs = [
+                t.variable_investment + t.fixed_investment / t.max_expansion for
+                t in p.technologies
+            ]
+            nets = [
+                sum(c * potential[j] for (j, c) in t.outputs) -
+                sum(a * potential[j] for (j, a) in t.inputs) for t in p.technologies
+            ]
+            @test all(nets .<= unit_costs .+ 1e-9 .* unit_costs)
+            τ = certificate.period
+            required =
+                sum(potential[j] * p.demand_min[j, τ] for j in axes(p.demand_min, 1)) - sum(
+                    max(nets[i], 0.0) * p.technologies[i].existing_capacity for
+                    i in eachindex(p.technologies)
+                )
+            @test certificate.required ≈ required rtol = 1e-9
+            @test certificate.achievable == p.capital_budget
+            # A planted margin, not a knife edge.
+            @test certificate.required >= 1.05 * certificate.achievable
+            @test certificate.achievable > 0
         end
-        @test length(kinds) == 2
+        @test kinds == Set([PP.expansion_capital_below_requirement])
 
-        # Unknown instances carry their market scenario, and only finished
+        # Unknown instances carry their budget scenario, and only finished
         # chemicals are sold forward.
         for seed in 0:3
             _, p = generate_problem(
                 :process_planning, 900, unknown, seed; variant=:capacity_expansion
             )
-            @test p.market_scenario !== nothing
-            @test -0.15 <= p.market_scenario.supply_share <= 0.95
+            @test p.budget_scenario !== nothing
+            @test -0.15 <= p.budget_scenario.budget_share <= 0.95
             @test p.feasible_witness === nothing
             @test p.infeasibility_certificate === nothing
             for j in p.sellable_chemicals
@@ -625,6 +635,7 @@
             healthy.demand_min,
             healthy.demand_max,
             healthy.discount,
+            healthy.capital_budget,
             nothing,
             broken.infeasibility_certificate,
             nothing,
@@ -743,6 +754,24 @@
                     :process_planning, 600, feasible, 1; variant=variant, relax_integer=false
                 )
                 @test solved_status(m; limit=180.0) == MOI.OPTIMAL
+            end
+
+            # The planted refutations need simplex work: HiGHS presolve alone
+            # does not decide a requested-infeasible instance.
+            for variant in (:refinery, :hydrogen_network, :campaign, :capacity_expansion),
+                target in (1000, 3000),
+                seed in 0:1
+
+                m, _ = generate_problem(:process_planning, target, infeasible, seed; variant=variant)
+                set_optimizer(m, HiGHS.Optimizer)
+                set_silent(m)
+                set_time_limit_sec(m, 60.0)
+                set_attribute(m, "solver", "simplex")
+                optimize!(m)
+                # (A rare dual-simplex abort still counts: it happened after
+                # presolve handed the model over.)
+                @test termination_status(m) in (MOI.INFEASIBLE, MOI.OTHER_ERROR)
+                @test MOI.get(m, MOI.SimplexIterations()) > 0
             end
 
             # Unknown-status instances are genuinely undecided: across seeds and

@@ -92,7 +92,9 @@ the unrelaxed model (the test file checks it with `primal_feasibility_report`).
 ## `standard`
 
 - `feasible`: the planted plan.
-- `infeasible`: one region's DCs (the union of its customers' arcs) lose
+- `infeasible`: one region (with at least four customers whenever the network
+  has one — a one-customer region is refuted by presolve bound propagation
+  alone) has its DCs (the union of its customers' arcs) lose
   throughput until their combined capacity is 8–18% below the region's
   peak-period demand (`SupplyChainRegionalCertificate`: region, customers, DCs,
   period, demand, throughput, margin). The proof sums the region's demand rows
@@ -168,6 +170,12 @@ facilities `y`, assign each customer to exactly one facility `z[f,c]`, and
 ship over available modes `x[(f,c,m)] ≤ demand[c] · z[f,c]`. Feasible requests
 plant an explicit capacity-respecting single-source assignment; infeasible
 requests drive total facility capacity below total demand with a margin.
+
+Customers are generated one at a time (location, demand, and lane availability
+per facility and mode), stopping at the customer count whose exact column total
+`n_facilities·(1 + n_customers) + n_lanes` is closest to the target — sizes
+land within ~2% of the target from a few hundred variables up (previously
+0.86–0.98× because the lane density was only estimated).
 
 ## Measured behavior (wave-2 audit, seeds 0–1, HiGHS dual simplex, 60 s limit)
 

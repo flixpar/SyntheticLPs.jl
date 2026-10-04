@@ -1323,7 +1323,6 @@ end
 """Structural reason a requested-infeasible planning instance has no plan."""
 @enum RefineryInfeasibilityKind begin
     refinery_contract_above_conversion_bound
-    refinery_specification_outside_component_range
     refinery_crude_supply_below_contracts
 end
 
@@ -1347,17 +1346,13 @@ falls below the contracted volume. Every grade can still be made on its own; onl
 the aggregation of every stream balance over every period refutes the instance,
 so presolve's bound propagation cannot.
 
-`refinery_specification_outside_component_range` names a product whose quality
-window excludes every one of its components: with all blend coefficients of that
-row strictly one-signed and blend volumes nonnegative, the row forces the whole
-blend to zero, so the contract cannot be served out of production or the opening
-tank.
+Both refutations aggregate every stream balance over every period; neither is
+visible to a single row. (A grade whose quality window excludes every one of its
+components was once a third mode, but that contradiction lives in one blend row
+and HiGHS presolve refutes it without simplex work, so it is no longer planted.)
 """
 struct RefineryInfeasibilityCertificate
     kind::RefineryInfeasibilityKind
-    product::Int
-    quality::Int
-    is_maximum_specification::Bool
     achievable::Float64
     required::Float64
 end
@@ -1845,43 +1840,12 @@ function refinery_certificate_holds(
     certificate::RefineryInfeasibilityCertificate;
     atol::Float64=1e-6,
 )
-    if certificate.kind in
-       (refinery_contract_above_conversion_bound, refinery_crude_supply_below_contracts)
-        certificate.product == 0 || return false
-        achievable = _pp_production_bound(fs, data)
-        required = sum(data.demand_min)
-        scale = max(1.0, abs(achievable), abs(required))
-        isapprox(certificate.achievable, achievable; rtol=1e-9, atol=atol * scale) || return false
-        isapprox(certificate.required, required; rtol=1e-9, atol=atol * scale) || return false
-        return achievable + atol * scale < required
-    end
-
-    p = certificate.product
-    q = certificate.quality
-    1 <= p <= n_products(fs) || return false
-    1 <= q <= PP_N_QUALITIES || return false
-    product = fs.products[p]
-    bound = certificate.is_maximum_specification ? product.spec_max[q] : product.spec_min[q]
-    isfinite(bound) || return false
-    isapprox(certificate.required, bound; rtol=1e-9, atol=atol * max(1.0, abs(bound))) ||
-        return false
-
-    values = [fs.qualities[s, q] for s in product.components]
-    achievable = certificate.is_maximum_specification ? minimum(values) : maximum(values)
-    isapprox(
-        certificate.achievable, achievable; rtol=1e-9, atol=atol * max(1.0, abs(achievable))
-    ) || return false
-    margin = atol * max(1.0, abs(achievable), abs(bound))
-    if certificate.is_maximum_specification
-        # Every component sits above the cap, so the row forces the blend to zero.
-        achievable > bound + margin || return false
-    else
-        achievable + margin < bound || return false
-    end
-    # The blend is pinned at zero, so the contract must exceed the opening tank.
-    contracted = sum(view(data.demand_min, p, :))
-    contracted > data.product_initial_inventory[p] + margin || return false
-    return true
+    achievable = _pp_production_bound(fs, data)
+    required = sum(data.demand_min)
+    scale = max(1.0, abs(achievable), abs(required))
+    isapprox(certificate.achievable, achievable; rtol=1e-9, atol=atol * scale) || return false
+    isapprox(certificate.required, required; rtol=1e-9, atol=atol * scale) || return false
+    return achievable + atol * scale < required
 end
 
 # ---------------------------------------------------------------------------
@@ -1948,64 +1912,6 @@ function _pp_demand_phase(key::Symbol)
 end
 
 """
-    _pp_impossible_specification!(rng, fs, data, nameplate) -> certificate or nothing
-
-Tighten one existing product specification past every component that could go
-into that blend, and contract the grade so the tightening bites. With all
-coefficients of that row one-signed and blend volumes nonnegative, the row pins
-the whole blend at zero for every period, so a positive contract cannot be met.
-Returns the certificate, or `nothing` when no product carries a usable spec.
-"""
-function _pp_impossible_specification!(
-    rng::AbstractRNG, fs::RefineryFlowsheet, data::ProcessPlanData, nameplate::Float64
-)
-    P = n_products(fs)
-    P == 0 && return nothing
-    for p in randperm(rng, P)
-        product = fs.products[p]
-        candidates = Tuple{Int, Bool}[]
-        for q in 1:PP_N_QUALITIES
-            values = [fs.qualities[s, q] for s in product.components]
-            if isfinite(product.spec_max[q]) && minimum(values) > 1e-9
-                push!(candidates, (q, true))
-            end
-            if isfinite(product.spec_min[q]) && maximum(values) > 1e-9
-                push!(candidates, (q, false))
-            end
-        end
-        isempty(candidates) && continue
-        q, is_max = candidates[rand(rng, 1:length(candidates))]
-        values = [fs.qualities[s, q] for s in product.components]
-        # The certificate argues from the tightened bound alone. Withdraw an
-        # opposing bound the tightening would leave on the wrong side of it: an
-        # empty published window is not a quality specification, and it would add
-        # a second, unrecorded reason for the infeasibility.
-        if is_max
-            achievable = minimum(values)
-            bound = achievable * rand(rng, Uniform(0.80, 0.94))
-            product.spec_max[q] = bound
-            product.spec_min[q] > bound && (product.spec_min[q] = -Inf)
-        else
-            achievable = maximum(values)
-            bound = achievable * rand(rng, Uniform(1.06, 1.25))
-            product.spec_min[q] = bound
-            product.spec_max[q] < bound && (product.spec_max[q] = Inf)
-        end
-        # The grade must actually be contracted, out of an empty opening tank.
-        data.product_initial_inventory[p] = 0.0
-        floor_demand = 0.01 * nameplate
-        for t in 1:data.n_periods
-            data.demand_min[p, t] = max(data.demand_min[p, t], floor_demand)
-            data.demand_max[p, t] = max(data.demand_max[p, t], data.demand_min[p, t] * 1.05)
-        end
-        return RefineryInfeasibilityCertificate(
-            refinery_specification_outside_component_range, p, q, is_max, achievable, bound
-        )
-    end
-    return nothing
-end
-
-"""
     _pp_curtail_crude!(rng, fs, data) -> certificate or nothing
 
 Supply disruption on a plan-sized instance: scale every crude availability and
@@ -2042,9 +1948,7 @@ function _pp_curtail_crude!(rng::AbstractRNG, fs::RefineryFlowsheet, data::Proce
     end
     data.unit_min_throughput .*= factor
     bound = _pp_production_bound(fs, data)
-    return RefineryInfeasibilityCertificate(
-        refinery_crude_supply_below_contracts, 0, 0, false, bound, required
-    )
+    return RefineryInfeasibilityCertificate(refinery_crude_supply_below_contracts, bound, required)
 end
 
 """
@@ -2069,7 +1973,7 @@ function _pp_starve_contracts!(rng::AbstractRNG, fs::RefineryFlowsheet, data::Pr
         data.demand_max[p, t] = max(data.demand_max[p, t], data.demand_min[p, t] * 1.05)
     end
     return RefineryInfeasibilityCertificate(
-        refinery_contract_above_conversion_bound, 0, 0, false, bound, sum(data.demand_min)
+        refinery_contract_above_conversion_bound, bound, sum(data.demand_min)
     )
 end
 
@@ -2095,11 +1999,11 @@ inventory build), and the instance data is then placed around it:
   it, sometimes just outside, never past the single best component. Whether the
   slate, the units and the specifications can serve all the contracts together is
   left genuinely open.
-- `infeasible`: the plan-sized (`feasible`) data is broken in one of three
+- `infeasible`: the plan-sized (`feasible`) data is broken in one of two
   auditable ways — by default a crude-supply curtailment below the contracted
-  volume (an aggregate potential argument presolve cannot see), otherwise
-  contracts beyond the conversion bound, or a specification outside the range of
-  every admissible component.
+  volume, otherwise contracts beyond the conversion bound. Both are aggregate
+  potential arguments over every stream balance and period, which presolve
+  cannot see.
 """
 function _pp_plan_instance(
     rng::AbstractRNG,
@@ -2479,17 +2383,11 @@ function _pp_plan_instance(
         _pp_settle_specifications!(rng, fs, plan; slack_low=slack_low, slack_high=0.06)
     end
     if status == infeasible
-        # Default: a crude-supply disruption only the LP aggregation exposes.
-        # Minorities: contracts above the conversion bound, or a specification
-        # outside the component range (both visible to presolve).
-        mode = rand(rng)
-        certificate = if mode < 0.7
-            _pp_curtail_crude!(rng, fs, data)
-        elseif mode < 0.85
-            _pp_impossible_specification!(rng, fs, data, nameplate)
-        else
-            nothing
-        end
+        # Default (80%): a crude-supply disruption only the LP aggregation
+        # exposes. Otherwise (and when no credible curtailment exists) contracts
+        # above the conversion bound - the same aggregate potential argument
+        # reached from the demand side.
+        certificate = rand(rng) < 0.8 ? _pp_curtail_crude!(rng, fs, data) : nothing
         certificate === nothing && (certificate = _pp_starve_contracts!(rng, fs, data))
     end
     return data, plan, certificate

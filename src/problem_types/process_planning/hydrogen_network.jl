@@ -49,7 +49,7 @@ Because every environmental term is linked to the refinery's physical feed or
 throughput variables, products cannot bypass hydrogen, sulfur recovery, or
 carbon accounting. Requested-feasible instances store and verify the full
 extended operating point; requested-infeasible instances inherit the refinery's
-solver-independent volume/specification certificate.
+solver-independent aggregate volume certificate.
 """
 struct RefineryHydrogenPlanningProblem <: ProblemGenerator
     flowsheet::RefineryFlowsheet

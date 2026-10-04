@@ -523,6 +523,10 @@ end
         @test cert.throughput ≈ sum(net.dc_throughput[d] for d in cert.dcs)
         @test cert.margin ≈ demand - cert.throughput
         @test cert.margin > 0.05 * demand
+        # A multi-customer region whenever one exists (a one-customer region
+        # is refuted by presolve's bound propagation alone).
+        sizes = [count(==(r), net.customer_region) for r in unique(net.customer_region)]
+        @test length(cert.customers) >= min(4, maximum(sizes))
     end
 
     # Carbon lower bound recomputed independently.
@@ -649,5 +653,39 @@ end
         @test unknown_optimal >= 6
         @test unknown_infeasible >= 3
         @test unknown_optimal + unknown_infeasible == 36
+    end
+end
+
+@testset "supply_chain/single_source sizing and structure" begin
+    for target in (500, 2_000, 20_000), status in (feasible, infeasible, unknown), seed in 0:1
+        model, p = generate_problem("supply_chain/single_source", target, status, seed; relax_integer=false)
+        n_lanes = length(p.transport_costs)
+        # Exact column formula: y, z, and one x per available lane.
+        @test num_variables(model) == p.n_facilities * (1 + p.n_customers) + n_lanes
+        # Customers are added until the exact total is closest to the target.
+        @test abs(num_variables(model) - target) <= 0.03 * target
+        @test count(is_binary, all_variables(model)) == p.n_facilities * (1 + p.n_customers)
+        if status == feasible
+            # Every customer has a fallback-mode lane to several facilities.
+            mode = "truck" in p.transport_modes ? "truck" : p.transport_modes[1]
+            K = min(max(3, p.n_facilities ÷ 3), p.n_facilities)
+            for c in 1:p.n_customers
+                @test count(f -> haskey(p.transport_costs, (f, c, mode)), 1:p.n_facilities) >= K
+            end
+        end
+    end
+    _, p = generate_problem("supply_chain/single_source", 100_000, unknown, 0)
+    @test abs(p.n_facilities * (1 + p.n_customers) + length(p.transport_costs) - 100_000) <= 1_000
+
+    @testset "feasible requests solve" begin
+        if HAS_HIGHS
+            for target in (500, 3_000), seed in 0:1
+                model, _ = generate_problem("supply_chain/single_source", target, feasible, seed)
+                set_optimizer(model, HiGHS.Optimizer)
+                set_silent(model)
+                optimize!(model)
+                @test termination_status(model) == MOI.OPTIMAL
+            end
+        end
     end
 end

@@ -77,6 +77,9 @@ end
 function _build_r_allocation(n_nodes::Int, feasibility_status::FeasibilityStatus, rng::AbstractRNG)
     n = n_nodes
     p = clamp(round(Int, n / 3) + rand(rng, 0:1), 3, min(8, n - 1))
+    # Infeasible instances draw p anywhere up to that level: fewer hubs mean
+    # fewer, larger island regions, whose windows (and hence sizes) vary.
+    feasibility_status == infeasible && (p = rand(rng, min(3, p):p))
     # Keep r below the node count so windows stay small at tiny sizes.
     r = max(2, min(p, n - 2, 2 + (rand(rng) < 0.25 ? 1 : 0)))
 
@@ -90,7 +93,17 @@ function _build_r_allocation(n_nodes::Int, feasibility_status::FeasibilityStatus
         q = min(fld(p, r) + 1, n)
         locations, groups, min_sep = _hub_island_geography(rng, n, q; min_members=r + 2)
         dist = _hub_distance_matrix(locations)
-        reach = 0.40 * min_sep
+        # In-region distances stay below 0.34 min_sep and cross-region ones
+        # above 0.66 min_sep, so any reach in between keeps windows inside
+        # their region. A reach drawn inside the region diameter (windows are
+        # then padded to r + 2 in-region candidates below) and a random subset
+        # of hub-capable cities per region make the window sizes vary between
+        # draws - the region sizes alone barely change with the seed - so the
+        # sizing loop can land close to the target.
+        reach = 0.40 * min_sep * rand(rng, Uniform(0.55, 1.0))
+        candidates = sort!(
+            reduce(vcat, [shuffle(rng, g)[1:rand(rng, min(r + 2, length(g)):length(g))] for g in groups])
+        )
         certificate = BackupRegionCertificate(groups, p, r)
         hubs = Int[]
         assignments = [Int[] for _ in 1:n]
@@ -107,6 +120,12 @@ function _build_r_allocation(n_nodes::Int, feasibility_status::FeasibilityStatus
         else
             cover * rand(rng, Uniform(0.8, 1.25))
         end
+        # Every city keeps at least r + 1 candidates (itself and its r nearest
+        # neighbours): a window of at most r cities forces its hubs open, which
+        # lets presolve settle an unknown instance without any simplex work.
+        floor_reach = maximum(sort(dist[i, :])[min(r + 1, n)] for i in 1:n)
+        reach = max(reach, floor_reach * (1 + 1e-9))
+        candidates = collect(1:n)
         certificate = nothing
     end
 
@@ -124,7 +143,21 @@ function _build_r_allocation(n_nodes::Int, feasibility_status::FeasibilityStatus
         symmetric=true,
         scale=rand(rng, Uniform(20.0, 90.0)),
     )
-    admissible = _hub_reach_admissible(dist, reach)
+    admissible = _hub_reach_admissible(dist, reach; candidates=candidates)
+    if feasibility_status == infeasible
+        # Pad every window with the nearest hub-capable cities of its own
+        # region up to r + 2, so no hub is forced open by bounds alone.
+        for g in certificate.groups
+            own = [k for k in candidates if k in g]
+            for i in g
+                for k in sort(own; by=k -> dist[i, k])
+                    length(admissible[i]) >= min(r + 2, length(own)) && break
+                    k in admissible[i] || push!(admissible[i], k)
+                end
+                sort!(admissible[i])
+            end
+        end
+    end
 
     # Feasible requests must give every node r admissible candidates.
     if feasibility_status == feasible
@@ -171,9 +204,20 @@ Feasibility:
     node (`HubBackupWitness`); feasible requests also guarantee `|A_i| >= r`.
   - `infeasible`: `floor(p/r) + 1` disjoint island regions, each needing `r`
     hubs of its own (`BackupRegionCertificate`). Every region has at least
-    `r + 2` cities, so the deficit is an aggregate over many allocation and
-    linking rows rather than a bound that presolve propagates.
+    `r + 2` hub-capable cities (a random subset of its cities) and every
+    window is padded to at least `r + 2` of them inside its own region (so for
+    this status `reach` is a lower bound on the window, not its radius); the
+    deficit is an aggregate over many allocation and linking rows rather than
+    a bound that presolve propagates.
+
+Sizing: up to 120 draws walk the node-count hint and keep the one closest to
+the target (stopping within 2.5%); one node is a ~20% step near 1k variables,
+so the per-draw variation of reach and windows is what fills the gaps.
   - `unknown`: reach sampled at 0.8-1.25x the cover radius.
+
+For `feasible` and `unknown` the reach is floored so every node has at least
+`r + 1` admissible hubs (itself and its `r` nearest neighbours); a window of at
+most `r` cities would force its hubs open by bounds alone.
 """
 function RAllocationHubProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
@@ -182,7 +226,10 @@ function RAllocationHubProblem(
     hint = clamp(round(Int, 2.0 * target^0.25), 3, 70)
     best = nothing
     best_score = (1, Inf)
-    for attempt in 1:20
+    # Each node adds about 2/n of the path count, so near 1k variables one
+    # node is a ~20% step; the fresh draw per attempt (reach, geography) is
+    # what fills the gaps, hence a generous attempt budget and a tight stop.
+    for attempt in 1:120
         rng = MersenneTwister(seed + 104729 * attempt)
         candidate = _build_r_allocation(hint, feasibility_status, rng)
         total = _number_of_variables(candidate.admissible)
@@ -195,7 +242,7 @@ function RAllocationHubProblem(
             best_score = score
             best = candidate
         end
-        gap <= 0.05 && break
+        gap <= 0.025 && break
         ratio = clamp((target / max(total, 1))^0.25, 0.6, 1.6)
         next_hint = round(Int, hint * ratio)
         next_hint == hint && (next_hint += total < target ? 1 : -1)

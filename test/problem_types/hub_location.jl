@@ -323,6 +323,27 @@
         @test cert.budget == q.link_budget
     end
 
+    # Window floors for feasible/unknown requests: no single-candidate window
+    # (forces a hub open) and, where the variant allows it, no two-candidate
+    # window (turns every supply row into a doubleton equation) - both let
+    # presolve strip a large share of the rows on small instances.
+    for status in (feasible, unknown), s in 0:3
+        _, p = generate_problem("hub_location/p_hub_median", 1000, status, s)
+        @test all(length(a) >= 2 for a in p.admissible)
+        _, p = generate_problem("hub_location/r_allocation", 1000, status, s)
+        @test all(length(a) >= p.r + 1 for a in p.admissible)
+        _, p = generate_problem("hub_location/multiple_allocation", 1000, status, s)
+        @test all(length(a) >= 2 for a in p.admissible)
+        _, p = generate_problem("hub_location/hub_network", 1000, status, s)
+        @test all(length(a) >= 2 for a in p.admissible)
+        @test count(a -> length(a) >= 3, p.admissible) >= 0.8 * p.n_nodes
+    end
+    # r_allocation lands near the target from 500 variables up.
+    for target in (500, 1_000, 5_000), status in (feasible, infeasible, unknown), s in 0:3
+        m, _ = generate_problem("hub_location/r_allocation", target, status, s)
+        @test abs(num_variables(m) - target) <= 0.07 * target
+    end
+
     # Reproducibility and global-RNG isolation: identical seeds produce
     # field-identical structs even with a seeded/dirty global RNG.
     for v in list_variants(:hub_location)
@@ -375,6 +396,22 @@
         end
         @test optimal > 0
         @test infeasible_count > 0
+
+        # Presolve keeps most of the small (~1k) instances of the variants
+        # whose windows used to collapse under it (0.37-0.56 of the rows).
+        for v in (:p_hub_median, :multiple_allocation, :hub_network), status in (feasible, unknown),
+            s in 0:1
+
+            m, _ = generate_problem(ProblemVariant(:hub_location, v), 1000, status, s)
+            set_optimizer(m, HiGHS.Optimizer)
+            set_silent(m)
+            MOI.Utilities.attach_optimizer(m)
+            highs = unsafe_backend(m)
+            HiGHS.Highs_presolve(highs)
+            @test HiGHS.Highs_getPresolvedNumCol(highs) >= 0.6 * num_variables(m)
+            @test HiGHS.Highs_getPresolvedNumRow(highs) >=
+                0.6 * num_constraints(m; count_variable_in_set_constraints=false)
+        end
 
         # The default infeasible modes need simplex work: HiGHS presolve alone
         # does not refute them (it used to for these four variants, through

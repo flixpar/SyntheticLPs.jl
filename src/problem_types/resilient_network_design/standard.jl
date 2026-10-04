@@ -17,21 +17,45 @@ struct ResilientNetworkWitness
 end
 
 """
-Regional cut certificate. `region` contains scenario `scenario`'s sink but not
-its source; summing the region's flow-balance rows shows that the scenario's
-`demand` must cross `cut_edges`, each of which carries at most
-`capacity[e] * max(build[e], harden[e]) ≤ capacity[e]` (`build`, `harden` ≤ 1).
-Their total `cut_capacity` is below `demand` by `margin`. The argument sums
-`length(region)` (about `sqrt(n_nodes)`, at least 4 when the source allows)
-balance rows with the cut's capacity rows, so presolve does
-not detect it, and it holds for every value of the (relaxed) design variables.
+Hardening-budget certificate: a lower bound on design spend, built from LP
+rows only, that exceeds the design budget.
+
+ 1. *Bridges.* Removing a bridge link (`bridges`) splits the network, so a
+    scenario whose source and sink fall on different sides routes its whole
+    demand over it (sum one side's balance rows); its capacity row forces
+    `harden ≥ demand / capacity` when the link fails in that scenario, else
+    `build ≥ demand / capacity`, and `build ≥ harden`. The largest such levels
+    are `bridge_build` / `bridge_harden`, costing `forced_spend`.
+ 2. *District.* `region` contains scenario `scenario`'s sink but not its
+    source, and that scenario's hazard takes out every link crossing its
+    boundary (`cut_edges`). Summing the region's balance rows, the scenario's
+    `demand` must cross the boundary, where a failed link carries at most
+    `capacity[e] * harden[e]`: `Σ_cut capacity[e] harden[e] ≥ demand`
+    (`cut_capacity` exceeds `demand`, so fully hardening the boundary would
+    do). Raising `harden[e]` above its forced level costs `hardening_cost[e]`
+    per unit, plus `build_cost[e]` once it passes the forced build level
+    (`harden ≤ build`); the cheapest fractional way to close the district's
+    shortfall (a knapsack by cost per unit of capacity) costs `cut_spend`.
+
+Bridges and boundary pieces are priced on disjoint increments, so every
+solution of the LP relaxation spends at least
+`implied_minimum = forced_spend + cut_spend`, which exceeds `budget` by
+`margin`. The budget still covers the forced spend plus most of the district,
+so no single row's bound propagation exposes the shortfall.
 """
-struct ResilientNetworkCutCertificate
+struct ResilientHardeningBudgetCertificate
     scenario::Int
     region::Vector{Int}
     cut_edges::Vector{Int}
     demand::Float64
     cut_capacity::Float64
+    bridges::Vector{Int}
+    bridge_build::Vector{Float64}
+    bridge_harden::Vector{Float64}
+    forced_spend::Float64
+    cut_spend::Float64
+    implied_minimum::Float64
+    budget::Float64
     margin::Float64
 end
 
@@ -59,14 +83,15 @@ else build)`, and flow conservation sending `demand[s]` from `sources[s]` to
   - `feasible`: the spanning tree is built and hardened with capacities raised to
     1.15 × the largest demand + 1, and the budget is 1.05 × its cost + 1
     ([`ResilientNetworkWitness`](@ref)).
-  - `infeasible`: a region (a breadth-first ball of about `sqrt(n_nodes)` nodes
-    around scenario 1's sink, excluding its source) is weakly connected: the
-    capacities of its boundary links are scaled so they total
-    `demand / U(1.08, 1.20)` ([`ResilientNetworkCutCertificate`](@ref)). The
-    budget is unlimited, so the cut — not the budget — is the obstruction, and
-    it survives relaxation. The certificate needs a whole region's balance
-    rows; HiGHS presolve still refutes some instances (about half at 1k, a
-    quarter at 10k in the audit) through its propagation, the rest need simplex.
+  - `infeasible`: scenario 1's hazard is centred on a district (a
+    breadth-first ball of about `sqrt(n_nodes)` nodes around its sink,
+    excluding its source) and takes out every access link into it. The
+    access links' capacities total `U(1.25, 1.45) ×` the demand, so hardening
+    them would carry it, but the design budget is set `U(1.08, 1.20)` times
+    below the cheapest fractional hardening of enough boundary capacity
+    ([`ResilientHardeningBudgetCertificate`](@ref)). The budget still covers
+    any single link, so presolve's bound propagation cannot see the
+    shortfall: it is a knapsack over the boundary that needs simplex work.
   - `unknown`: natural capacities and a budget `U(0.45, 1.1) ×` the planted
     tree's cost: whether a design within budget routes every scenario is left
     to the instance.
@@ -94,7 +119,7 @@ struct ResilientNetworkDesignProblem <: ProblemGenerator
     failed::Matrix{Bool}
     design_budget::Float64
     feasible_witness::Union{Nothing, ResilientNetworkWitness}
-    infeasibility_certificate::Union{Nothing, ResilientNetworkCutCertificate}
+    infeasibility_certificate::Union{Nothing, ResilientHardeningBudgetCertificate}
     feasibility_status::FeasibilityStatus
 end
 
@@ -192,6 +217,375 @@ function _resilient_tree_path(n_nodes::Int, edges, tree_count::Int, source::Int,
     return reverse!(path)
 end
 
+"""
+    _resilient_district(rng, n_nodes, edges, adjacency, excluded, sink) -> (region, cut_edges)
+
+Breadth-first ball of about `sqrt(n_nodes)` nodes (at least 4, at most a third
+of the nodes) around `sink` that never enters an `excluded` node (the
+scenario's source and every other scenario's endpoints, so no other scenario
+has to reach into the district), grown further while its boundary has fewer
+than six links. Returns the region's nodes and the
+indices of the links crossing its boundary.
+"""
+function _resilient_district(
+    rng::AbstractRNG, n_nodes::Int, edges, adjacency, excluded::AbstractVector{Bool}, sink::Int
+)
+    ball_size = clamp(round(Int, sqrt(n_nodes)), 4, max(4, n_nodes ÷ 3))
+    region = [sink]
+    in_region = falses(n_nodes)
+    in_region[sink] = true
+    queue = [sink]
+    boundary() = [e for (e, (i, j)) in enumerate(edges) if in_region[i] != in_region[j]]
+    while !isempty(queue)
+        u = popfirst!(queue)
+        for v in shuffle(rng, adjacency[u])
+            (in_region[v] || excluded[v]) && continue
+            if length(region) >= ball_size
+                # A district reached by only a handful of links needs too
+                # little hardening for the budget to bind without also
+                # capping single links; keep growing (up to half the map).
+                (length(boundary()) >= 6 || 2 * length(region) >= n_nodes) && break
+            end
+            in_region[v] = true
+            push!(region, v)
+            push!(queue, v)
+        end
+        length(region) >= ball_size && length(boundary()) >= 6 && break
+        2 * length(region) >= n_nodes && break
+    end
+    # Fill holes: a node whose every neighbour is in the district (unless
+    # excluded) joins it - left outside, all its links would be
+    # resized boundary links, a one-row bottleneck for its own traffic.
+    changed = true
+    while changed
+        changed = false
+        for v in 1:n_nodes
+            (in_region[v] || excluded[v]) && continue
+            if all(in_region[w] for w in adjacency[v])
+                in_region[v] = true
+                push!(region, v)
+                changed = true
+            end
+        end
+    end
+    return region, boundary()
+end
+
+"""
+    _resilient_bridges(n_nodes, arcs) -> (bridges, child, tin, tout)
+
+Bridge links of the (connected) topology by an iterative Tarjan DFS from node
+1. `bridges[t]` is a link index whose removal splits off the DFS subtree of
+node `child[t]`; node `v` lies in that subtree iff
+`tin[child[t]] <= tin[v] <= tout[child[t]]`.
+"""
+function _resilient_bridges(n_nodes::Int, arcs::Vector{Tuple{Int, Int}})
+    adjacency = [Tuple{Int, Int}[] for _ in 1:n_nodes]
+    for (a, (i, j)) in enumerate(arcs)
+        push!(adjacency[i], (j, a))
+        push!(adjacency[j], (i, a))
+    end
+    tin = zeros(Int, n_nodes)
+    tout = zeros(Int, n_nodes)
+    low = zeros(Int, n_nodes)
+    parent_link = zeros(Int, n_nodes)
+    next_edge = ones(Int, n_nodes)
+    bridges = Int[]
+    child = Int[]
+    timer = 0
+    for root in 1:n_nodes
+        tin[root] != 0 && continue
+        timer += 1
+        tin[root] = low[root] = timer
+        stack = [root]
+        while !isempty(stack)
+            u = stack[end]
+            if next_edge[u] <= length(adjacency[u])
+                v, a = adjacency[u][next_edge[u]]
+                next_edge[u] += 1
+                a == parent_link[u] && continue
+                if tin[v] == 0
+                    timer += 1
+                    tin[v] = low[v] = timer
+                    parent_link[v] = a
+                    push!(stack, v)
+                else
+                    low[u] = min(low[u], tin[v])
+                end
+            else
+                pop!(stack)
+                tout[u] = timer
+                if !isempty(stack)
+                    w = stack[end]
+                    low[w] = min(low[w], low[u])
+                    if low[u] > tin[w]
+                        push!(bridges, parent_link[u])
+                        push!(child, u)
+                    end
+                end
+            end
+        end
+    end
+    return bridges, child, tin, tout
+end
+
+"""
+    _resilient_forced_levels(n_nodes, edges, capacities, failed, sources, sinks, demands)
+    -> (forced_build, forced_harden, bridges, child, tin, tout)
+
+Design levels every solution must reach on bridge links. Removing bridge `b`
+separates the network, so a scenario whose source and sink fall on different
+sides routes all its demand over `b` (sum one side's balance rows); the
+capacity row then forces `harden[b] ≥ demand / capacity[b]` if `b` fails in
+that scenario, else `build[b] ≥ demand / capacity[b]` (and `build ≥ harden`).
+Non-bridge links get zeros. The caller keeps bridge capacities above every
+crossing demand, so the levels stay below 1.
+"""
+function _resilient_forced_levels(n_nodes::Int, edges, capacities, failed, sources, sinks, demands)
+    E = length(edges)
+    forced_build = zeros(E)
+    forced_harden = zeros(E)
+    bridges, child, tin, tout = _resilient_bridges(n_nodes, edges)
+    for (t, b) in enumerate(bridges)
+        inside(v) = tin[child[t]] <= tin[v] <= tout[child[t]]
+        for s in eachindex(sources)
+            inside(sources[s]) == inside(sinks[s]) && continue
+            level = demands[s] / capacities[b]
+            failed[b, s] && (forced_harden[b] = max(forced_harden[b], level))
+            forced_build[b] = max(forced_build[b], level)
+        end
+    end
+    return forced_build, forced_harden, bridges, child, tin, tout
+end
+
+"""
+    _resilient_hardening_spend(capacity, build_cost, hardening_cost,
+                               forced_build, forced_harden, required) -> Float64
+
+Cheapest fractional way to add `required` units of hardened capacity on
+boundary links already at the forced levels: raising `harden[e]` from
+`forced_harden[e]` to `forced_build[e]` costs `hardening_cost[e]` per unit,
+beyond it also `build_cost[e]` (`harden ≤ build`). The cost is convex in each
+link's level, so the greedy cost-per-capacity order over these pieces is
+optimal (`Inf` if even full hardening falls short, `0` if `required ≤ 0`).
+"""
+function _resilient_hardening_spend(
+    capacity::Vector{Float64},
+    build_cost::Vector{Float64},
+    hardening_cost::Vector{Float64},
+    forced_build::Vector{Float64},
+    forced_harden::Vector{Float64},
+    required::Float64,
+)
+    required <= 0 && return 0.0
+    pieces = Tuple{Float64, Float64, Float64}[]  # (cost per capacity, capacity, unit cost)
+    for e in eachindex(capacity)
+        cheap = forced_build[e] - forced_harden[e]
+        cheap > 0 && push!(pieces, (hardening_cost[e] / capacity[e], capacity[e] * cheap, hardening_cost[e]))
+        full = 1.0 - max(forced_build[e], forced_harden[e])
+        unit = build_cost[e] + hardening_cost[e]
+        full > 0 && push!(pieces, (unit / capacity[e], capacity[e] * full, unit))
+    end
+    sort!(pieces; by=first)
+    spend = 0.0
+    remaining = required
+    for (ratio, cap, _) in pieces
+        take = min(cap, remaining)
+        spend += ratio * take
+        remaining -= take
+        remaining <= 1e-12 * required && return spend
+    end
+    return Inf
+end
+
+"""
+    _resilient_max_flow(n_nodes, edges, capacities, source, sink) -> (value, source_side)
+
+Maximum `source`-`sink` flow when every link is built and hardened (an
+undirected link carries up to its capacity in either direction), by Dinic's
+algorithm, and the source side of a minimum cut.
+"""
+function _resilient_max_flow(n_nodes::Int, edges, capacities, source::Int, sink::Int)
+    # Arc 2e-1 is i -> j, arc 2e is j -> i; each starts with the full capacity.
+    m = length(edges)
+    head = Vector{Int}(undef, 2m)
+    residual = Vector{Float64}(undef, 2m)
+    out = [Int[] for _ in 1:n_nodes]
+    for (e, (i, j)) in enumerate(edges)
+        head[2e - 1], head[2e] = j, i
+        residual[2e - 1] = residual[2e] = capacities[e]
+        push!(out[i], 2e - 1)
+        push!(out[j], 2e)
+    end
+    partner(a) = isodd(a) ? a + 1 : a - 1
+    tail(a) = head[partner(a)]
+    level = zeros(Int, n_nodes)
+    pointer = ones(Int, n_nodes)
+    tol = 1e-12 * (1.0 + sum(capacities))
+    value = 0.0
+    function bfs!()
+        fill!(level, 0)
+        level[source] = 1
+        queue = [source]
+        while !isempty(queue)
+            u = popfirst!(queue)
+            for a in out[u]
+                v = head[a]
+                if level[v] == 0 && residual[a] > tol
+                    level[v] = level[u] + 1
+                    push!(queue, v)
+                end
+            end
+        end
+        return level[sink] != 0
+    end
+    while bfs!()
+        fill!(pointer, 1)
+        while true
+            # Iterative blocking-flow DFS: advance along level-increasing arcs.
+            path = Int[]
+            u = source
+            while u != sink
+                advanced = false
+                while pointer[u] <= length(out[u])
+                    a = out[u][pointer[u]]
+                    v = head[a]
+                    if residual[a] > tol && level[v] == level[u] + 1
+                        push!(path, a)
+                        u = v
+                        advanced = true
+                        break
+                    end
+                    pointer[u] += 1
+                end
+                if !advanced
+                    u == source && break
+                    level[u] = 0  # dead end: retreat
+                    a = pop!(path)
+                    u = tail(a)
+                    pointer[u] += 1
+                end
+            end
+            u == sink || break
+            push_amount = minimum(residual[a] for a in path)
+            for a in path
+                residual[a] -= push_amount
+                residual[partner(a)] += push_amount
+            end
+            value += push_amount
+        end
+    end
+    source_side = falses(n_nodes)
+    source_side[source] = true
+    queue = [source]
+    while !isempty(queue)
+        u = popfirst!(queue)
+        for a in out[u]
+            v = head[a]
+            if !source_side[v] && residual[a] > tol
+                source_side[v] = true
+                push!(queue, v)
+            end
+        end
+    end
+    return value, source_side
+end
+
+"""
+    _resilient_budget_plan(rng, ...; star) -> NamedTuple
+
+Infeasible-mode data for scenario `star`: its hazard is recentred on a
+district around its sink (redrawing that scenario's failures) and fails every
+access link; the access links are resized to total `U(1.25, 1.45) ×` the
+demand; bridges are kept at least 1.25 × the largest demand crossing them;
+then the bridge-forced design levels and spend, and the cheapest fractional
+hardening of the district's remaining shortfall (`cut_spend`), are computed.
+"""
+function _resilient_budget_plan(
+    rng::AbstractRNG, N, edges, adjacency, positions, sources, sinks, demands, capacities,
+    build_cost, hardening_cost, failed, hazard_radius, star::Int,
+)
+    excluded = falses(N)
+    for s in eachindex(sources)
+        excluded[sources[s]] = true
+        excluded[sinks[s]] = true
+    end
+    excluded[sinks[star]] = false
+    excluded[sources[star]] = true
+    region, cut_edges = _resilient_district(rng, N, edges, adjacency, excluded, sinks[star])
+    cx = sum(positions[v][1] for v in region) / length(region)
+    cy = sum(positions[v][2] for v in region) / length(region)
+    for (e, (i, j)) in enumerate(edges)
+        mid = ((positions[i][1] + positions[j][1]) / 2, (positions[i][2] + positions[j][2]) / 2)
+        r = hypot(mid[1] - cx, mid[2] - cy) / hazard_radius[star]
+        failed[e, star] = rand(rng) < 0.85 * exp(-r^2) + 0.03
+    end
+    failed[cut_edges, star] .= true
+    # Access links sized so hardening the whole boundary would carry the
+    # demand with 25-45% to spare: capacity alone is not the obstruction -
+    # for any scenario that has to cross the district's boundary.
+    in_district = falses(N)
+    in_district[region] .= true
+    crossing = maximum(
+        demands[s] for s in eachindex(demands) if in_district[sources[s]] != in_district[sinks[s]]
+    )
+    goal = crossing * rand(rng, Uniform(1.25, 1.45))
+    current = sum(capacities[e] for e in cut_edges)
+    for e in cut_edges
+        capacities[e] = round(capacities[e] * goal / current; digits=3)
+    end
+    # Headroom guard: with every link built and hardened, each scenario's
+    # maximum flow must exceed its demand by 25%, so the budget is the only
+    # obstruction and no small bottleneck (a node hemmed in by the resized
+    # boundary, say) lets presolve refute the instance on its own. Links of a
+    # short minimum cut are widened - off the district boundary when possible.
+    on_cut = falses(length(edges))
+    on_cut[cut_edges] .= true
+    for s in eachindex(sources)
+        for _ in 1:50
+            value, side = _resilient_max_flow(N, edges, capacities, sources[s], sinks[s])
+            value >= 1.25 * demands[s] && break
+            crossing = [e for (e, (i, j)) in enumerate(edges) if side[i] != side[j]]
+            widen = [e for e in crossing if !on_cut[e]]
+            isempty(widen) && (widen = crossing)
+            grow = (1.25 * demands[s] - value) / sum(capacities[e] for e in widen) + 1.0
+            for e in widen
+                capacities[e] = round(capacities[e] * grow + 1e-3; digits=3)
+            end
+        end
+    end
+    # (Bridges are minimum cuts too, so every forced level is at most 0.8.)
+    forced_build, forced_harden, bridges, _, _, _ = _resilient_forced_levels(
+        N, edges, capacities, failed, sources, sinks, demands
+    )
+    forced_spend = sum(
+        build_cost[b] * forced_build[b] + hardening_cost[b] * forced_harden[b] for b in bridges;
+        init=0.0,
+    )
+    required = demands[star] - sum(capacities[e] * forced_harden[e] for e in cut_edges)
+    cut_spend = _resilient_hardening_spend(
+        capacities[cut_edges],
+        build_cost[cut_edges],
+        hardening_cost[cut_edges],
+        forced_build[cut_edges],
+        forced_harden[cut_edges],
+        required,
+    )
+    return (
+        scenario=star,
+        region=region,
+        cut_edges=cut_edges,
+        center=(cx, cy),
+        capacities=capacities,
+        failed=failed,
+        bridges=bridges,
+        forced_build=forced_build[bridges],
+        forced_harden=forced_harden[bridges],
+        forced_spend=forced_spend,
+        cut_spend=cut_spend,
+    )
+end
+
 function ResilientNetworkDesignProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
@@ -202,6 +596,12 @@ function ResilientNetworkDesignProblem(
     E = length(edges)
     tree_count = N - 1
     len = [hypot(positions[i][1] - positions[j][1], positions[i][2] - positions[j][2]) for (i, j) in edges]
+
+    adjacency = [Int[] for _ in 1:N]
+    for (i, j) in edges
+        push!(adjacency[i], j)
+        push!(adjacency[j], i)
+    end
 
     sources = zeros(Int, S)
     sinks = zeros(Int, S)
@@ -248,37 +648,46 @@ function ResilientNetworkDesignProblem(
         build = [e <= tree_count ? 1.0 : 0.0 for e in 1:E]
         witness = ResilientNetworkWitness(build, copy(build), forward, reverse)
     elseif feasibility_status == infeasible
-        design_budget = sum(build_cost) + sum(hardening_cost) + 1.0
-        adjacency = [Int[] for _ in 1:N]
-        for (i, j) in edges
-            push!(adjacency[i], j)
-            push!(adjacency[j], i)
-        end
-        # Breadth-first ball around the sink that stops before the source.
-        source, sink = sources[1], sinks[1]
-        ball_size = clamp(round(Int, sqrt(N)), 4, max(4, N ÷ 3))
-        region = [sink]
-        in_region = falses(N)
-        in_region[sink] = true
-        queue = [sink]
-        while !isempty(queue) && length(region) < ball_size
-            u = popfirst!(queue)
-            for v in shuffle(rng, adjacency[u])
-                (in_region[v] || v == source || length(region) >= ball_size) && continue
-                in_region[v] = true
-                push!(region, v)
-                push!(queue, v)
+        # Plan a district for every scenario and keep the one whose hardening
+        # shortfall (beyond what bridges already force) is largest: a large
+        # `cut_spend` leaves the budget room for every single link.
+        best = nothing
+        for star in 1:S
+            plan = _resilient_budget_plan(
+                rng, N, edges, adjacency, positions, sources, sinks, demands, copy(capacities),
+                build_cost, hardening_cost, copy(failed), hazard_radius, star,
+            )
+            if best === nothing || plan.cut_spend > best.cut_spend
+                best = plan
             end
         end
-        cut_edges = [e for (e, (i, j)) in enumerate(edges) if in_region[i] != in_region[j]]
-        goal = demands[1] / rand(rng, Uniform(1.08, 1.20))
-        current = sum(capacities[e] for e in cut_edges)
-        for e in cut_edges
-            capacities[e] *= goal / current
+        capacities = best.capacities
+        failed = best.failed
+        hazard_center[best.scenario] = best.center
+        implied = best.forced_spend + best.cut_spend
+        shrink = rand(rng, Uniform(1.08, 1.20))
+        # The shortfall sits on the district's knapsack; only on degenerate
+        # tiny networks, where bridges already force most of the spend, is
+        # the whole bound shrunk instead (still a strict, certified margin).
+        design_budget = if best.cut_spend >= 0.25 * implied
+            best.forced_spend + best.cut_spend / shrink
+        else
+            implied / shrink
         end
-        cut_capacity = sum(capacities[e] for e in cut_edges)
-        certificate = ResilientNetworkCutCertificate(
-            1, sort(region), cut_edges, demands[1], cut_capacity, demands[1] - cut_capacity
+        certificate = ResilientHardeningBudgetCertificate(
+            best.scenario,
+            sort(best.region),
+            best.cut_edges,
+            demands[best.scenario],
+            sum(capacities[e] for e in best.cut_edges),
+            best.bridges,
+            best.forced_build,
+            best.forced_harden,
+            best.forced_spend,
+            best.cut_spend,
+            implied,
+            design_budget,
+            implied - design_budget,
         )
     else
         design_budget = tree_cost * rand(rng, Uniform(0.45, 1.1))

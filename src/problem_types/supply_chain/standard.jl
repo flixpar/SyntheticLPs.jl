@@ -63,7 +63,8 @@ weight-split lane shipments; every capacity is sized 8–35% above the plan's
 usage.
 
   - `feasible`: stores the plan as [`SupplyChainNetworkWitness`](@ref).
-  - `infeasible`: one region's DCs lose throughput so that their combined
+  - `infeasible`: one region (at least four customers whenever the network
+    has such a region) has its DCs lose throughput so that their combined
     capacity is 8–18% below the region's peak-period demand
     ([`SupplyChainRegionalCertificate`](@ref)); needs simplex to discover.
   - `unknown`: every capacity is multiplied by one network-wide supply factor
@@ -91,7 +92,12 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
     capacity_factor = 1.0
     certificate = nothing
     if feasibility_status == infeasible
-        populated = [r for r in eachindex(regions) if !isempty(regions[r])]
+        # A region of several customers, so the shortfall only shows once many
+        # demand rows are summed: a one- or two-customer region lets presolve
+        # refute the instance by bound propagation alone. Fall back to the
+        # largest region on tiny networks.
+        populated = [r for r in eachindex(regions) if length(regions[r]) >= 4]
+        isempty(populated) && (populated = [argmax(length.(regions))])
         r = populated[rand(rng, 1:length(populated))]
         customers = regions[r]
         dcs = sort!(unique(d for (d, c) in net.arcs if net.customer_region[c] == r))
