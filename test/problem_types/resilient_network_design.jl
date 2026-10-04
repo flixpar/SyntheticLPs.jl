@@ -1,6 +1,6 @@
 # Focused quality contracts for resilient_network_design: exact sizing, the
 # geometric candidate topology (spanning tree first), spatially correlated
-# hazard scenarios, the planted build+harden+route witness, the regional cut
+# hazard scenarios, the planted build+harden+route witness, the hardening-budget
 # certificate, reproducibility, and HiGHS status contracts.
 @testset "Resilient network design" begin
     @test list_variants(:resilient_network_design) == [:standard]
@@ -67,19 +67,83 @@
         @test p.design_budget ≈ 1.05 * sum(p.build_cost[e] + p.hardening_cost[e] for e in 1:tree) + 1.0
     end
 
-    # Regional cut certificate arithmetic.
+    # Hardening-budget certificate arithmetic, recomputed from the data.
+    function components_without(p, skip)
+        parent = collect(1:p.n_nodes)
+        find(x) = parent[x] == x ? x : (parent[x] = find(parent[x]))
+        for (e, (i, j)) in enumerate(p.edges)
+            e == skip && continue
+            parent[find(i)] = find(j)
+        end
+        return [find(v) for v in 1:p.n_nodes]
+    end
     for target in (200, 2000, 20_000), seed in 0:3
         _, p = generate_problem(ref, target, infeasible, seed)
         c = p.infeasibility_certificate
         s = c.scenario
         region = Set(c.region)
         @test p.sinks[s] in region && !(p.sources[s] in region)
-        @test length(c.region) >= min(4, p.n_nodes ÷ 3)
+        # No other scenario has to reach into the district.
+        for t in 1:p.n_scenarios
+            t == s && continue
+            @test !(p.sources[t] in region) || p.sources[t] == p.sinks[s]
+            @test !(p.sinks[t] in region) || p.sinks[t] == p.sinks[s]
+        end
         @test c.cut_edges == [e for (e, (i, j)) in enumerate(p.edges) if (i in region) != (j in region)]
+        @test all(p.failed[e, s] for e in c.cut_edges)   # the hazard takes out every access link
         @test c.demand == p.demands[s]
         @test c.cut_capacity ≈ sum(p.capacities[e] for e in c.cut_edges)
-        @test c.margin ≈ c.demand - c.cut_capacity
-        @test c.margin >= 0.07 * c.demand
+        @test c.cut_capacity >= 1.24 * c.demand          # capacity alone is not the obstruction
+        # With everything built and hardened, every scenario routes with headroom.
+        for t in 1:p.n_scenarios
+            value, _ = SyntheticLPs._resilient_max_flow(p.n_nodes, p.edges, p.capacities, p.sources[t], p.sinks[t])
+            @test value >= 1.24 * p.demands[t]
+        end
+        # Bridge-forced design levels.
+        for (k, b) in enumerate(c.bridges)
+            comp = components_without(p, b)
+            @test length(unique(comp)) == 2
+            build, harden = 0.0, 0.0
+            for t in 1:p.n_scenarios
+                comp[p.sources[t]] == comp[p.sinks[t]] && continue
+                level = p.demands[t] / p.capacities[b]
+                build = max(build, level)
+                p.failed[b, t] && (harden = max(harden, level))
+            end
+            @test c.bridge_build[k] ≈ build
+            @test c.bridge_harden[k] ≈ harden
+            @test build <= 0.81
+        end
+        forced = sum(
+            p.build_cost[b] * c.bridge_build[k] + p.hardening_cost[b] * c.bridge_harden[k] for
+            (k, b) in enumerate(c.bridges);
+            init=0.0,
+        )
+        @test c.forced_spend ≈ forced
+        # District knapsack: harden the boundary beyond its forced levels.
+        level_b = Dict(b => c.bridge_build[k] for (k, b) in enumerate(c.bridges))
+        level_h = Dict(b => c.bridge_harden[k] for (k, b) in enumerate(c.bridges))
+        pieces = Tuple{Float64, Float64}[]   # (cost per capacity, capacity)
+        required = c.demand
+        for e in c.cut_edges
+            fb, fh = get(level_b, e, 0.0), get(level_h, e, 0.0)
+            required -= p.capacities[e] * fh
+            fb > fh && push!(pieces, (p.hardening_cost[e] / p.capacities[e], p.capacities[e] * (fb - fh)))
+            push!(pieces, ((p.build_cost[e] + p.hardening_cost[e]) / p.capacities[e], p.capacities[e] * (1 - max(fb, fh))))
+        end
+        spend = 0.0
+        for (ratio, cap) in sort(pieces)
+            required <= 0 && break
+            take = min(cap, required)
+            spend += ratio * take
+            required -= take
+        end
+        @test c.cut_spend ≈ spend rtol = 1e-9
+        @test c.cut_spend > 0
+        @test c.implied_minimum ≈ c.forced_spend + c.cut_spend
+        @test c.budget == p.design_budget
+        @test c.margin ≈ c.implied_minimum - c.budget
+        @test c.margin >= 0.06 * c.cut_spend
     end
 
     # Reproducibility.

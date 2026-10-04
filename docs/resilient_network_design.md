@@ -45,16 +45,30 @@ Sizing: `S = clamp(round(sqrt(target)/3), 2, 8)` scenarios,
   budget is `1.05 ×` the tree's cost `+ 1`. Each scenario's demand is routed
   along the unique tree path. Stored as `ResilientNetworkWitness`; the test
   file checks it against every row with `primal_feasibility_report`.
-- `infeasible`: a region — a breadth-first ball of about `sqrt(n_nodes)` nodes
-  around scenario 1's sink, not containing its source — is weakly connected:
-  its boundary link capacities are scaled to total `demand / U(1.08, 1.20)`.
-  Summing the region's balance rows, the demand must cross the boundary, which
-  carries at most its total capacity for any fractional build/harden, so the
-  certificate (`ResilientNetworkCutCertificate`) survives relaxation. The budget
-  is unlimited, so the cut is the only obstruction. The previous certificate
-  was a single sink node, which HiGHS presolve always refuted; with regions,
-  presolve still refutes roughly half the instances at 1k and a quarter at 10k,
-  the rest need simplex iterations.
+- `infeasible`: a hardening-budget shortfall. For each scenario a *district*
+  is planned: a breadth-first ball of about `sqrt(n_nodes)` nodes around its
+  sink that avoids its source and every other scenario's endpoints (so no other
+  scenario must reach into it), grown until its boundary has at least six
+  links, with enclosed nodes filled in. The scenario's hazard is recentred on
+  the district and takes out every access link; the access links are resized
+  to total `U(1.25, 1.45) ×` the demand that must cross them, and links on any
+  short minimum cut are widened until, with everything built and hardened,
+  every scenario's maximum flow is at least `1.25 ×` its demand — capacity is
+  never the obstruction. The lower bound on design spend then has two parts
+  built from LP rows: *bridges* (a scenario split by a bridge routes its whole
+  demand over it, forcing `build`/`harden ≥ demand / capacity`), and the
+  district's *knapsack*: summing its balance rows, the demand must cross failed
+  access links that carry `capacity × harden`, and hardening costs
+  `hardening_cost` per unit plus `build_cost` beyond the forced build level
+  (`harden ≤ build`). The scenario with the largest knapsack spend is used,
+  and the budget covers the bridges' forced spend plus
+  `1 / U(1.08, 1.20)` of the knapsack (`ResilientHardeningBudgetCertificate`).
+  The budget still affords every single link, so HiGHS presolve cannot see
+  the shortfall. The previous mode (shrinking the region's boundary capacity
+  with an unlimited budget) was refuted by presolve's doubleton/aggregator
+  substitutions in 3 of 4 instances at 1k: on a small region they sum the
+  balance rows exactly as the certificate does. Every audited infeasible
+  instance (200–100k, seeds 0–7 at ≤3k, 0–3 above) now needs simplex.
 - `unknown`: natural capacities and a budget of `0.45–1.1 ×` the tree's
   cost; whether some design within budget routes every scenario is left to the
   instance (both outcomes occur over seed blocks).

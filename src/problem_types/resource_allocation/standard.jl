@@ -90,7 +90,10 @@ output.
     so that the hours its *department-local* committed activities need at
     their best efficiency exceed the department's total hours by a 12–35%
     margin, certified by a [`DepartmentOvercommitCertificate`](@ref). The
-    contradiction needs the sum of many rows, so presolve cannot see it.
+    contradiction needs the sum of many rows, so presolve cannot see it; a
+    floor the cut would put out of its own activity's reach (a one-row
+    contradiction) is trimmed to 90% of that activity's standalone maximum
+    and the cut redone.
   - `unknown`: the same department ratio `required / available` is steered to
     `1 ± U(0.03, 0.30)`. Above 1 the instance is provably infeasible; below 1
     windows, eligibility, and rate caps decide — a genuine two-sided instance
@@ -396,7 +399,35 @@ function ResourceAllocationProblem(
                 floors[a] = min(floors[a] * grow, max(floors[a], ceiling))
             end
         end
+        # Capacity absorbs the rest. Cutting a department's hours can leave a
+        # single commitment unreachable even on its own (its floor above the
+        # most its eligible pools and rate cap could deliver), a one-row
+        # contradiction presolve's bound propagation finds at once. Such
+        # floors are trimmed to 90% of that standalone maximum and the cut is
+        # redone, so the shortfall stays an aggregate over the department.
+        standalone(a) = sum(
+            min(
+                rate_cap[a],
+                sum(efficiency[a][k] * capacity[p, t] for (k, p) in enumerate(eligible_pools[a])),
+            ) for t in release[a]:deadline[a]
+        )
         required = hours_needed(acts_g)
+        for _ in 1:30
+            scale = required / (ratio * hours_available(pools_g))
+            for p in pools_g, t in 1:T
+                capacity[p, t] *= scale
+            end
+            trimmed = false
+            for a in acts_g
+                cap_a = 0.9 * min(standalone(a), workload[a])
+                if floors[a] > cap_a
+                    floors[a] = cap_a
+                    trimmed = true
+                end
+            end
+            required = hours_needed(acts_g)
+            trimmed || break
+        end
         scale = required / (ratio * hours_available(pools_g))
         for p in pools_g, t in 1:T
             capacity[p, t] *= scale

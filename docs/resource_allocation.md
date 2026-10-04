@@ -63,7 +63,12 @@ planned output.
   the most committed hours has its whole local portfolio put under contract;
   floors grow part of the way (never past a single activity's own workload or
   cumulative rate cap) and the department's pools lose staff until the floors
-  need 12–35% more hours than exist. `DepartmentOvercommitCertificate(department,
+  need 12–35% more hours than exist. A floor the cut would put out of reach
+  of its own activity (above what its eligible pools and rate cap could deliver
+  even if it had them to itself) is trimmed to 90% of that standalone maximum
+  and the cut redone: otherwise that single row is a contradiction HiGHS
+  presolve finds by bound propagation, which it did on 1k–100k instances
+  (including `unknown` ones) before the trim. `DepartmentOvercommitCertificate(department,
   pools, activities, max_efficiency, required_hours, available_hours)`: divide
   each commitment row by the activity's best efficiency and sum with all the
   department's pool rows. Department `0` (the whole organisation) is the

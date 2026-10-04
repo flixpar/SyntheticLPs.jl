@@ -110,6 +110,16 @@
             # its workload and its cumulative rate cap.
             len = p.deadline[a] - p.release[a] + 1
             @test p.floors[a] < min(p.workload[a], p.rate_cap[a] * len)
+            # ... nor its eligible pools' cut capacities: the floor stays below
+            # the most the activity could deliver with every eligible pool to
+            # itself (otherwise presolve refutes that one row by propagation).
+            standalone = sum(
+                min(
+                    p.rate_cap[a],
+                    sum(p.efficiency[a][k] * p.capacity[q, t] for (k, q) in enumerate(p.eligible_pools[a])),
+                ) for t in p.release[a]:p.deadline[a]
+            )
+            @test p.floors[a] < standalone
         end
         required = sum(p.floors[a] / cert.max_efficiency[k] for (k, a) in enumerate(cert.activities))
         available = sum(p.capacity[q, t] for q in cert.pools, t in 1:p.n_periods)
