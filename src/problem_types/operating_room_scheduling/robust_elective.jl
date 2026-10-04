@@ -200,6 +200,8 @@ function build_model(prob::RobustElectiveSurgeryAssignmentProblem)
     end
     for (s, d) in sort!(collect(keys(by_surgeon_day)))
         idxs = by_surgeon_day[(s, d)]
+        # Rows that cannot bind (all admissible cases fit at once) are omitted.
+        sum(prob.nominal_duration[prob.admissible[a][1]] for a in idxs) <= prob.surgeon_budget[s, d] && continue
         @constraint(
             model,
             sum(prob.nominal_duration[prob.admissible[a][1]] * assign[a] for a in idxs) <=

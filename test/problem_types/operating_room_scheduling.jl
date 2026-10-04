@@ -183,6 +183,14 @@
         @test all(occ_icu .<= p.icu_capacity .+ 1e-9)
         @test all(.!p.mandatory .| (w .> 0))
     end
+    # The greedy plan behind every status places most of the list (a
+    # combined `for i, slot` loop once broke out after the first case).
+    for seed in 0:2
+        _, p = generate_problem(weekly_ref, 3000, feasible, seed)
+        @test count(>(0), something(p.feasible_witness)) >= 0.5 * p.n_surgeries
+        _, q = generate_problem(elective_ref, 3000, feasible, seed)
+        @test length(something(q.feasible_witness)) >= 0.3 * q.n_surgeries
+    end
     for seed in 0:3, target in (200, 3000)
         _, p = generate_problem(weekly_ref, target, infeasible, seed)
         cert = something(p.infeasibility_certificate)
@@ -361,10 +369,22 @@
                     @test MOI.get(model, MOI.SimplexIterations()) > 0
                 end
             end
+            # Weekly planning at 100k: the overload certificate survives
+            # presolve (three-day set, budget rows not parallel).
+            for seed in 0:1
+                model, _ = generate_problem(weekly_ref, 100_000, infeasible, seed)
+                set_optimizer(model, HiGHS.Optimizer)
+                set_silent(model)
+                optimize!(model)
+                @test termination_status(model) == MOI.INFEASIBLE
+                @test MOI.get(model, MOI.SimplexIterations()) > 0
+            end
+
             # Unknown is two-sided (seeds verified when calibrating).
             for (ref, target) in (
                 (elective_ref, 30_000),
                 (weekly_ref, 3000),
+                (weekly_ref, 30_000),
                 (mss_ref, 3000),
                 (robust_ref, 3000),
                 (benchmark_ref, 10_000),

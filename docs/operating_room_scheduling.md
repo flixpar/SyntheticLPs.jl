@@ -129,6 +129,15 @@ Deviation magnitudes are calibrated from the empirical fitted standard
 deviations. A feasible robust witness is checked against the exact fractional
 Γ-budget (largest deviations first), not a proxy average.
 
+### Presolve hygiene (elective, robust, weekly)
+
+A case is admissible to a slot only if it fits on its own (surgeon budget;
+room session plus overtime, or the specialty's OR minutes), and surgeon-day,
+specialty-day and bed rows that cannot bind - every admissible case fits at
+once - are not emitted. Previously ~20% of the weekly rows were redundant or
+singleton rows (presolve kept 0.60-0.76 of them); now presolve keeps 95-100%
+of rows and columns at 10k and above.
+
 ### Weekly downstream beds
 
 Cases needing critical care occupy ICU first and enter the ward only after ICU
@@ -168,8 +177,12 @@ the regular close plus a small completion-time term.
     the room/specialty capacity on each, become mandatory while each of those
     days is budgeted only the longest case, so the budgets total at most 90%
     of the cases' minutes; no single row is contradictory and no variable
-    bound tightens (three-day sets are preferred because presolve can
-    aggregate two-day doubleton assignment rows);
+    bound tightens. The (surgeon, day set) is chosen over all surgeons,
+    preferring three days (two-day sets make every assignment row a doubleton
+    that presolve substitutes out) and day sets where every day also carries
+    an optional case of the surgeon (otherwise the substituted budget rows are
+    parallel and presolve combines them) - this fixed the last
+    presolve-detected weekly instances at 100k;
   - `master_surgical_schedule`: `MSSWardShortageCertificate` - the patient-days
     the busiest specialty ward receives from its services' minimum quotas
     exceed the ward's cycle capacity by more than 10%;
@@ -189,11 +202,20 @@ the regular close plus a small completion-time term.
   presolve-infeasible because urgent cases without any admissible slot were
   mandatory.)
   - elective/robust/weekly: urgent cases come from a greedy plan (for every
-    status, so no urgent case is stranded on a single impossible slot), plus
-    urgent referrals of a random 0-100% of the cases the plan could not place
-    that fit at least two days on their own (robust: each block's overtime cap
-    is raised where a mandatory case would not fit any block on its own under
-    its robust load);
+    status, so no urgent case is stranded on a single impossible slot; the
+    shared greedy placed only the first case until a combined `for i, slot`
+    loop whose `break` left both loops was split - it now places 75-97% of the
+    list). On top, a share U(0.5, 1.0) of the planned cases are already booked
+    (mandatory) and urgent referrals of a random 0-100% of the unplaced cases
+    are added; booked cases and referrals must fit at least two days on their
+    own. Elective/robust also draw overtime availability globally (cap scaled
+    by U(0, 1)); weekly applies one global OR-capacity shock after planning
+    (the plan's utilization times U(0.90, 1.50), so the pressure does not
+    drift with hospital size) and caps the referral share at 50%. Measured
+    infeasible share at 3k / 30k / 100k: elective 2/6, 4/6, 1/6; robust 5/6,
+    2/6, 3/6; weekly 4/8, 1/8, 6/8. Robust also raises a block's overtime cap
+    where a mandatory case would not fit any block on its own under its
+    robust load;
   - MSS: quotas loosen or tighten around the plan and a hospital-wide bed
     pressure factor in `[0.70, 1.05]` scales capacities (critical ~0.85);
   - case sequencing: up to ~20 surgeons receive one short add-on case

@@ -52,9 +52,19 @@ status, so no urgent case is stranded). For `infeasible` instances a surgeon
 overload is planted on top ([`SurgeonOverloadCertificate`]): three or more of
 one surgeon's cases sharing two or three admissible days become mandatory with
 each of those days budgeted only the longest case, a contradiction only
-visible by aggregating many rows. For `unknown`, urgent referrals of a random
-0-100% of the cases the plan could not place (each fitting two days on its
-own) are added ([`_orsched_add_referrals!`]), so both outcomes occur.
+visible by aggregating many rows. For `unknown`, after planning the OR
+capacity receives one global shock - the plan's OR utilization times U(0.90,
+1.50), so the pressure does not drift with hospital size - a share U(0.5, 1.0)
+of the planned cases are already booked (mandatory), and urgent referrals of a
+random 0-50% of the cases the plan could not place are added
+([`_orsched_add_referrals!`]); booked cases and referrals must fit two days on
+their own after the shock. Both outcomes occur at every size (measured 4/8,
+1/8, 6/8 infeasible at 3k, 30k, 100k).
+
+Admissible days require the case to fit its surgeon's budget and its
+specialty's OR minutes on its own, and `build_model` omits rows that cannot
+bind (all admissible cases fit at once): previously ~20% of the rows were
+redundant or singleton and presolve kept only 0.60-0.76 of them.
 
 The hospital grows linearly with the target from 2,500 variables up (about
 `target / 190` rooms, see [`_orsched_hospital_scale`]).
@@ -124,11 +134,16 @@ function _weekly_admissible_days(
     surgeon_budget::Matrix{Float64},
     specialty_capacity::Matrix{Float64},
     n_days::Int,
+    duration::Vector{Float64},
+    turnover::Float64,
 )
+    # A day is admissible only if the case fits the surgeon's budget and the
+    # specialty's OR minutes on its own: a column that can never be fully
+    # assigned only adds singleton rows presolve turns into bounds.
     days = [Int[] for _ in 1:n_surgeries]
     for i in 1:n_surgeries, d in 1:min(n_days, surgery_deadline[i])
-        if specialty_capacity[surgery_specialty[i], d] > 0 &&
-            surgeon_budget[surgery_surgeon[i], d] > 0
+        if specialty_capacity[surgery_specialty[i], d] >= duration[i] + turnover &&
+            surgeon_budget[surgery_surgeon[i], d] >= duration[i]
             push!(days[i], d)
         end
     end
@@ -193,8 +208,16 @@ function WeeklySurgeryPlanningProblem(
             surgeon_budget,
             specialty_capacity,
             n_days,
+            wl.duration,
+            turnover,
         )
-        n_mandatory = round(Int, wl.requested_urgent_fraction * n_surgeries)
+        # Mandatory cases carry no postponement column: the urgent share, plus
+        # for `unknown` the booked cases (measured: about 35% of the
+        # remaining list in small hospitals, 70% in large ones).
+        urgent_share = wl.requested_urgent_fraction
+        booked_estimate = target < 5000 ? 0.35 : 0.7
+        feasibility_status == unknown && (urgent_share += booked_estimate * (1 - urgent_share))
+        n_mandatory = round(Int, urgent_share * n_surgeries)
         total = sum(length, admissible_days) + n_surgeries - n_mandatory
         gap = abs(total - target) / target
         if gap < best_gap
@@ -318,7 +341,33 @@ function WeeklySurgeryPlanningProblem(
         if feasibility_status == feasible
             witness = assignment
         elseif feasibility_status == unknown
-            _orsched_add_referrals!(rng, mandatory, urgency, penalty, assignment, has_option)
+            # After planning, OR capacity receives one global shock (staff
+            # shortage or extra sessions) relative to the plan's utilization; most planned cases are already
+            # booked with the patient and urgent referrals of unplaced cases
+            # come on top. Booked cases and referrals must still fit two days
+            # after the shock, so presolve cannot pin any of them.
+            # Relative to how full the plan left the OR (utilization differs
+            # between hospital sizes), so the outcome mix does not drift with
+            # size.
+            planned = sum(
+                (wl.duration[i] + turnover for i in 1:n_surgeries if assignment[i] > 0); init=0.0
+            )
+            utilization = planned / sum(specialty_capacity)
+            shock = clamp(utilization * rand(rng, Uniform(0.90, 1.50)), 0.5, 1.1)
+            specialty_capacity .= round.(specialty_capacity .* shock)
+            fits_twice = [
+                count(
+                    day_fits(i, d) && surgeon_budget[surgery_surgeon[i], d] >= wl.duration[i] for
+                    d in admissible_days[i]
+                ) >= 2 for i in 1:n_surgeries
+            ]
+            booked = rand(rng, Uniform(0.5, 1.0))
+            for i in 1:n_surgeries
+                (assignment[i] > 0 && fits_twice[i] && rand(rng) < booked) && (mandatory[i] = true)
+            end
+            _orsched_add_referrals!(
+                rng, mandatory, urgency, penalty, assignment, fits_twice; max_share=0.5
+            )
         end
     end
     if feasibility_status == infeasible
@@ -404,6 +453,9 @@ function build_model(prob::WeeklySurgeryPlanningProblem)
     # Aggregate OR capacity per specialty-day (durations plus turnovers).
     for (k, d) in sort!(collect(keys(by_specialty_day)))
         cases = by_specialty_day[(k, d)]
+        # Rows that cannot bind (all admissible cases fit at once) are omitted.
+        sum(prob.surgery_duration[i] + prob.turnover for i in cases) <= prob.specialty_capacity[k, d] &&
+            continue
         @constraint(
             model,
             sum((prob.surgery_duration[i] + prob.turnover) * assign_day[i, d] for i in cases) <=
@@ -414,6 +466,7 @@ function build_model(prob::WeeklySurgeryPlanningProblem)
     # Surgeon-day operating-time budgets.
     for (s, d) in sort!(collect(keys(by_surgeon_day)))
         cases = by_surgeon_day[(s, d)]
+        sum(prob.surgery_duration[i] for i in cases) <= prob.surgeon_budget[s, d] && continue
         @constraint(
             model,
             sum(prob.surgery_duration[i] * assign_day[i, d] for i in cases) <=
@@ -434,7 +487,7 @@ function build_model(prob::WeeklySurgeryPlanningProblem)
                 end
             end
         end
-        isempty(terms) && continue
+        length(terms) <= prob.ward_capacity[t] && continue
         @constraint(model, sum(assign_day[i, d] for (i, d) in terms) <= prob.ward_capacity[t])
     end
 
@@ -449,7 +502,7 @@ function build_model(prob::WeeklySurgeryPlanningProblem)
                 end
             end
         end
-        isempty(terms) && continue
+        length(terms) <= prob.icu_capacity[t] && continue
         @constraint(model, sum(assign_day[i, d] for (i, d) in terms) <= prob.icu_capacity[t])
     end
 

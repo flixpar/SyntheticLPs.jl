@@ -255,10 +255,10 @@ function _orsched_designate_mandatory!(
 end
 
 """
-    _orsched_add_referrals!(rng, mandatory, urgency, penalty, assignment, has_option)
+    _orsched_add_referrals!(rng, mandatory, urgency, penalty, assignment, has_option; max_share=1.0)
 
 `unknown` instances: on top of the urgent cases designated from the greedy
-plan, a random 0-100% of the cases the plan could not place (but that fit some
+plan, a random share in `[0, max_share]` of the cases the plan could not place (but that fit some
 admissible slot on their own, `has_option`) arrive as urgent referrals and
 become mandatory. Whether the
 LP can fit them depends on how much slack the greedy plan left, so the
@@ -270,11 +270,12 @@ function _orsched_add_referrals!(
     urgency::Vector{Symbol},
     penalty::Vector{Float64},
     assignment::Vector{Int},
-    has_option::Vector{Bool},
+    has_option::Vector{Bool};
+    max_share::Float64=1.0,
 )
     pool = [i for i in eachindex(assignment) if assignment[i] == 0 && has_option[i] && !mandatory[i]]
     isempty(pool) && return mandatory
-    n_referrals = round(Int, rand(rng, Uniform(0.0, 1.0)) * length(pool))
+    n_referrals = round(Int, rand(rng, Uniform(0.0, max_share)) * length(pool))
     for i in shuffle(rng, pool)[1:n_referrals]
         mandatory[i] = true
         urgency[i] = :urgent
@@ -339,10 +340,14 @@ function _orsched_greedy_schedule(
     rank = Dict(:urgent => 1, :semi_urgent => 2, :routine => 3)
     order = sort(collect(1:n_surgeries); by=i -> (rank[urgency[i]], deadline[i], -duration[i]))
     assignment = zeros(Int, n_surgeries)
-    for i in order, slot in slots_for[i]
-        if consume!(slot, i)
-            assignment[i] = slot
-            break
+    # Nested loops on purpose: in `for i in order, slot in ...` a `break`
+    # would leave both loops, so only the first case was ever placed.
+    for i in order
+        for slot in slots_for[i]
+            if consume!(slot, i)
+                assignment[i] = slot
+                break
+            end
         end
     end
     return assignment
@@ -406,9 +411,18 @@ function _orsched_plant_surgeon_overload!(
         isempty(case_days[i]) || push!(cases_of[surgery_surgeon[i]], i)
     end
     order = shuffle(rng, collect(1:n_surgeons))
-    # Strict mode first (every case on >= 2 days, >= 3 cases: presolve-proof);
-    # small hospitals fall back to single shared days and pairs of cases.
+    # Strict mode first (every case on >= 2 days, >= 3 cases); small
+    # hospitals fall back to single shared days and pairs of cases. Within a
+    # mode the best (surgeon, day set) over all surgeons is chosen by:
+    #   1. three days rather than two - two-day sets turn every assignment row
+    #      into a doubleton that presolve substitutes out;
+    #   2. every day of the set also carrying an optional case of the surgeon -
+    #      otherwise the substituted budget rows of the set are parallel and
+    #      presolve combines them into the contradiction;
+    #   3. the larger group.
     for (min_days, min_group) in ((2, 3), (1, 2))
+        best = nothing
+        best_key = nothing
         for s in order
             length(cases_of[s]) >= min_group || continue
             good = [
@@ -422,7 +436,6 @@ function _orsched_plant_surgeon_overload!(
                 [[d1, d2] for d1 in working for d2 in working if d1 < d2],
                 [[d1, d2, d3] for d1 in working for d2 in working for d3 in working if d1 < d2 < d3],
             )
-            best = nothing
             for D in sets
                 group = [i for i in good if issubset(case_days[i], D)]
                 length(group) >= min_group || continue
@@ -432,26 +445,29 @@ function _orsched_plant_surgeon_overload!(
                 any(
                     mandatory[i] && !(i in group) && issubset(case_days[i], D) for i in cases_of[s]
                 ) && continue
-                # Prefer three days (two-day sets of doubleton assignment rows
-                # can be aggregated by presolve), then the larger group.
-                if best === nothing || (length(D), length(group)) > (length(best[1]), length(best[2]))
-                    best = (D, group, longest)
+                others_ok = all(
+                    any(!(i in group) && d in case_days[i] for i in cases_of[s]) for d in D
+                )
+                key = (length(D) >= 3, others_ok, length(group))
+                if best_key === nothing || key > best_key
+                    best_key = key
+                    best = (s, D, group, longest)
                 end
             end
-            best === nothing && continue
-            D, group, longest = best
-            for d in D
-                surgeon_budget[s, d] = longest
-            end
-            for i in group
-                mandatory[i] = true
-                if urgency[i] != :urgent
-                    urgency[i] = :urgent
-                    penalty[i] = rand(rng, Uniform(300.0, 600.0))
-                end
-            end
-            return SurgeonOverloadCertificate(s, D, sort(group), sum(duration[group]), length(D) * longest)
         end
+        best === nothing && continue
+        s, D, group, longest = best
+        for d in D
+            surgeon_budget[s, d] = longest
+        end
+        for i in group
+            mandatory[i] = true
+            if urgency[i] != :urgent
+                urgency[i] = :urgent
+                penalty[i] = rand(rng, Uniform(300.0, 600.0))
+            end
+        end
+        return SurgeonOverloadCertificate(s, D, sort(group), sum(duration[group]), length(D) * longest)
     end
     # Tiny instances: overload one surgeon's whole list by spreading 90% of
     # its minutes over its days (single rows may then be contradictory, which
