@@ -228,7 +228,9 @@ config, selection, shard, stats, size_match, instances, failures). Variants whos
 size cap cannot cover the distribution are dropped and recorded.
 `check_quality(model, optimizer; ...)` with `QualityCriteria`/`QualityResult`
 filters trivial, degenerate, unbounded, and ill-conditioned instances; with
-`quality_filter=true` its solve doubles as verification. The package stays
+`quality_filter=true` its solve doubles as verification for `feasible` requests
+(`infeasible` ones are still verified on the source primal, since no passing
+quality solve proves infeasibility). The package stays
 solver-agnostic: the caller supplies the optimizer.
 
 **Problem generators** (`src/problem_types/<category>/`): a `<category>.jl` entry

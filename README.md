@@ -519,7 +519,7 @@ The mix is spread with a low-discrepancy sequence, so both the overall and each
 variant's realized proportions track the weights. `feasible_only=true` is
 shorthand for `feasibility_status=feasible`.
 
-With an `optimizer` and no quality filter, `feasible`/`infeasible` requests are
+With an `optimizer`, `feasible`/`infeasible` requests are
 verified as in `generate_problem` (with `feasibility_timeout` taken from
 `quality_criteria.solve_timeout`) and the outcome is recorded as `verified_status`.
 
@@ -528,8 +528,11 @@ verified as in `generate_problem` (with `feasibility_timeout` taken from
 The package itself is solver-agnostic. To **filter** instances — solving each one
 and rejecting trivial, degenerate, unbounded, timed-out, or ill-conditioned ones —
 pass `quality_filter=true` and an `optimizer`. The quality solve then doubles as
-verification: an `infeasible` request that the solve shows feasible is rejected as
-`"contract_violated"`.
+verification for `feasible` requests. `infeasible` requests are still verified on
+the source primal, because no passing quality solve proves infeasibility
+(`INFEASIBLE_OR_UNBOUNDED` passes, and an infeasible dual leaves the primal
+infeasible or unbounded); one that the quality solve shows feasible is rejected
+as `"contract_violated"`.
 
 ```julia
 using SyntheticLPs, HiGHS

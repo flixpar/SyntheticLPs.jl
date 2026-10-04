@@ -181,6 +181,14 @@ _set_values(s) = (MOI.constant(s),)
         @test aggregate_rows!(c, MersenneTwister(1); probability=1.0, max_block=2) == 1
         leq = all_constraints(c, AffExpr, MOI.LessThan{Float64})
         @test length(constraint_object(leq[3]).func.terms) == 1  # 2u3 <= 2
+        # A tiny but nonzero residual is kept: dropping it would not be implied.
+        r = Model()
+        @variable(r, w[1:2])
+        @constraint(r, w[1] + 2e-13 * w[2] <= 1)
+        @constraint(r, w[1] - 1e-13 * w[2] <= 1)
+        @test aggregate_rows!(r, MersenneTwister(1); probability=1.0, max_block=2) == 1
+        agg_r = constraint_object(all_constraints(r, AffExpr, MOI.LessThan{Float64})[3])
+        @test coefficient(agg_r.func, w[2]) ≈ 1e-13 && agg_r.set.upper == 2
         @test_throws ArgumentError aggregate_rows!(c, MersenneTwister(1); probability=2.0)
         @test_throws ArgumentError aggregate_rows!(c, MersenneTwister(1); max_block=1)
     end
@@ -257,6 +265,18 @@ _set_values(s) = (MOI.constant(s),)
         @test coefficient(objective_function(p), variable_by_name(p, "y[2]")) == 6
         q = permute_model(m, MersenneTwister(3))
         @test sprint(print, p) == sprint(print, q)
+        # A unit-scaling record is remapped to the copy's references.
+        sm = _transform_test_model()
+        sc = scale_units!(sm, MersenneTwister(5); decades=2)
+        sp = permute_model(sm, MersenneTwister(3))
+        psc = sp.ext[:SyntheticLPs_unit_scaling]
+        @test length(psc.column_scale) == length(sc.column_scale)
+        @test all(
+            psc.column_scale[y] == sc.column_scale[variable_by_name(sm, name(y))] for
+            y in all_variables(sp)
+        )
+        @test Set(keys(psc.row_scale)) == Set(SyntheticLPs._linear_rows(sp))
+        @test sort(collect(values(psc.row_scale))) == sort(collect(values(sc.row_scale)))
     end
 
     @testset "Determinism and RNG isolation" begin

@@ -4,6 +4,44 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-10-04 (PR #56 review fixes)
+
+**Previous Commit**: `99673be`
+
+**Commits**: (pending)
+
+**Datetime**: 2026-10-04 UTC
+
+**Summary**: Addressed the Codex review of PR #56. `generate_dataset` could emit
+`infeasible`-labelled instances that nothing had proved infeasible when
+`quality_filter=true`; `aggregate_rows!` could drop a small nonzero residual
+and so add a row its block did not imply; and `permute_model` carried a
+`UnitScaling` record keyed by the source model's references.
+
+**Details**:
+
+- `generate_dataset` with `quality_filter=true` skipped the feasibility-contract
+  solve and relied on `check_quality`, which rejected an `infeasible` request
+  only when its solve proved feasibility. `INFEASIBLE_OR_UNBOUNDED` passes
+  `check_quality`, and an `INFEASIBLE` dual leaves the primal infeasible or
+  unbounded, so both were emitted with an `infeasible` label (and
+  `verified_status = nothing`). `_generate_entry` now still runs the
+  contract verification (the full optimizer escalation chain, on the source
+  primal before transforms and dualization) for `infeasible` requests under the
+  quality filter, and records `verified_status = infeasible` when it holds.
+  `feasible` requests keep using the quality solve, whose required `OPTIMAL`
+  is conclusive for a primal or its dual. The manifest's `config.verification`
+  is now `optimizer !== nothing`.
+- `aggregate_rows!` dropped accumulated coefficients below `1e-12 ×` the
+  block's largest. Such a residual can matter on a free or widely bounded
+  column, so only exact zeros are dropped now, matching the docstring.
+- `permute_model` remaps a `:SyntheticLPs_unit_scaling` record through the new
+  column and row references, so `p.ext[:SyntheticLPs_unit_scaling].column_scale[v]`
+  works for the permuted model after a direct `scale_units!` call. (The central
+  `apply_transforms` permutes before scaling, so it was unaffected.)
+- Tests: a tiny-residual aggregate case and a scale-then-permute remap case in
+  `test/transforms.jl`.
+
 ## 2026-10-04 (major upgrade: scale, presolve survival, five new categories, transforms, dataset control)
 
 **Previous Commit**: `02599df`

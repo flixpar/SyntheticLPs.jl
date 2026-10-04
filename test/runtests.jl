@@ -1251,9 +1251,9 @@ end
                 @test termination_status(m) == MOI.OPTIMAL
             end
 
-            # With the quality filter, its solve doubles as verification: a status
-            # mix comes back labelled, and infeasible requests are kept only when
-            # the solve proves them infeasible.
+            # With the quality filter, its solve doubles as verification for feasible
+            # requests, and infeasible requests are verified on the source primal: a
+            # status mix comes back labelled with proven statuses.
             mixed = generate_dataset(;
                 num_problems=6,
                 size_distribution=Uniform(80, 200),

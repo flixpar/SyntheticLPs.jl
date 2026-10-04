@@ -658,6 +658,12 @@ function _generate_entry(entry::PlannedInstance, cfg)
     problem_seed = 0
     dualized = false
     fresh_draw = true
+    # Under the quality filter its solve doubles as verification only where it is
+    # conclusive: OPTIMAL proves a `feasible` request for the primal or its dual, but
+    # no passing outcome proves an `infeasible` one (`check_quality` accepts
+    # INFEASIBLE_OR_UNBOUNDED, and an infeasible dual leaves the primal infeasible or
+    # unbounded). Those requests are verified on the source primal instead.
+    verify_optimizer = cfg.quality_filter && status != infeasible ? nothing : cfg.verify_optimizer
     for attempt in 1:cfg.max_retries
         if fresh_draw
             problem_seed = rand(rng, 1:typemax(Int32))
@@ -675,7 +681,7 @@ function _generate_entry(entry::PlannedInstance, cfg)
                 cfg.transform_flags...,
                 transforms=cfg.model_transforms,
                 dualize=dualized,
-                optimizer=cfg.verify_optimizer,
+                optimizer=verify_optimizer,
                 max_feasibility_retries=cfg.max_feasibility_retries,
                 feasibility_timeout=cfg.feasibility_timeout,
                 info=info,
@@ -745,7 +751,11 @@ function _generate_entry(entry::PlannedInstance, cfg)
             iterations = result.iterations
             stime = result.solve_time
             solve_status = string(result.termination_status)
-            verified = _verified_status(result.termination_status, cand.dualized)
+            verified = if haskey(cand.info, :verification_status)
+                status
+            else
+                _verified_status(result.termination_status, cand.dualized)
+            end
         elseif haskey(cand.info, :verification_status)
             # The verification solve ran on the primal and its contract held.
             solve_status = string(cand.info[:verification_status])
@@ -1074,9 +1084,11 @@ index) carrying `failures` and the `manifest`.
 
   - `optimizer = nothing`: e.g. `HiGHS.Optimizer`, or a vector of optimizers
     forming a verification escalation chain (see [`generate_problem`](@ref)).
-    Without `quality_filter`, it verifies `feasible`/`infeasible` requests
-    (rebuilding on violation); with `quality_filter=true`, the quality solve
-    doubles as verification and uses the chain's first entry.
+    It verifies `feasible`/`infeasible` requests (rebuilding on violation). With
+    `quality_filter=true`, the quality solve (on the chain's first entry) doubles
+    as verification for `feasible` requests; `infeasible` requests are still
+    verified on the source primal, since no passing quality solve proves
+    infeasibility.
   - `quality_filter::Bool = false`, `quality_criteria = QualityCriteria()`,
     `optimizer_attributes = ()`: see [`check_quality`](@ref). An `infeasible`
     request that the quality solve shows feasible is rejected as
@@ -1188,9 +1200,9 @@ function generate_dataset(;
         model_transforms,
         dualize,
         dualize_probability=validated_dualize_probability,
-        # Skip separate verification when the quality filter is on: `check_quality`
-        # already solves every candidate and rejects contract violations.
-        verify_optimizer=quality_filter ? nothing : optimizer,
+        # With the quality filter on, `_generate_entry` verifies only `infeasible`
+        # requests: for the rest the quality solve is conclusive.
+        verify_optimizer=optimizer,
         # A verification escalation chain's first entry is the quality-filter
         # solver: iteration-count criteria need a single, simplex-like solve.
         optimizer=optimizer isa AbstractVector ? first(optimizer) : optimizer,
@@ -1321,7 +1333,7 @@ function generate_dataset(;
         "file_extension" => file_extension,
         "quality_filter" => quality_filter,
         "quality_criteria" => _jsonable(quality_criteria),
-        "verification" => optimizer !== nothing && !quality_filter,
+        "verification" => optimizer !== nothing,
         "max_retries" => max_retries,
         "max_feasibility_retries" => max_feasibility_retries,
     )

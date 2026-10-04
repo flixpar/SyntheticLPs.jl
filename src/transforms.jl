@@ -703,8 +703,9 @@ function aggregate_rows!(
             for (_, f, _) in members, t in f.terms
                 acc[t.variable] = get(acc, t.variable, 0.0) + t.coefficient
             end
-            largest = maximum(abs, values(acc); init=0.0)
-            terms = [MOI.ScalarAffineTerm(c, v) for (v, c) in acc if abs(c) > 1e-12 * largest]
+            # Drop only exact zeros: a tiny residual can still matter on a free or
+            # widely bounded column, and dropping it would break the implication.
+            terms = [MOI.ScalarAffineTerm(c, v) for (v, c) in acc if c != 0]
             isempty(terms) && continue
             sort!(terms; by=t -> t.variable.value)
             set = _sum_sets([s for (_, _, s) in members])
@@ -806,7 +807,8 @@ end
 
 Return a copy of `model` with its columns and rows in random order (names,
 bounds, integrality, constraint sets and the objective are copied unchanged; the
-input is not modified, and `model.ext` entries are carried over).
+input is not modified, and `model.ext` entries are carried over, with a
+[`UnitScaling`](@ref) record remapped to the copy's references).
 
 Generators create columns and rows in index order (`x[1,1], x[1,2], …`), so
 structure leaks into position: a slack basis, Dantzig/Devex tie-breaking and
@@ -840,13 +842,14 @@ function permute_model(model::Model, rng::AbstractRNG)
         vmap[x] = y
     end
     rows = _linear_rows(model)
+    rmap = Dict{ConstraintRef, ConstraintRef}()
     for i in randperm(rng, length(rows))
         c = constraint_object(rows[i])
         f = AffExpr(c.func.constant)
         for (x, a) in c.func.terms
             add_to_expression!(f, a, vmap[x])
         end
-        add_constraint(permuted, ScalarConstraint(f, c.set), name(rows[i]))
+        rmap[rows[i]] = add_constraint(permuted, ScalarConstraint(f, c.set), name(rows[i]))
     end
     sense = objective_sense(model)
     if sense != MOI.FEASIBILITY_SENSE
@@ -858,5 +861,21 @@ function permute_model(model::Model, rng::AbstractRNG)
         set_objective(permuted, sense, f)
     end
     merge!(permuted.ext, model.ext)
+    # The scaling record is keyed by references, which are new in the copy (entries
+    # for columns or rows deleted since scaling are dropped).
+    sc = get(model.ext, :SyntheticLPs_unit_scaling, nothing)
+    if sc isa UnitScaling
+        permuted.ext[:SyntheticLPs_unit_scaling] = UnitScaling(
+            Dict{VariableRef, Float64}(
+                vmap[x] => s for (x, s) in sc.column_scale if haskey(vmap, x)
+            ),
+            Dict{ConstraintRef, Float64}(
+                rmap[c] => r for (c, r) in sc.row_scale if haskey(rmap, c)
+            ),
+            sc.objective_scale,
+            sc.column_exponents,
+            sc.row_exponents,
+        )
+    end
     return permuted
 end
