@@ -27,7 +27,8 @@ penalty, except clinically urgent cases, which are mandatory.
 # Model
 
   - `assign[a] ∈ {0,1}` for each admissible `(surgery, room, day)` triple;
-  - `postpone[i] ∈ {0,1}` per surgery (fixed to 0 for mandatory/urgent cases);
+  - `postpone[i] ∈ {0,1}` per non-mandatory surgery (mandatory cases get no
+    postponement column at all, rather than a column fixed to zero);
   - `overtime[q] ∈ [0, max_overtime]` per open block.
 
 Minimize total postponement penalty plus overtime cost, subject to:
@@ -42,13 +43,23 @@ For `feasible` instances a greedy earliest-deadline/best-fit schedule is
 constructed first; mandatory urgent cases are then designated from cases in
 that schedule, so urgency is never weakened to repair feasibility. The
 assignment is stored in `feasible_witness` as admissible-triple indices — a
-provably feasible point. For `infeasible` instances one surgery is
-made mandatory and its surgeon's budgets are shrunk so the budgeted minutes
-over the surgery's admissible days total less than its duration; summing that
-surgeon's day rows contradicts the mandatory assignment row already in the LP
-relaxation (`infeasible_surgery` records the case). For `unknown`, no witness
-is built and urgent cases stay mandatory regardless, so feasibility is
-genuinely uncertain (usually feasible when the list fits comfortably).
+provably feasible point. Every status designates its urgent (mandatory)
+cases from such a plan, so no urgent case is ever stranded. For `infeasible`
+instances a surgeon overload is planted on top ([`SurgeonOverloadCertificate`],
+`infeasibility_certificate`): three or more of one surgeon's cases, each
+admissible on two or three shared days and fitting each of them, become
+mandatory while every one of those days is budgeted only the longest case, so
+the total budget is at most 90% of the cases' minutes. Summing the surgeon's
+budget rows against the cases' assignment rows refutes the LP relaxation, but
+no single row is contradictory and no bound is tightened, so presolve does not
+see it. For `unknown`, urgent referrals - a random 0-100% of the cases the plan
+could not place that fit at least two days on their own - are added
+([`_orsched_add_referrals!`]); whether the LP can still fit everything depends
+on the slack the greedy plan left, so both outcomes occur.
+
+The hospital grows with the target from 2,500 variables up (about
+`sqrt(target * specialties / 150)` rooms, see [`_orsched_hospital_scale`]), and the surgeon
+pool with the waiting list, so the list stays proportionate to OR capacity.
 
 # Fields
 
@@ -72,8 +83,8 @@ genuinely uncertain (usually feasible when the list fits comfortably).
   - `open_blocks::Vector{Tuple{Int,Int}}`: open `(room, day)` blocks (overtime indices)
   - `feasible_witness::Union{Nothing,Vector{Int}}`: triple indices of the planted
     feasible schedule (only for `feasible` instances)
-  - `infeasible_surgery::Union{Nothing,Int}`: the mandatory surgery of the
-    infeasibility certificate (only for `infeasible` instances)
+  - `infeasibility_certificate::Union{Nothing,SurgeonOverloadCertificate}`
+    (only for `infeasible` instances)
   - `feasibility_status::FeasibilityStatus`: resolved feasibility status
 """
 struct ElectiveSurgeryAssignmentProblem <: ProblemGenerator
@@ -101,7 +112,7 @@ struct ElectiveSurgeryAssignmentProblem <: ProblemGenerator
     admissible::Vector{Tuple{Int, Int, Int}}
     open_blocks::Vector{Tuple{Int, Int}}
     feasible_witness::Union{Nothing, Vector{Int}}
-    infeasible_surgery::Union{Nothing, Int}
+    infeasibility_certificate::Union{Nothing, SurgeonOverloadCertificate}
     feasibility_status::FeasibilityStatus
 end
 
@@ -148,7 +159,7 @@ end
     ElectiveSurgeryAssignmentProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
 Construct an elective surgery assignment instance near `target_variables`
-decision variables (`|admissible| + n_surgeries + |open_blocks|`). The
+decision variables (`|admissible| + #non-mandatory + |open_blocks|`). The
 constructor iterates over waiting-list sizes, computing the exact variable
 count of each sampled instance, and keeps the closest one.
 
@@ -178,7 +189,7 @@ function ElectiveSurgeryAssignmentProblem(
         spec_ids = _orsched_case_mix(rng, n_specs)
         mss, session = _orsched_master_schedule(rng, n_rooms, n_days, spec_ids)
         wl = _orsched_waiting_list(
-            rng, n_surgeries, spec_ids, n_days; allow_urgent=feasibility_status != feasible
+            rng, n_surgeries, spec_ids, n_days; allow_urgent=false
         )
         counts = [count(==(k), wl.specialty) for k in 1:n_specs]
         surgeon_specialty, surgeon_budget = _orsched_surgeon_pool(rng, counts, n_days, mss)
@@ -187,7 +198,10 @@ function ElectiveSurgeryAssignmentProblem(
             n_surgeries, wl.specialty, wl.deadline, surgery_surgeon, surgeon_budget, mss
         )
         open_blocks = [(r, d) for d in 1:n_days for r in 1:n_rooms if session[r, d] > 0]
-        total = length(admissible) + n_surgeries + length(open_blocks)
+        # Mandatory cases carry no postponement column: about the urgent share
+        # designated from the planted schedule.
+        n_mandatory = round(Int, wl.requested_urgent_fraction * n_surgeries)
+        total = length(admissible) + n_surgeries - n_mandatory + length(open_blocks)
         gap = abs(total - target) / target
         if gap < best_gap
             best_gap = gap
@@ -227,10 +241,32 @@ function ElectiveSurgeryAssignmentProblem(
     penalty = collect(wl.penalty)
 
     witness = nothing
-    infeasible_surgery = nothing
-    mandatory = BitVector(urgency[i] == :urgent for i in 1:n_surgeries)
+    certificate = nothing
+    # `room_fits(i, d)`: case i fits some admissible room session (with
+    # overtime) on day d on its own; `has_option[i]`: it also fits its
+    # surgeon's budget on such a day. Urgent cases without such a slot are
+    # referred elsewhere rather than made mandatory: a mandatory case that
+    # cannot fit any single slot is a one-row contradiction presolve spots,
+    # not a scheduling problem.
+    room_fit_days = [Int[] for _ in 1:n_surgeries]
+    for (i, r, d) in admissible
+        if session[r, d] + max_overtime >= wl.duration[i] + turnover && !(d in room_fit_days[i])
+            push!(room_fit_days[i], d)
+        end
+    end
+    room_fits(i, d) = d in room_fit_days[i]
+    # Referral candidates need two fitting days, so presolve cannot pin them.
+    has_option = [
+        count(surgeon_budget[surgery_surgeon[i], d] >= wl.duration[i] for d in room_fit_days[i]) >= 2
+        for i in 1:n_surgeries
+    ]
+    mandatory = BitVector(urgency[i] == :urgent && has_option[i] for i in 1:n_surgeries)
 
-    if feasibility_status == feasible
+    let
+        # The urgent list is designated from a greedy plan that respects every
+        # capacity (for every status), so for `feasible` the plan is a witness.
+        # For `unknown`, referrals add urgent cases the plan could not place;
+        # for `infeasible`, the surgeon overload is planted on top.
         # Plant a schedule first and then designate mandatory cases from the
         # scheduled set.  Clinical urgency is never weakened to repair the
         # heuristic.
@@ -257,35 +293,27 @@ function ElectiveSurgeryAssignmentProblem(
         mandatory = _orsched_designate_mandatory!(
             rng, urgency, deadline, penalty, assignment, wl.requested_urgent_fraction
         )
-        witness = [assignment[i] for i in 1:n_surgeries if assignment[i] > 0]
-    elseif feasibility_status == infeasible
-        # Pick the longest surgery with at least one admissible triple, make it
-        # mandatory, and shrink its surgeon's budgets so the budgeted minutes
-        # over its admissible days sum to less than its duration — an LP-level
-        # contradiction with the mandatory assignment row.
-        candidates = [i for i in 1:n_surgeries if any(t[1] == i for t in admissible)]
-        if isempty(candidates)
-            # Repair one option without changing urgency: expose its surgeon on
-            # a matching MSS day, then use that case for the explicit certificate.
-            deadline[1] = n_days
-            matching_days = [d for d in 1:n_days if any(mss[:, d] .== wl.specialty[1])]
-            surgeon_budget[surgery_surgeon[1], first(matching_days)] = wl.duration[1]
-            admissible = _elective_admissible_triples(
-                n_surgeries, wl.specialty, deadline, surgery_surgeon, surgeon_budget, mss
-            )
-            candidates = [i for i in 1:n_surgeries if any(t[1] == i for t in admissible)]
+        if feasibility_status == feasible
+            witness = [assignment[i] for i in 1:n_surgeries if assignment[i] > 0]
+        elseif feasibility_status == unknown
+            _orsched_add_referrals!(rng, mandatory, urgency, penalty, assignment, has_option)
         end
-        victim = candidates[argmax([wl.duration[i] for i in candidates])]
-        surgeon = surgery_surgeon[victim]
-        working_days = unique([t[3] for t in admissible if t[1] == victim])
-        _orsched_inject_surgeon_shortage!(
-            surgeon_budget, surgeon, wl.duration[victim], working_days
-        )
-        urgency[victim] = :urgent
-        mandatory[victim] = true
-        infeasible_surgery = victim
-        admissible = _elective_admissible_triples(
-            n_surgeries, wl.specialty, deadline, surgery_surgeon, surgeon_budget, mss
+    end
+    if feasibility_status == infeasible
+        case_days = [Int[] for _ in 1:n_surgeries]
+        for (i, _, d) in admissible
+            d in case_days[i] || push!(case_days[i], d)
+        end
+        certificate = _orsched_plant_surgeon_overload!(
+            rng,
+            surgeon_budget,
+            surgery_surgeon,
+            wl.duration,
+            case_days,
+            room_fits,
+            mandatory,
+            urgency,
+            penalty,
         )
     end
 
@@ -314,7 +342,7 @@ function ElectiveSurgeryAssignmentProblem(
         admissible,
         open_blocks,
         witness,
-        infeasible_surgery,
+        certificate,
         feasibility_status,
     )
 end
@@ -339,7 +367,9 @@ function build_model(prob::ElectiveSurgeryAssignmentProblem)
     open_index = Dict(q => idx for (idx, q) in enumerate(prob.open_blocks))
 
     @variable(model, assign[1:n_adm], Bin)
-    @variable(model, postpone[1:n_surgeries], Bin)
+    # Mandatory (clinically urgent) cases get no postponement column.
+    optional = [i for i in 1:n_surgeries if !prob.mandatory[i]]
+    @variable(model, postpone[optional], Bin)
     @variable(model, 0 <= overtime[1:n_open] <= prob.max_overtime)
 
     # Index the admissible triples by surgery, by block, and by (surgeon, day).
@@ -354,12 +384,9 @@ function build_model(prob::ElectiveSurgeryAssignmentProblem)
 
     # Each surgery is either assigned to exactly one admissible block or postponed.
     for i in 1:n_surgeries
-        @constraint(model, sum(assign[a] for a in by_surgery[i]; init=0.0) + postpone[i] == 1)
-    end
-
-    # Mandatory (clinically urgent) cases may not be postponed.
-    for i in 1:n_surgeries
-        prob.mandatory[i] && @constraint(model, postpone[i] == 0)
+        lhs = sum(assign[a] for a in by_surgery[i]; init=AffExpr(0.0))
+        prob.mandatory[i] || (lhs += postpone[i])
+        @constraint(model, lhs == 1)
     end
 
     # Block capacity: case durations plus turnovers fit the session, allowing
@@ -389,7 +416,7 @@ function build_model(prob::ElectiveSurgeryAssignmentProblem)
     @objective(
         model,
         Min,
-        sum(prob.postponement_penalty[i] * postpone[i] for i in 1:n_surgeries) +
+        sum(prob.postponement_penalty[i] * postpone[i] for i in optional; init=0.0) +
             prob.overtime_cost * sum(overtime[q] for q in 1:n_open)
     )
 

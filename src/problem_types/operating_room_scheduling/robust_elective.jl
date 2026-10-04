@@ -12,6 +12,14 @@ deviation.  For each open block `q`, `Gamma[q]` controls how many assigned cases
 may simultaneously realize their maximum deviation.  One `mu` variable is
 created per admissible assignment, rather than per dense surgery/room/day
 combination.
+
+Feasibility follows `elective_assignment`: `feasible` instances keep its
+planted schedule and raise each block's overtime cap to cover the witness's
+exact Γ-budget load; `infeasible` instances inherit its
+[`SurgeonOverloadCertificate`] (the robust terms only tighten block rows, and
+the certificate uses surgeon-budget rows, which carry nominal durations);
+`unknown` makes urgent cases with an admissible slot mandatory. Mandatory
+cases get no postponement column.
 """
 struct RobustElectiveSurgeryAssignmentProblem <: ProblemGenerator
     n_surgeries::Int
@@ -35,7 +43,7 @@ struct RobustElectiveSurgeryAssignmentProblem <: ProblemGenerator
     admissible::Vector{Tuple{Int, Int, Int}}
     open_blocks::Vector{Tuple{Int, Int}}
     feasible_witness::Union{Nothing, Vector{Int}}
-    infeasible_surgery::Union{Nothing, Int}
+    infeasibility_certificate::Union{Nothing, SurgeonOverloadCertificate}
     feasibility_status::FeasibilityStatus
 end
 
@@ -59,7 +67,8 @@ function RobustElectiveSurgeryAssignmentProblem(
     best_gap = Inf
     for _ in 1:16
         base = ElectiveSurgeryAssignmentProblem(base_target, feasibility_status, seed)
-        total = 2length(base.admissible) + base.n_surgeries + 2length(base.open_blocks)
+        total =
+            2length(base.admissible) + count(!, base.mandatory) + 2length(base.open_blocks)
         gap = abs(total - target) / target
         if gap < best_gap
             best_gap = gap
@@ -78,6 +87,26 @@ function RobustElectiveSurgeryAssignmentProblem(
     ]
     gamma = [rand(rng, Uniform(1.0, 3.0)) for _ in base.open_blocks]
     max_overtime = fill(base.max_overtime, length(base.open_blocks))
+
+    # A mandatory case must fit at least one admissible block on its own under
+    # the robust load (nominal + turnover + its own deviation); otherwise its
+    # assignment row is a one-row contradiction. Raise that block's overtime
+    # cap where needed (the surgeon-overload certificate does not use blocks).
+    block_of = Dict(q => k for (k, q) in enumerate(base.open_blocks))
+    options_of = [Int[] for _ in 1:base.n_surgeries]
+    for (i, r, d) in base.admissible
+        push!(options_of[i], block_of[(r, d)])
+    end
+    for i in findall(base.mandatory)
+        options = options_of[i]
+        isempty(options) && continue
+        need(q) =
+            base.surgery_duration[i] + base.turnover + min(1.0, gamma[q]) * deviation[i] -
+            base.session_length[base.open_blocks[q]...]
+        any(need(q) <= max_overtime[q] for q in options) && continue
+        q = options[argmin([need(q) for q in options])]
+        max_overtime[q] = ceil(need(q))
+    end
 
     if feasibility_status == feasible
         open_index = Dict(q => k for (k, q) in enumerate(base.open_blocks))
@@ -120,7 +149,7 @@ function RobustElectiveSurgeryAssignmentProblem(
         base.admissible,
         base.open_blocks,
         base.feasible_witness,
-        base.infeasible_surgery,
+        base.infeasibility_certificate,
         feasibility_status,
     )
 end
@@ -141,18 +170,16 @@ function build_model(prob::RobustElectiveSurgeryAssignmentProblem)
     end
 
     @variable(model, assign[1:A], Bin)
-    @variable(model, postpone[1:N], Bin)
+    optional = [i for i in 1:N if !prob.mandatory[i]]
+    @variable(model, postpone[optional], Bin)
     @variable(model, 0 <= overtime[q = 1:Q] <= prob.max_overtime[q])
     @variable(model, theta[1:Q] >= 0)
     @variable(model, mu[1:A] >= 0)
 
-    @constraint(
-        model,
-        case_assignment[i = 1:N],
-        sum(assign[a] for a in by_surgery[i]; init=0.0) + postpone[i] == 1
-    )
     for i in 1:N
-        prob.mandatory[i] && @constraint(model, postpone[i] == 0)
+        lhs = sum(assign[a] for a in by_surgery[i]; init=AffExpr(0.0))
+        prob.mandatory[i] || (lhs += postpone[i])
+        @constraint(model, lhs == 1)
     end
     for q in 1:Q
         r, d = prob.open_blocks[q]
@@ -183,7 +210,7 @@ function build_model(prob::RobustElectiveSurgeryAssignmentProblem)
     @objective(
         model,
         Min,
-        sum(prob.postponement_penalty[i] * postpone[i] for i in 1:N) +
+        sum(prob.postponement_penalty[i] * postpone[i] for i in optional; init=0.0) +
             prob.overtime_cost * sum(overtime[q] for q in 1:Q)
     )
     return model
