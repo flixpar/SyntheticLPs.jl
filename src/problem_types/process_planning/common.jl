@@ -1324,6 +1324,7 @@ end
 @enum RefineryInfeasibilityKind begin
     refinery_contract_above_conversion_bound
     refinery_specification_outside_component_range
+    refinery_crude_supply_below_contracts
 end
 
 """
@@ -1337,6 +1338,14 @@ stream balances against the yield potential `M` (the largest volume of finished
 product one barrel of a stream can ever become, computed backwards through the
 flowsheet DAG) bounds total finished production by what the crude menu, the crude
 unit and the purchased blendstocks can supply.
+
+`refinery_crude_supply_below_contracts` is the same potential argument reached
+from the supply side, and the default mode: the term contracts stay where a
+feasible plan would put them, but crude availability and blendstock purchase
+limits are curtailed (a supply disruption) until the potential-weighted supply
+falls below the contracted volume. Every grade can still be made on its own; only
+the aggregation of every stream balance over every period refutes the instance,
+so presolve's bound propagation cannot.
 
 `refinery_specification_outside_component_range` names a product whose quality
 window excludes every one of its components: with all blend coefficients of that
@@ -1836,7 +1845,8 @@ function refinery_certificate_holds(
     certificate::RefineryInfeasibilityCertificate;
     atol::Float64=1e-6,
 )
-    if certificate.kind == refinery_contract_above_conversion_bound
+    if certificate.kind in
+       (refinery_contract_above_conversion_bound, refinery_crude_supply_below_contracts)
         certificate.product == 0 || return false
         achievable = _pp_production_bound(fs, data)
         required = sum(data.demand_min)
@@ -1996,6 +2006,48 @@ function _pp_impossible_specification!(
 end
 
 """
+    _pp_curtail_crude!(rng, fs, data) -> certificate or nothing
+
+Supply disruption on a plan-sized instance: scale every crude availability and
+blendstock purchase limit by one factor so the potential-weighted supply bound
+(see [`_pp_production_bound`](@ref)) sits 6-20% below the contracted volume,
+which is left where a feasible plan put it. Crude-unit and conversion-unit
+minimum rates are scaled down with the supply so the refinery can still run at
+reduced rates; the only refutation is the aggregate one. Returns `nothing` when
+opening inventories alone come too close to the contracts for a credible
+curtailment.
+"""
+function _pp_curtail_crude!(rng::AbstractRNG, fs::RefineryFlowsheet, data::ProcessPlanData)
+    potential, crude_potential = _pp_yield_potential(fs)
+    T = data.n_periods
+    required = sum(data.demand_min)
+    opening =
+        sum(crude_potential[c] * data.crude_initial_inventory[c] for c in 1:fs.n_crudes) +
+        sum(potential[s] * data.stream_initial_inventory[s] for s in 1:n_streams(fs)) +
+        sum(data.product_initial_inventory)
+    crude_supply = sum(
+        crude_potential[c] * sum(view(data.crude_availability, c, :)) for c in 1:fs.n_crudes
+    )
+    purchase_supply = sum(
+        potential[s] * data.stream_purchase_limit[s] * T for s in fs.purchasable; init=0.0
+    )
+    wanted = required / rand(rng, Uniform(1.06, 1.20))
+    factor = (wanted - opening) / max(crude_supply + purchase_supply, eps())
+    0.15 <= factor < 1 || return nothing
+    data.crude_availability .*= factor
+    data.stream_purchase_limit .*= factor
+    for t in 1:T
+        offered = sum(view(data.crude_availability, :, t))
+        data.cdu_min_throughput[t] = min(data.cdu_min_throughput[t] * factor, 0.8 * offered)
+    end
+    data.unit_min_throughput .*= factor
+    bound = _pp_production_bound(fs, data)
+    return RefineryInfeasibilityCertificate(
+        refinery_crude_supply_below_contracts, 0, 0, false, bound, required
+    )
+end
+
+"""
     _pp_starve_contracts!(rng, fs, data) -> certificate
 
 Raise the contracted volumes until they exceed everything the refinery could
@@ -2043,7 +2095,9 @@ inventory build), and the instance data is then placed around it:
   it, sometimes just outside, never past the single best component. Whether the
   slate, the units and the specifications can serve all the contracts together is
   left genuinely open.
-- `infeasible`: the `unknown` data is then broken in one of two auditable ways —
+- `infeasible`: the plan-sized (`feasible`) data is broken in one of three
+  auditable ways — by default a crude-supply curtailment below the contracted
+  volume (an aggregate potential argument presolve cannot see), otherwise
   contracts beyond the conversion bound, or a specification outside the range of
   every admissible component.
 """
@@ -2103,7 +2157,9 @@ function _pp_plan_instance(
 
     throughput = _pp_plan_throughput(fs, plan)
     production = _pp_stream_production(fs, plan)
-    planned = status == feasible
+    # A requested-infeasible instance starts from plan-sized data too, so the
+    # recorded certificate is its only reason for infeasibility.
+    planned = status != unknown
 
     # --- crude economics -------------------------------------------------
     crude_price = zeros(Float64, C, T)
@@ -2416,15 +2472,24 @@ function _pp_plan_instance(
     )
 
     certificate = nothing
-    if status == feasible
+    if planned
         _pp_settle_specifications!(rng, fs, plan; slack_low=0.005, slack_high=0.05)
     else
-        slack_low = status == unknown ? -0.04 + 0.06 * market_position : -0.03
+        slack_low = -0.04 + 0.06 * market_position
         _pp_settle_specifications!(rng, fs, plan; slack_low=slack_low, slack_high=0.06)
     end
     if status == infeasible
-        certificate =
-            rand(rng) < 0.5 ? _pp_impossible_specification!(rng, fs, data, nameplate) : nothing
+        # Default: a crude-supply disruption only the LP aggregation exposes.
+        # Minorities: contracts above the conversion bound, or a specification
+        # outside the component range (both visible to presolve).
+        mode = rand(rng)
+        certificate = if mode < 0.7
+            _pp_curtail_crude!(rng, fs, data)
+        elseif mode < 0.85
+            _pp_impossible_specification!(rng, fs, data, nameplate)
+        else
+            nothing
+        end
         certificate === nothing && (certificate = _pp_starve_contracts!(rng, fs, data))
     end
     return data, plan, certificate

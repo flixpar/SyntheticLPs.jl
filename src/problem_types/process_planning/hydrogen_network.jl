@@ -235,9 +235,11 @@ inventory, venting, recovered sulfur, and carbon emissions.
 A requested-feasible instance sizes every added capacity and emissions cap above
 the extended planted operation, checked by
 [`refinery_hydrogen_plan_satisfies`](@ref). A requested-infeasible instance uses
-one of the base refinery's volume/specification certificates; because the
-extension only adds constraints, that certificate remains valid. Unknown data
-uses independent engineering capacities and carbon limits.
+one of the base refinery's certificates (by default the crude-supply
+curtailment); its H2/SRU/carbon system is sized around the planted operation as
+for a feasible request, and because the extension only adds constraints, the
+certificate remains valid. Unknown data uses independent engineering capacities
+and carbon limits.
 """
 function RefineryHydrogenPlanningProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
@@ -257,8 +259,16 @@ function RefineryHydrogenPlanningProblem(
     data, refinery_plan, certificate = _pp_plan_instance(
         rng, flowsheet, T, feasibility_status, mode_choice; unknown_position=_pp_seed_position(seed)
     )
+    # A requested-infeasible instance sizes its H2/SRU/carbon system around the
+    # planted operation like a feasible one, so the refinery certificate stays the
+    # only reason it fails.
     hydrogen, hydrogen_plan = _pp_hydrogen_extensions(
-        rng, flowsheet, data, refinery_plan, feasibility_status, _pp_seed_position(seed)
+        rng,
+        flowsheet,
+        data,
+        refinery_plan,
+        feasibility_status == unknown ? unknown : feasible,
+        _pp_seed_position(seed),
     )
     problem = RefineryHydrogenPlanningProblem(
         flowsheet,

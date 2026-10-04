@@ -38,7 +38,9 @@ constraints cannot be bypassed by bookkeeping variables.
 `campaign` uses a state-task network for petrochemical and fertilizer chains.
 It models fixed-ratio multi-input and co-product tasks, shared grade trains,
 minimum campaign lengths, planned turnarounds, storage, and tiered raw-material
-purchases. `capacity_expansion` covers the long-range member of the family:
+purchases. Large requests become a multi-site company: several complexes, each
+with its own chain portfolio, drawing on shared regional feedstock pools and
+selling into shared regional markets. `capacity_expansion` covers the long-range member of the family:
 selecting and expanding processes over time, following the multiperiod MILPs of
 Sahinidis, Grossmann, Fornari & Chathrathi (*Comput. Chem. Eng.* 13, 1989) and
 Sahinidis & Grossmann (*Oper. Res.* 40, 1992).
@@ -121,7 +123,7 @@ blendstocks and `n_spot` streams saleable as they are, the models have exactly
 refinery:        T * (3C + sum_u (|F_u| + 1)       + sum_p |B_p| + n_store + n_buy + n_spot + 2P)
 mode_switching:  T * (3C + sum_u M_u (|F_u| + 3)   + sum_p |B_p| + n_store + n_buy + n_spot + 2P)
 hydrogen_network: refinery + 6T
-campaign: T * (n_tasks + 2*n_campaign_tasks + n_raw*n_tiers + n_materials + n_final)
+campaign: T * (n_tasks + 2*n_campaign_tasks + n_raw*n_tiers + n_materials + n_final)   (summed over sites)
 capacity_expansion: T * (4I + n_raw + n_sell)
 ```
 
@@ -143,8 +145,21 @@ floor a small request settles on a topping or hydroskimming refinery with a
 coarse assay, and a large one on a cracking or full conversion refinery running
 parallel trains and a dozen grades. Small `mode_switching` and
 `hydrogen_network` requests use a compact diesel-hydrotreating line rather than
-silently degenerating to a topping-only model. Campaign targets through 20,000
-variables search from a minimal LDPE train to a seven-chain chemical complex.
+silently degenerating to a topping-only model.
+
+Campaign targets up to 16,000 variables search from a minimal LDPE train to a
+seven-chain chemical complex over up to 126 weekly periods. Larger targets add
+complexes — each with its own sampled portfolio of two to seven chains — until
+the company fills the target over a one-to-three-year weekly horizon, so the
+campaign model grows linearly (100k variables in well under a second, about 10
+sites) up to the package's documented cap of 1,000,000 variables
+(`MAX_CAMPAIGN_PLANNING_VARIABLES`), above which `ArgumentError` is raised. Its
+rows grow with it (about one row per variable): a balance per material and
+period, the campaign gates, starts and minimum runs, plus one pool row per
+regional feedstock and period and one ceiling row per multi-site grade and
+period. A single-task unit's capacity is a bound on its task's rate, and late
+starts are fixed to zero, so neither appears as a row. All five variants land
+within 10% of the target at 100,000 variables.
 
 ## LP Formulation
 
@@ -257,10 +272,21 @@ aromatics, polyolefins, polyester, C1 chemistry, and nitrogen fertilizers.
 Material balances connect fixed-ratio tasks over weekly periods. Multiple grade
 tasks sharing a train have mutually exclusive binary activity and startup
 variables, capacity-gated minimum rates, two-to-three-week minimum campaigns,
-and no late-horizon starts. Single-task units remain continuous. Raw materials
-are bought through one to three tiers with increasing marginal prices; annual
-seasonal demand, tank inventories, and contiguous turnaround windows couple the
-periods.
+and no late-horizon starts. Single-task units remain continuous (their capacity
+is a bound on the task rate). Raw materials are bought through one to three tiers
+with increasing marginal prices; annual seasonal demand, tank inventories, and
+contiguous turnaround windows couple the periods.
+
+Sites are coupled regionally. Every raw material is drawn from one pool shared by
+the sites that use it,
+
+```math
+\sum_{m \in g} \sum_j pur_{m,j,t} \le S_{g,t},
+```
+
+and a grade made at several sites is sold into one market,
+`Σ_{m ∈ h} sales[m,t] ≤ D_{h,t}`. A single complex has one pool row per raw
+material (when it is bought on more than one tier) and no market rows.
 
 ### `capacity_expansion`
 
@@ -301,7 +327,7 @@ operation is stored as `feasible_witness` and re-checked row by row —
 `process_expansion_plan_satisfies` for the investment model — by arithmetic
 alone.
 
-**`infeasible`.** One of two structural refutations, stored in
+**`infeasible`.** One of three structural refutations (the third, the default, is described after the first two), stored in
 `infeasibility_certificate` and re-derivable from the instance data:
 
 - *contract above the conversion bound*. Give each stream a potential `M` — the
@@ -316,15 +342,39 @@ alone.
   one-signed, so with nonnegative blend volumes the row pins the whole blend at
   zero and the contract cannot be met.
 
-`capacity_expansion` has the matching pair: one chemical's contracted sales above
-what the processes making it could produce even under the largest permitted
-expansion in every period, or the network's total contracted sales above the
-value of the raw material the market can supply (the same potential argument,
-applied to chemicals). `campaign` stores a cumulative contract above both the
-producing task's capacity bound and its direct raw-feed bound.
+A third refutation, `refinery_crude_supply_below_contracts`, is the default (about
+70% of requests): the requested-infeasible instance starts from the plan-sized
+(`feasible`) data and a crude supply disruption scales every crude availability
+and blendstock purchase limit by one factor until the potential-weighted supply
+sits 6-20% below the contracted volume, which stays where a feasible plan put
+it. Minimum rates are scaled down with the supply. Every grade can still be made
+on its own; only the aggregation of every stream balance over every period
+refutes the instance, so HiGHS presolve cannot (the contract-above-bound and
+specification modes, about 15% each, are visible to presolve).
 
-Both refinery certificates use only linear rows and each feed's best mode, so
-they refute the LP relaxation and every mode assignment at once.
+`capacity_expansion` has the matching pair. The default (80%) is a feedstock
+curtailment: each chemical carries its least raw-material content (one on every
+raw, the leanest recipe over its makers for a main product, zero on byproducts —
+a valid dual since no process creates content), and every raw is offered only
+`kappa_star / (1.06-1.20)` times what the reference plan buys, where
+`kappa_star` is the level at which the content-weighted contracts meet the
+market. The minority mode puts one chemical's contracts above what the processes
+making it could produce under the largest permitted expansion in every period.
+Only finished chemicals are sold forward; intermediates and byproducts move on
+the spot market without a floor.
+
+`campaign` defaults (80%) to a feedstock-pool shortfall: each material carries
+its least content of one pooled raw material (one on the pool's raws, zero on
+other raws, each task's feed content spread over its output mass), and the
+pool's supply is curtailed until the content-weighted term contracts of every
+site exceed opening stocks plus the pool's supply over the horizon by 6-15%. The
+minority mode stores a cumulative contract above both the producing task's
+capacity bound and its direct raw-feed bound.
+
+Every certificate uses only linear rows (and each feed's best mode), so it
+refutes the LP relaxation and every mode or campaign assignment at once, and is
+re-checked by `refinery_certificate_holds`, `campaign_certificate_holds` and
+`process_expansion_certificate_holds`.
 
 **`unknown`.** Assets are sized from engineering design rules — a unit's typical
 fraction of crude charge, a tank's typical days of cover — rather than from the
@@ -333,7 +383,13 @@ produced; and each quality window is stated at the edge of what the configuratio
 supports, sometimes just inside it and sometimes just outside. A low-discrepancy
 position derived from the seed moves refinery supply, demand, specification
 slack, and H2/environmental capacity together from stressed to accommodating
-conditions; campaign and expansion variants use analogous market scenarios.
+conditions. `campaign` and `capacity_expansion` place every local row around a
+planted plan exactly as for a feasible request, then set the feedstock market
+(every regional pool, or every raw material) between its critical level — where
+the content bound meets the contracts — and the plan's own purchases, by a
+share that follows the same seed position (`market_scenario`). A negative share
+is infeasible by the certificate argument; a share near one nearly restores the
+plan; in between, capacity, campaign, co-product and inventory rows decide.
 No grade is made unmakeable on its own (that is the requested-infeasible branch's
 business), but whether all coupled requirements can be served remains genuinely
 open. Solver audits observe both outcomes for every variant across seeds and
@@ -349,7 +405,7 @@ scales.
   default `relax_integer=true` they are returned as LP relaxations. The planted
   witnesses are integral, so they remain feasible for the integer models.
 - All five objectives maximize; all variables are bounded, so no instance is
-  unbounded. Implied bounds (no crude charged beyond the crude unit's capacity,
+  unbounded. The refinery-family objectives are in thousands of dollars. Implied bounds (no crude charged beyond the crude unit's capacity,
   no feed beyond its unit's, nothing blended into a grade beyond what it can sell
   or store) are stated explicitly: they cut nothing off, and a simplex given them
   does not have to discover them.
@@ -368,6 +424,11 @@ scales.
   cold flow, viscosity index)`. Sulfur is carried in weight ppm and is the only
   weight-basis property; RVP uses the Chevron index, and viscosity is carried as
   a blending index so both specifications remain linear.
+- HiGHS's dual simplex occasionally aborts with "excessive dual values"
+  (`OTHER_ERROR`) while proving a requested-infeasible refinery-family LP
+  infeasible — a few percent of requests, observed before and after the
+  curtailment mode was added. Primal simplex, the interior-point method, or
+  presolve off all certify the same models infeasible.
 - A relaxation of `mode_switching` or `campaign` is not an operating plan: a
   fractional mode mixture or grade campaign has no plant-floor meaning. Solve it unrelaxed
   (`relax_integer=false`) if you need a plan rather than a bound.

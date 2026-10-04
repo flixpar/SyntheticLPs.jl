@@ -625,15 +625,17 @@ function build_model(prob::MaritimeInventoryRoutingProblem)
         ) + sum(prob.holding_cost[c] * inventory[c, t] for c in 1:C, t in 1:T)
     )
 
+    # Period-0 state is data: fix it as variable bounds rather than emitting
+    # singleton equality rows (which presolve would only turn into bounds).
     for v in 1:V
-        @constraint(model, location[v, 1, 0] == 1)
+        fix(location[v, 1, 0], 1.0)
         for p in 2:P
-            @constraint(model, location[v, p, 0] == 0)
+            fix(location[v, p, 0], 0.0)
         end
-        @constraint(model, load[v, 0] == prob.initial_load[v])
+        fix(load[v, 0], prob.initial_load[v]; force=true)
     end
     for c in 1:C
-        @constraint(model, inventory[c, 0] == prob.initial_inventory[c])
+        fix(inventory[c, 0], prob.initial_inventory[c]; force=true)
     end
 
     for v in 1:V, t in 1:T

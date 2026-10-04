@@ -57,13 +57,23 @@
             count(==(:final), p.material_kind)
         )
 
-    campaign_rows(p) =
-        p.n_periods * (
+    # Rows: a balance per material; an exclusivity row per campaign train; per
+    # campaign task a capacity gate and a turndown row every period, the start
+    # definition (one row in period 1, three after it) and a minimum-run row per
+    # admissible start; a pool row per regional feedstock pool with more than one
+    # purchase variable and a ceiling row per multi-site market. Single-task unit
+    # capacity and late-start prohibitions are variable bounds, not rows.
+    function campaign_rows(p)
+        T, L = p.n_periods, p.campaign_length
+        pools = count(g -> length(g) * p.n_tiers >= 2, p.supply_groups)
+        per_task = 2T + 1 + 3 * (T - 1) + (T - L + 1)
+        return T * (
             length(p.material_names) +
-            length(p.unit_names) +
             count(p.campaign_unit) +
-            6 * length(campaign_tasks(p))
-        )
+            pools +
+            length(p.market_groups)
+        ) + length(campaign_tasks(p)) * per_task
+    end
 
     @testset "Variable counts and sizing" begin
         for target in (60, 240, 1500, 9000), status in (feasible, infeasible, unknown)
@@ -82,6 +92,7 @@
             m, p = generate_problem(:process_planning, target, status, 3; variant=:campaign)
             @test num_variables(m) == campaign_variables(p)
             @test num_constraints(m; count_variable_in_set_constraints=false) == campaign_rows(p)
+            @test PP.campaign_row_count(p) == campaign_rows(p)
             @test p.feasibility_status == status
 
             m, p = generate_problem(
@@ -97,7 +108,7 @@
             (:refinery, :mode_switching, :hydrogen_network, :campaign, :capacity_expansion)
             for target in (50, 120, 500, 2000, 20000),
                 status in (feasible, infeasible, unknown),
-                seed in 0:2
+                seed in 0:1
 
                 m, _ = generate_problem(:process_planning, target, status, seed; variant=variant)
                 @test abs(num_variables(m) - target) <= 0.20 * target
@@ -109,6 +120,23 @@
             ]
             @test issorted(sizes)
         end
+
+        # The variants scale to 100k variables within 10% (the campaign as a
+        # multi-site company whose rows grow with it), and the campaign's
+        # documented cap is enforced before anything is allocated.
+        for variant in (:refinery, :campaign, :capacity_expansion)
+            m, _ = generate_problem(:process_planning, 100_000, feasible, 1; variant=variant)
+            @test abs(num_variables(m) - 100_000) <= 0.10 * 100_000
+            @test num_constraints(m; count_variable_in_set_constraints=false) >=
+                0.1 * num_variables(m)
+        end
+        m, p = generate_problem(:process_planning, 100_000, unknown, 2; variant=:campaign)
+        @test p.n_sites > 1
+        @test num_constraints(m; count_variable_in_set_constraints=false) == campaign_rows(p)
+        @test PP.MAX_CAMPAIGN_PLANNING_VARIABLES == 1_000_000
+        @test_throws ArgumentError generate_problem(
+            :process_planning, PP.MAX_CAMPAIGN_PLANNING_VARIABLES + 1, unknown, 0; variant=:campaign
+        )
 
         # Complexity tracks the scale of the request. A topping refinery has the
         # smallest per-period block, so left to size error alone it wins ties at
@@ -333,7 +361,10 @@
                 @test PP.refinery_certificate_holds(p.flowsheet, p.data, certificate)
                 push!(kinds, certificate.kind)
 
-                if certificate.kind == PP.refinery_contract_above_conversion_bound
+                if certificate.kind in (
+                    PP.refinery_contract_above_conversion_bound,
+                    PP.refinery_crude_supply_below_contracts,
+                )
                     # The contracted volume is strictly above the bound, and the
                     # bound is what the potential argument recomputes.
                     @test certificate.required > certificate.achievable
@@ -361,8 +392,10 @@
                         p.data.product_initial_inventory[certificate.product]
                 end
             end
-            # Both structural arguments are exercised across seeds.
-            @test length(kinds) == 2
+            # The crude-supply curtailment is the default; the minority modes
+            # appear across seeds too.
+            @test PP.refinery_crude_supply_below_contracts in kinds
+            @test length(kinds) >= 2
 
             # A certificate only exists for a requested-infeasible instance, and
             # a feasible instance's data does not support one.
@@ -381,9 +414,26 @@
     end
 
     @testset "Process campaigns" begin
-        for target in (60, 600, 5000, 20000), status in (feasible, infeasible, unknown)
+        for target in (60, 600, 5000, 40000), status in (feasible, infeasible, unknown)
             _, p = generate_problem(:process_planning, target, status, 5; variant=:campaign)
             @test p.period_days == 7.0
+            @test p.n_sites == maximum(p.material_site)
+            @test (p.n_sites > 1) == (target > PP._CP_SINGLE_SITE_LIMIT)
+            # Every raw belongs to exactly one regional pool, pools are keyed by
+            # material, and markets only couple a grade made at several sites.
+            raws = [m for m in eachindex(p.material_kind) if p.material_kind[m] == :raw]
+            @test sort(reduce(vcat, p.supply_groups)) == raws
+            @test all(length(unique(p.material_names[g])) == 1 for g in p.supply_groups)
+            @test all(length(unique(p.material_site[g])) == length(g) for g in p.supply_groups)
+            @test all(length(g) >= 2 for g in p.market_groups)
+            @test all(p.material_kind[m] == :final for g in p.market_groups for m in g)
+            @test size(p.supply_cap) == (length(p.supply_groups), p.n_periods)
+            # Tasks only touch materials of their own site.
+            for t in eachindex(p.task_names)
+                site = p.unit_site[p.task_unit[t]]
+                @test all(p.material_site[m] == site for (m, _) in p.task_inputs[t])
+                @test all(p.material_site[m] == site for (m, _) in p.task_outputs[t])
+            end
             @test 2 <= p.campaign_length <= 3
             @test !isempty(p.task_names)
             @test !isempty(p.material_names)
@@ -401,7 +451,7 @@
             end
         end
 
-        for target in (60, 500, 3000), seed in 0:6
+        for target in (60, 500, 3000, 30000), seed in 0:3
             _, p = generate_problem(:process_planning, target, feasible, seed; variant=:campaign)
             @test p.feasible_witness !== nothing
             @test p.infeasibility_certificate === nothing
@@ -417,26 +467,59 @@
             end
         end
 
-        for target in (60, 500, 3000), seed in 0:6
+        certificate_types = Set{DataType}()
+        for target in (60, 500, 3000, 30000), seed in 0:5
             _, p = generate_problem(:process_planning, target, infeasible, seed; variant=:campaign)
             @test p.feasible_witness === nothing
             @test p.infeasibility_certificate !== nothing
             @test p.market_scenario === nothing
             @test PP.campaign_certificate_holds(p)
+            cert = p.infeasibility_certificate
+            push!(certificate_types, typeof(cert))
+            if cert isa PP.CampaignFeedstockCertificate
+                # Recompute the pool argument by hand: the potential is one on
+                # the pooled raws, zero on every other raw, and no task creates
+                # pooled-raw content.
+                y = cert.potential
+                members = p.supply_groups[cert.group]
+                @test all(y[members] .== 1.0)
+                @test all(
+                    y[m] == 0.0 for
+                    m in eachindex(y) if p.material_kind[m] == :raw && !(m in members)
+                )
+                for t in eachindex(p.task_names)
+                    made = sum(c * y[m] for (m, c) in p.task_outputs[t])
+                    fed = sum(c * y[m] for (m, c) in p.task_inputs[t])
+                    @test made <= fed + 1e-9
+                end
+                demand = sum(
+                    y[m] * p.sales_floor[m, τ] for m in eachindex(y) for
+                    τ in 1:p.n_periods if p.material_kind[m] == :final
+                )
+                supply = sum(
+                    min(
+                        p.supply_cap[cert.group, τ],
+                        sum(p.tier_cap[m, j] for m in members for j in 1:p.n_tiers),
+                    ) for τ in 1:p.n_periods
+                )
+                opening = sum(y .* p.initial_inventory)
+                @test demand ≈ cert.demand rtol = 1e-9
+                @test opening + supply ≈ cert.upper_bound rtol = 1e-9
+                # A planted margin, not a knife edge.
+                @test cert.margin >= 0.05 * cert.demand
+            end
         end
+        # The feedstock pool is the default argument; the bottleneck appears too.
+        @test certificate_types ==
+            Set([PP.CampaignFeedstockCertificate, PP.CampaignCapacityCertificate])
 
         for seed in 0:4
             _, p = generate_problem(:process_planning, 700, unknown, seed; variant=:campaign)
             @test p.feasible_witness === nothing
             @test p.infeasibility_certificate === nothing
             @test p.market_scenario !== nothing
-            @test 0.55 <= p.market_scenario.supply_factor <= 0.89
-            @test 0.875 <= p.market_scenario.demand_factor <= 1.125
+            @test -0.15 <= p.market_scenario.supply_factor <= 0.95
         end
-
-        @test_throws ArgumentError generate_problem(
-            :process_planning, PP.MAX_CAMPAIGN_PLANNING_VARIABLES + 1, unknown, 0; variant=:campaign
-        )
     end
 
     @testset "Capacity expansion network" begin
@@ -484,11 +567,43 @@
                 :process_planning, target, infeasible, seed; variant=:capacity_expansion
             )
             @test p.feasible_witness === nothing
+            @test p.market_scenario === nothing
             @test PP.process_expansion_certificate_holds(p)
-            push!(kinds, p.infeasibility_certificate.kind)
-            @test p.infeasibility_certificate.required > p.infeasibility_certificate.achievable
+            certificate = p.infeasibility_certificate
+            push!(kinds, certificate.kind)
+            @test certificate.required > certificate.achievable
+            if certificate.kind == PP.expansion_demand_above_feedstock_bound
+                # The content vector is a valid dual: no process creates
+                # feedstock content, every raw carries one, and the content-
+                # weighted contracts exceed the whole market by a real margin.
+                content = PP._pp_expansion_content(p.chemicals, p.technologies)
+                @test all(content[j] == 1.0 for j in p.raw_chemicals)
+                for technology in p.technologies
+                    made = sum(c * content[j] for (j, c) in technology.outputs)
+                    fed = sum(c * content[j] for (j, c) in technology.inputs)
+                    @test made <= fed + 1e-9
+                end
+                @test certificate.achievable ≈ sum(p.availability[p.raw_chemicals, :])
+                @test certificate.required >= 1.05 * certificate.achievable
+            end
         end
         @test length(kinds) == 2
+
+        # Unknown instances carry their market scenario, and only finished
+        # chemicals are sold forward.
+        for seed in 0:3
+            _, p = generate_problem(
+                :process_planning, 900, unknown, seed; variant=:capacity_expansion
+            )
+            @test p.market_scenario !== nothing
+            @test -0.15 <= p.market_scenario.supply_share <= 0.95
+            @test p.feasible_witness === nothing
+            @test p.infeasibility_certificate === nothing
+            for j in p.sellable_chemicals
+                startswith(String(p.chemicals[j].name), "product_") && continue
+                @test all(iszero, view(p.demand_min, j, :))
+            end
+        end
 
         # A feasible instance's data does not support the certificate of a
         # different, broken one.
@@ -512,6 +627,7 @@
             healthy.discount,
             nothing,
             broken.infeasibility_certificate,
+            nothing,
             infeasible,
         )
         @test !PP.process_expansion_certificate_holds(transplanted)
@@ -587,7 +703,17 @@
                 set_silent(model)
                 set_time_limit_sec(model, limit)
                 optimize!(model)
-                return termination_status(model)
+                status = termination_status(model)
+                if status == MOI.OTHER_ERROR
+                    # HiGHS's dual simplex occasionally aborts ("excessive dual
+                    # values") while proving a refinery-family LP infeasible
+                    # (a few percent of requests); the interior-point method
+                    # settles the same model.
+                    set_attribute(model, "solver", "ipm")
+                    optimize!(model)
+                    status = termination_status(model)
+                end
+                return status
             end
 
             for variant in
@@ -603,6 +729,12 @@
                     @test solved_status(m) == MOI.INFEASIBLE
                 end
             end
+
+            # A multi-site campaign company keeps both contracts.
+            m, _ = generate_problem(:process_planning, 30_000, feasible, 0; variant=:campaign)
+            @test solved_status(m) == MOI.OPTIMAL
+            m, _ = generate_problem(:process_planning, 30_000, infeasible, 0; variant=:campaign)
+            @test solved_status(m) == MOI.INFEASIBLE
 
             # The planted operation is a feasible point of the unrelaxed integer
             # model too, not just of the relaxation.

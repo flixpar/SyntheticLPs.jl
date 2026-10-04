@@ -31,6 +31,29 @@ struct NetworkPlanningInfeasibilityCertificate
     margin::Float64
 end
 
+"""
+Network-wide shared-resource certificate (the default infeasible mode). Through
+period `period`, every unit of product `k` delivered must have been produced
+unless it came from initial stock (inventory stays nonnegative), and producing
+one unit of `k` consumes at least `min_resource_use[k]` of a plant's shared
+resource. Summing the `resource_capacity` rows of every plant over periods
+`1:period` therefore needs at least
+`required_resource = Σ_k min_resource_use[k] * max(0, cumulative_demand[k] - initial_stock[k])`,
+while those rows allow at most `available_resource`; `margin` is the positive
+difference. The contradiction aggregates `n_plants * period` capacity rows with
+every demand and inventory-balance row, so presolve cannot see it from any
+single row — simplex has to discover it.
+"""
+struct NetworkPlanningResourceCertificate
+    period::Int
+    cumulative_demand::Vector{Float64}
+    initial_stock::Vector{Float64}
+    min_resource_use::Vector{Float64}
+    required_resource::Float64
+    available_resource::Float64
+    margin::Float64
+end
+
 struct NetworkPlanningDisruption
     period::Int
     plant::Int
@@ -99,7 +122,9 @@ struct SupplyChainNetworkPlanningProblem <: ProblemGenerator
     shipment_cost::Dict{NTuple{4, Int}, Float64}
     lane_capacity::Dict{NTuple{4, Int}, Float64}
     feasible_witness::Union{Nothing, NetworkPlanningWitness}
-    infeasibility_certificate::Union{Nothing, NetworkPlanningInfeasibilityCertificate}
+    infeasibility_certificate::Union{
+        Nothing, NetworkPlanningInfeasibilityCertificate, NetworkPlanningResourceCertificate
+    }
     disruption::Union{Nothing, NetworkPlanningDisruption}
     nominal_scenario::Union{Nothing, NetworkPlanningNominalScenario}
 end
@@ -113,17 +138,59 @@ function _network_period_range(profile::Symbol)
     return 4:7
 end
 
-function _network_density(profile::Symbol)
-    profile == :regional_stable && return (0.30, 0.46)
-    profile == :seasonal_prebuild && return (0.24, 0.38)
-    return (0.16, 0.30)
+"""
+    _network_degree_range(profile) -> (lo, hi)
+
+Target range for the average number of candidate supplying plants (shipment
+arcs) per `(customer, product, period)` demand node. The range is absolute, not
+a fraction of the plant count: a fractional density let the dimension search
+pair a handful of plants with thousands of customers at an average degree near
+one, so almost every demand row was a singleton that fixed its only shipment and
+HiGHS presolve removed the entire model (the 50k collapse in the wave-2 audit).
+"""
+function _network_degree_range(profile::Symbol)
+    profile == :regional_stable && return (3.0, 5.0)
+    profile == :seasonal_prebuild && return (2.8, 4.6)
+    return (2.6, 4.2)
 end
+
+"""
+    _network_max_degree(profile, n_plants)
+
+Maximum number of shipment arcs into one demand node (`n_plants` caps it).
+"""
+_network_max_degree(profile::Symbol, n_plants::Int) =
+    min(n_plants, profile == :disruption ? 6 : 7)
+
+"""
+    _network_min_degree(arc_budget, demand_nodes, n_plants)
+
+Every demand node first receives this many arcs (its best-scored plants) before
+the remaining budget is spread by score. Two lanes per node whenever the budget
+allows keeps demand rows from being singletons, which presolve would otherwise
+eliminate together with their shipment column.
+"""
+_network_min_degree(arc_budget::Int, demand_nodes::Int, n_plants::Int) =
+    clamp(fld(arc_budget, max(demand_nodes, 1)), 1, min(2, n_plants))
+
+"""
+    _network_ideal_plants(target)
+
+Preferred plant count for a target: production networks grow with the problem
+(≈15 plants at 1k variables, ≈30 at 10k, ≈55 at 100k, capped at 80) so the
+production/inventory block and the resource rows grow with the instance instead
+of a handful of plants feeding thousands of customers.
+"""
+_network_ideal_plants(target::Int) = clamp(round(Int, 2.2 * Float64(target)^0.28), 2, 80)
 
 """
 Choose dimensions and an exact sparse-arc budget. The search counts the two
 dense plant/product/time blocks and every shipment variable that will actually
 be created. Customer candidates are computed analytically, avoiding a scan
-whose size grows with the requested target.
+whose size grows with the requested target. Candidates are ranked by size
+error, then by how far the average arc degree falls outside the profile's
+absolute degree range, then by shape (plant count near
+`_network_ideal_plants`, more products and periods at larger targets).
 """
 function _choose_network_planning_dimensions(target_variables::Int, profile::Symbol)
     target_variables <= MAX_NETWORK_PLANNING_VARIABLES || throw(
@@ -134,18 +201,25 @@ function _choose_network_planning_dimensions(target_variables::Int, profile::Sym
         ),
     )
     target = max(target_variables, 1)
-    density_lo, density_hi = _network_density(profile)
-    density_mid = (density_lo + density_hi) / 2
-    best_score = (typemax(Int), Inf, typemax(Int), typemax(Int))
-    best = (2, 2, 2, first(_network_period_range(profile)), 1)
+    degree_lo, degree_hi = _network_degree_range(profile)
+    degree_mid = (degree_lo + degree_hi) / 2
+    ideal_plants = _network_ideal_plants(target)
+    ideal_products = clamp(round(Int, 1.0 + 0.9 * log10(target)), 2, 6)
+    period_range = _network_period_range(profile)
+    ideal_periods = clamp(
+        round(Int, first(period_range) + 0.6 * log10(target) - 1.2), first(period_range),
+        last(period_range),
+    )
+    best_score = (typemax(Int), Inf, Inf)
+    best = (2, 2, 2, first(period_range), 1)
 
-    for n_periods in _network_period_range(profile), n_products in 2:5, n_plants in 2:20
+    plant_lo = 2
+    plant_hi = min(80, round(Int, 1.5 * ideal_plants) + 1)
+    for n_periods in period_range, n_products in 2:6, n_plants in plant_lo:plant_hi
         dense_vars = 2 * n_plants * n_products * n_periods
-        max_degree = min(n_plants, max(2, ceil(Int, density_hi * n_plants)))
-        expected_degree = clamp(density_mid * n_plants, 1.0, max_degree)
-        denominators = (1.0, expected_degree, Float64(max_degree))
+        max_degree = _network_max_degree(profile, n_plants)
         customer_candidates = Set([2])
-        for degree in denominators
+        for degree in (1.0, clamp(degree_mid, 1.0, max_degree), Float64(max_degree))
             estimate = (target - dense_vars) / (n_products * n_periods * degree)
             for delta in -2:2
                 push!(customer_candidates, max(2, round(Int, estimate) + delta))
@@ -163,9 +237,14 @@ function _choose_network_planning_dimensions(target_variables::Int, profile::Sym
             arc_budget = clamp(target - dense_vars, demand_nodes, max_arcs)
             delivered = dense_vars + arc_budget
             size_error = abs(delivered - target)
-            density_error = abs(arc_budget / (n_plants * demand_nodes) - density_mid)
-            shape_penalty = abs(n_customers - 3 * n_plants)
-            score = (size_error, density_error, 0, shape_penalty)
+            average_degree = arc_budget / demand_nodes
+            degree_error = max(0.0, degree_lo - average_degree, average_degree - degree_hi)
+            shape_penalty =
+                abs(n_plants - ideal_plants) / ideal_plants +
+                abs(n_products - ideal_products) / ideal_products +
+                abs(n_periods - ideal_periods) / ideal_periods +
+                (n_customers < n_plants ? 1.0 : 0.0)
+            score = (size_error, round(degree_error; digits=1), shape_penalty)
             if score < best_score
                 best_score = score
                 best = (n_plants, n_customers, n_products, n_periods, arc_budget)
@@ -276,8 +355,9 @@ function _network_arcs(
     disruption_period::Int,
     disrupted_plant::Int,
 )
-    _, density_hi = _network_density(profile)
-    max_degree = min(n_plants, max(2, ceil(Int, density_hi * n_plants)))
+    max_degree = _network_max_degree(profile, n_plants)
+    demand_nodes = n_customers * n_products * n_periods
+    min_degree = _network_min_degree(arc_budget, demand_nodes, n_plants)
     arcs = NTuple{4, Int}[]
     extras = Tuple{Float64, NTuple{4, Int}}[]
     degree = Dict{Tuple{Int, Int, Int}, Int}()
@@ -301,10 +381,14 @@ function _network_arcs(
             push!(scored, (distance + region_penalty + specialist_penalty + time_jitter, p))
         end
         sort!(scored)
-        primary = (scored[1][2], c, k, t)
-        push!(arcs, primary)
-        degree[node] = 1
-        for (score, p) in scored[2:end]
+        # Guaranteed lanes: the node's `min_degree` best-scored plants. The
+        # remaining candidates compete globally for the rest of the budget.
+        guaranteed = min(min_degree, length(scored))
+        for i in 1:guaranteed
+            push!(arcs, (scored[i][2], c, k, t))
+        end
+        degree[node] = guaranteed
+        for (score, p) in scored[(guaranteed + 1):end]
             push!(extras, (score + rand(rng, Uniform(0, 7)), (p, c, k, t)))
         end
     end
@@ -520,11 +604,13 @@ function SupplyChainNetworkPlanningProblem(
             plant_capacity[p, t] = max(plant_capacity[p, t], 1.04 * used)
         end
     end
+    plant_product_out = zeros(Float64, n_plants, n_products)
+    for arc in shipment_arcs
+        plant_product_out[arc[1], arc[3]] += witness_shipment[arc]
+    end
     for p in 1:n_plants, k in 1:n_products
         peak_inventory = maximum(witness_inventory[p, k, :])
-        average_out =
-            sum((witness_shipment[a] for a in shipment_arcs if a[1] == p && a[3] == k); init=0.0) /
-            n_periods
+        average_out = plant_product_out[p, k] / n_periods
         inventory_capacity[p, k] = max(
             1.18 * peak_inventory + 0.08 * average_out + 1.0, 1.10 * initial_inventory[p, k]
         )
@@ -535,7 +621,7 @@ function SupplyChainNetworkPlanningProblem(
         # Draw a coherent network-wide supply condition, then add small
         # plant/product/time effects. This creates natural aggregate tightness
         # without independently damaging every sparse coordinate.
-        supply_factor = rand(rng, Uniform(0.65, 1.20))
+        supply_factor = rand(rng, Uniform(0.66, 1.14))
         lane_factor = rand(rng, Uniform(0.92, 1.14))
         plant_effect = rand(rng, Uniform(0.95, 1.05), n_plants)
         product_effect = rand(rng, Uniform(0.95, 1.05), n_products)
@@ -586,7 +672,38 @@ function SupplyChainNetworkPlanningProblem(
 
     infeasibility_certificate = nothing
 
-    if feasibility_status == infeasible
+    if feasibility_status == infeasible && rand(rng) < 0.7
+        # Default mode: a network-wide capacity crunch (labour action, energy
+        # rationing) cuts every plant's shared resource through period tau
+        # below what the cumulative demand of ALL products provably needs.
+        tau =
+            profile == :disruption ? disruption_period : rand(rng, max(2, n_periods - 2):n_periods)
+        tau = min(tau, n_periods)
+        initial_stock = vec(sum(initial_inventory; dims=1))
+        cumulative_demand = [sum(@view demand[:, k, 1:tau]) for k in 1:n_products]
+        min_use = [minimum(@view resource_use[:, k]) for k in 1:n_products]
+        required = sum(
+            min_use[k] * max(0.0, cumulative_demand[k] - initial_stock[k]) for k in 1:n_products
+        )
+        available_before = sum(@view plant_capacity[:, 1:tau])
+        crunch = rand(rng, Uniform(0.78, 0.92)) * required / available_before
+        if crunch < 1.0
+            # Plants lose capacity unevenly: a common shock times plant noise,
+            # renormalized so the total hits the drawn crunch exactly.
+            plant_noise = rand(rng, Uniform(0.85, 1.15), n_plants)
+            weights = [plant_noise[p] * plant_capacity[p, t] for p in 1:n_plants, t in 1:tau]
+            scale = crunch * available_before / sum(weights)
+            for p in 1:n_plants, t in 1:tau
+                plant_capacity[p, t] *= plant_noise[p] * scale
+            end
+        end
+        available = sum(@view plant_capacity[:, 1:tau])
+        margin = required - available
+        @assert margin > 0.05 * required
+        infeasibility_certificate = NetworkPlanningResourceCertificate(
+            tau, cumulative_demand, initial_stock, min_use, required, available, margin
+        )
+    elseif feasibility_status == infeasible
         certificate_product = rand(rng, 1:n_products)
         certificate_period =
             profile == :disruption ? disruption_period : rand(rng, max(1, n_periods - 2):n_periods)

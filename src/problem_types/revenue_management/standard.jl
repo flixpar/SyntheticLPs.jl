@@ -3,362 +3,466 @@ using Random
 using Distributions
 
 """
-    RevenueManagementProduct
-
-Typed itinerary metadata for the deterministic network revenue-management LP.
-`resources` contains the capacity legs consumed by one accepted booking.
+Fare classes from full fare to the deepest discount: fare multiplier on the
+market's base fare and a quality term (fewer restrictions are more attractive
+at equal price).
 """
-struct RevenueManagementProduct
-    id::Int
+const _RM_FARE_CLASSES = (
+    (name=:Y, fare=2.6, quality=0.6),
+    (name=:B, fare=1.9, quality=0.4),
+    (name=:M, fare=1.45, quality=0.2),
+    (name=:Q, fare=1.1, quality=0.0),
+    (name=:V, fare=0.8, quality=-0.2),
+)
+
+"""Seat counts of the aircraft types used to size flights."""
+const _RM_FLEET = (50.0, 76.0, 100.0, 150.0, 180.0, 220.0, 300.0)
+
+"""A scheduled flight: one operation of a route on a day in a departure bank."""
+struct RMFlight
     origin::Int
     destination::Int
+    day::Int
+    bank::Int
+end
+
+"""An origin–destination market on one departure day (one MNL choice set)."""
+struct RMMarket
+    origin::Int
+    destination::Int
+    day::Int
+end
+
+"""A sellable product: an itinerary (one or two flights) in a fare class."""
+struct RMChoiceProduct
+    market::Int
+    flights::Vector{Int}
     fare_class::Symbol
-    resources::Vector{Int}
 end
 
 """
-Feasible acceptance vector stored for solver-independent status auditing.
+Planted feasible point: in every market-day `m` the airline offers all
+products and sells the fraction `offer_fraction[m]` (≤ 1) of the MNL
+full-offer sales, `sales[j] = θ_m Λ_m v_j / (V_m + v0_m)`; `no_purchase[m]` closes
+the market balance. With `θ ≤ 1` every sales-based scale row holds (the check
+reduces to `θ ≤ 1`), capacities were sized above the plan's flight loads, and
+contract minimum loads below them.
 """
-struct RevenueManagementWitness
-    acceptance::Vector{Float64}
+struct RMChoiceWitness
+    sales::Vector{Float64}
+    no_purchase::Vector{Float64}
+    offer_fraction::Vector{Float64}
 end
 
 """
-Proof that one resource's mandatory contractual load exceeds its capacity.
-`excess` equals `committed_load - capacity` and is strictly positive.
+Unattainable minimum-load contract. For every market-day `m` using `flight`,
+let `S` be its products on the flight with total attraction `V_S`; the market's
+scale rows `x_j ≤ (v_j / v0) x0` (summed over `S`) and its balance row
+`Σ x + x0 = Λ` give `Σ_{j∈S} x_j ≤ Λ V_S / (V_S + v0) = market_bounds[k]`.
+Summing over the markets bounds the flight's load by `sellable_bound`, below the
+contracted `min_load` by `margin`. The proof combines the flight's min-load row
+with the balance and scale rows of every market feeding it, so no single row
+(or bound) reveals it to presolve.
 """
-struct RevenueManagementCapacityCertificate
-    resource::Int
-    committed_load::Float64
-    capacity::Float64
-    excess::Float64
+struct RMChoiceCertificate
+    flight::Int
+    min_load::Float64
+    markets::Vector{Int}
+    market_bounds::Vector{Float64}
+    sellable_bound::Float64
+    margin::Float64
 end
 
 """
     RevenueManagementProblem <: ProblemGenerator
 
-Deterministic network revenue management (the classic deterministic LP, or DLP).
-Products are coherent one-leg or hub-connecting itineraries with differentiated
-fare classes. Acceptance is bounded by forecast demand and contractual group
-commitments, while each physical leg has a shared, perishable capacity.
+Choice-based network revenue management: the sales-based linear program (SBLP)
+of Gallego, Ratliff & Shebalov (2015) for a multi-hub airline schedule with
+multinomial-logit (MNL) customer choice.
 
-Requested-feasible instances store the commitment vector as a primal witness.
-Requested-infeasible instances store a leg whose mandatory committed load exceeds
-capacity. `unknown` resolves to one of the two profiles and records that status.
+# Overview
+
+Airports (a few hubs and many spokes) are linked by spoke–hub and hub–hub
+routes flown in daily departure banks over several days. Each origin–destination
+market on each day is one MNL choice set whose products are its nonstop and
+one-stop itineraries (connecting at a hub in the same bank) in several fare
+classes; product attraction falls with price, stops, and distance from the
+market's preferred departure bank. Decision variables are expected sales
+`sales[j] ≥ 0` per product and no-purchase volume `no_purchase[m] ≥ 0` per
+market-day. Constraints:
+
+  - market balance: `Σ_{j∈m} sales[j] + no_purchase[m] = Λ_m`;
+  - sales-based scale rows (one per product): `sales[j] ≤ (v_j / v0_m) no_purchase[m]`,
+    which make the LP equivalent to the choice-based deterministic LP;
+  - flight capacity: `Σ_{j uses f} sales[j] ≤ capacity[f]`;
+  - minimum-load contracts on a few flights (charter / public-service
+    guarantees): `Σ_{j uses f} sales[j] ≥ min_load[f]`.
+
+The objective maximizes expected revenue. Unlike the independent-demand DLP
+(whose same-itinerary fare-class columns are parallel and collapse under
+presolve), every column here has its own scale row, and rows grow one-for-one
+with products.
+
+# Feasibility control
+
+  - `feasible`: contracts at `U(0.70, 0.95)` of the planted plan's flight loads;
+    stores [`RMChoiceWitness`](@ref).
+  - `infeasible`: one contracted flight's minimum load is set `U(5%, 12%)` above
+    the most its markets can sell under the choice model (the aircraft is
+    up-gauged if needed so the contract fits the cabin); stores
+    [`RMChoiceCertificate`](@ref). Discovering it needs simplex work.
+  - `unknown`: contracts at an instance-wide tightness `U(0.9, 2.0)` times the
+    planted plan's flight loads (up-gauging the aircraft when a contract would
+    exceed 97% of the cabin): below one the plan meets them; above it, whether
+    all contracts can be met together under the choice model, the shared
+    connecting demand, and the other flights' capacities is left to the
+    instance.
+
+# Size
+
+Variables are exactly `n_products + n_markets`; markets (in gravity-weighted
+random order) and their day copies are added until the target is reached, the
+last market-day trimmed to land exactly on it (targets below 2 give 2). Rows
+are `n_products + n_markets + n_flights + n_contracts`.
 """
 struct RevenueManagementProblem <: ProblemGenerator
-    n_products::Int
-    n_resources::Int
-    n_nodes::Int
-    products::Vector{RevenueManagementProduct}
-    product_resources::Vector{Vector{Int}}
-    resource_products::Vector{Vector{Int}}
-    resource_names::Vector{String}
-    resource_origin::Vector{Int}
-    resource_destination::Vector{Int}
-    fare::Vector{Float64}
-    demand::Vector{Float64}
-    commitment::Vector{Float64}
+    n_airports::Int
+    n_hubs::Int
+    n_days::Int
+    n_banks::Int
+    airport_location::Vector{Tuple{Float64, Float64}}
+    flights::Vector{RMFlight}
     capacity::Vector{Float64}
-    market_profile::Symbol
-    resolved_status::FeasibilityStatus
-    feasible_witness::Union{Nothing, RevenueManagementWitness}
-    infeasibility_certificate::Union{Nothing, RevenueManagementCapacityCertificate}
-end
-
-function _sample_revenue_market_profile(rng::AbstractRNG)
-    profiles = (
-        (
-            name=:regional_airline,
-            base_fare=(55.0, 145.0),
-            base_demand=(18.0, 48.0),
-            seat_capacity=(55.0, 110.0),
-            connection_share=0.32,
-        ),
-        (
-            name=:network_airline,
-            base_fare=(90.0, 240.0),
-            base_demand=(12.0, 38.0),
-            seat_capacity=(120.0, 260.0),
-            connection_share=0.62,
-        ),
-        (
-            name=:intercity_rail,
-            base_fare=(28.0, 105.0),
-            base_demand=(30.0, 75.0),
-            seat_capacity=(180.0, 430.0),
-            connection_share=0.24,
-        ),
-    )
-    return profiles[rand(rng, eachindex(profiles))]
+    markets::Vector{RMMarket}
+    market_size::Vector{Float64}
+    no_purchase_attraction::Vector{Float64}
+    products::Vector{RMChoiceProduct}
+    fare::Vector{Float64}
+    attraction::Vector{Float64}
+    contracted_flights::Vector{Int}
+    min_load::Vector{Float64}
+    feasible_witness::Union{Nothing, RMChoiceWitness}
+    infeasibility_certificate::Union{Nothing, RMChoiceCertificate}
+    feasibility_status::FeasibilityStatus
 end
 
 """
-    _generate_revenue_network(n_resources)
+    _rm_dimensions(target) -> (days, fare_classes, banks, hubs, spokes)
 
-Create directed hub-and-spoke capacity legs. Odd-numbered resources leave the hub;
-even-numbered resources return from the same spoke. This supplies coherent
-two-leg spoke-hub-spoke itineraries without materializing a dense graph.
+Schedule dimensions for a target: more days, fare classes, banks, and hubs as
+the target grows, and enough spokes that the candidate markets comfortably
+exceed the target.
 """
-function _generate_revenue_network(n_resources::Int)
-    n_spokes = max(1, cld(n_resources, 2))
-    n_nodes = n_spokes + 1
-    origin = Int[]
-    destination = Int[]
-    for spoke in 2:n_nodes
-        length(origin) < n_resources || break
-        push!(origin, 1)
-        push!(destination, spoke)
-        length(origin) < n_resources || break
-        push!(origin, spoke)
-        push!(destination, 1)
+function _rm_dimensions(target::Int)
+    T = max(target, 2)
+    days = clamp(round(Int, 2.3 * log10(T) - 5), 1, 14)
+    classes = T < 300 ? 3 : (T < 5_000 ? 4 : 5)
+    banks = T < 2_000 ? 2 : (T < 50_000 ? 3 : 4)
+    hubs = T < 3_000 ? 1 : (T < 100_000 ? 2 : 3)
+    per_market = days * (2.0 * classes + 1)
+    spokes = clamp(ceil(Int, 1.7 * sqrt(hubs * T / per_market)) + 2, 3, 600)
+    return days, classes, banks, hubs, spokes
+end
+
+"""
+    _rm_network(rng, hubs, spokes, banks)
+
+Airports on a 2500 × 2500 km map (hubs central), each spoke served from its
+nearest hub and, with probability 0.35, a second hub. Returns locations,
+populations, the route set, and per-route operating banks.
+"""
+function _rm_network(rng::AbstractRNG, hubs::Int, spokes::Int, banks::Int)
+    n = hubs + spokes
+    location = Vector{Tuple{Float64, Float64}}(undef, n)
+    population = zeros(Float64, n)
+    for h in 1:hubs
+        location[h] = (rand(rng, Uniform(700, 1800)), rand(rng, Uniform(700, 1800)))
+        population[h] = rand(rng, LogNormal(log(4.0), 0.3))
     end
-    names = ["LEG$(r):$(origin[r])-$(destination[r])" for r in 1:n_resources]
-    return n_nodes, names, origin, destination
-end
-
-@inline function _sample_revenue_fare_class(rng::AbstractRNG)
-    draw = rand(rng)
-    return if draw < 0.62
-        :economy
-    elseif draw < 0.86
-        :premium
-    else
-        :business
+    for s in (hubs + 1):n
+        location[s] = (rand(rng, Uniform(0, 2500)), rand(rng, Uniform(0, 2500)))
+        population[s] = rand(rng, LogNormal(log(0.8), 0.7))
     end
-end
-
-function _generate_revenue_products(
-    rng::AbstractRNG,
-    n_products::Int,
-    resource_origin::Vector{Int},
-    resource_destination::Vector{Int},
-    profile,
-)
-    n_resources = length(resource_origin)
-    inbound = [r for r in 1:n_resources if resource_destination[r] == 1]
-    outbound = [r for r in 1:n_resources if resource_origin[r] == 1]
-
-    products = Vector{RevenueManagementProduct}(undef, n_products)
-    fare = zeros(Float64, n_products)
-    demand = zeros(Float64, n_products)
-    for j in 1:n_products
-        # Give every resource a local product before sampling the remaining mix.
-        resources = if j <= n_resources
-            [j]
-        elseif rand(rng) < profile.connection_share && !isempty(inbound) && !isempty(outbound)
-            first_leg = rand(rng, inbound)
-            candidates = [
-                r for r in outbound if resource_destination[r] != resource_origin[first_leg]
-            ]
-            if isempty(candidates)
-                [rand(rng, 1:n_resources)]
-            else
-                [first_leg, rand(rng, candidates)]
-            end
-        else
-            [rand(rng, 1:n_resources)]
-        end
-
-        origin = resource_origin[first(resources)]
-        destination = resource_destination[last(resources)]
-        fare_class = _sample_revenue_fare_class(rng)
-        products[j] = RevenueManagementProduct(j, origin, destination, fare_class, resources)
-
-        class_fare = if fare_class == :economy
-            1.0
-        elseif fare_class == :premium
-            1.65
-        else
-            2.7
-        end
-        class_demand = if fare_class == :economy
-            1.0
-        elseif fare_class == :premium
-            0.58
-        else
-            0.32
-        end
-        base_fare = rand(rng, Uniform(profile.base_fare...))
-        route_factor = length(resources) == 1 ? 1.0 : rand(rng, Uniform(1.55, 1.9))
-        fare[j] = round(
-            base_fare * class_fare * route_factor * rand(rng, Uniform(0.88, 1.12)); digits=2
-        )
-
-        mean_demand = rand(rng, Uniform(profile.base_demand...)) * class_demand
-        demand[j] = round(clamp(rand(rng, LogNormal(log(mean_demand), 0.32)), 2.0, 140.0); digits=2)
+    dist(a, b) = hypot(location[a][1] - location[b][1], location[a][2] - location[b][2])
+    route_banks = Dict{Tuple{Int, Int}, Vector{Int}}()
+    for h in 1:hubs, g in 1:hubs
+        h == g && continue
+        route_banks[(h, g)] = collect(1:banks)
     end
-    return products, fare, demand
+    for s in (hubs + 1):n
+        order = sortperm([dist(s, h) for h in 1:hubs])
+        served = [order[1]]
+        hubs >= 2 && rand(rng) < 0.35 && push!(served, order[2])
+        frequency = clamp(round(Int, 1 + population[s] * banks / 2), 1, banks)
+        for h in served
+            ops = sort(randperm(rng, banks)[1:frequency])
+            route_banks[(s, h)] = ops
+            route_banks[(h, s)] = ops
+        end
+    end
+    return location, population, route_banks
 end
 
 """
-    RevenueManagementProblem(target_variables, feasibility_status, seed)
+    _rm_itineraries(o, d, hubs, route_banks) -> Vector{Vector{Tuple{Int,Int,Int}}}
 
-Construct a deterministic network DLP. The model has exactly one acceptance
-variable per product, so `n_products = max(2, target_variables)`.
+Nonstop and one-stop (same-bank hub connection) itineraries from `o` to `d`,
+each a list of `(origin, destination, bank)` legs; at most four, nonstops first.
 """
+function _rm_itineraries(o::Int, d::Int, hubs::Int, route_banks)
+    itineraries = Vector{Vector{Tuple{Int, Int, Int}}}()
+    for b in get(route_banks, (o, d), Int[])
+        push!(itineraries, [(o, d, b)])
+    end
+    for h in 1:hubs
+        (h == o || h == d) && continue
+        first_banks = get(route_banks, (o, h), Int[])
+        second_banks = get(route_banks, (h, d), Int[])
+        for b in first_banks
+            b in second_banks && push!(itineraries, [(o, h, b), (h, d, b)])
+        end
+    end
+    return itineraries[1:min(end, 4)]
+end
+
+"""
+    _rm_sellable_bound(prob_attraction, no_purchase, market_size, market_of, flight_products, f)
+
+Upper bound on flight `f`'s load implied by the market balance and scale rows:
+`Σ_m Λ_m V_{m,f} / (V_{m,f} + v0_m)` over the market-days feeding the flight.
+Returns `(bound, markets, per_market_bounds)`.
+"""
+function _rm_sellable_bound(attraction, no_purchase, market_size, market_of, flight_products, f)
+    by_market = Dict{Int, Float64}()
+    for j in flight_products[f]
+        m = market_of[j]
+        by_market[m] = get(by_market, m, 0.0) + attraction[j]
+    end
+    markets = sort!(collect(keys(by_market)))
+    bounds = [market_size[m] * by_market[m] / (by_market[m] + no_purchase[m]) for m in markets]
+    return sum(bounds), markets, bounds
+end
+
+function _rm_cabin(needed::Float64)
+    for seats in _RM_FLEET
+        seats >= needed && return seats
+    end
+    return 50.0 * ceil(needed / 50.0)
+end
+
 function RevenueManagementProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
-    resolved_status = if feasibility_status == unknown
-        (rand(rng) < 0.72 ? feasible : infeasible)
-    else
-        feasibility_status
+    target = max(target_variables, 2)
+    days, n_classes, banks, hubs, spokes = _rm_dimensions(target)
+    classes = n_classes == 5 ? _RM_FARE_CLASSES : _RM_FARE_CLASSES[[1:(n_classes - 1); 5]]
+
+    local location, population, route_banks, candidates
+    while true
+        location, population, route_banks = _rm_network(rng, hubs, spokes, banks)
+        n = hubs + spokes
+        candidates = Tuple{Float64, Int, Int, Vector{Vector{Tuple{Int, Int, Int}}}}[]
+        capacity_estimate = 0
+        for o in 1:n, d in 1:n
+            o == d && continue
+            its = _rm_itineraries(o, d, hubs, route_banks)
+            isempty(its) && continue
+            od_distance = hypot(location[o][1] - location[d][1], location[o][2] - location[d][2])
+            weight = population[o] * population[d] / max(od_distance, 150.0)^0.7
+            # Efraimidis–Spirakis key: ascending order is a weighted random
+            # permutation, so big city pairs tend to come first.
+            key = -log(rand(rng)) / weight
+            push!(candidates, (key, o, d, its))
+            capacity_estimate += days * (length(its) * n_classes + 1)
+        end
+        capacity_estimate >= target && break
+        spokes = ceil(Int, 1.4 * spokes)
+    end
+    sort!(candidates; by=first)
+    n_airports = hubs + spokes
+    dist(a, b) = hypot(location[a][1] - location[b][1], location[a][2] - location[b][2])
+
+    # --- Markets, products, and the flights they use ---
+    flight_index = Dict{Tuple{Int, Int, Int, Int}, Int}()
+    flights = RMFlight[]
+    markets = RMMarket[]
+    market_size = Float64[]
+    no_purchase = Float64[]
+    products = RMChoiceProduct[]
+    fare = Float64[]
+    attraction = Float64[]
+    day_factor = [rand(rng, Uniform(0.75, 1.25)) for _ in 1:days]
+    total = 0
+    for (_, o, d, its) in candidates
+        total >= target && break
+        distance = dist(o, d)
+        base_fare = 60.0 + 0.11 * distance
+        price_sensitivity = rand(rng, Uniform(1.2, 2.4))
+        preferred_bank = rand(rng, 1:banks)
+        gravity = 35.0 * population[o] * population[d] / max(distance / 1000, 0.3)^0.4
+        for day in 1:days
+            total >= target && break
+            remaining = target - total
+            full = length(its) * length(classes) + 1
+            n_products_here = min(full, remaining) - 1
+            n_products_here < 1 && (n_products_here = 1)
+            push!(markets, RMMarket(o, d, day))
+            m = length(markets)
+            push!(market_size, gravity * day_factor[day] * rand(rng, LogNormal(0.0, 0.25)))
+            V = 0.0
+            count = 0
+            for c in classes, it in its
+                count >= n_products_here && break
+                legs = Int[]
+                for (a, b, bank) in it
+                    key = (a, b, day, bank)
+                    idx = get!(flight_index, key) do
+                        push!(flights, RMFlight(a, b, day, bank))
+                        length(flights)
+                    end
+                    push!(legs, idx)
+                end
+                stops = length(it) - 1
+                price = base_fare * c.fare * (stops == 0 ? 1.0 : rand(rng, Uniform(0.85, 0.95)))
+                bank_gap = abs(it[1][3] - preferred_bank) / banks
+                utility =
+                    c.quality - price_sensitivity * price / base_fare - 0.7 * stops -
+                    0.8 * bank_gap + 0.15 * randn(rng)
+                push!(products, RMChoiceProduct(m, legs, c.name))
+                push!(fare, round(price; digits=2))
+                push!(attraction, exp(utility))
+                V += attraction[end]
+                count += 1
+            end
+            purchase_probability = rand(rng, Uniform(0.35, 0.75))
+            push!(no_purchase, V * (1 - purchase_probability) / purchase_probability)
+            total += count + 1
+        end
     end
 
-    n_products = max(2, target_variables)
-    resource_ratio = rand(rng, Uniform(3.0, 5.5))
-    n_resources = clamp(round(Int, n_products / resource_ratio), 2, min(n_products, 80))
-    profile = _sample_revenue_market_profile(rng)
-    n_nodes, resource_names, resource_origin, resource_destination = _generate_revenue_network(
-        n_resources
-    )
-    products, fare, demand = _generate_revenue_products(
-        rng, n_products, resource_origin, resource_destination, profile
-    )
-    product_resources = [copy(product.resources) for product in products]
-    resource_products = [Int[] for _ in 1:n_resources]
-    for product in products, resource in product.resources
-        push!(resource_products[resource], product.id)
+    n_products = length(products)
+    n_markets = length(markets)
+    n_flights = length(flights)
+    market_of = [p.market for p in products]
+    flight_products = [Int[] for _ in 1:n_flights]
+    for (j, p) in enumerate(products), f in p.flights
+        push!(flight_products[f], j)
     end
-
-    # Contractual floors represent group blocks and protected allotments. Most
-    # products have no floor; positive blocks stay well below forecast demand.
-    commitment = zeros(Float64, n_products)
-    commitment_probability = profile.name == :intercity_rail ? 0.30 : 0.22
+    market_attraction = zeros(Float64, n_markets)
     for j in 1:n_products
-        if rand(rng) < commitment_probability
-            commitment[j] = round(demand[j] * rand(rng, Uniform(0.04, 0.18)); digits=3)
+        market_attraction[market_of[j]] += attraction[j]
+    end
+
+    # --- Planted plan and capacities ---
+    offer_fraction = rand(rng, Uniform(0.45, 0.85), n_markets)
+    sales = [
+        offer_fraction[market_of[j]] * market_size[market_of[j]] * attraction[j] /
+        (market_attraction[market_of[j]] + no_purchase[market_of[j]]) for j in 1:n_products
+    ]
+    no_purchase_sales = copy(market_size)
+    for j in 1:n_products
+        no_purchase_sales[market_of[j]] -= sales[j]
+    end
+    load = [sum((sales[j] for j in flight_products[f]); init=0.0) for f in 1:n_flights]
+    capacity = [_rm_cabin(load[f] / rand(rng, Uniform(0.85, 0.97))) for f in 1:n_flights]
+
+    # --- Minimum-load contracts ---
+    n_contracts = max(1, round(Int, 0.06 * n_flights))
+    contracted = sort(randperm(rng, n_flights)[1:n_contracts])
+    min_load = zeros(Float64, n_flights)
+    witness = nothing
+    certificate = nothing
+    if feasibility_status == unknown
+        # One instance-level contract tightness relative to the planted loads:
+        # below 1 the planted plan meets every contract; above it, the
+        # contracts compete for shared connecting demand and capacity.
+        tightness = rand(rng, Uniform(0.9, 2.0))
+        for f in contracted
+            min_load[f] = load[f] * tightness * rand(rng, Uniform(0.97, 1.03))
+            if min_load[f] > 0.97 * capacity[f]
+                capacity[f] = _rm_cabin(min_load[f] / rand(rng, Uniform(0.80, 0.95)))
+            end
         end
-    end
-    if all(iszero, commitment)
-        j = rand(rng, 1:n_products)
-        commitment[j] = round(0.1 * demand[j]; digits=3)
-    end
-
-    capacity = zeros(Float64, n_resources)
-    for r in 1:n_resources
-        through_demand = sum(demand[j] for j in resource_products[r])
-        committed_load = sum(commitment[j] for j in resource_products[r])
-        schedule_capacity = rand(rng, Uniform(profile.seat_capacity...))
-        demand_capacity = through_demand * rand(rng, Uniform(0.48, 0.78))
-        natural_capacity = min(schedule_capacity, demand_capacity)
-        capacity[r] = max(natural_capacity, 1.08 * committed_load + 0.5)
-    end
-
-    feasible_witness = nothing
-    infeasibility_certificate = nothing
-    if resolved_status == feasible
-        feasible_witness = RevenueManagementWitness(copy(commitment))
     else
-        critical_resource = rand(rng, 1:n_resources)
-        affected_products = resource_products[critical_resource]
-        for j in affected_products
-            commitment[j] = max(
-                commitment[j], round(demand[j] * rand(rng, Uniform(0.30, 0.62)); digits=3)
-            )
+        for f in contracted
+            min_load[f] = load[f] * rand(rng, Uniform(0.70, 0.95))
         end
-        committed_load = sum(commitment[j] for j in affected_products)
-        capacity[critical_resource] = committed_load * rand(rng, Uniform(0.68, 0.88))
-        excess = committed_load - capacity[critical_resource]
-        infeasibility_certificate = RevenueManagementCapacityCertificate(
-            critical_resource, committed_load, capacity[critical_resource], excess
+    end
+    if feasibility_status == feasible
+        witness = RMChoiceWitness(sales, no_purchase_sales, offer_fraction)
+    elseif feasibility_status == infeasible
+        f = contracted[rand(rng, 1:n_contracts)]
+        bound, feeding, bounds = _rm_sellable_bound(
+            attraction, no_purchase, market_size, market_of, flight_products, f
         )
+        min_load[f] = bound * rand(rng, Uniform(1.05, 1.12))
+        if min_load[f] > 0.97 * capacity[f]
+            capacity[f] = _rm_cabin(min_load[f] / rand(rng, Uniform(0.80, 0.95)))
+        end
+        certificate = RMChoiceCertificate(f, min_load[f], feeding, bounds, bound, min_load[f] - bound)
     end
 
-    problem = RevenueManagementProblem(
-        n_products,
-        n_resources,
-        n_nodes,
-        products,
-        product_resources,
-        resource_products,
-        resource_names,
-        resource_origin,
-        resource_destination,
-        fare,
-        demand,
-        commitment,
+    return RevenueManagementProblem(
+        n_airports,
+        hubs,
+        days,
+        banks,
+        location,
+        flights,
         capacity,
-        profile.name,
-        resolved_status,
-        feasible_witness,
-        infeasibility_certificate,
+        markets,
+        market_size,
+        no_purchase,
+        products,
+        fare,
+        attraction,
+        contracted,
+        min_load,
+        witness,
+        certificate,
+        feasibility_status,
     )
-    if resolved_status == feasible
-        @assert _revenue_management_witness_is_valid(problem)
-    else
-        @assert _revenue_management_certificate_is_valid(problem)
-    end
-    return problem
 end
 
-function _revenue_management_witness_is_valid(problem::RevenueManagementProblem; atol::Float64=1e-8)
-    problem.resolved_status == feasible || return false
-    problem.infeasibility_certificate === nothing || return false
-    witness = problem.feasible_witness
-    witness === nothing && return false
-    length(witness.acceptance) == problem.n_products || return false
-    for j in 1:problem.n_products
-        witness.acceptance[j] + atol >= problem.commitment[j] || return false
-        witness.acceptance[j] <= problem.demand[j] + atol || return false
-    end
-    for r in 1:problem.n_resources
-        load = sum(witness.acceptance[j] for j in problem.resource_products[r])
-        load <= problem.capacity[r] + atol || return false
-    end
-    return true
-end
-
-function _revenue_management_certificate_is_valid(
-    problem::RevenueManagementProblem; atol::Float64=1e-8
-)
-    problem.resolved_status == infeasible || return false
-    problem.feasible_witness === nothing || return false
-    certificate = problem.infeasibility_certificate
-    certificate === nothing && return false
-    1 <= certificate.resource <= problem.n_resources || return false
-    committed_load = sum(
-        problem.commitment[j] for j in problem.resource_products[certificate.resource]
-    )
-    isapprox(certificate.committed_load, committed_load; atol=atol, rtol=1e-10) || return false
-    isapprox(certificate.capacity, problem.capacity[certificate.resource]; atol=atol, rtol=1e-10) ||
-        return false
-    isapprox(
-        certificate.excess,
-        committed_load - problem.capacity[certificate.resource];
-        atol=atol,
-        rtol=1e-10,
-    ) || return false
-    return certificate.excess > atol
-end
-
-"""
-    build_model(problem::RevenueManagementProblem)
-
-Build the deterministic network revenue-management LP. This function is fully
-deterministic and consumes only stored problem data.
-"""
-function build_model(problem::RevenueManagementProblem)
+function build_model(prob::RevenueManagementProblem)
     model = Model()
-    @variable(
-        model, problem.commitment[j] <= acceptance[j in 1:problem.n_products] <= problem.demand[j],
-    )
-    # Preserve the legacy model lookup while giving the variable its clearer
-    # domain name. Both keys reference the same JuMP container.
-    model[:x] = acceptance
-    if problem.feasible_witness !== nothing
-        witness = problem.feasible_witness
-        for j in 1:problem.n_products
-            set_start_value(acceptance[j], witness.acceptance[j])
+    n_products = length(prob.products)
+    n_markets = length(prob.markets)
+    n_flights = length(prob.flights)
+    market_products = [Int[] for _ in 1:n_markets]
+    flight_products = [Int[] for _ in 1:n_flights]
+    for (j, p) in enumerate(prob.products)
+        push!(market_products[p.market], j)
+        for f in p.flights
+            push!(flight_products[f], j)
         end
     end
-    @objective(model, Max, sum(problem.fare[j] * acceptance[j] for j in 1:problem.n_products),)
+
+    @variable(model, sales[1:n_products] >= 0)
+    @variable(model, no_purchase[1:n_markets] >= 0)
+    @objective(model, Max, sum(prob.fare[j] * sales[j] for j in 1:n_products))
     @constraint(
         model,
-        resource_capacity[r in 1:problem.n_resources],
-        sum(acceptance[j] for j in problem.resource_products[r]) <= problem.capacity[r],
+        market_balance[m = 1:n_markets],
+        sum(sales[j] for j in market_products[m]) + no_purchase[m] == prob.market_size[m]
+    )
+    @constraint(
+        model,
+        scale[j = 1:n_products],
+        sales[j] -
+        prob.attraction[j] / prob.no_purchase_attraction[prob.products[j].market] *
+        no_purchase[prob.products[j].market] <= 0
+    )
+    @constraint(
+        model,
+        flight_capacity[f = 1:n_flights],
+        sum(sales[j] for j in flight_products[f]) <= prob.capacity[f]
+    )
+    @constraint(
+        model,
+        contract[f in prob.contracted_flights],
+        sum(sales[j] for j in flight_products[f]) >= prob.min_load[f]
     )
     return model
 end
@@ -367,6 +471,6 @@ register_variant(
     :revenue_management,
     :standard,
     RevenueManagementProblem,
-    "Deterministic network revenue management with typed hub itineraries, fare classes, group commitments, and shared leg capacity";
+    "Choice-based network revenue management (sales-based LP with MNL choice) on a multi-hub banked airline schedule over several days, with flight capacities and minimum-load contracts";
     default=true,
 )
