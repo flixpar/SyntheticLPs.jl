@@ -41,7 +41,7 @@ nf_arc_length(p, k) = hypot(
 
 @testset "Network Flow" begin
     @test :network_flow in list_categories()
-    @test Set(list_variants(:network_flow)) == Set([:standard, :generalized_flow])
+    @test Set(list_variants(:network_flow)) == Set([:standard, :generalized_flow, :time_expanded])
     info = problem_info(:network_flow)
     @test info[:default_variant] == :standard
     @test occursin("flow", lowercase(info[:description]))
@@ -291,6 +291,106 @@ nf_arc_length(p, k) = hypot(
             for ref in variants, status in (feasible, infeasible)
                 m, _ = generate_problem(ref, 300, status, 1; optimizer=HiGHS.Optimizer)
                 @test num_variables(m) == 300
+            end
+        end
+    end
+
+    @testset "time_expanded evacuation" begin
+        ref = "network_flow/time_expanded"
+        for target in (1000, 5000, 20_000), seed in 0:2
+            m, p = generate_problem(ref, target, unknown, seed)
+            nv = length(p.moves) + length(p.waits) + length(p.intakes)
+            @test num_variables(m) == nv
+            @test 0.65 * target <= nv <= 1.35 * target
+            @test num_constraints(m; count_variable_in_set_constraints=false) == length(p.node_copies)
+        end
+        big = SyntheticLPs.TimeExpandedEvacuationProblem(100_000, unknown, 0)
+        @test abs(length(big.moves) + length(big.waits) + length(big.intakes) - 100_000) <= 10_000
+
+        for seed in 0:2
+            _, p = generate_problem(ref, 4000, feasible, seed)
+            copies = Set(p.node_copies)
+            @test all(1 <= t <= 4 for t in p.travel_time)
+            @test all(t + p.travel_time[a] <= p.horizon for (a, t) in p.moves)
+            @test all((p.arcs[a][1], t) in copies && (p.arcs[a][2], t + p.travel_time[a]) in copies for (a, t) in p.moves)
+            @test all((v, t) in copies && (v, t + 1) in copies && p.hold_capacity[v] > 0 for (v, t) in p.waits)
+            @test all(p.intake_rate[v] > 0 && (v, t) in copies for (v, t) in p.intakes)
+            zones = findall(>(0.0), p.supply)
+            @test all((v, 0) in copies for v in zones)
+            @test isempty(intersect(zones, findall(>(0.0), p.intake_rate)))
+        end
+
+        for target in (800, 4000), seed in 0:2
+            m, p = generate_problem(ref, target, feasible, seed)
+            w = p.feasible_witness
+            vals = Dict{VariableRef, Float64}()
+            for i in eachindex(p.moves)
+                vals[m[:move][i]] = w.moves[i]
+            end
+            for i in eachindex(p.waits)
+                vals[m[:wait][i]] = w.waits[i]
+            end
+            for i in eachindex(p.intakes)
+                vals[m[:intake][i]] = w.intakes[i]
+            end
+            @test isempty(primal_feasibility_report(m, vals; atol=1e-6))
+            @test sum(w.intakes) ≈ p.total_supply rtol = 1e-9
+        end
+
+        for target in (800, 4000), seed in 0:3
+            _, p = generate_problem(ref, target, infeasible, seed)
+            c = p.infeasibility_certificate
+            X = Set(p.node_copies[c.region])
+            @test c.exit_moves == [
+                i for (i, (a, t)) in enumerate(p.moves) if (p.arcs[a][1], t) in X && !((p.arcs[a][2], t + p.travel_time[a]) in X)
+            ]
+            @test c.exit_waits == [i for (i, (v, t)) in enumerate(p.waits) if (v, t) in X && !((v, t + 1) in X)]
+            @test c.exit_intakes == [i for (i, (v, t)) in enumerate(p.intakes) if (v, t) in X]
+            cap = sum(p.road_capacity[p.moves[i][1]] for i in c.exit_moves; init=0.0) +
+                sum(p.hold_capacity[p.waits[i][1]] for i in c.exit_waits; init=0.0) +
+                sum(p.intake_rate[p.intakes[i][1]] for i in c.exit_intakes; init=0.0)
+            @test c.exit_capacity ≈ cap
+            @test c.trapped_supply ≈ sum(p.supply[v] for (v, t) in X if t == 0; init=0.0)
+            @test c.trapped_supply > c.exit_capacity
+        end
+
+        for status in (feasible, infeasible, unknown)
+            Random.seed!(31)
+            _, p1 = generate_problem(ref, 900, status, 5)
+            Random.seed!(32)
+            rand(5)
+            _, p2 = generate_problem(ref, 900, status, 5)
+            for f in fieldnames(typeof(p1))
+                a, b = getfield(p1, f), getfield(p2, f)
+                if a === nothing || a isa Union{Number, Symbol, Vector, FeasibilityStatus}
+                    @test isequal(a, b)
+                else
+                    @test all(isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a)))
+                end
+            end
+        end
+
+        if HAS_HIGHS
+            for target in (800, 4000), seed in 0:2
+                m, _ = generate_problem(ref, target, feasible, seed)
+                set_optimizer(m, HiGHS.Optimizer)
+                set_silent(m)
+                optimize!(m)
+                @test termination_status(m) == MOI.OPTIMAL
+                m, _ = generate_problem(ref, target, infeasible, seed)
+                set_optimizer(m, HiGHS.Optimizer)
+                set_silent(m)
+                optimize!(m)
+                @test termination_status(m) == MOI.INFEASIBLE
+                target >= 4000 && @test MOI.get(m, MOI.SimplexIterations()) > 0
+            end
+            for seed in 0:7
+                m, p = generate_problem(ref, 1500, unknown, seed)
+                set_optimizer(m, HiGHS.Optimizer)
+                set_silent(m)
+                optimize!(m)
+                @test termination_status(m) ==
+                    (p.max_flow_value >= p.total_supply * (1 - 1e-9) ? MOI.OPTIMAL : MOI.INFEASIBLE)
             end
         end
     end
