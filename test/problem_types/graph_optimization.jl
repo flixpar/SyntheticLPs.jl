@@ -196,6 +196,19 @@ end
         end
     end
 
+    @testset "Tiny vertex_cover deficit" begin
+        # Target 6 gives a 3-vertex triangle: the rich club must clamp to the
+        # whole graph (it once indexed 4 of 3 vertices).
+        for seed in 0:3
+            m, p = generate_problem(_go_ref(:vertex_cover), 6, infeasible, seed)
+            cert = p.infeasibility_certificate
+            @test num_variables(m) == 6
+            @test length(cert.core) <= p.n_vertices
+            @test cert.capacity_total == sum(p.capacity[cert.core])
+            @test length(cert.core_edges) > cert.capacity_total
+        end
+    end
+
     @testset "Model structure" begin
         # Capacitated cover: one orientation variable per link, no doubleton
         # assignment equalities; rows = 2 linking rows per link + 1 per vertex.

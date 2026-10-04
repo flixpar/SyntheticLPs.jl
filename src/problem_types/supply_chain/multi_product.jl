@@ -91,11 +91,18 @@ function MultiProductSupplyChainProblem(
     certificate = nothing
     if feasibility_status == infeasible
         T = net.n_periods
-        k = rand(rng, 1:net.n_products)
-        tau = rand(rng, max(2, T - 2):T)
+        # Only a product someone orders can be short: on tiny networks (two
+        # customers ordering ~60% of the products each) a product may have no
+        # demand at all, which would leave nothing to cut.
+        tau_range = max(2, T - 2):T
+        ordered = [k for k in 1:net.n_products if sum(net.demand[:, k, 1:first(tau_range)]) > 0]
+        k = rand(rng, ordered)
+        tau = rand(rng, tau_range)
         demand = sum(net.demand[:, k, 1:tau])
         plants, stock, _ = _multi_product_supply_bound(net, k, tau)
         goal = demand * rand(rng, Uniform(0.80, 0.90))
+        # Opening stock covers at most 45% of period-1 outflow, so it is always
+        # below 80% of a positive cumulative demand.
         @assert goal > stock
         # Per-plant effective rate (never above the plant's resource limit), then
         # one common scale so the cumulative bound lands on the goal.

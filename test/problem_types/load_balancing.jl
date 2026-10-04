@@ -58,7 +58,21 @@
             vals[m[:U]] = w.utilization
             @test isempty(primal_feasibility_report(m, vals; atol=1e-6))
         end
-        for target in (200, 3000), seed in 0:3
+        # Tiny targets (1-3) clamp up to one balanced OD pair, so the certificate
+        # still has traffic to grow (it once failed to separate at target 1).
+        for (target, seed) in (
+            (1, 0),
+            (1, 1),
+            (2, 5),
+            (200, 0),
+            (200, 1),
+            (200, 2),
+            (200, 3),
+            (3000, 0),
+            (3000, 1),
+            (3000, 2),
+            (3000, 3),
+        )
             _, p = generate_problem("load_balancing/standard", target, infeasible, seed)
             c = p.infeasibility_certificate
             @test all(l -> l == 0 || l in p.link_latency, c.lengths)
@@ -67,6 +81,7 @@
                 for k in eachindex(p.od_pairs)
             ]
             @test c.required ≈ sum(p.demands .* min_len) + sum(p.background .* c.lengths)
+            @test !isempty(p.od_pairs)
             @test c.capacity_length ≈ p.max_utilization * sum(p.capacities .* c.lengths)
             @test c.capacity_length < c.required
         end

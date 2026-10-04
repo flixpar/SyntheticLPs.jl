@@ -80,17 +80,23 @@ end
     end
 
     @testset "due_dates" begin
-        for target in (1, 3, 40, 500, 4000), status in (feasible, infeasible, unknown)
-            m, p = generate_problem("cutting_stock/due_dates", target, status, 2)
+        # Tiny targets may trade pattern columns for item types (t = 28, seeds
+        # 4-5 once exhausted a one-item pattern space); the column total holds.
+        for (target, seed) in ((1, 2), (3, 2), (28, 4), (28, 5), (40, 2), (500, 2), (4000, 2)),
+            status in (feasible, infeasible, unknown)
+
+            m, p = generate_problem("cutting_stock/due_dates", target, status, seed)
             T, n_types, n_patterns, n_stock = SyntheticLPs.cs_due_dates_dimensions(target)
-            @test p.n_periods == T && length(p.patterns) == n_patterns
+            n_items = length(p.piece_lengths)
+            @test p.n_periods == T && n_items >= n_types
+            @test length(p.patterns) + n_items == n_patterns + n_types
             @test num_variables(m) == T * (n_patterns + n_types)
             target >= 40 && @test abs(num_variables(m) - target) < T
             used_stock = length(unique(p.patterns.stock))
-            @test cs_rows(m) == T * (n_types + used_stock)
+            @test cs_rows(m) == T * (n_items + used_stock)
             cs_check_patterns(p.patterns, p.stock_lengths, p.piece_lengths)
-            @test size(p.demands) == (n_types, T) && all(>=(0), p.demands)
-            @test all(any(>(0), p.demands[i, :]) for i in 1:n_types)
+            @test size(p.demands) == (n_items, T) && all(>=(0), p.demands)
+            @test all(any(>(0), p.demands[i, :]) for i in 1:n_items)
         end
         _, big = generate_problem("cutting_stock/due_dates", 100_000, unknown, 0)
         @test abs(big.n_periods * (length(big.patterns) + length(big.piece_lengths)) - 100_000) < big.n_periods

@@ -331,6 +331,33 @@ end
         test_problem_generator(ref)
     end
 
+    # Every registered variant must generate at the smallest targets it
+    # accepts, for every seed and status: tiny requests clamp the internal
+    # dimensions up (or the variant registers a larger `min_target_variables`)
+    # rather than throwing from an index, assertion or planting step. It runs
+    # after the per-variant sweep, which has already compiled every generator:
+    # cold, this testset alone takes ~2 min of JIT; warm, ~6 s. Like that sweep
+    # it honours the focus filter.
+    @testset "Tiny Target Robustness" begin
+        for ref in list_problems()
+            in_scope(ref) || continue
+            lo = SyntheticLPs.get_variant(ref).min_target_variables
+            targets = unique(filter(>=(lo), [max(lo, 1), 2, 3, 5, 8, 13, 21, 34, 55]))
+            failures = String[]
+            for target in targets, seed in (0, 1), status in (feasible, infeasible, unknown)
+                try
+                    generate_problem(ref, target, status, seed)
+                catch err
+                    push!(
+                        failures,
+                        "$ref t=$target seed=$seed $status: $(first(sprint(showerror, err), 160))",
+                    )
+                end
+            end
+            @test isempty(failures)
+        end
+    end
+
     # Test batch dataset generation
     @testset "Dataset Generation" begin
         # Basic in-memory generation (no solver required)

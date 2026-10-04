@@ -4,6 +4,60 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-10-04 (tiny-target robustness)
+
+**Previous Commit**: `0618cfa`
+
+**Commits**: (pending)
+
+**Datetime**: 2026-10-04 UTC
+
+**Summary**: A sweep of every registered variant at targets 1–40, 45–120 step 5,
+150, 200 and 300 × seeds 0–12 × all three statuses found five variants that
+threw at tiny sizes. All five now generate at every target ≥ their registered
+`min_target_variables` (no new minimums were needed), and a framework-level
+`Tiny Target Robustness` testset guards the whole registry.
+
+**Details**:
+
+- `graph_optimization/vertex_cover` (target 6, every infeasible seed): the rich
+  club size was `clamp(round(0.05n), 4, n)`, and Julia's `clamp` returns the lower
+  bound 4 when `n = 3` (a triangle), so `sortperm(degree)[1:4]` threw a
+  `BoundsError`. Now `min(n, max(4, …))`; the deficit certificate then spans the
+  whole triangle (3 links vs. 2 ports).
+- `supply_chain/multi_product` (tiny targets, seed 12, infeasible): the shorted
+  product was drawn from every product, but on tiny networks (two customers each
+  ordering ~60% of the products) a product can have no demand at all, so
+  `goal = 0` and `@assert goal > stock` failed. The product is now drawn from the
+  products ordered through the earliest cut-off period. The fix lives entirely in
+  `multi_product.jl`; `network_common.jl` is untouched.
+- `cutting_stock/due_dates` (target 28, seeds 4–5): the dimension rule gave one
+  item type on one stock with six patterns requested, but an item cut at most
+  five times per bar has only five distinct patterns. The constructor now counts
+  the single- and two-item pattern space (`_cs_due_dates_pattern_space`) and
+  trades pattern columns for extra item types one for one, so
+  `T * (n_patterns + n_types)` is unchanged. The `due_dates` dimension test
+  checks the column total rather than the per-part split and covers t = 28, seeds 4–5.
+- `load_balancing/standard` (target 1, every infeasible seed): with one path
+  wanted, the trim loop dropped every OD pair, leaving no traffic to grow, so the
+  latency-metric certificate could not separate. The trim now keeps at least one
+  pair, so targets below 4 clamp up to one three-path OD pair. A regression test
+  covers targets 1–2.
+- `energy/security_constrained_dc_opf` (C = 1 grids up to target ~100, e.g.
+  t ≤ 20 seed 11, t = 25 seed 7, t = 40 seed 8): with a single screened line, the
+  30 random pocket draws could only produce the two 3-bus pockets beside it. If
+  both failed the bus-adequacy check, generation raised "could not plant an N-1
+  pocket". A lazy deterministic sweep over every contingency, side, and pocket
+  size now follows the random draws. The random draws are unchanged, so
+  instances that planted before are identical.
+- New `Tiny Target Robustness` testset in `test/runtests.jl`: every variant (in
+  scope of the focus filter) at targets `max(min_target, 1), 2, 3, 5, 8, 13, 21,
+  34, 55` (filtered to ≥ the minimum) × seeds 0–1 × all statuses must not throw.
+  It runs right after the per-variant generator sweep, so it reuses that sweep's
+  compilation: about 6 s warm, against about 2 min cold when run on its own.
+- All tiny infeasible/feasible instances of the five variants were checked with
+  HiGHS (statuses match), and the full sweep reruns with zero failures.
+
 ## 2026-09-25 (remove the generic_milp category)
 
 **Previous Commit**: `7134748`

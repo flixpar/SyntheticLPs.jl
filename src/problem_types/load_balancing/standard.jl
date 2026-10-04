@@ -96,7 +96,8 @@ so its utilization is at most a target in [0.45, 0.8] of the SLA.
 
 Variables = candidate paths + 1, within 2 of `target_variables` (paths are
 trimmed, never below three per pair, or OD pairs added until the count
-matches; networks too small to offer that many distinct paths stay below).
+matches; networks too small to offer that many distinct paths stay below, and
+targets below 4 clamp up to one OD pair with three paths).
 Rows = OD pairs + links carrying a path or background traffic.
 """
 struct LoadBalancingProblem <: ProblemGenerator
@@ -254,7 +255,10 @@ function LoadBalancingProblem(target_variables::Int, feasibility_status::Feasibi
             pop!(trimmable)
         end
     end
-    while total > n_paths_target  # only pairs left: drop whole pairs
+    # Only three-path pairs left: drop whole pairs, but keep one so tiny targets
+    # clamp up to a single balanced OD pair (with none, no traffic could be
+    # grown and the infeasibility certificate could never separate).
+    while total > n_paths_target && length(od_paths) > 1
         k = rand(rng, eachindex(od_paths))
         total -= length(od_paths[k])
         deleteat!(od_pairs, k)

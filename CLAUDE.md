@@ -346,7 +346,12 @@ documentation, and regression coverage evolve as one reviewable unit.
   reproducibility), plus registry and interface tests, `Registry Metadata` and
   `Registry Tag Coverage` (every variant has tags and exactly one domain tag; a
   temporary `_UNTAGGED_CATEGORIES_PENDING` set exempts categories still being
-  tagged), global-RNG isolation, dataset planning and generation controls, the
+  tagged), global-RNG isolation, `Tiny Target Robustness` (every variant at
+  targets from its registered `min_target_variables` up to 55 × seeds 0–1 × all
+  three statuses must generate without throwing — clamp tiny targets upward
+  rather than erroring; like the RNG sweep it honours the focus filter),
+  dataset planning and
+  generation controls, the
   bounds-to-constraints transform, dual reformulation, the pure
   `_classify_termination` table, and the generic feasibility-contract machinery
   (retry budget, seed walk, pristine-model guarantee). It includes

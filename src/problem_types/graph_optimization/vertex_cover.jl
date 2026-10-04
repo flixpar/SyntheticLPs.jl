@@ -128,8 +128,9 @@ function VertexCoverProblem(target_variables::Int, feasibility_status::Feasibili
         end
         witness = VertexCoverWitness(monitor)
     elseif feasibility_status == infeasible
-        # Rich club: the top 5% of vertices by degree (at least 4).
-        h = clamp(round(Int, 0.05 * n), 4, n)
+        # Rich club: the top 5% of vertices by degree (at least 4, at most n —
+        # `clamp(x, 4, n)` would return 4 on a 3-vertex graph).
+        h = min(n, max(4, round(Int, 0.05 * n)))
         core = sort!(sortperm(degree; rev=true)[1:h])
         in_core = falses(n)
         in_core[core] .= true

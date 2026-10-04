@@ -181,11 +181,24 @@ function SecurityConstrainedDCOPFProblem(
     if feasibility_status == infeasible
         witness = nothing
         m = _e_unif(rng, (0.06, 0.15))
-        for _ in 1:30
-            c = rand(rng, 1:C)
+        # Random pockets first; then (small grids, where C = 1 and the random
+        # draws only ever produce the two 3-bus pockets beside the one screened
+        # line) a deterministic sweep over every contingency, side and size.
+        random_tries = [
+            (
+                c=rand(rng, 1:C),
+                side=rand(rng, Bool),
+                size=round(Int, B * _e_unif(rng, (0.02, 0.06))),
+            ) for _ in 1:30
+        ]
+        sweep = (
+            (c=c, side=side, size=size) for c in 1:C for size in 3:(B - 1) for side in (true, false)
+        )
+        for try_ in Iterators.flatten((random_tries, sweep))
+            c = try_.c
             k = contingencies[c]
-            a, b = rand(rng, Bool) ? (from[k], to[k]) : (to[k], from[k])
-            size = clamp(round(Int, B * _e_unif(rng, (0.02, 0.06))), min(3, B - 1), B - 1)
+            a, b = try_.side ? (from[k], to[k]) : (to[k], from[k])
+            size = clamp(try_.size, min(3, B - 1), B - 1)
             S = _grid_bfs(B, from, to, a, size; exclude=b)
             length(S) >= 2 || continue
             inS = falses(B)

@@ -57,7 +57,9 @@ s.t. inv_{i,t-1} + sum_j a_ij x_jt - inv_it = d_it     for every item i, period 
 
 Sizing: `T = clamp(round(2 log10 n), 4, 12)` periods (fewer for tiny targets),
 `n_types = round(n / (16 T))`, `n_patterns = n ÷ T - n_types`; columns
-`T * (n_patterns + n_types)`, within `T - 1` of the target. Rows
+`T * (n_patterns + n_types)`, within `T - 1` of the target (at tiny targets
+whose one or two items admit too few distinct patterns, pattern columns are
+traded one-for-one for extra item types, keeping that total). Rows
 `T * (n_types + n_stock)` ≈ 6% of the columns.
 
 # Feasibility
@@ -106,6 +108,28 @@ function cs_due_dates_dimensions(n::Int)
     return T, n_types, n_patterns, n_stock
 end
 
+"""
+    _cs_due_dates_pattern_space(stock_lengths, piece_lengths, cap) -> Int
+
+Number of distinct single-item and two-item patterns (the space
+`cs_generate_patterns`'s deterministic fallback enumerates), counted up to `cap`.
+"""
+function _cs_due_dates_pattern_space(
+    stock_lengths::Vector{Int}, piece_lengths::Vector{Int}, cap::Int
+)
+    count = 0
+    n = length(piece_lengths)
+    for L in stock_lengths, i in 1:n
+        count += L ÷ piece_lengths[i]
+        for j in (i + 1):n, ci in 1:(L ÷ piece_lengths[i])
+            count += (L - ci * piece_lengths[i]) ÷ piece_lengths[j]
+            count >= cap && return count
+        end
+        count >= cap && return count
+    end
+    return count
+end
+
 function DueDatesCuttingStockProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
@@ -115,7 +139,19 @@ function DueDatesCuttingStockProblem(
     T, n_types, n_patterns, n_stock = cs_due_dates_dimensions(target_variables)
 
     stock_lengths, stock_costs = cs_stock_types(rng, n_stock)
-    piece_lengths = cs_piece_lengths(rng, n_types, floor(Int, 0.45 * stock_lengths[end]))
+    max_piece = floor(Int, 0.45 * stock_lengths[end])
+    piece_lengths = cs_piece_lengths(rng, n_types, max_piece)
+    # Tiny targets: one or two items on one stock can have fewer distinct
+    # single/two-item patterns than requested (an item cut at most 4 times per
+    # bar has only 4 single-item patterns). Trade pattern columns for item
+    # types — each swap keeps `T * (n_patterns + n_types)` unchanged — until
+    # the deterministic fallback enumeration is guaranteed to fill the pool.
+    while _cs_due_dates_pattern_space(stock_lengths, piece_lengths, n_patterns) < n_patterns &&
+          n_patterns - 1 >= (n_types + 1) * n_stock
+        append!(piece_lengths, cs_piece_lengths(rng, 1, max_piece))
+        n_types += 1
+        n_patterns -= 1
+    end
     # Fewer singles than patterns is guaranteed by the dimension rule only for
     # stocks every item fits; drop to singles-only generation if needed.
     patterns = cs_generate_patterns(rng, stock_lengths, piece_lengths, n_patterns)

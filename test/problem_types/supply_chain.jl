@@ -559,7 +559,8 @@ end
     end
 
     # Cumulative product-supply certificate (multi_product).
-    for seed in 0:5, target in (300, 3000)
+    # (1, 12): a tiny network where the first-drawn product had no orders.
+    for (seed, target) in vcat(vec(collect(Iterators.product(0:5, (300, 3000)))), [(12, 1)])
         _, p = generate_problem("supply_chain/multi_product", target, infeasible, seed)
         net, cert = p.network, p.infeasibility_certificate
         k, tau = cert.product, cert.period
@@ -573,6 +574,7 @@ end
             )
         @test cert.supply_bound ≈ bound
         @test cert.margin ≈ cert.demand - bound
+        @test cert.demand > 0
         @test cert.margin > 0.05 * cert.demand
     end
 

@@ -350,7 +350,20 @@ end
         p = SyntheticLPs._economic_dispatch(3_000, infeasible, 1; infeasible_mode=:import_pocket)
         @test p.infeasibility_certificate.kind == :import_pocket
 
-        for v in ENERGY_DC_VARIANTS, target in (60, 700, 3_000), seed in 0:3
+        dc_cases = [
+            (v, target, seed) for v in ENERGY_DC_VARIANTS for target in (60, 700, 3_000) for
+            seed in 0:3
+        ]
+        # Single-contingency grids where the random pockets beside the one
+        # screened line all failed (the deterministic sweep finds one).
+        append!(
+            dc_cases,
+            [
+                (:security_constrained_dc_opf, t, s) for
+                (t, s) in ((1, 11), (25, 7), (40, 8), (100, 7))
+            ],
+        )
+        for (v, target, seed) in dc_cases
             _, p = generate_problem(ProblemVariant(:energy, v), target, infeasible, seed)
             cert = p.infeasibility_certificate
             @test cert isa SyntheticLPs.DCPocketCertificate
