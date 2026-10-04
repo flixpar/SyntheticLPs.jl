@@ -132,7 +132,11 @@ floor).
   best-connected hubs run short, not a district's only source — and a local
   repair keeps every demand node deliverable under one step of bound
   propagation with 30% slack (total unchanged), so presolve rarely sees it.
-  The certificate stores the potentials and both sides.
+  The repair keeps the total only up to rounding, site floors and early
+  stops, so it is applied only while the repaired total stays below the
+  requirement (small networks otherwise keep the plain cut). The certificate
+  stores the potentials and both sides, the supply side being the total the
+  model actually carries.
 - `unknown`: every site holds a common reserve factor in [0.9, 1.1] of its
   planted draw (4% site noise), starved sites topped up: below 1 the routing
   must beat the planted (near-efficient, noisy) paths, above 1 it has slack.

@@ -72,10 +72,12 @@ Rows: `G + 3 * n_clusters + 2`, about 20% of the columns.
   - `infeasible`: same instance, then one shared resource's capacity is cut to
     `min_usage_total / U(1.04, 1.12)` — a site power curtailment below what even
     the leanest configurations need. Certificate: `MinimumLevelCertificate`.
-  - `unknown`: every capacity is placed between the total of per-class minima
-    and the total at the median service level (cluster rows `U(0.25, 0.85)`,
-    shared rows `U(0.0, 0.45)` of that span). Each row alone is satisfiable;
-    whether one selection satisfies all of them jointly is decided by the LP.
+  - `unknown`: capacities are placed around the all-minimal-service plan
+    (the first, level-1 configuration of every class): cluster rows get
+    `U(1.0, 1.4)` times its usage, shared rows `U(0.90, 1.12)`. A shared row
+    below the plan can only be met by switching classes to configurations that
+    trade the shared resource for local ones, which may or may not suffice;
+    the LP decides.
 """
 struct MultipleChoiceKnapsackProblem <: ProblemGenerator
     n_classes::Int

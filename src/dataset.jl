@@ -891,20 +891,27 @@ function _failure_dict(f::DatasetFailure)
     )
 end
 
+# Size-fit statistics over `|log(actual/target)|` errors, written into `report`
+# (shared by `generate_dataset` and `merge_manifests`).
+function _size_error_stats!(report::AbstractDict, errs, tolerance::Real)
+    report["mean_abs_log_error"] = isempty(errs) ? nothing : sum(errs) / length(errs)
+    report["max_abs_log_error"] = isempty(errs) ? nothing : maximum(errs)
+    report["fraction_within_tolerance"] =
+        isempty(errs) ? nothing : count(<=(tolerance), errs) / length(errs)
+    return report
+end
+
 function _size_match_report(
     instances, tolerance::Float64, enabled::Bool, by_category::Bool, description
 )
     errs = [abs(log(i.num_variables / i.target_variables)) for i in instances]
-    return Dict{String, Any}(
+    report = Dict{String, Any}(
         "enabled" => enabled,
         "by_category" => by_category,
         "distribution" => description,
         "tolerance" => tolerance,
-        "mean_abs_log_error" => isempty(errs) ? nothing : sum(errs) / length(errs),
-        "max_abs_log_error" => isempty(errs) ? nothing : maximum(errs),
-        "fraction_within_tolerance" =>
-            isempty(errs) ? nothing : count(<=(tolerance), errs) / length(errs),
     )
+    return _size_error_stats!(report, errs, tolerance)
 end
 
 function _failure_counts(instances, failures)
@@ -974,11 +981,7 @@ function merge_manifests(output_dir::AbstractString; write::Bool=true)
         "generation_time" => sum(s["stats"]["generation_time"] for s in shards),
     )
     errs = [abs(log(i["num_variables"] / i["target_variables"])) for i in instances]
-    tol = merged["size_match"]["tolerance"]
-    merged["size_match"]["mean_abs_log_error"] = isempty(errs) ? nothing : sum(errs) / length(errs)
-    merged["size_match"]["max_abs_log_error"] = isempty(errs) ? nothing : maximum(errs)
-    merged["size_match"]["fraction_within_tolerance"] =
-        isempty(errs) ? nothing : count(<=(tol), errs) / length(errs)
+    _size_error_stats!(merged["size_match"], errs, merged["size_match"]["tolerance"])
     write && _write_json(joinpath(output_dir, "manifest.json"), merged)
     return merged
 end

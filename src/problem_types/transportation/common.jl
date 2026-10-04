@@ -129,13 +129,13 @@ function _tp_maxflow_network(
 end
 
 """
-    _tp_market_supply(rng, src_pos, lanes, primary, d0; build_median=1.3, build_sd=0.2)
+    _tp_market_supply(rng, src_pos, lanes, primary, d0; build_median=1.5, build_sd=0.2)
         -> Vector{Float64}
 
 Source capacities sized to their historical market: every customer's nominal
 demand is attributed half to its primary (nearest) source and half spread over
 its other lanes. Each source's capacity is that market times a lognormal build
-factor (median `build_median`, default 1.5, log-sd `build_sd`) times REGIONAL under-build
+factor (median `build_median`, log-sd `build_sd`) times REGIONAL under-build
 shocks: 2-6 discs (centred on random sources, radius 10%-25% of the region)
 inside which plants were built at only 45%-80% of their market (a closed
 plant, a lagging region). Total supply comfortably exceeds demand, so the

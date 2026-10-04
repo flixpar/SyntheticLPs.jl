@@ -54,8 +54,8 @@
 #   - `presolve-solved`: an instance HiGHS presolve reduced to nothing (it solved or
 #     disproved the instance without simplex work) — counted separately for
 #     feasible/unknown and for infeasible requests;
-#   - `contract`: a feasibility-contract violation (feasible → INFEASIBLE/UNBOUNDED,
-#     infeasible → OPTIMAL/UNBOUNDED);
+#   - `contract`: a feasibility-contract violation (feasible → INFEASIBLE/UNBOUNDED/
+#     UNBOUNDED_OR_INFEASIBLE, infeasible → OPTIMAL/UNBOUNDED);
 #   - `error` / `timeout` / `skipped`: failed builds, solves at the time limit, and
 #     models skipped for exceeding `--max-nnz`.
 #
@@ -328,7 +328,10 @@ presolve_solved(r) = haskey(r, "presolved_cols") && r["presolved_cols"] == 0
 function contract_violated(r)
     st = get(r, "solve_status", nothing)
     st === nothing && return false
-    r["status"] == "feasible" && return st in ("INFEASIBLE", "UNBOUNDED")
+    # A feasible request must solve to OPTIMAL, so HiGHS's undecided
+    # UNBOUNDED_OR_INFEASIBLE already breaks it; for an infeasible request only
+    # a proven feasible point (OPTIMAL / UNBOUNDED) does.
+    r["status"] == "feasible" && return st in ("INFEASIBLE", "UNBOUNDED", "UNBOUNDED_OR_INFEASIBLE")
     r["status"] == "infeasible" && return st in ("OPTIMAL", "UNBOUNDED")
     return false
 end

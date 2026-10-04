@@ -244,6 +244,11 @@ function LeeftinkHansORSchedulingProblem(
     for _ in 1:20
         # Smaller suites run fewer services (about one per three OR-days).
         allowed = _orsched_case_mix(rng, clamp(n_or_days ÷ 3, 2, length(_ORSCHED_SPECIALTIES)))
+        # `_benchmark_blocks` gives every present specialty at least one block,
+        # so a suite smaller than the specialty mix would gain OR-days after
+        # the case list was sized for it, diluting the load (an infeasible
+        # request could then fall below 100% and lose its certificate).
+        n_or_days = max(n_or_days, length(allowed))
         cases = _benchmark_case_list(rng, n_or_days, requested_load, allowed)
         blocks = _benchmark_blocks(rng, cases.specs, cases.means, n_or_days)
         q_actual = length(blocks[1])
@@ -283,7 +288,10 @@ function LeeftinkHansORSchedulingProblem(
         mandatory .= true
         max_overtime .= 0.0
         excess = sum(expected) - 480.0 * n_or_days
-        @assert excess > 0
+        excess > 0 || error(
+            "benchmark_loading: the case list ($(sum(expected)) min) does not exceed the " *
+            "$(n_or_days) OR-days; the overload certificate would not hold",
+        )
     else
         # Overtime is budgeted against a reference LPT plan scaled by a global
         # factor on either side of what that plan needs, and a large share of

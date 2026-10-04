@@ -164,7 +164,7 @@ function UnitCommitmentProblem(
 
     # Variable-count formula: 5 * n_units * n_periods (g, on, startup, shutdown,
     # reserve are each indexed by unit × period). Dimensions are sized below so this
-    # product lands within ~10% of target_variables.
+    # product lands within ~2% of target_variables from 1k up.
     # Switch bands at the smallest formulation supported by the next band. This
     # avoids artificial jumps (for example, 3,000 requested variables formerly
     # jumped to the large-band floor).
@@ -197,32 +197,17 @@ function UnitCommitmentProblem(
         period_range = (48, 168)
     end
 
-    n_units = unit_range[1]
-    n_periods = period_range[1]
-
-    for _ in 1:20
-        current_vars = n_units * n_periods * 5
-        if abs(current_vars - sizing_target) / sizing_target <= 0.1
-            break
-        end
-
-        ratio = sqrt(sizing_target / max(current_vars, 1))
-        if ratio > 1.05
-            if n_periods < period_range[2]
-                n_periods = min(
-                    period_range[2], max(period_range[1], round(Int, n_periods * ratio))
-                )
-            elseif n_units < unit_range[2]
-                n_units = min(unit_range[2], max(unit_range[1], round(Int, n_units * ratio)))
-            end
-        elseif ratio < 0.95
-            if n_periods > period_range[1]
-                n_periods = max(period_range[1], round(Int, n_periods * ratio))
-            elseif n_units > unit_range[1]
-                n_units = max(unit_range[1], round(Int, n_units * ratio))
-            end
-        else
-            break
+    # Exact best fit within the band: for every horizon, the fleet size closest
+    # to the target, keeping the (longest-horizon) pair with the smallest error.
+    # The former grow-until-within-10% loop stopped at the first admissible
+    # pair, always from below, and could stall on rounding (e.g. 5 x 36 for
+    # every target in 1012-1088), undersizing by 7-18% across 1k-20k.
+    n_units, n_periods, best_err = unit_range[1], period_range[1], typemax(Int)
+    for p in period_range[2]:-1:period_range[1]
+        u = clamp(round(Int, sizing_target / (5 * p)), unit_range[1], unit_range[2])
+        err = abs(5 * u * p - sizing_target)
+        if err < best_err
+            n_units, n_periods, best_err = u, p, err
         end
     end
 

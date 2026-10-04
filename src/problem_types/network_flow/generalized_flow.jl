@@ -344,8 +344,8 @@ function GeneralizedFlowProblem(
     if feasibility_status != feasible
         # Infeasible: keep the total (the certificate depends on it). Unknown:
         # just top up starved sites (a natural instance).
-        _generalized_flow_local_repair!(
-            supplies,
+        repaired = _generalized_flow_local_repair!(
+            copy(supplies),
             n,
             arcs,
             capacities,
@@ -354,10 +354,18 @@ function GeneralizedFlowProblem(
             supply_nodes;
             keep_total=feasibility_status == infeasible,
         )
+        # The repair keeps the total only approximately (it rounds to cents,
+        # floors sites at 0.01 and stops early when nothing is left to give
+        # back), so it must never lift an infeasible instance over the
+        # loss-adjusted requirement; small networks keep the plain cut then.
+        if feasibility_status == unknown || sum(repaired[supply_nodes]) < required
+            supplies = repaired
+        end
     end
 
     if feasibility_status == infeasible
-        total_supply = sum(supply_caps)
+        # The certificate is about the supplies the model actually carries.
+        total_supply = sum(supplies[supply_nodes])
         total_supply < required ||
             error("generalized_flow: loss certificate failed to separate (seed $seed)")
         infeasibility_certificate = GeneralizedFlowLossCertificate(

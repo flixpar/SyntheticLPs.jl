@@ -73,7 +73,10 @@ Feasibility:
 - `infeasible`: a peak-hour bottleneck deficit (`BottleneckCertificate`).
   - A group of mandatory trains has every candidate path inside one bottleneck
     window, and together they need at least 10% more bottleneck slots than the
-    window has.
+    window has. Small requests keep enough trains for that: one path per train
+    below 20 variables and at most five (shift flexibility `w <= 2`) below 80;
+    the generator raises rather than emit a group that cannot over-subscribe
+    its window.
   - Weighting each train's equality row by its occupancy and summing the
     window's slot rows gives the contradiction.
 - `unknown`: a random 15–60% of passenger trains are mandatory, with no

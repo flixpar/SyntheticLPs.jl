@@ -49,8 +49,9 @@ The constructor searches within scale-appropriate dimension ranges:
 
 Band boundaries match the smallest formulation in the next band, avoiding a
 variable-count jump at the threshold. Large requests grow the fleet rather than
-silently saturating at a fixed 48-unit cap. Ordinary targets are within about 10%
-of the request (100k requests land within 10% with ~140 units over a week).
+silently saturating at a fixed 48-unit cap. Within its band the generator picks
+the exact best-fitting fleet size for every horizon, so targets from 1k up land
+within about 2% of the request (100k requests use 125 units over 160 periods).
 Targets below 60 clamp to the smallest useful formulation: two units over six
 periods, or 60 variables.
 

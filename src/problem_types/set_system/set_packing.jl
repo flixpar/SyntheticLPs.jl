@@ -102,9 +102,19 @@ function SetPackingProblem(target_variables::Int, feasibility_status::Feasibilit
         else
             rand(rng, 1:(n_sections - len + 1))
         end
-        # Tiny infeasible requests use one path per train so that at least
-        # two trains exist to over-subscribe the bottleneck.
-        w = (feasibility_status == infeasible && target_variables < 20) ? 0 : rand(rng, 2:5)
+        # Small infeasible requests need enough trains to over-subscribe the
+        # bottleneck window (the group below needs `sum(occ) > max spread`):
+        # one path per train under 20 variables (at least two trains), at most
+        # five paths (w <= 2) under 80, which yields at least four trains —
+        # enough for any mix of kinds. With w in 2:5, 80 variables give at
+        # least seven trains, again enough for any mix.
+        w = if feasibility_status == infeasible && target_variables < 20
+            0
+        elseif feasibility_status == infeasible && target_variables < 80
+            rand(rng, 1:2)
+        else
+            rand(rng, 2:5)
+        end
         count = min(2w + 1, target_variables - total)
         push!(kinds, kind)
         push!(dirs, rand(rng, (-1, 1)))
@@ -167,6 +177,10 @@ function SetPackingProblem(target_variables::Int, feasibility_status::Feasibilit
             need = max(need, spread(r))
             load >= need + max(1, ceil(Int, 0.1 * need)) && length(group) >= 2 && break
         end
+        load > need || error(
+            "set_packing: $(length(group)) trains (occupancy $load) cannot over-subscribe a " *
+            "$need-slot bottleneck window; the infeasibility certificate would not hold",
+        )
         window = need
         for r in group
             mandatory[r] = true

@@ -461,6 +461,13 @@ struct UnitScaling
     row_exponents::Dict{String, Int}
 end
 
+# The record is keyed by references, which a copy renumbers, and
+# `copy_extension_data` receives no reference map to translate them with, so a
+# copied model carries no scaling record (`permute_model` remaps it explicitly).
+# Defining the method also keeps JuMP from warning on every copy of a scaled
+# model, e.g. the internal copy `dualize_model` makes to split ranged rows.
+JuMP.copy_extension_data(::UnitScaling, ::JuMP.AbstractModel, ::JuMP.AbstractModel) = nothing
+
 _scale_set(s::MOI.LessThan, r) = MOI.LessThan(s.upper * r)
 _scale_set(s::MOI.GreaterThan, r) = MOI.GreaterThan(s.lower * r)
 _scale_set(s::MOI.EqualTo, r) = MOI.EqualTo(s.value * r)

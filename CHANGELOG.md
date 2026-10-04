@@ -4,6 +4,59 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-10-04 (PR #56 second review: broken infeasible labels, sizing, transforms)
+
+**Previous Commit**: `1b0944c`
+
+**Commits**: uncommitted working-tree changes on top of `1b0944c`
+
+**Datetime**: 2026-10-04 UTC
+
+**Summary**: A many-seed sweep (every variant, targets 20-8,000, seeds 0-40,
+HiGHS simplex then IPM) found two generators whose `infeasible` instances were
+feasible and one that crashed at tiny targets; a fine-grained size sweep found
+`unit_commitment/standard` undersizing by up to 18%. All fixed; smaller
+framework and documentation fixes alongside.
+
+**Details**:
+
+- `set_system/set_packing`: below ~50 variables an `infeasible` request could
+  have too few trains to over-subscribe the bottleneck window; the grouping
+  loop ran out of trains and the generator emitted an invalid
+  `BottleneckCertificate` (HiGHS: `OPTIMAL` at e.g. 25/seed 2, 40/seed 0).
+  Requests under 80 variables now give each train at most five paths (one
+  under 20), which guarantees enough trains for any mix of kinds, and the
+  generator raises instead of emitting a group that cannot over-subscribe.
+- `network_flow/generalized_flow`: the infeasible certificate was checked
+  against the pre-repair site supplies, but `_generalized_flow_local_repair!`
+  can lift the total (cent rounding, site floors, early stops); at 40/seed 3
+  the model carried 173.8 units against a 162.5 requirement (feasible) while
+  the certificate claimed 150.7. The repair is now kept only while the
+  repaired total stays below the requirement, and the certificate records the
+  supplies the model actually carries.
+- `operating_room_scheduling/benchmark_loading`: `_benchmark_blocks` gives
+  every present specialty a block, so a one-OR-day suite with two specialties
+  gained a day after its case list was sized, the load fell below 100% and an
+  `infeasible` request hit `@assert excess > 0` (83 of 3,660 tiny requests).
+  The suite is now at least the size of the specialty mix before the case list
+  is drawn, and the check raises a descriptive error.
+- `unit_commitment/standard`: the grow-until-within-10% sizing loop stopped
+  at the first admissible pair from below and stalled on rounding (`5 x 36`
+  for every target 1,012-1,088), undersizing by 7-18% from 700 to 20,000
+  variables. An exact best-fit scan over the band now lands within 2% from 1k.
+- `UnitScaling`: `JuMP.copy_extension_data` is defined (the copy carries no
+  record), so `dualize=true` with unit scaling no longer prints a JuMP warning
+  for every instance with ranged rows.
+- `model_statistics` counts nonzeros from the MOI functions instead of
+  rebuilding a JuMP expression per row (~40% faster at 1.8M nonzeros).
+- `merge_manifests` and `generate_dataset` share `_size_error_stats!`.
+- `scripts/audit_generators.jl`: `feasible -> UNBOUNDED_OR_INFEASIBLE` is now
+  reported as a contract violation.
+- Docs: `knapsack/multiple_choice` docstring described an `unknown` capacity
+  rule the code does not use; `_generate_problem_verified`'s `:build_time`
+  excludes the `transforms`; `_tp_market_supply`'s default `build_median`; the
+  upgrade section below now records its commit range.
+
 ## 2026-10-04 (PR #56 review fixes)
 
 **Previous Commit**: `99673be`
@@ -46,7 +99,7 @@ and so add a row its block did not imply; and `permute_model` carried a
 
 **Previous Commit**: `02599df`
 
-**Commits**: branch `upgrade/integration` (merges of 16 workstream branches plus integration fixes; see `git log 02599df..`)
+**Commits**: `02599df..7b041a7` (branch `upgrade/integration`: merges of 16 workstream branches plus integration fixes, ending at `7b041a7`; changelog `99673be`)
 
 **Datetime**: 2026-10-04 UTC
 

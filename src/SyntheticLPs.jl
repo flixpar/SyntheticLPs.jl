@@ -432,8 +432,9 @@ is itself deterministic — attempts walk `seed, seed+1, …` — so a given
 
 When `info` is a `Dict{Symbol,Any}`, it is filled with diagnostics of the returned
 model's final attempt: `:num_integer` (integer/binary columns *before* relaxation),
-`:build_time` (seconds spent constructing the generator, building, and applying the
-pre-dualization transforms — excluding verification solves), `:attempts`, and, when a
+`:build_time` (seconds spent constructing the generator, building, and applying
+`relax_integer`/`bounds_to_constraints` — excluding verification solves and the later
+`transforms` and `dualize` steps), `:attempts`, and, when a
 verification solve ran, `:verification_status` (its termination status).
 """
 function _generate_problem_verified(
@@ -977,10 +978,14 @@ _count_integer(model::Model) = count(x -> is_integer(x) || is_binary(x), all_var
 
 function _count_nonzeros(model::Model)
     nnz = 0
+    moi = backend(model)
     for (F, S) in list_of_constraint_types(model)
         F <: GenericAffExpr || continue
         for c in all_constraints(model, F, S)
-            nnz += count(!iszero, values(constraint_object(c).func.terms))
+            # Read the MOI function directly: `constraint_object` would rebuild a
+            # JuMP expression (an ordered dict) per row just to count its terms.
+            f = MOI.get(moi, MOI.ConstraintFunction(), index(c))
+            nnz += count(t -> !iszero(t.coefficient), f.terms)
         end
     end
     return nnz
