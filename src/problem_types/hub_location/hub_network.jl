@@ -179,8 +179,12 @@ function _build_hub_network(
     h = clamp(n_hubs, 2, n)
 
     # Regional geography: island groups with anchors on the group centers.
-    n_regions = clamp(round(Int, h / 2), 2, 4)
+    # About three gateway candidates per region, so a city's feeder window
+    # offers a real choice (two-candidate windows turn every supply row into
+    # a doubleton equation that presolve substitutes away).
+    n_regions = clamp(round(Int, h / 3), 2, 4)
     n_regions = min(n_regions, h, n)
+    h = max(h, min(n, 3 * n_regions))
     centers = _hub_ring_centers(rng, n_regions)
     node_region = vcat(collect(1:n_regions), rand(rng, 1:n_regions, max(0, n - n_regions)))
     min_sep = minimum(
@@ -201,8 +205,20 @@ function _build_hub_network(
     dist = _hub_distance_matrix(locations)
 
     populations = _hub_populations(rng, n)
-    # Gateway candidates: the anchors plus the largest remaining cities.
-    extra = [i for i in sortperm(populations; rev=true) if i > n_regions][1:max(0, h - n_regions)]
+    # Gateway candidates: the anchors plus the largest remaining cities of
+    # each region, taken round-robin so every region gets its share.
+    by_region = [
+        [i for i in sortperm(populations; rev=true) if i > n_regions && node_region[i] == g] for
+        g in 1:n_regions
+    ]
+    extra = Int[]
+    rank = 1
+    while length(extra) < h - n_regions && any(length(b) >= rank for b in by_region)
+        for b in by_region
+            length(extra) < h - n_regions && length(b) >= rank && push!(extra, b[rank])
+        end
+        rank += 1
+    end
     hubs = sort(unique(vcat(collect(1:n_regions), extra)))
 
     # Regional gateway per region: the heaviest candidate of each region.
@@ -220,6 +236,16 @@ function _build_hub_network(
         reach =
             cover *
             rand(rng, feasibility_status == feasible ? Uniform(1.05, 1.2) : Uniform(0.99, 1.1))
+        # Every city sees (up to) three gateway candidates of its own region.
+        # In-region distances stay below 0.43 min_sep and cross-region ones
+        # above 0.57 min_sep, so the window never leaves the region.
+        third = maximum(
+            begin
+                own = sort([dist[i, k] for k in hubs if node_region[k] == node_region[i]])
+                own[min(3, length(own))]
+            end for i in 1:n
+        )
+        reach = max(reach, third * (1 + 1e-9))
     end
     admissible = _hub_reach_admissible(dist, reach; candidates=hubs)
 
@@ -373,6 +399,11 @@ target.
     the traffic that must cross it (`BackboneCutCertificate`).
   - `unknown`: crossing capacities are squeezed toward the crossing traffic, so
     the backbone may or may not have room for the inter-regional demand.
+
+Every region gets about three gateway candidates, and for `feasible` and
+`unknown` the reach is floored so every city's window holds (up to) three
+candidates of its own region: two-candidate windows make every supply row a
+doubleton equation that presolve substitutes away.
 """
 function HubNetworkDesignProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int

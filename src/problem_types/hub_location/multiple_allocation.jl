@@ -178,12 +178,13 @@ function _build_multiple_allocation(
         shape = rand(rng, (:clustered, :corridor, :archipelago))
         locations = _hub_city_locations(rng, n, shape)
         dist = _hub_distance_matrix(locations)
-        # Smallest reach at which every node still sees its nearest candidate
-        # (no empty windows), then sampled just above it.
-        cover_reach = maximum(minimum(dist[i, k] for k in hubs) for i in 1:n)
-        # `unknown` stays above the cover reach too: a reach below it leaves
-        # some city with an empty window, an infeasibility presolve finds
-        # from one empty supply row.
+        # Smallest reach at which every node sees at least two candidates,
+        # then sampled just above it. A single-candidate window fixes its
+        # collection arcs and forces that hub open, after which presolve turns
+        # every linking row of the hub into a bound and drops it; and an empty
+        # window (below the one-candidate reach) is an infeasibility presolve
+        # finds from one supply row. `unknown` therefore stays above it too.
+        cover_reach = maximum(sort([dist[i, k] for k in hubs])[min(2, length(hubs))] for i in 1:n)
         reach =
             cover_reach *
             rand(rng, feasibility_status == feasible ? Uniform(1.05, 1.2) : Uniform(1.03, 1.25))
@@ -277,10 +278,11 @@ follows it) to land near the target.
   - `infeasible`: disjoint island groups with a budget below
     `groups * min_k f_k` (`BudgetCoverCertificate`) - the budget row conflicts
     with the covering forced by the supply and linking rows in the relaxation.
-  - `unknown`: the reach sits 3-25% above the smallest window that leaves no
-    city without a candidate, and the budget is sampled at 0.8-1.15x the greedy
-    cover cost (never below 1.05x the hubs forced open by single-candidate
-    windows), which may or may not be enough once cheaper (including
+  - `unknown`: the reach sits 3-25% above the smallest window that gives every
+    city at least two candidates (`feasible` uses 5-20%), and the budget is
+    sampled at 0.8-1.15x the greedy cover cost (never below 1.05x the cost of
+    any hubs forced open by single-candidate windows - a safeguard for tiny
+    candidate sets), which may or may not be enough once cheaper (including
     fractional) covers exist, leaving feasibility undecided.
 """
 function MultipleAllocationHubProblem(

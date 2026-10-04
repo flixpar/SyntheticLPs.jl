@@ -222,6 +222,12 @@ function _build_p_hub_median(n_nodes::Int, feasibility_status::FeasibilityStatus
         else
             cover * rand(rng, Uniform(0.8, 1.25))
         end
+        # Every city may at least be allocated to its nearest neighbour: a
+        # window holding only the city itself makes all its pair rows
+        # doubleton equations and forces it open, which presolve exploits to
+        # strip a large share of the rows.
+        nearest_other = maximum(minimum(dist[i, k] for k in 1:n if k != i) for i in 1:n)
+        reach = max(reach, nearest_other * (1 + 1e-9))
         certificate = nothing
     end
 
@@ -288,13 +294,19 @@ the target (within a few percent for most requests).
   - `unknown`: the reach window is sampled around the covering radius (from 0.8x
     to 1.25x), leaving whether `p` hubs can serve every node genuinely
     undecided.
+
+For `feasible` and `unknown` the reach is floored at the largest
+nearest-neighbour distance, so every city has at least two admissible hubs
+(itself and its nearest neighbour).
 """
 function PHubMedianProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     target = max(target_variables, 1)
     hint = clamp(round(Int, 2.0 * target^0.25), 3, 70)
     best = nothing
     best_score = (1, Inf)
-    for attempt in 1:20
+    # One node is a ~2/n step in the path count; fresh draws per attempt
+    # (reach, geography) fill the gaps, hence many attempts and a tight stop.
+    for attempt in 1:120
         rng = MersenneTwister(seed + 7919 * attempt)
         candidate = _build_p_hub_median(hint, feasibility_status, rng)
         total = _number_of_variables(candidate.admissible)
@@ -307,7 +319,7 @@ function PHubMedianProblem(target_variables::Int, feasibility_status::Feasibilit
             best_score = score
             best = candidate
         end
-        gap <= 0.05 && break
+        gap <= 0.025 && break
         ratio = clamp((target / max(total, 1))^0.25, 0.6, 1.6)
         next_hint = round(Int, hint * ratio)
         next_hint == hint && (next_hint += total < target ? 1 : -1)
