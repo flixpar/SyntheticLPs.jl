@@ -96,10 +96,10 @@ columns, ~9,000-15,000 at 100k; the previous single-day, single-site model had
   certificate and are `nothing` for the other statuses. The refutation needs
   the group's coverage rows and pool-day rows together, so presolve does not
   detect it.
-- `unknown`: capacities are scaled by a labor-market factor in `[0.50, 0.95]`
+- `unknown`: capacities are scaled by a labor-market factor in `[0.60, 1.10]`
   with independent per-pool noise, and demand receives per-period load
   shocks. Because the greedy witness is generous, the critical uniform
   capacity factor (the smallest keeping the LP feasible) was measured at
-  0.53-0.88 across profiles and sizes, so the market factor lands on both
+  0.53-0.88 across profiles at 2k-20k columns and 0.58-0.87 at 100k, so the market factor lands on both
   sides of it: both statuses occur at every size. No witness or certificate is
   exposed.

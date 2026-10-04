@@ -768,9 +768,9 @@ function WorkforceShiftCoveringProblem(
         # A labor-market factor plus independent pool and workload noise; no
         # status is forced. The greedy planted staffing is generous, so the
         # critical uniform capacity factor (the smallest one keeping the LP
-        # feasible) was measured at 0.53-0.88 across profiles and sizes; the
+        # feasible) was measured at 0.53-0.88 (2k-20k) and 0.58-0.87 (100k); the
         # market factor straddles that range.
-        market = 0.50 + 0.45 * rand(rng)
+        market = 0.60 + 0.50 * rand(rng)
         for pool in 1:n_pools
             pool_shock = market * (0.93 + 0.14 * rand(rng))
             for day in 1:n_days
