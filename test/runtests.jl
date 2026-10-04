@@ -595,9 +595,9 @@ end
         )
 
         # Exclusion.
-        plan_x = plan_dataset(; num_problems=50, seed=2, exclude=[:tsp, "knapsack/standard"])
+        plan_x = plan_dataset(; num_problems=50, seed=2, exclude=[:tsp, "knapsack/bounded"])
         @test !any(
-            p -> p.ref.category == :tsp || p.ref == ProblemVariant("knapsack/standard"), plan_x
+            p -> p.ref.category == :tsp || p.ref == ProblemVariant("knapsack/bounded"), plan_x
         )
 
         # Feasibility mixes are stratified within each variant.

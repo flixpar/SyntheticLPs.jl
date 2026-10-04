@@ -134,7 +134,7 @@ function parse_commandline()
         "--variant-weighting"
         help =
             "category (uniform over categories, then variants), variant (uniform over " *
-            "variants), or explicit weights such as 'tsp=2,knapsack/standard=0.5' " *
+            "variants), or explicit weights such as 'tsp=2,knapsack/bounded=0.5' " *
             "(unlisted variants get weight 0)"
         default = "category"
         "--feasibility"
