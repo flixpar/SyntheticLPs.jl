@@ -405,6 +405,43 @@ function _forest_same_regime_option(b::_ForestBuilder, m::Int)
     return 1
 end
 
+"""
+Minimum ending-inventory advantage (m³/ha) a costlier regeneration option must
+offer to be kept beside a cheaper one whose column is otherwise identical.
+"""
+const FOREST_REGEN_EI_TOL = 20.0
+
+"""
+    _forest_terminal_regen_keep(b, m, t, candidates) -> BitVector
+
+Dominance pruning among regeneration options `r ∈ candidates` after a
+clearcut of stand model `m` in period `t` when the regenerated stand is not
+harvested again. Such columns share every harvest and green-up coefficient,
+so they differ only in NPV (the discounted regeneration cost) and the ending
+inventory. Option `r` is dropped when another candidate costs no more and ends
+with at most `FOREST_REGEN_EI_TOL` m³/ha less standing volume (ties keep the
+lowest index). Besides being economically pointless (for example, planting
+improved stock in the last period), these columns are nearly parallel, which
+was observed to stall the dual simplex on infeasibility proofs.
+"""
+function _forest_terminal_regen_keep(b::_ForestBuilder, m::Int, t::Int, candidates::BitVector)
+    nopt = length(b.regen_targets[m])
+    cost = b.regen_costs[m]
+    ei = [_forest_standing(b, b.regen_targets[m][r], (b.T - t + 0.5) * b.L, -1.0) for r in 1:nopt]
+    keep = copy(candidates)
+    for r in 1:nopt
+        candidates[r] || continue
+        for q in 1:nopt
+            (q == r || !candidates[q]) && continue
+            if cost[q] <= cost[r] && ei[q] >= ei[r] - FOREST_REGEN_EI_TOL && (cost[q] < cost[r] || q < r)
+                keep[r] = false
+                break
+            end
+        end
+    end
+    return keep
+end
+
 "Periods of rotation needed before a stand regenerated as model `m` can be clearcut."
 function _forest_min_rotation_periods(b::_ForestBuilder, m::Int)
     sm = b.models[m]
@@ -444,13 +481,33 @@ function _forest_draft_add!(d::_ForestColumnDraft, t::Int, k::Int, amount::Float
     return amount
 end
 
+"""
+Merchantability threshold (m³/ha): an assortment smaller than this is not
+merchandised separately (a sawlog remainder goes to pulpwood, a pulpwood
+remainder is left on site), and standing volume below it does not count as
+inventory. Besides being realistic, this keeps sub-m³/ha coefficients — which
+sit next to the unit area coefficients and were observed to destabilise the
+dual simplex's infeasibility proofs — out of the matrix.
+"""
+const FOREST_MIN_MERCH = 5.0
+
+"Apply the merchantability threshold to a (sawlog, pulpwood) split (m³/ha)."
+function _forest_merchandise(saw::Float64, pulp::Float64)
+    if saw < FOREST_MIN_MERCH
+        pulp += saw * FOREST_PULP_UTILIZATION
+        saw = 0.0
+    end
+    pulp < FOREST_MIN_MERCH && (pulp = 0.0)
+    return saw, pulp
+end
+
 "Record a commercial thinning of stand model `m` at period `t`, stand age `age`."
 function _forest_thin_event!(d::_ForestColumnDraft, b::_ForestBuilder, m::Int, t::Int, age::Float64)
     sm = b.models[m]
     spec = b.types[sm.type_index]
     removed = b.thinning_fraction * _forest_volume(sm, age)
-    saw = 0.3 * _forest_saw_fraction(spec, sm, age) * removed
-    pulp = (removed - saw) * FOREST_PULP_UTILIZATION
+    saw0 = 0.3 * _forest_saw_fraction(spec, sm, age) * removed
+    saw, pulp = _forest_merchandise(saw0, (removed - saw0) * FOREST_PULP_UTILIZATION)
     ks = spec.softwood ? b.product_index[1] : b.product_index[2]
     kp = b.product_index[3]
     _forest_draft_add!(d, t, ks, saw)
@@ -470,7 +527,7 @@ function _forest_standing(b::_ForestBuilder, m::Int, age::Float64, thin_age::Flo
     if thin_age >= 0.0
         v -= b.thinning_fraction * _forest_volume(sm, thin_age) * exp(-b.thinning_recovery * (age - thin_age))
     end
-    return max(v, 0.0)
+    return v < FOREST_MIN_MERCH ? 0.0 : v
 end
 
 "Record a clearcut of stand model `m` at period `t`, age `age`; returns the total volume (m³/ha)."
@@ -482,8 +539,7 @@ function _forest_clearcut_event!(
     v = _forest_standing(b, m, age, thin_age)
     sigma = _forest_saw_fraction(spec, sm, age)
     thin_age >= 0.0 && (sigma = min(0.95, sigma + 0.10))
-    saw = sigma * v
-    pulp = (1.0 - sigma) * v * FOREST_PULP_UTILIZATION
+    saw, pulp = _forest_merchandise(sigma * v, (1.0 - sigma) * v * FOREST_PULP_UTILIZATION)
     ks = spec.softwood ? b.product_index[1] : b.product_index[2]
     kp = b.product_index[3]
     total = _forest_draft_add!(d, t, ks, saw) + _forest_draft_add!(d, t, kp, pulp)
@@ -1020,7 +1076,11 @@ function _forest_finalize(
     inventory_scale = 1.0
     witness = nothing
     certificate = nothing
-    ei_cap = 0.93 * ei_max / bb             # keep the ending-inventory row satisfiable on its own
+    # Keep the ending-inventory floor at most 75% of the never-harvest
+    # maximum: satisfiable on its own (no single-row contradiction for
+    # presolve) and well clear of the degenerate sliver near the maximum,
+    # where the dual simplex stalls on infeasibility proofs.
+    ei_cap = 0.75 * ei_max / bb
     if status == feasible
         witness = ForestPlanningWitness(x, Hw, V, eiw)
     elseif status == infeasible

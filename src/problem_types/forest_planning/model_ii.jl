@@ -95,11 +95,13 @@ function _forest_model_ii_source!(rng::AbstractRNG, b::_ForestBuilder, src::Int,
         done = falses(T, nopt)
         for pass in 1:2, t in E
             t <= thin && continue
+            terminal = BitVector([t + _forest_min_rotation_periods(b, b.regen_targets[m][r]) > T for r in 1:nopt])
+            keep = _forest_terminal_regen_keep(b, m, t, terminal) .| .!terminal
             for k in 0:(nopt - 1)
                 r = mod1(pref + k, nopt)
-                done[t, r] && continue
+                (done[t, r] || !keep[r]) && continue
                 m2 = b.regen_targets[m][r]
-                has_node = t + _forest_min_rotation_periods(b, m2) <= T
+                has_node = !terminal[r]
                 new_node = has_node && !haskey(b.node_lookup, (m2, z, t))
                 added + (new_node ? 3 : 1) + length(pending) > budget && continue
                 dest = 0

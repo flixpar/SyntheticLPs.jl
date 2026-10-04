@@ -42,15 +42,21 @@ function _forest_model_i_stratum!(b::_ForestBuilder, s::Int, budget::Int)
 
     # Single-rotation prescriptions first, so a stratum truncated at the
     # streamed tail still offers a clearcut in every merchantable period.
-    for h1 in E, r1 in 1:nopt
-        added >= budget && return added
-        m1 = b.regen_targets[m0][r1]
-        _forest_draft_reset!(d)
-        d.cutvol1 = _forest_clearcut_event!(d, b, m0, h1, age(h1), -1.0)
-        _forest_regen_event!(d, b, m0, r1, h1)
-        ei = _forest_standing(b, m1, (T - h1 + 0.5) * L, -1.0)
-        _forest_push_column!(b, d, s, 0, 0, h1, r1, 0, ei)
-        added += 1
+    # Regeneration options that cannot pay off before the horizon ends are
+    # pruned (see `_forest_terminal_regen_keep`).
+    for h1 in E
+        keep = _forest_terminal_regen_keep(b, m0, h1, trues(nopt))
+        for r1 in 1:nopt
+            keep[r1] || continue
+            added >= budget && return added
+            m1 = b.regen_targets[m0][r1]
+            _forest_draft_reset!(d)
+            d.cutvol1 = _forest_clearcut_event!(d, b, m0, h1, age(h1), -1.0)
+            _forest_regen_event!(d, b, m0, r1, h1)
+            ei = _forest_standing(b, m1, (T - h1 + 0.5) * L, -1.0)
+            _forest_push_column!(b, d, s, 0, 0, h1, r1, 0, ei)
+            added += 1
+        end
     end
 
     # Second rotations: replant under the same regime and clearcut again.
@@ -85,7 +91,9 @@ function _forest_model_i_stratum!(b::_ForestBuilder, s::Int, budget::Int)
         added += 1
         for h1 in E
             h1 <= th && continue
+            keep = _forest_terminal_regen_keep(b, m0, h1, trues(nopt))
             for r1 in 1:nopt
+                keep[r1] || continue
                 added >= budget && return added
                 m1 = b.regen_targets[m0][r1]
                 _forest_draft_reset!(d)

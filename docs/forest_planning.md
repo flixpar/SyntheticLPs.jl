@@ -57,6 +57,10 @@ rises logistically with age to a type-specific maximum (0.25 for aspen, 0.85
 for Douglas-fir and ponderosa pine). The non-sawlog volume is pulpwood at 85%
 utilization. Sawlogs go to the softwood or hardwood sawlog product by species,
 so `products` is `[:softwood_sawlog, (:hardwood_sawlog,) :pulpwood]`.
+A merchantability threshold of 5 m³/ha (`FOREST_MIN_MERCH`) applies. A
+smaller sawlog assortment goes to pulpwood, a smaller pulpwood remainder is
+left on site, and standing volume below the threshold does not count toward
+ending inventory. This also keeps sub-m³/ha coefficients out of the matrix.
 
 **Silviculture.** Plantation softwoods (Douglas-fir, western hemlock,
 loblolly, slash, red pine, ponderosa pine, mixed conifer) have a
@@ -100,6 +104,15 @@ clearcut before `T` (`j + ρ0 <= T`). Otherwise the column ends there, and its
 ending inventory counts the young stand. Area regenerated in the same
 watershed, period and stand model merges into one node whatever stratum it
 came from. This merging is what makes Model II compact at long horizons.
+
+**Dominance pruning.** After a clearcut whose regenerated stand is not
+harvested again (Model I's single-rotation and thinning prescriptions, and
+Model II columns that end at the horizon), the regeneration options share
+every harvest and green-up coefficient. They differ only in cost and in
+ending inventory. An option is therefore dropped when a sibling costs no more
+and ends with at most 20 m³/ha less standing volume
+(`FOREST_REGEN_EI_TOL`), for example planting improved stock in the last
+period. Such columns are economically pointless and nearly parallel.
 
 Each column stores its harvest-volume coefficients sparsely
 (`vol_ptr`/`vol_period`/`vol_product`/`vol_amount`), its discounted NPV
@@ -171,14 +184,18 @@ over `μ` finds it. By construction `θ* ≥ 1`.
 - `infeasible`: the contracts are scaled by `θ*(1 + m)`, `m ∈ [0.04, 0.12]`.
   The typed `infeasibility_certificate` stores `μ`, `π`, the bound and the
   requirement, with `bound * (1 + m/2) <= required`. If joint scaling would
-  push the inventory floor above 93% of the maximum attainable inventory, a
-  single-row contradiction that presolve would detect, the inventory floor is
-  held there and the supply contracts absorb the gap. The certificate uses
+  push the inventory floor above 75% of the maximum attainable inventory (the
+  never-harvest level), the floor is held there and the supply contracts
+  absorb the gap. This keeps the floor satisfiable on its own, so presolve
+  sees no single-row contradiction. It also keeps the floor clear of the
+  degenerate sliver near the maximum, where the dual simplex was observed to
+  stall on infeasibility proofs. The certificate uses
   only the area, node, harvest-definition and inventory rows and the supply
-  bounds, so it is independent of even flow and green-up. Measured with HiGHS,
-  the true feasibility boundary sits at about 0.8 θ*, so infeasible instances
-  have a 25–40% margin beyond it.
-- `unknown`: the contracts are scaled by `s ~ U(1, 1.08 θ*)`, a continuum from
+  bounds, so it is independent of even flow and green-up. Measured with HiGHS
+  (joint scaling, 2,000 variables), the true feasibility boundary sits at
+  0.75–0.9 θ*, so infeasible instances lie 15–45% beyond it.
+- `unknown`: the contracts are scaled by `s ~ U(1, 1.08 θ*)` (the inventory
+  floor capped as above), a continuum from
   the planted level to just past the certified level, which straddles the true
   boundary. The instance stores no witness and no certificate. About half of
   the instances are feasible at 300–2,000 variables.
@@ -205,13 +222,28 @@ JuMP build about 3–4 s.
 
 ## Solver profile
 
-Presolve barely touches either variant: at 10k–100k variables HiGHS keeps
-99.9–100% of columns and rows. These are hard LPs. The dense harvest-definition
-and inventory rows and the near-parallel prescriptions of each stratum make
-the dual simplex take about 10× as many iterations as there are rows. At 10k
-variables, a solve takes about 3–7k iterations (~1 s). At 50k, it takes 12–37k
-iterations (15–60 s). Instances at 100k variables exceed a 60 s single-thread
-budget.
+Presolve barely touches either variant: at 1k–100k variables HiGHS keeps
+97–100% of columns and 85–100% of rows. These are hard LPs. The dense
+harvest-definition and inventory rows make the dual simplex take about 7–10×
+as many iterations as there are rows. At 10k variables, a solve takes about
+3–7k iterations (~1 s). At 50k, it takes 12–46k iterations (13–60 s).
+Instances at 100k variables exceed a 60 s single-thread budget.
+
+**Known limitation: dual-simplex infeasibility proofs.** An `infeasible`
+instance is refuted by a *global* Farkas ray: one multiplier per stratum (and
+node) row, aggregated over every period. HiGHS's dual simplex reaches it, but
+on roughly 15–25% of `infeasible` instances at 10k–50k variables it fails to
+verify the dual ray and returns `UNKNOWN` / `OTHER_ERROR` instead of
+`INFEASIBLE`. This was measured over 32 direct solves and 8 MPS-roundtrip
+audit solves, and the rate did not change
+with the infeasibility depth, the even-flow tolerance, mill capacities, cost
+perturbation, or scaling strategy. HiGHS's IPM proves the same instances
+infeasible in seconds, and the stored certificate is exact (verified
+arithmetically in the tests). Instances up to a few thousand variables solve
+cleanly. The framework's verification backstop
+(`generate_problem(...; optimizer=...)`) treats `OTHER_ERROR` as
+inconclusive and raises, so verify large `infeasible` instances with an
+optimizer configured for IPM (for example, HiGHS with `solver = "ipm"`).
 
 ## References
 
