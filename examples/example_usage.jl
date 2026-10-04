@@ -13,19 +13,19 @@ println("Available problem types: ", problem_types)
 model, problem = generate_problem(:transportation, 100)
 println("\nTransportation problem with ~100 variables:")
 println("  - ", problem.n_sources, " sources")
-println("  - ", problem.n_destinations, " destinations")
+println("  - ", problem.n_customers, " customers")
 
 # Example 2: Generate a diet problem with specific target size
 model, problem = generate_problem(:diet_problem, 50)
 println("\nDiet problem with ~50 variables:")
 println("  - ", problem.n_foods, " foods")
-println("  - ", problem.n_nutrients, " nutrients")
+println("  - ", problem.n_cohorts, " population cohorts")
 
 # Example 3: Generate a large transportation problem
 model, problem = generate_problem(:transportation, 500)
 println("\nLarge transportation problem with ~500 variables:")
 println("  - ", problem.n_sources, " sources")
-println("  - ", problem.n_destinations, " destinations")
+println("  - ", problem.n_customers, " customers")
 
 # Example 4: Generate a random problem of any variant
 model, ref, problem = generate_random_problem(200)

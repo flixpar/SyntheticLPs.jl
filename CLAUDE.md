@@ -34,16 +34,16 @@ make check   # lint and run the complete Julia test suite
 ### Testing
 
 Always pass `-O1`. The suite is compilation-bound — roughly half its runtime was
-JIT — so `-O1` cuts wall clock by ~23% while running every assertion (measured:
-342s → ~263s). CI uses it too.
+JIT — so `-O1` cuts wall clock by ~23% while running every assertion. CI uses it
+too. The full suite takes over ten minutes.
 
 **Prefer a focused run.** Naming categories as command-line arguments limits the
 per-variant sweeps and the per-category include loop to them. When only one
-problem class has changed, run just that class — it takes seconds rather than
-minutes, so there is no reason to run the full suite while iterating:
+problem class has changed, run just that class — it takes seconds to a minute
+rather than many minutes:
 
 ```bash
-# One category (~15s). Use this by default when working on a single generator.
+# One category. Use this by default when working on a single generator.
 julia --project=@. -O1 test/runtests.jl transportation
 
 # Several, space- or comma-separated:
@@ -60,8 +60,9 @@ An unregistered category name is an error rather than a silent no-op, so a typo
 cannot masquerade as a passing focused run.
 
 Run the full suite before committing, and whenever a change touches
-`src/SyntheticLPs.jl`, `src/transforms.jl`, `src/dataset.jl`, or `test/runtests.jl`
-— those are shared by every category, so a focused run cannot cover them.
+`src/SyntheticLPs.jl`, `src/transforms.jl`, `src/dataset.jl`, `test/runtests.jl`,
+or `test/transforms.jl` — those are shared by every category, so a focused run
+cannot cover them.
 
 HiGHS is a test-only dependency in `[extras]`. Both commands work:
 
@@ -78,36 +79,57 @@ julia --project=@. -O1 test/runtests.jl
 run skips those testsets with an `@info` notice instead of erroring.
 
 Framework-level testsets always run, focused or not; they are cheap and guard the
-shared machinery. Note `--problem-types` (`scripts/generate_lps.jl`) and `--types`
-(`scripts/analyze_problem_statuses.jl`) select what to *generate*, not what to
-test; the positional arguments above are the test-side filter.
+shared machinery. Note `--problem-types` (`scripts/generate_lps.jl`), `--types`
+(`scripts/analyze_problem_statuses.jl`), and `--variants`
+(`scripts/audit_generators.jl`) select what to *generate*, not what to test; the
+positional arguments above are the test-side filter.
 
 ### Problem generation
 
+The scripts activate the `scripts` environment themselves (HiGHS, ArgParse) and
+`Pkg.develop` the local package into it.
+
 ```bash
-julia --project=@. scripts/generate_problem.jl list
-julia --project=@. scripts/generate_problem.jl transportation 100 output.mps
-julia --project=@. scripts/generate_problem.jl knapsack 50 --feasible --solve
+julia --project=scripts scripts/generate_problem.jl list   # variants with tags, cap, class
+julia --project=scripts scripts/generate_problem.jl transportation 100 output.mps
+julia --project=scripts scripts/generate_problem.jl knapsack/bounded 50 --feasible --solve
 ```
 
 ### Dataset generation
 
 `generate_dataset` builds a whole dataset; `scripts/generate_lps.jl` is a thin CLI
-wrapper that supplies HiGHS, so use the `scripts` environment:
+wrapper that supplies HiGHS:
 
 ```bash
 julia --project=scripts scripts/generate_lps.jl -o output -n 100
 julia --project=scripts scripts/generate_lps.jl -o output -n 50 --feasible-only -q -v
+julia --project=scripts scripts/generate_lps.jl -o big -n 1000 --seed 7 \
+    --size-distribution loguniform --var-min 1000 --var-max 100000 --dry-run
+```
+
+### Auditing at scale
+
+`scripts/audit_generators.jl` measures size ratio, build time, HiGHS presolve
+survival, and solve status per (variant, target, status, seed), one JSON line
+each, and `--report` turns the JSONL into a flagged markdown table. Use it after
+any generator change that could affect scaling. In a worktree, stack the main
+checkout's `scripts` environment so the audit uses the worktree's source:
+
+```bash
+JULIA_LOAD_PATH="@:/path/to/SyntheticLPs.jl/scripts:@stdlib" julia --project=. \
+    scripts/audit_generators.jl -o audit.jsonl --variants energy --targets 1000,10000,100000
+julia --project=scripts scripts/audit_generators.jl --report audit.jsonl --flagged-only
 ```
 
 ## Architecture
 
 Problems are a two-level hierarchy: a **category** is a problem domain (e.g.
 `:transportation`) grouping one or more **variants**, each a concrete generator
-with its own data generation and formulation (e.g. `:standard`). There are 45
-categories. Query the live registry — `list_categories()`, `list_variants(:cat)`,
-`list_problems()`, `problem_info(...)` — rather than a hardcoded list; `README.md`
-holds the catalog and `docs/<category>.md` the per-category notes.
+with its own data generation and formulation (e.g. `:standard`). There are 50
+categories and 142 variants. Query the live registry — `list_categories()`,
+`list_variants(:cat)`, `list_problems(...)`, `problem_info(...)` — rather than a
+hardcoded list; `README.md` holds the catalog and `docs/<category>.md` the
+per-category notes.
 
 **Main module** (`src/SyntheticLPs.jl`):
 - `ProblemGenerator` (abstract base type for generators), `FeasibilityStatus`
@@ -116,11 +138,26 @@ holds the catalog and `docs/<category>.md` the per-category notes.
   bare category symbol (→ default variant), or a `"category/variant"` string
 - Two-level registry `LP_REGISTRY::Dict{Symbol,CategorySpec}`, populated by
   `register_category()` and `register_variant()` (a variant lazily creates its
-  category)
+  category). Each `VariantSpec` carries `tags`, `min_target_variables`,
+  `max_target_variables` (a documented cap, or `nothing`), and an optional
+  declared `model_class`
+- **Registry metadata**: tags come from the controlled vocabulary `VARIANT_TAGS`
+  (structure tags such as `:network`, `:staircase`, `:big_m`; `register_variant`
+  rejects unknown tags, `register_tag` extends the set). `DOMAIN_TAGS` is the
+  application subset, and every variant carries exactly one domain tag.
+  `model_class(ref)` (`:lp`/`:mip`) is derived lazily from a 200-variable probe
+  build and cached. `supports_target`, `variant_tags`, `list_tags`, and
+  `model_statistics(model)` (variables, affine rows, nonzeros, integer columns)
+  complete the introspection API
+- `list_problems(; problem_types, exclude, model_class, tags, any_tags,
+  exclude_tags, target_variables)` is the shared selector used by
+  `generate_random_problem` and `generate_dataset`; `variant_weights` implements
+  `variant_weighting=:category` (default; uniform over categories, then variants),
+  `:variant`, or an explicit `Dict`
 - `generate_problem()` (accepts a category symbol with optional `variant=`, a
-  `ProblemVariant`, or a generator type), `generate_random_problem()` (also
-  returns the selected `ProblemVariant`), and `build_model(problem)`, which every
-  variant implements
+  `ProblemVariant`, a string, or a generator type), `generate_random_problem()`
+  (also returns the selected `ProblemVariant`), and `build_model(problem)`, which
+  every variant implements
 
 **Feasibility-contract verification**: every `generate_problem` /
 `generate_random_problem` overload accepts an optional `optimizer` (plus
@@ -131,17 +168,21 @@ holds the catalog and `docs/<category>.md` the per-category notes.
 - `:violated` — disproved (`INFEASIBLE` for a `feasible` request;
   `OPTIMAL`/`DUAL_INFEASIBLE` for an `infeasible` one). Rebuild with the next seed.
 - `:inconclusive` — certifies nothing (`TIME_LIMIT`, `ALMOST_OPTIMAL`,
-  `INFEASIBLE_OR_UNBOUNDED`, or anything else). Raises immediately rather than
-  spending the retry budget re-asking an unanswerable question. Unrelaxed MIPs are
-  the common trigger — raise `feasibility_timeout`.
+  `INFEASIBLE_OR_UNBOUNDED`, `OTHER_ERROR`, or anything else). Raises immediately
+  rather than spending the retry budget re-asking an unanswerable question.
+  Unrelaxed MIPs are the common trigger — raise `feasibility_timeout`.
 
-This is the project-level backstop for the few generators whose heuristic
-feasibility logic occasionally misses (~0.1% of requests corpus-wide). It lives in
-`generate_problem`, not per-variant; with the default `optimizer=nothing`,
-generation is unchanged. Retries walk `seed, seed+1, …`, so a given
-`(seed, optimizer)` pair always resolves to the same model. `generate_dataset`
-records the resolved seed per instance and skips verification when
-`quality_filter` is on (`check_quality` already solves every candidate).
+`optimizer` may be a vector — an **escalation chain** tried in order while the
+verdict is `:inconclusive` (`:violated` is final; each entry gets the full
+`feasibility_timeout`). HiGHS dual simplex returns
+`OTHER_ERROR` on some large infeasible MDP, forest, refinery, and blending LPs that
+its IPM proves infeasible, so use `[HiGHS.Optimizer,
+optimizer_with_attributes(HiGHS.Optimizer, "solver" => "ipm")]`. This is the
+project-level backstop for the few generators whose heuristic feasibility logic
+occasionally misses. It lives in `generate_problem`, not per-variant; with the
+default `optimizer=nothing`, generation is unchanged. Retries walk
+`seed, seed+1, …`, so a given `(seed, optimizer)` pair always resolves to the same
+model.
 
 **Model transforms** (`src/transforms.jl`) — post-`build_model` reformulations of
 the finished JuMP model, applied centrally in `generate_problem()` in this order:
@@ -151,37 +192,77 @@ the finished JuMP model, applied centrally in `generate_problem()` in this order
    lower bounds — including those introduced by relaxation. Converted bounds are
    genuine rows, so they raise
    `num_constraints(...; count_variable_in_set_constraints=false)` and affect
-   dataset size-matching and quality thresholds.
-3. `dualize=true` (or a per-instance `dualize_probability`) returns a separately
-   named dual model (`dual_var_`/`dual_con_` prefixes), leaving the primal
-   unchanged; it rejects unrelaxed discrete variables and splits ranged rows on an
-   internal copy. Feasibility verification applies to the source primal; size and
-   quality metadata to the returned model.
+   dataset size-matching and quality thresholds. They are singleton rows, which
+   every presolver turns back into bounds: this changes the file, not what a
+   presolving solver sees.
+3. Feasibility verification (when `optimizer` is set) solves this primal.
+4. `transforms=ModelTransforms(...)` (or a `NamedTuple` of its keywords; identity
+   by default) applies practitioner-style reformulations in the fixed order
+   `aggregate_rows!` (redundant block-total rows; equivalence) →
+   `elasticize_rows!` (penalized violation columns; a *relaxation*, refused for
+   `infeasible` requests) → `permute_model` (row/column order; equivalence) →
+   `scale_units!` (per-family powers of ten kept within `[1e-6, 1e6]`, integer
+   columns unscaled, `UnitScaling` record in `model.ext`; equivalence), each from
+   its own RNG stream seeded by the resolved instance seed (`apply_transforms`).
+5. `dualize=true` (or a per-instance `dualize_probability`) returns a separately
+   named dual model (`dual_var_`/`dual_con_` prefixes) of the transformed primal;
+   it rejects unrelaxed discrete variables and splits ranged rows on an internal
+   copy. Feasibility verification applies to the source primal; size and quality
+   metadata to the returned model.
 
-**Dataset generation** (`src/dataset.jl`): `generate_dataset(; kwargs...)` samples
-problem types and target variable counts, optionally writes instance files plus a
-`manifest.json`, and returns `Vector{GeneratedInstance}` metadata; fully
-reproducible from a non-zero `seed`. `check_quality(model, optimizer; ...)` with
-`QualityCriteria`/`QualityResult` filters trivial, degenerate, unbounded, and
-ill-conditioned instances. The package stays solver-agnostic: the caller supplies
-the optimizer.
+**Dataset generation** (`src/dataset.jl`): two stages. `plan_dataset(; kwargs...)`
+(cheap, builds nothing) assigns every index a variant (stratified by
+`variant_weighting`), a feasibility status (a single status or a `Dict` mix spread
+by a low-discrepancy sequence), a target size (stratified quantiles of
+`size_distribution` — `:normal`, `:uniform`, `:loguniform`, or any
+`UnivariateDistribution`), and a private RNG stream. `generate_dataset(; kwargs...)`
+then builds each index independently, **calibrating** size by rebuilding on the
+same seed with a rescaled request until `|log(actual/target)| ≤
+size_match_tolerance` (this replaced the old `candidate_multiplier` /
+`match_size_by_type` candidate pool). An index depends only on `(seed, index)`, so
+`shard_index`/`num_shards` shards union to the unsharded dataset and
+`merge_manifests` combines their manifests. `on_failure=:error|:skip` controls
+exhausted indices (`DatasetFailure`). It returns a `GeneratedDataset` (a vector of
+`GeneratedInstance` plus `failures` and the format-version-2 `manifest`: provenance,
+config, selection, shard, stats, size_match, instances, failures). Variants whose
+size cap cannot cover the distribution are dropped and recorded.
+`check_quality(model, optimizer; ...)` with `QualityCriteria`/`QualityResult`
+filters trivial, degenerate, unbounded, and ill-conditioned instances; with
+`quality_filter=true` its solve doubles as verification. The package stays
+solver-agnostic: the caller supplies the optimizer.
 
 **Problem generators** (`src/problem_types/<category>/`): a `<category>.jl` entry
-point that `include`s one file per variant (or per closely related group), plus an
-optional `register_category` call for a category-level description.
+point that `include`s one file per variant (or per closely related group), often a
+`common.jl` of data and helpers shared by the category's variants, plus an
+optional `register_category` call for a category-level description. Cross-category
+helpers exist too: `network_flow/geo_network.jl` (geographic node placement,
+near-linear kNN, sparse strongly connected networks with an exact arc count,
+shortest-path trees, Dinic max flow / min cut) backs `network_flow`,
+`transportation`, `multi_commodity_flow`, `load_balancing`, and `assignment`.
+Reuse such helpers rather than writing new graph code.
 
 ### Generator pattern
 
 ```julia
 # src/problem_types/<category>/<category>.jl  (entry point)
 # Optionally: register_category(:category, "Category-level description")
+include("common.jl")    # optional shared helpers
 include("standard.jl")
 ```
 
 ```julia
 # src/problem_types/<category>/standard.jl  (a variant)
+struct VariantWitness            # typed planted solution
+    x::Vector{Float64}
+end
+struct VariantCertificate        # typed solver-free infeasibility proof
+    multipliers::Vector{Float64}
+end
+
 struct VariantStruct <: ProblemGenerator
     # every field build_model needs
+    feasible_witness::Union{Nothing, VariantWitness}
+    infeasibility_certificate::Union{Nothing, VariantCertificate}
 end
 
 function VariantStruct(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
@@ -199,7 +280,9 @@ end
 
 # Registers the variant; lazily creates :category. Pass default=true to make it
 # the category default.
-register_variant(:category, :standard, VariantStruct, "Description")
+register_variant(:category, :standard, VariantStruct, "Description";
+                 tags=[:network, :staircase, :logistics],  # structure tags + one domain tag
+                 max_target_variables=1_000_000)           # only for a documented cap
 ```
 
 ### Key design principles
@@ -215,28 +298,42 @@ register_variant(:category, :standard, VariantStruct, "Description")
    helper a constructor calls takes it first: `helper(rng::AbstractRNG, …)`. The
    `Global RNG Isolation` testset enforces this across every registered variant.
 3. **Feasibility control**: handle all three statuses. Where feasibility is
-   planted rather than hoped for, store a typed `feasible_witness` for `feasible`
-   requests, a typed `infeasibility_certificate` for `infeasible` ones, and
-   neither for `unknown` (the pattern used by `hub_location`, `product_mix`,
-   `airline_crew`, `nurse_scheduling`, `neural_network_verification`,
-   `maritime_inventory_routing`, `supply_chain/network_planning`,
-   `telecom_network_design`, and others). In a MIP category, build the certificate
-   from LP rows alone so the infeasibility survives the default
-   `relax_integer=true`.
-4. **Sizing limits**: generators whose sparse data is represented in several
-   structures at once (`supply_chain/network_planning`,
-   `telecom_network_design/standard`) cap `target_variables` at a documented
-   1,000,000 and raise `ArgumentError` above it rather than silently undersizing.
+   planted rather than hoped for, store a typed `feasible_witness` (a complete
+   primal solution) for `feasible` requests, a typed `infeasibility_certificate`
+   for `infeasible` ones, and neither for `unknown`; almost every category does.
+   Certificates must be checkable without a solver (Farkas multipliers, a cut or
+   Hall deficit, a capacity prefix, a Lagrangian bound) and tested.
+4. **Presolve-resistant infeasibility**: never plant infeasibility as a
+   single-row contradiction or an impossible bound — presolve detects it without
+   simplex work. Make the certificate combine many rows (across periods, regions,
+   or a network cut). In a MIP category, build the certificate from LP rows alone
+   so the infeasibility survives the default `relax_integer=true`.
+5. **Presolve survival**: an instance should be hard for the solver, not the
+   presolver. Emit single-variable limits as variable bounds, never as singleton
+   rows; avoid rows that fix or eliminate variables trivially, duplicated or
+   dominated rows, and structure that collapses under presolve. The audit flags
+   presolved row or column ratios below 0.6.
+6. **Size fidelity at every scale**: the variable count should track
+   `target_variables` from tiny requests (~20) to 100k+ — within a few percent at
+   1k–100k — so dataset size calibration converges. Builds must be near-linear in
+   size (no O(n²) pair sampling, all-pairs distance matrices, or other dense
+   intermediates) and nonzeros bounded (sparse rows; a few million nonzeros at
+   100k at most). Check with `scripts/audit_generators.jl`.
+7. **Sizing limits**: a generator whose data cannot scale further documents a cap,
+   registers it as `max_target_variables` (usually 1,000,000), and raises
+   `ArgumentError` above it rather than silently undersizing. Dataset generation
+   never samples a variant above its cap.
 
 ### Model classes
 
-The corpus deliberately mixes pure LPs, natural MIPs (binary/integer variables),
-and purpose-built LP relaxations. The public API defaults to `relax_integer=true`,
-so MIP variants are returned as relaxations unless the caller opts out. When
-building an LP-only corpus, filter or relax the MIP variants; when characterizing
-instances, do not present a relaxation as a real-world integer solution
-(`tsp/assignment_relaxation` in particular is a fractional degree relaxation that
-may contain subtours, not a tour).
+The corpus deliberately mixes pure LPs (70 variants), natural MIPs (72;
+binary/integer variables), and purpose-built LP relaxations. The public API
+defaults to `relax_integer=true`, so MIP variants are returned as relaxations
+unless the caller opts out. When building an LP-only corpus, filter with
+`model_class=:lp` or relax the MIP variants; when characterizing instances, do not
+present a relaxation as a real-world integer solution (`tsp/assignment_relaxation`
+in particular is a fractional degree relaxation that may contain subtours, not a
+tour).
 
 ### Testing strategy
 
@@ -246,10 +343,14 @@ documentation, and regression coverage evolve as one reviewable unit.
 
 - `test/runtests.jl`: `test_problem_generator(ref)` applied to every registered
   variant (target variable counts, all three statuses, model structure,
-  reproducibility), plus registry and interface tests, global-RNG isolation,
-  dataset generation, the bounds-to-constraints transform, the pure
+  reproducibility), plus registry and interface tests, `Registry Metadata` and
+  `Registry Tag Coverage` (every variant has tags and exactly one domain tag; a
+  temporary `_UNTAGGED_CATEGORIES_PENDING` set exempts categories still being
+  tagged), global-RNG isolation, dataset planning and generation controls, the
+  bounds-to-constraints transform, dual reformulation, the pure
   `_classify_termination` table, and the generic feasibility-contract machinery
-  (retry budget, seed walk, pristine-model guarantee). It ends with an include
+  (retry budget, seed walk, pristine-model guarantee). It includes
+  `test/transforms.jl` (the `ModelTransforms` contracts) and ends with an include
   loop over every `test/problem_types/*.jl` in sorted order.
 - `test/problem_types/<category>.jl`: focused contracts for one category —
   registry shape, exact variable-count formulas, data invariants,
@@ -263,18 +364,24 @@ documentation, and regression coverage evolve as one reviewable unit.
 - The focused-run filter matches the include loop by file basename, so a
   category's test file must be named after the category for a focused run to pick
   it up.
+- Scale (100k builds, presolve survival, solve behavior) is too slow for the test
+  suite; it is checked with `scripts/audit_generators.jl` instead.
 
 ## Adding a category or variant
 
 **New variant in an existing category**: add
-`src/problem_types/<category>/<variant>.jl` following the pattern above, `include`
-it from the category entry point, extend `test/problem_types/<category>.jl` with
-its quality contracts (create the file if the category has none — the include loop
-finds it automatically), and run the tests.
+`src/problem_types/<category>/<variant>.jl` following the pattern above (with
+`tags`, and `max_target_variables` if capped), `include` it from the category
+entry point, extend `test/problem_types/<category>.jl` with its quality contracts
+(create the file if the category has none — the include loop finds it
+automatically), update `docs/<category>.md`, run the focused tests, and audit it
+at 1k/10k/100k.
 
 **New category**: additionally create the entry point
 `src/problem_types/<category>/<category>.jl` and add one
 `include("problem_types/<category>/<category>.jl")` line to `src/SyntheticLPs.jl`.
 Call `register_category(:category, "…")` there only when you want a category-level
-description distinct from its variants. Consider adding a `docs/<category>.md`
-page; see `docs/README.md` for the index and the explainer rebuild step.
+description distinct from its variants. Add a `docs/<category>.md` page, list it in
+`docs/README.md`, add its `META` entry to `scripts/build_explainer.py` (the build
+fails on a docs/`META` mismatch), and rebuild `docs/explainer.html`. Add the
+category to the `README.md` catalog.

@@ -34,217 +34,457 @@ def load_mathjax():
 FAMILIES = {
     "network": (
         "Network & Routing",
-        "Flows, multicommodity routing, and capacity sharing over graphs.",
+        "Flows, tours, multicommodity routing, and network design over graphs.",
     ),
     "facility": (
         "Facility & Supply Chain",
         "Where to open capacity and how to serve demand from it.",
     ),
     "blending": ("Blending & Diet", "Mix ingredients to hit composition targets at least cost."),
-    "production": ("Production & Planning", "Allocate shared capacity across products and time."),
+    "production": (
+        "Production & Process Planning",
+        "Allocate shared capacity across products, processes, and time.",
+    ),
+    "energy": (
+        "Energy & Natural Resources",
+        "Power systems, economy-wide planning, mining, and forestry over long horizons.",
+    ),
     "scheduling": (
         "Assignment & Scheduling",
-        "Match discrete entities to tasks, shifts, or patterns.",
+        "Match staff, jobs, and rooms to tasks, shifts, and time slots.",
     ),
-    "selection": ("Selection & Finance", "Pick a subset / weighting under budget and risk limits."),
+    "packing": (
+        "Packing & Combinatorial",
+        "Cutting, packing, knapsacks, and set or graph structures.",
+    ),
+    "selection": (
+        "Selection & Finance",
+        "Pick a subset or weighting under budget, risk, and uncertainty.",
+    ),
     "inference": (
-        "Inference & Calibration",
-        "Recover optimization parameters from observed decisions and outcomes.",
+        "Inference & Learning",
+        "Fit, invert, or verify models from data and observed decisions.",
+    ),
+    "decision": (
+        "Decision Processes & Games",
+        "Occupation-measure MDPs and equilibria of zero-sum games.",
     ),
     "land": ("Land & Agriculture", "Allocate parcels and acreage under physical limits."),
     "healthcare": ("Healthcare", "Plan clinical resources and treatment under safety constraints."),
 }
 
-# file stem -> dict(family, sense, vclass, tagline)
+# file stem -> dict(family, sense, vclass, tag, variants). `variants` lists the
+# registered variants with the category default first (`list_variants`, `default_variant`).
 META = {
     "tsp": dict(
         family="network",
         sense="Min",
         vclass="Mixed",
-        tag="Tour routing, alternative relaxations, and operational variants",
+        tag="Symmetric, asymmetric, and operational tours; flow and degree-relaxation formulations",
+        variants=[
+            "standard",
+            "assignment_relaxation",
+            "asymmetric",
+            "flow",
+            "multiple_salespersons",
+            "precedence",
+            "prize_collecting",
+            "time_windows",
+        ],
+    ),
+    "vehicle_routing": dict(
+        family="network",
+        sense="Min",
+        vclass="Mixed",
+        tag="Capacitated vehicle routing with single-commodity-flow subtour elimination",
+        variants=["cvrp"],
     ),
     "transportation": dict(
         family="network",
         sense="Min",
-        vclass="Continuous",
-        tag="Min-cost shipping over supply/demand lanes",
+        vclass="Mixed",
+        tag="Shipping on sparse geographic lanes: capacitated, multimodal, fixed-charge, transshipment",
+        variants=["standard", "emission_constrained", "fixed_charge", "transshipment"],
     ),
     "network_flow": dict(
         family="network",
-        sense="Min/Max",
+        sense="Min",
         vclass="Continuous",
-        tag="Single-commodity max-flow or min-cost flow",
+        tag="NETGEN-style min-cost flow, flow with gains, and time-expanded evacuation",
+        variants=["standard", "generalized_flow", "time_expanded"],
     ),
     "multi_commodity_flow": dict(
         family="network",
         sense="Min",
-        vclass="Continuous",
-        tag="Several commodities sharing arc capacities",
+        vclass="Mixed",
+        tag="Commodities sharing arc capacities, plus binary-capacity network design",
+        variants=["standard", "binary_capacity"],
     ),
     "load_balancing": dict(
         family="network",
-        sense="Min-max",
-        vclass="Continuous",
-        tag="Minimize the most-utilized link",
+        sense="Min",
+        vclass="Mixed",
+        tag="Path-based traffic engineering that minimizes peak link utilization",
+        variants=["standard", "discrete_placement"],
     ),
     "telecom_network_design": dict(
         family="network",
         sense="Min",
         vclass="Mixed",
-        tag="Install links + route traffic under a budget",
+        tag="Install links and route traffic under capacity and budget",
+        variants=["standard"],
     ),
     "hub_location": dict(
         family="network",
         sense="Min",
         vclass="Mixed",
         tag="Open hubs, consolidate OD traffic, and design hub-and-spoke backbones",
+        variants=[
+            "p_hub_median",
+            "budgeted_backbone",
+            "capacitated",
+            "compact_single_allocation",
+            "hub_covering",
+            "hub_network",
+            "multiple_allocation",
+            "r_allocation",
+        ],
+    ),
+    "resilient_network_design": dict(
+        family="network",
+        sense="Min",
+        vclass="Mixed",
+        tag="Build and harden a network to keep routing feasible under edge failures",
+        variants=["standard"],
+    ),
+    "maritime_inventory_routing": dict(
+        family="network",
+        sense="Min",
+        vclass="Mixed",
+        tag="Route vessels between ports while keeping port inventories in bounds",
+        variants=["standard"],
     ),
     "facility_location": dict(
         family="facility",
         sense="Min",
         vclass="Mixed",
-        tag="Open capacitated facilities, then serve demand",
+        tag="Strong capacitated facility location, capacitated p-median, two echelons",
+        variants=["standard", "p_median", "two_echelon"],
     ),
     "supply_chain": dict(
-        family="facility", sense="Min", vclass="Mixed", tag="Open facilities + multi-mode shipping"
+        family="facility",
+        sense="Min",
+        vclass="Mixed",
+        tag="Multi-echelon, multi-period network design with DC openings and modal linehaul",
+        variants=["standard", "carbon", "multi_product", "network_planning", "single_source"],
     ),
     "blending": dict(
         family="blending",
-        sense="Min",
+        sense="Min/Max",
         vclass="Continuous",
-        tag="Hit quality bands at minimum ingredient cost",
+        tag="Secondary-aluminium alloy blending: multi-plant, multi-period, and robust",
+        variants=["standard", "multi_period", "robust"],
     ),
     "feed_blending": dict(
         family="blending",
         sense="Min",
         vclass="Continuous",
-        tag="Feed formulation with nutrient floors/caps",
+        tag="Least-cost feed formulation for a network of feed mills",
+        variants=["standard"],
     ),
     "diet_problem": dict(
         family="blending",
         sense="Min",
         vclass="Continuous",
-        tag="Classic min-cost diet with nutrient bounds",
+        tag="Population diets, humanitarian food baskets, and multi-week menus",
+        variants=["standard", "food_aid", "food_groups"],
     ),
     "process_planning": dict(
         family="production",
         sense="Max",
         vclass="Mixed",
-        tag="Refinery and chemical-process planning: crude slates, conversion yields, blending, campaigns, capacity",
+        tag="Refinery and chemical-process planning: crude slates, yields, blending, campaigns, capacity",
+        variants=[
+            "refinery",
+            "campaign",
+            "capacity_expansion",
+            "hydrogen_network",
+            "mode_switching",
+        ],
     ),
     "production_planning": dict(
         family="production",
-        sense="Max",
+        sense="Min",
         vclass="Continuous",
-        tag="Profit-max under shared resource capacities",
+        tag="Multi-level, multi-period capacitated MRP with lead times and backlog",
+        variants=["standard"],
     ),
     "product_mix": dict(
         family="production",
         sense="Max",
         vclass="Continuous",
-        tag="Profit-max with market lower/upper bounds",
+        tag="Product mix with alternative routings, department labor, and ranged markets",
+        variants=["standard"],
     ),
     "resource_allocation": dict(
         family="production",
         sense="Max",
         vclass="Continuous",
-        tag="Allocate scarce resources among activities",
+        tag="Allocate skilled resource pools to windowed activities over time",
+        variants=["standard"],
     ),
     "inventory": dict(
         family="production",
         sense="Min",
-        vclass="Continuous",
-        tag="Single-item lot sizing over a horizon",
+        vclass="Mixed",
+        tag="DC replenishment, lot sizing, multi-echelon and multi-item planning",
+        variants=["standard", "lot_sizing", "multi_echelon", "multi_item"],
     ),
     "energy": dict(
-        family="production",
+        family="energy",
         sense="Min",
         vclass="Continuous",
-        tag="Dispatch generators over time to meet demand",
+        tag="Multi-area dispatch with reserves, storage, hydro; DC-OPF with N-1 security",
+        variants=[
+            "standard",
+            "dc_opf",
+            "hydrothermal",
+            "reserves",
+            "security_constrained_dc_opf",
+            "storage",
+        ],
     ),
     "unit_commitment": dict(
-        family="production",
+        family="energy",
         sense="Min",
         vclass="Mixed",
-        tag="Commit and dispatch generators across time",
+        tag="Commit and dispatch generators with ramping, reserves, and min up/down times",
+        variants=["standard"],
+    ),
+    "economic_planning": dict(
+        family="energy",
+        sense="Min/Max",
+        vclass="Continuous",
+        tag="Dynamic Leontief growth models and TIMES/MESSAGE energy-system models",
+        variants=["dynamic_leontief", "energy_system"],
+    ),
+    "mine_planning": dict(
+        family="energy",
+        sense="Max",
+        vclass="Mixed",
+        tag="Open-pit mine scheduling over a precedence-closed block model",
+        variants=["cpit", "pcpsp", "stockpile"],
+    ),
+    "forest_planning": dict(
+        family="energy",
+        sense="Max",
+        vclass="Continuous",
+        tag="Model I and Model II harvest scheduling with even flow and green-up",
+        variants=["model_i", "model_ii"],
     ),
     "assignment": dict(
         family="scheduling",
         sense="Min",
-        vclass="Binary",
-        tag="Worker-task matching with compatibility",
-    ),
-    "bin_packing": dict(
-        family="scheduling",
-        sense="Min",
-        vclass="Binary",
-        tag="Pack items into identical or heterogeneous fleets",
+        vclass="Mixed",
+        tag="Sparse job-to-worker assignment and workload balancing",
+        variants=["standard", "workload_balance"],
     ),
     "operating_room_scheduling": dict(
         family="scheduling",
         sense="Min",
         vclass="Mixed",
         tag="Assign and sequence surgeries under clinical capacity",
+        variants=[
+            "elective_assignment",
+            "benchmark_loading",
+            "case_sequencing",
+            "master_surgical_schedule",
+            "robust_elective",
+            "weekly_planning",
+        ],
     ),
     "scheduling": dict(
         family="scheduling",
         sense="Min",
         vclass="Binary",
-        tag="Workforce shift scheduling with coverage",
+        tag="Multi-department staff rostering with shift templates and rest rules",
+        variants=["standard"],
     ),
     "workforce_shift_scheduling": dict(
         family="scheduling",
         sense="Min",
         vclass="Continuous",
-        tag="Multi-skill shift-pattern staffing coverage",
+        tag="Multi-site, multi-skill shift-pattern covering",
+        variants=["covering"],
     ),
     "airline_crew": dict(
-        family="scheduling", sense="Min", vclass="Binary", tag="Set-partitioning crew pairing"
+        family="scheduling",
+        sense="Min",
+        vclass="Binary",
+        tag="Crew pairing over legal pairings with base availability",
+        variants=["standard"],
+    ),
+    "nurse_scheduling": dict(
+        family="scheduling",
+        sense="Min",
+        vclass="Binary",
+        tag="Multi-ward nurse rostering with float pools and contract rules",
+        variants=["standard"],
+    ),
+    "job_shop_scheduling": dict(
+        family="scheduling",
+        sense="Min",
+        vclass="Binary",
+        tag="Time-indexed job shop with parallel machines and deadlines",
+        variants=["standard"],
+    ),
+    "bin_packing": dict(
+        family="packing",
+        sense="Min",
+        vclass="Binary",
+        tag="Pack items into identical or heterogeneous fleets",
+        variants=["standard", "heterogeneous"],
+    ),
+    "container_loading": dict(
+        family="packing",
+        sense="Min",
+        vclass="Mixed",
+        tag="Load a container fleet; two-stage guillotine 2D packing",
+        variants=["standard", "two_dimensional_bin_packing"],
     ),
     "cutting_stock": dict(
-        family="scheduling", sense="Min", vclass="Integer", tag="One-dimensional pattern cutting"
+        family="packing",
+        sense="Min",
+        vclass="Mixed",
+        tag="Gilmore-Gomory pattern LPs and the arc-flow formulation",
+        variants=["standard", "arc_flow", "due_dates", "setup_cost"],
     ),
     "knapsack": dict(
-        family="selection",
+        family="packing",
         sense="Max",
-        vclass="Continuous",
-        tag="Fractional knapsack under a capacity",
+        vclass="Mixed",
+        tag="Multiple-choice, bounded, multidimensional, and mixed-integer knapsacks",
+        variants=["multiple_choice", "bounded", "mixed_integer_set", "multidimensional"],
+    ),
+    "graph_optimization": dict(
+        family="packing",
+        sense="Min/Max",
+        vclass="Mixed",
+        tag="Independent sets, covers, colorings, and dense subgraphs on application graphs",
+        variants=[
+            "independent_set",
+            "generalized_independent_set",
+            "map_labeling",
+            "quasi_clique",
+            "vertex_coloring",
+            "vertex_cover",
+        ],
+    ),
+    "set_system": dict(
+        family="packing",
+        sense="Min/Max",
+        vclass="Binary",
+        tag="Set covering, packing, partitioning, and combinatorial auctions",
+        variants=["set_cover", "combinatorial_auction", "set_packing", "set_partitioning"],
     ),
     "project_selection": dict(
         family="selection",
         sense="Max",
         vclass="Binary",
-        tag="Pick projects under budget/risk/dependency",
+        tag="Multi-year capital portfolio selection under budgets and prerequisites",
+        variants=["standard"],
     ),
     "portfolio": dict(
         family="selection",
         sense="Max",
         vclass="Continuous",
-        tag="CVaR portfolio with policy constraints",
+        tag="CVaR and tracking-error portfolios on a factor scenario market",
+        variants=["cvar", "tracking_error"],
     ),
     "revenue_management": dict(
         family="selection",
         sense="Max",
         vclass="Continuous",
-        tag="Network capacity allocation and stochastic overbooking",
+        tag="Choice-based network capacity allocation and stochastic overbooking",
+        variants=["standard", "stochastic_overbooking"],
+    ),
+    "stochastic_program": dict(
+        family="selection",
+        sense="Min/Max",
+        vclass="Continuous",
+        tag="Two-stage recourse and multistage asset-liability scenario trees",
+        variants=["standard", "multistage_alm"],
     ),
     "inverse_optimization": dict(
         family="inference",
         sense="Min",
         vclass="Continuous",
         tag="Infer costs from exact, noisy, routed, and market observations",
+        variants=[
+            "standard",
+            "classical_normalized",
+            "linf",
+            "market_clearing",
+            "noisy_observations",
+            "restricted_optimal_value",
+            "shortest_path",
+            "shortest_path_layered",
+        ],
+    ),
+    "regression": dict(
+        family="inference",
+        sense="Min",
+        vclass="Continuous",
+        tag="LAD, quantile, Chebyshev, sparse-recovery, and 1-norm SVM fitting",
+        variants=["lad", "basis_pursuit", "chebyshev", "l1_svm", "quantile"],
+    ),
+    "neural_network_verification": dict(
+        family="inference",
+        sense="Max",
+        vclass="Mixed",
+        tag="Big-M verification queries for ReLU networks",
+        variants=["relu_big_m"],
+    ),
+    "markov_decision_process": dict(
+        family="decision",
+        sense="Min",
+        vclass="Continuous",
+        tag="Occupation-measure LPs of discounted and average-cost MDPs",
+        variants=["inventory_control", "constrained", "machine_maintenance", "queueing_control"],
+    ),
+    "game_theory": dict(
+        family="decision",
+        sense="Min/Max",
+        vclass="Continuous",
+        tag="Equilibrium LPs of zero-sum games: poker, Colonel Blotto, patrol security",
+        variants=["poker_sequence_form", "colonel_blotto", "patrol_security"],
+    ),
+    "land_use": dict(
+        family="land",
+        sense="Max",
+        vclass="Binary",
+        tag="Assign parcels to zoning types under infrastructure and buffer rules",
+        variants=["standard"],
+    ),
+    "crop_planning": dict(
+        family="land",
+        sense="Max",
+        vclass="Continuous",
+        tag="Regional multi-year crop rotation under water, labour, and markets",
+        variants=["standard"],
     ),
     "radiotherapy": dict(
         family="healthcare",
         sense="Min",
         vclass="Mixed",
         tag="IMRT fluence maps, DVH tails, robust setup scenarios, and beam selection",
-    ),
-    "land_use": dict(
-        family="land", sense="Max", vclass="Binary", tag="Assign parcels to zoning types"
-    ),
-    "crop_planning": dict(
-        family="land", sense="Max", vclass="Continuous", tag="Allocate acreage across crops"
+        variants=[
+            "weighted_deviation",
+            "beam_angle_selection",
+            "mean_tail_dose",
+            "minmax_deviation",
+            "robust_fluence",
+        ],
     ),
 }
 
@@ -253,9 +493,12 @@ FAMILY_ORDER = [
     "facility",
     "blending",
     "production",
+    "energy",
     "scheduling",
+    "packing",
     "selection",
     "inference",
+    "decision",
     "land",
     "healthcare",
 ]
@@ -300,10 +543,10 @@ def render_blocks(lines):
         line = lines[i]
         stripped = line.strip()
 
-        # fenced blocks
-        if stripped == "```math" or stripped == "```text":
+        # fenced blocks: ```math renders with MathJax, any other fence verbatim
+        if stripped.startswith("```"):
             flush_para()
-            kind = stripped[3:]
+            kind = stripped[3:].strip()
             body = []
             i += 1
             while i < n and lines[i].strip() != "```":
@@ -498,13 +741,16 @@ def build():
         for s in stems:
             title, intro, _ = docs[s]
             m = META[s]
-            search = html.escape((title + " " + intro + " " + m["tag"]).lower())
+            search = html.escape(
+                (title + " " + intro + " " + m["tag"] + " " + " ".join(m["variants"])).lower()
+            )
             cards_html.append(f'''<a class="card fam-border-{fam}" href="#{s}" data-target="{s}" data-search="{search}">
   <div class="card-top"><span class="card-title">{html.escape(title)}</span></div>
   <p class="card-tag">{html.escape(m["tag"])}</p>
   <div class="chips">
     <span class="chip chip-sense">{html.escape(m["sense"])}</span>
     <span class="chip chip-{m["vclass"].lower()}">{html.escape(m["vclass"])}</span>
+    <span class="chip">{len(m["variants"])} variant{"s" if len(m["variants"]) != 1 else ""}</span>
   </div>
 </a>''')
         cards_html.append("</div></div>")
@@ -519,6 +765,10 @@ def build():
             title, intro, sections = docs[s]
             m = META[s]
             fam_label = FAMILIES[fam][0]
+            variant_chips = "".join(
+                f'<span class="chip chip-variant{" default" if k == 0 else ""}">{html.escape(v)}</span>'
+                for k, v in enumerate(m["variants"])
+            )
             secs = []
             for name, body in sections:
                 icon = SECTION_ICONS.get(name, "§")
@@ -536,6 +786,7 @@ def build():
       <span class="chip chip-sense">Objective: {html.escape(m["sense"])}</span>
       <span class="chip chip-{m["vclass"].lower()}">{html.escape(m["vclass"])} variables</span>
     </div>
+    <div class="chips variants">{variant_chips}</div>
   </header>
   {"".join(secs)}
 </article>''')
@@ -550,10 +801,11 @@ def build():
         css=CSS,
         mathjax=mathjax_js,
         count=len(META),
+        nvariants=sum(len(m["variants"]) for m in META.values()),
     )
     with open(OUT, "w") as f:
         f.write(page)
-    print(f"Wrote {OUT} ({len(page) / 1024:.0f} KB, {len(META)} generators)")
+    print(f"Wrote {OUT} ({len(page) / 1024:.0f} KB, {len(META)} categories)")
 
 
 CSS = r"""
@@ -562,6 +814,7 @@ CSS = r"""
   --line:#e7e3da; --line2:#efece4; --accent:#4338ca; --accent-soft:#eceaff;
   --code-bg:#1d1c27; --code-ink:#e8e6f5;
   --net:#2563eb; --fac:#0d9488; --ble:#d97706; --pro:#9333ea; --sch:#dc2626; --sel:#0891b2; --lan:#65a30d;
+  --ene:#ca8a04; --pac:#db2777; --inf:#4f46e5; --dec:#475569; --hea:#e11d48;
   --sidebar-w:288px;
 }
 *{box-sizing:border-box}
@@ -626,7 +879,9 @@ a{color:var(--accent);text-decoration:none}
 .fam-network,.fam-net{background:var(--net)} .fam-facility,.fam-fac{background:var(--fac)}
 .fam-blending,.fam-ble{background:var(--ble)} .fam-production,.fam-pro{background:var(--pro)}
 .fam-scheduling,.fam-sch{background:var(--sch)} .fam-selection,.fam-sel{background:var(--sel)}
-.fam-land,.fam-lan{background:var(--lan)}
+.fam-land,.fam-lan{background:var(--lan)} .fam-energy{background:var(--ene)}
+.fam-packing{background:var(--pac)} .fam-inference{background:var(--inf)}
+.fam-decision{background:var(--dec)} .fam-healthcare{background:var(--hea)}
 .card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:14px}
 .card{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--line);
   border-radius:12px;padding:15px 16px 14px;display:flex;flex-direction:column;gap:8px;
@@ -637,7 +892,9 @@ a{color:var(--accent);text-decoration:none}
 .fam-border-network{border-left-color:var(--net)} .fam-border-facility{border-left-color:var(--fac)}
 .fam-border-blending{border-left-color:var(--ble)} .fam-border-production{border-left-color:var(--pro)}
 .fam-border-scheduling{border-left-color:var(--sch)} .fam-border-selection{border-left-color:var(--sel)}
-.fam-border-land{border-left-color:var(--lan)}
+.fam-border-land{border-left-color:var(--lan)} .fam-border-energy{border-left-color:var(--ene)}
+.fam-border-packing{border-left-color:var(--pac)} .fam-border-inference{border-left-color:var(--inf)}
+.fam-border-decision{border-left-color:var(--dec)} .fam-border-healthcare{border-left-color:var(--hea)}
 
 /* chips */
 .chips{display:flex;gap:7px;flex-wrap:wrap}
@@ -648,6 +905,9 @@ a{color:var(--accent);text-decoration:none}
 .chip-binary{background:#fdecec;color:#b0322a;border-color:#f6d8d6}
 .chip-mixed{background:#f3ecfd;color:#7b35c4;border-color:#e7d8f8}
 .chip-integer{background:#fff2e2;color:#b5650c;border-color:#f7e2c6}
+.chip-variant{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:500;background:var(--panel)}
+.chip-variant.default{border-color:var(--accent);color:var(--accent)}
+.variants{margin-top:12px}
 
 /* article */
 .article{padding-top:34px}
@@ -732,7 +992,7 @@ window.MathJax={{
 <div class="scrim" id="scrim"></div>
 <div class="layout">
   <aside class="sidebar" id="sidebar">
-    <div class="brand"><b>SyntheticLPs</b><span>Generator Explainer · {count} problem types</span></div>
+    <div class="brand"><b>SyntheticLPs</b><span>Generator Explainer · {count} categories · {nvariants} variants</span></div>
     <input class="search" id="search" type="search" placeholder="Filter generators…" autocomplete="off">
     <nav id="nav">
       {nav}
@@ -751,22 +1011,22 @@ window.MathJax={{
 
         <div class="contract">
           <div class="c"><h4>The shared contract</h4>
-            <p>Call <span class="tagk">generate_problem(sym, target_variables, feasibility_status, seed)</span>.
-               All randomness lives in the constructor; <span class="tagk">build_model</span> is deterministic, so a
-               seed reproduces an instance exactly.</p></div>
+            <p>Call <span class="tagk">generate_problem("category/variant", target_variables, feasibility_status, seed)</span>
+               (a bare category uses its default variant). All randomness lives in the constructor;
+               <span class="tagk">build_model</span> is deterministic, so a seed reproduces an instance exactly.</p></div>
           <div class="c"><h4>Sizing by variables</h4>
             <p><span class="tagk">target_variables</span> is interpreted per generator — usually by choosing
-               dimensions whose product or sum approximates the requested count. Ranges and group counts often scale
-               with problem size.</p></div>
+               dimensions whose product or sum approximates the requested count. Sizes track the request from tiny
+               instances to 100k+ variables with near-linear build times.</p></div>
           <div class="c"><h4>Integer relaxation</h4>
             <p>Several problems are naturally mixed-integer. <span class="tagk">generate_problem</span> defaults to
                <span class="tagk">relax_integer=true</span>, so binary variables are relaxed unless you opt out. Pages
                describe the intended MIP and note the difference.</p></div>
         </div>
         <div class="statuses">
-          <span class="status f">feasible — bounds widened so a solution is constructed or likely</span>
-          <span class="status i">infeasible — a binding resource is deliberately over-tightened</span>
-          <span class="status u">unknown — a realistic random draw with no guarantee</span>
+          <span class="status f">feasible — built around a planted solution (a typed witness)</span>
+          <span class="status i">infeasible — a presolve-resistant contradiction with a solver-free certificate</span>
+          <span class="status u">unknown — a realistic random draw with no planted outcome</span>
         </div>
       </header>
 
