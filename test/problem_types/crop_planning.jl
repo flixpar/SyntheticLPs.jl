@@ -37,6 +37,18 @@
         @test abs(nb - 100_000) <= 0.01 * 100_000
     end
 
+    # Regression: tiny regions (one or two fields) once could not reach the
+    # certificate margin with capped contracts and tripped the constructor's
+    # assertion (e.g. target 50, seed 42). Constructor-only sweep.
+    @testset "infeasible certificates at tiny targets" begin
+        failures = Tuple{Int, Int}[]
+        for target in 2:200, seed in 0:60
+            p = S.CropPlanningProblem(target, infeasible, seed)
+            S.crop_certificate_holds(p) || push!(failures, (target, seed))
+        end
+        @test isempty(failures)
+    end
+
     @testset "reproducibility and global-RNG isolation" begin
         _, p1 = generate_problem(ref, 180, feasible, 12345)
         _, p2 = generate_problem(ref, 180, feasible, 12345)
