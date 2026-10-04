@@ -80,7 +80,7 @@ excluded names) is a constant.
 
 Variables = `n_investable + n_factors + n_scenarios`, exact for targets ≥ 60,
 with `n_assets ≈ 15–30%` of the target. Rows
-= `2·n_scenarios + n_factors + 2`; nonzeros ≈ `2·S·(K + J + 1) + 7n` (≈ 3–5M at
+= `2·n_scenarios + n_factors + 2`; nonzeros ≈ `2·S·(K + J + 1) + 7n` (≈ 5–6.5M at
 100k variables).
 """
 struct TrackingErrorPortfolioProblem <: ProblemGenerator
@@ -150,7 +150,7 @@ function TrackingErrorPortfolioProblem(
         n_sectors;
         sector=sector,
         crash_probability=rand(rng, Uniform(0.02, 0.05)),
-        shocks_per_scenario=rand(rng, 16:32),
+        shocks_per_scenario=rand(rng, 12:24),
     )
     commodity = 1 + n_styles                               # column in style_loadings
     for i in 1:n

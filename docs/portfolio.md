@@ -23,7 +23,7 @@ r[s, i] = Σ_k F[s, k] · B[i, k] + E[i, s]
 - **Exposures `B`**: market beta and style loadings are dense; industry
   exposure is the 0/1 sector indicator.
 - **Idiosyncratic shocks `E`** are *sparse jump events*: each scenario hits a
-  random subset of `J` assets (12–32) with an earnings-surprise / credit-event
+  random subset of `J` assets (12–24) with an earnings-surprise / credit-event
   jump of `(1.5 + |t₃|)×` the asset's monthly idiosyncratic volatility
   (capped at ±60%, 55% negative). Diffusive idiosyncratic noise is not
   sampled — for diversified portfolios it is second order, and sampling it
@@ -36,7 +36,7 @@ The LPs use **factor-exposure variables** `f = Bᵀx` (one definition row per
 factor), so a scenario row has `K + J + O(1)` nonzeros instead of `n`. The
 previous formulation materialized the dense `n_scenarios × n_assets` matrix
 (8M nonzeros at 10k variables for `cvar`, 32M for `tracking_error`, 380 s to
-build; ≈ 6 GB at 100k). Now 100k-variable instances have 2.4M (`cvar`) to 5.5M
+build; ≈ 6 GB at 100k). Now 100k-variable instances have 2.4–3.1M (`cvar`) to 4.9–6.3M
 (`tracking_error`) nonzeros and build in a few seconds.
 
 Helpers: `_portfolio_waterfill` (cap-respecting allocation), `_portfolio_cvar`
