@@ -17,23 +17,26 @@ struct ProductMixPlanWitness
 end
 
 """
-Department over-commitment certificate. Every product in `products` has a
-committed sales floor `floor[p]`, and *every* routing of it passes through
-department `department` (machines `machines`), spending at least
-`min_hours[k]` machine-hours there per unit for the `k`-th listed product.
-Multiplying each product's market row (`Σ_r x[r] >= floor[p]`) by that minimum
-and summing the department's machine-capacity rows shows the department needs
-`required_hours = Σ floor[p] * min_hours[k]` hours but has
-`available_hours < required_hours`. Only LP rows are combined (one market row
-per product, one capacity row per machine), so presolve does not see it.
+Material-shortage certificate at plant-area (or plant) level. Every product in
+`products` has a committed sales floor `floor[p]` in its market row
+(`Σ_r x[r] >= floor[p]`), and each unit it sells draws at least `min_use[k]`
+of material `material` whatever routing makes it (`qty * min routing yield`).
+Multiplying each market row by that minimum and adding the material's
+availability row shows the commitments need `required = Σ floor[p] *
+min_use[k]` units while only `available < required` are allocated. `scope` is
+`:area` or `:plant` for a shared material (`:department` only in shops without
+areas). The material row is protected so that no single row or product is
+refuted on its own, and the floors of multi-routing products are row
+constraints rather than column bounds, so HiGHS presolve's bound propagation
+cannot assemble the contradiction.
 """
-struct ProductMixDepartmentCertificate
-    department::Int
-    machines::Vector{Int}
+struct ProductMixMaterialCertificate
+    material::Int
+    scope::Symbol
     products::Vector{Int}
-    min_hours::Vector{Float64}
-    required_hours::Float64
-    available_hours::Float64
+    min_use::Vector{Float64}
+    required::Float64
+    available::Float64
 end
 
 """
@@ -81,10 +84,15 @@ headroom (a few near-saturated bottlenecks), and floors are fractions of the
 plan.
 
   - `feasible`: the plan is stored as a [`ProductMixPlanWitness`](@ref).
-  - `infeasible`: the most committed department's machines lose capacity until
-    the floors of products that cannot avoid it need 10–35% more hours than it
-    has — a [`ProductMixDepartmentCertificate`](@ref).
-  - `unknown`: the same mechanism with ratio `1 ± U(0.03, 0.30)`.
+  - `infeasible`: a supply shortage on a shared area- or plant-level material:
+    its multi-routing users are put under contract (floors 60–95% of plan) and
+    its allocation is cut until the floors need 10–35% more of it than is
+    available (at the most material-efficient routing mix) — a [`ProductMixMaterialCertificate`](@ref). The allocation never
+    drops below 1.3× what single-routing floors (column bounds) force through it
+    plus 1.3× the largest single commitment, so presolve's bound propagation
+    cannot refute it; only the material row plus all committed market rows do.
+  - `unknown`: the same mechanism with ratio `1 ± U(0.03, 0.30)`, measured at
+    the plan's own routing mix.
 
 # Fields
 
@@ -97,6 +105,7 @@ plan.
   - `labor_capacity::Vector{Float64}`: per department
   - `product_materials::Vector{Vector{Int}}`, `material_qty::Vector{Vector{Float64}}`
   - `material_capacity::Vector{Float64}`, `material_cost::Vector{Float64}`
+  - `material_owner::Vector{Int}`: owning department (> 0), area (negated, < 0), or plant (0)
   - `price`, `floor`, `ceiling::Vector{Float64}`: per product
   - `primary_department::Vector{Int}`: per product
   - `industry::Symbol`
@@ -121,13 +130,14 @@ struct ProductMixProblem <: ProblemGenerator
     material_qty::Vector{Vector{Float64}}
     material_capacity::Vector{Float64}
     material_cost::Vector{Float64}
+    material_owner::Vector{Int}
     price::Vector{Float64}
     floor::Vector{Float64}
     ceiling::Vector{Float64}
     primary_department::Vector{Int}
     industry::Symbol
     feasible_witness::Union{Nothing, ProductMixPlanWitness}
-    infeasibility_certificate::Union{Nothing, ProductMixDepartmentCertificate}
+    infeasibility_certificate::Union{Nothing, ProductMixMaterialCertificate}
     feasibility_status::FeasibilityStatus
 end
 
@@ -362,100 +372,86 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
     if feasibility_status == feasible
         witness = ProductMixPlanWitness(production, machine_load, labor_load, material_load)
     else
-        # Hours product p needs in department d per unit, at its best routing
-        # (0 if some routing avoids the department).
-        function min_hours(p, d)
-            best = Inf
-            for r in prod_routings[p]
-                h = sum(
-                    (t for (m, t) in zip(routing_machines[r], routing_times[r]) if machine_department[m] == d);
-                    init=0.0,
-                )
-                best = min(best, h)
-            end
-            return best
+        # Material shortage at plant-area (or plant) level. Per unit of
+        # product p, every routing uses at least `qty * min yield` of each of
+        # its materials, so committed floors force a minimum draw on a shared
+        # material. Only one row is involved per material, but the floors of
+        # multi-routing products live in ranged market rows, not in column
+        # bounds, so presolve's bound propagation cannot add them up — the
+        # contradiction needs the material row plus every committed market row.
+        min_use(p, k) = material_qty[p][findfirst(==(k), product_materials[p])] *
+            minimum(routing_yield[r] for r in prod_routings[p])
+        max_use(p, k) = material_qty[p][findfirst(==(k), product_materials[p])] *
+            maximum(routing_yield[r] for r in prod_routings[p])
+        users = [Int[] for _ in 1:n_materials]
+        for p in 1:n_products, k in product_materials[p]
+            push!(users[k], p)
         end
-        dept_products = [[p for p in 1:n_products if primary_department[p] == d] for d in 1:n_departments]
-        cap_d = [sum(machine_capacity[m] for m in dept_machines[d]) for d in 1:n_departments]
-        need_d = [
-            sum((floor[p] * min_hours(p, d) for p in dept_products[d]); init=0.0) for d in 1:n_departments
-        ]
-        dstar = argmax(d -> isempty(dept_products[d]) ? -1.0 : need_d[d] / cap_d[d], 1:n_departments)
-        prods = dept_products[dstar]
-        # The department's whole portfolio goes under contract: floors rise to
-        # 60-95% of the plan (never above the market ceiling).
-        # Single-routing floors are variable bounds; they are left alone so
-        # bound propagation has little to work with.
-        for p in prods
-            length(prod_routings[p]) > 1 || continue
-            floor[p] = max(floor[p], planned[p] * rand(rng, Uniform(0.6, 0.95)))
+        multi(p) = length(prod_routings[p]) > 1
+        # Protection a material row must keep so no single row or single
+        # product is refuted on its own: 1.3x what single-routing floors
+        # (variable bounds) force through it plus 1.3x the largest single
+        # multi-routing commitment.
+        function protection(k)
+            forced = sum((min_use(p, k) * floor[p] for p in users[k] if !multi(p) && floor[p] > 0); init=0.0)
+            big = maximum((max_use(p, k) * floor[p] for p in users[k] if multi(p)); init=0.0)
+            return 1.3 * forced + 1.3 * big
         end
-        if !any(floor[p] > 0 for p in prods)
-            # Tiny shops: no multi-routing commitment to lean on.
-            for p in prods
+        # Candidate: the shared (area or plant) material whose multi-routing
+        # users could carry the largest commitment relative to its protection;
+        # department materials only when the shop has no areas.
+        shared = [k for k in 1:n_materials if material_owner[k] <= 0 && any(multi, users[k])]
+        candidates = isempty(shared) ? [k for k in 1:n_materials if any(multi, users[k])] : shared
+        isempty(candidates) && (candidates = [k for k in 1:n_materials if !isempty(users[k])])
+        function potential(k)
+            pot = sum((0.95 * planned[p] * min_use(p, k) for p in users[k] if multi(p)); init=0.0)
+            pot += sum((min_use(p, k) * floor[p] for p in users[k] if !multi(p) && floor[p] > 0); init=0.0)
+            prot = 1.3 * sum((min_use(p, k) * floor[p] for p in users[k] if !multi(p) && floor[p] > 0); init=0.0) +
+                1.3 * maximum((max_use(p, k) * 0.95 * planned[p] for p in users[k] if multi(p)); init=0.0)
+            return pot / max(prot, 1e-9)
+        end
+        kstar = argmax(potential, candidates)
+        # Its multi-routing users go under contract (60-95% of plan).
+        for p in users[kstar]
+            multi(p) && (floor[p] = max(floor[p], planned[p] * rand(rng, Uniform(0.6, 0.95))))
+        end
+        if !any(floor[p] > 0 for p in users[kstar])
+            for p in users[kstar]   # tiny shops: commit whatever uses it
                 floor[p] = planned[p] * rand(rng, Uniform(0.6, 0.95))
             end
         end
-        filter!(p -> floor[p] > 0, prods)
-        hours = [min_hours(p, dstar) for p in prods]
-        required = sum(floor[p] * h for (p, h) in zip(prods, hours))
+        prods = [p for p in users[kstar] if floor[p] > 0]
+        uses = [min_use(p, kstar) for p in prods]
+        required = sum(floor[p] * u for (p, u) in zip(prods, uses))
         ratio = if feasibility_status == infeasible
             1.1 + 0.25 * rand(rng)
         else
             m = 0.03 + 0.27 * rand(rng)
             rand(rng) < 0.5 ? 1.0 - m : 1.0 + m
         end
-        # Cut the department's machines to `required / ratio` hours in total,
-        # but never below 1.6x what single-routing floors alone force onto a
-        # machine (those floors are variable bounds; a machine cut close to
-        # them lets bound propagation through the market rows refute the
-        # instance in presolve). The aggregate contradiction then needs the
-        # whole department.
-        forced = zeros(n_machines)
-        for p in 1:n_products
-            length(prod_routings[p]) == 1 && floor[p] > 0 || continue
-            r = prod_routings[p][1]
-            for (m, t) in zip(routing_machines[r], routing_times[r])
-                forced[m] += t * floor[p]
-            end
-        end
-        # Room each machine must keep for the largest single multi-routing
-        # commitment through it: otherwise bound propagation (machine row ->
-        # implied column bounds -> market row) refutes that product alone.
-        biggest = zeros(n_machines)
-        for p in 1:n_products
-            length(prod_routings[p]) > 1 && floor[p] > 0 || continue
-            for r in prod_routings[p], (m, t) in zip(routing_machines[r], routing_times[r])
-                biggest[m] = max(biggest[m], t * floor[p])
-            end
-        end
-        machines = dept_machines[dstar]
-        cut(s) = [max(1.3 * forced[m] + 1.3 * biggest[m], machine_capacity[m] * s) for m in machines]
-        goal = required / ratio
-        lo, hi = 0.0, 1.0 / ratio
-        for _ in 1:60
-            mid = (lo + hi) / 2
-            sum(cut(mid)) > goal ? (hi = mid) : (lo = mid)
-        end
-        new_caps = cut(lo)
-        if sum(new_caps) > 1.02 * goal
-            # The protected caps cannot reach the drawn ratio (single-routing
-            # floors dominate the department): fall back to a uniform cut
-            # (still certified, only less hidden from presolve).
-            new_caps = [machine_capacity[m] * goal / cap_d[dstar] for m in machines]
-        end
-        for (m, c) in zip(machines, new_caps)
-            machine_capacity[m] = c
-        end
-        if feasibility_status == infeasible
-            certificate = ProductMixDepartmentCertificate(
-                dstar,
-                copy(dept_machines[dstar]),
-                prods,
-                hours,
-                required,
-                sum(machine_capacity[m] for m in dept_machines[dstar]),
+        # Supply allocation cut to `required / ratio`, never below the
+        # protection; an infeasible request that the protection would push
+        # under a 1.1 ratio falls back to the plain cut (still certified,
+        # only less hidden from presolve).
+        # `unknown` measures the ratio against the plan's own routing mix
+        # (the minimum-yield mix is usually blocked by machine capacity, which
+        # would make nearly every draw infeasible).
+        basis = if feasibility_status == infeasible
+            required
+        else
+            sum(
+                floor[p] * material_qty[p][findfirst(==(kstar), product_materials[p])] *
+                sum(routing_yield[r] * production[r] for r in prod_routings[p]) / planned[p] for p in prods
             )
+        end
+        cap = max(basis / ratio, protection(kstar))
+        if feasibility_status == infeasible && required / cap < 1.1
+            cap = required / ratio
+        end
+        material_capacity[kstar] = cap
+        if feasibility_status == infeasible
+            scope = material_owner[kstar] == 0 ? :plant : (material_owner[kstar] < 0 ? :area : :department)
+            certificate = ProductMixMaterialCertificate(kstar, scope, prods, uses, required, cap)
         end
     end
 
@@ -478,6 +474,7 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
         material_qty,
         material_capacity,
         material_cost,
+        material_owner,
         price,
         floor,
         ceiling,
@@ -561,5 +558,5 @@ register_variant(
     :product_mix,
     :standard,
     ProductMixProblem,
-    "Single-period product mix with alternative routings over many machines, department labor pools, and materials: ranged market rows, planted operating plan, and a department over-commitment infeasibility certificate",
+    "Single-period product mix with alternative routings over many machines, department labor pools, and materials: ranged market rows, planted operating plan, and an area/plant material-shortage infeasibility certificate",
 )

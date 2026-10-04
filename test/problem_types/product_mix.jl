@@ -1,8 +1,8 @@
 # Focused quality contracts for the product_mix category: registry shape,
 # exact routing-column sizing and the row formula (machines, labor pools,
 # materials, ranged market rows), shop/routing data invariants, the planted
-# plan witness checked against the built model, the department
-# over-commitment certificate recomputed from the struct fields,
+# plan witness checked against the built model, the area/plant
+# material-shortage certificate recomputed from the struct fields,
 # reproducibility under a dirty global RNG, and HiGHS contracts including a
 # presolve-survival regression (the previous formulation presolved to an empty
 # model).
@@ -97,30 +97,35 @@
         @test isempty(report)
     end
 
-    # Department over-commitment certificate, recomputed from the data.
-    for target in (50, 600, 4000), seed in 0:3
+    # Material-shortage certificate (area/plant level), recomputed from the
+    # data, including the protection that keeps single rows and single
+    # products satisfiable (so presolve bound propagation cannot refute it).
+    for target in (50, 600, 4000, 20_000), seed in 0:3
         _, p = generate_problem(:product_mix, target, infeasible, seed)
         cert = p.infeasibility_certificate
         @test cert !== nothing
         @test p.feasible_witness === nothing
-        @test cert.machines == findall(==(cert.department), p.machine_department)
+        k = cert.material
+        owner = p.material_owner[k]
+        @test cert.scope == (owner == 0 ? :plant : (owner < 0 ? :area : :department))
         rs = pm_routings(p)
-        for (k, q) in enumerate(cert.products)
-            @test p.floor[q] > 0
-            hours = [
-                sum(
-                    (t for (m, t) in zip(p.routing_machines[r], p.routing_times[r]) if
-                     p.machine_department[m] == cert.department);
-                    init=0.0,
-                ) for r in rs[q]
-            ]
-            @test cert.min_hours[k] ≈ minimum(hours)
-            @test cert.min_hours[k] > 0              # no routing avoids the department
+        users = [q for q in 1:p.n_products if k in p.product_materials[q]]
+        @test cert.products == [q for q in users if p.floor[q] > 0]
+        use(q) = p.material_qty[q][findfirst(==(k), p.product_materials[q])]
+        for (j, q) in enumerate(cert.products)
+            @test cert.min_use[j] ≈ use(q) * minimum(p.routing_yield[r] for r in rs[q])
         end
-        required = sum(p.floor[q] * h for (q, h) in zip(cert.products, cert.min_hours))
-        @test cert.required_hours ≈ required
-        @test cert.available_hours ≈ sum(p.machine_capacity[m] for m in cert.machines)
-        @test cert.required_hours > 1.05 * cert.available_hours
+        @test cert.required ≈ sum(p.floor[q] * u for (q, u) in zip(cert.products, cert.min_use))
+        @test cert.available == p.material_capacity[k]
+        @test cert.required >= 1.1 * cert.available * (1 - 1e-9)
+        if target >= 600
+            @test cert.scope in (:area, :plant)
+            # Single-routing floors (column bounds) leave room in the row, and
+            # no single multi-routing commitment exceeds the row on its own.
+            forced = sum((use(q) * minimum(p.routing_yield[r] for r in rs[q]) * p.floor[q] for q in users if length(rs[q]) == 1 && p.floor[q] > 0); init=0.0)
+            big = maximum((use(q) * maximum(p.routing_yield[r] for r in rs[q]) * p.floor[q] for q in users if length(rs[q]) > 1); init=0.0)
+            @test cert.available >= 1.3 * forced + 1.3 * big - 1e-6
+        end
     end
 
     for seed in 0:4
@@ -165,6 +170,16 @@
                 push!(outcomes, termination_status(m))
             end
             @test outcomes == Set([MOI.OPTIMAL, MOI.INFEASIBLE])
+            # Infeasible requests are not refuted by presolve alone: with the
+            # simplex iteration limit at 0, HiGHS must stop undecided.
+            for target in (1000, 10_000), seed in 0:1
+                m, _ = generate_problem(:product_mix, target, infeasible, seed)
+                set_optimizer(m, HiGHS.Optimizer)
+                set_silent(m)
+                set_attribute(m, "simplex_iteration_limit", 0)
+                optimize!(m)
+                @test termination_status(m) == MOI.ITERATION_LIMIT
+            end
             # Presolve survival: simplex has real work left on a feasible 5k
             # instance (the old formulation presolved to empty).
             m, _ = generate_problem(:product_mix, 5000, feasible, 1)
