@@ -17,10 +17,13 @@ combined-cycle gas, fast-ramping combustion turbines, hydro, and variable
 renewables (wind), each with distinct capacities, minimum stable outputs, ramp
 limits, costs, and minimum up/down times. The objective minimizes total
 operating cost (variable generation cost, no-load cost, startup cost, and
-shutdown cost). Constraints enforce generation bounds tied to commitment status
-and availability, system demand balance, spinning reserve requirements, ramp
-limits between consecutive periods, commitment state logic linking on/startup/
-shutdown, and minimum up/down time windows.
+shutdown cost, plus a small reserve-holding cost). Constraints enforce
+generation bounds tied to commitment status and availability, system demand
+balance, unit-level operating reserve (each committed unit's reserve shares its
+available headroom with generation and is capped by its 30-minute ramp
+capability) against a system requirement, ramp limits between consecutive
+periods, commitment state logic linking on/startup/shutdown, and minimum
+up/down time windows.
 
 The natural formulation is a MILP: commitment, startup, and shutdown are binary.
 The package-level default `relax_integer=true` exposes its LP relaxation, while
@@ -53,7 +56,11 @@ without solving the model.
   - `initial_on::Dict{String,Float64}`: Initial commitment state per unit (0 or 1)
   - `initial_generation::Dict{String,Float64}`: Initial generation per unit
   - `unit_types::Dict{String,Symbol}`: Sampled fleet archetype for each unit
-  - `resolved_status::FeasibilityStatus`: Status actually constructed (`unknown` is resolved)
+  - `reserve_capability::Dict{String,Float64}`: Reserve a committed unit can hold
+    (its 30-minute ramp capability, half its hourly ramp-up limit)
+  - `reserve_costs::Dict{String,Float64}`: Reserve-holding cost per MW per period
+  - `resolved_status::FeasibilityStatus`: the requested status (`unknown` stays
+    `unknown`: a natural instance with neither artifact)
   - `feasible_witness`: Complete feasible point, present exactly for feasible instances
   - `infeasibility_certificate`: Aggregate capacity contradiction, present exactly for infeasible instances
 """
@@ -62,16 +69,18 @@ struct UnitCommitmentWitness
     commitment::Matrix{Float64}
     startup::Matrix{Float64}
     shutdown::Matrix{Float64}
+    reserve::Matrix{Float64}
 end
 
 Base.:(==)(a::UnitCommitmentWitness, b::UnitCommitmentWitness) =
     a.generation == b.generation &&
     a.commitment == b.commitment &&
     a.startup == b.startup &&
-    a.shutdown == b.shutdown
+    a.shutdown == b.shutdown &&
+    a.reserve == b.reserve
 Base.isequal(a::UnitCommitmentWitness, b::UnitCommitmentWitness) = a == b
 Base.hash(a::UnitCommitmentWitness, h::UInt) =
-    hash((a.generation, a.commitment, a.startup, a.shutdown), h)
+    hash((a.generation, a.commitment, a.startup, a.shutdown, a.reserve), h)
 
 struct UnitCommitmentCapacityCertificate
     period::Int
@@ -110,6 +119,8 @@ struct UnitCommitmentProblem <: ProblemGenerator
     initial_on::Dict{String, Float64}
     initial_generation::Dict{String, Float64}
     unit_types::Dict{String, Symbol}
+    reserve_capability::Dict{String, Float64}
+    reserve_costs::Dict{String, Float64}
     resolved_status::FeasibilityStatus
     feasible_witness::Union{Nothing, UnitCommitmentWitness}
     infeasibility_certificate::Union{Nothing, UnitCommitmentCapacityCertificate}
@@ -120,45 +131,48 @@ end
 
 Construct a unit commitment problem instance.
 
-Decision variables in `build_model`: `g`, `on`, `startup`, `shutdown`, each indexed
-by (unit, period). Total = 4 * n_units * n_periods. The constructor sizes
-`n_units` and `n_periods` so this product lands near `target_variables`.
+Decision variables in `build_model`: `g`, `on`, `startup`, `shutdown`, `reserve`,
+each indexed by (unit, period). Total = 5 * n_units * n_periods. The constructor
+sizes `n_units` and `n_periods` so this product lands near `target_variables`.
 
 # Arguments
 
-  - `target_variables`: Target number of variables (4 × n_units × n_periods)
+  - `target_variables`: Target number of variables (5 × n_units × n_periods)
   - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
   - `seed`: Random seed for reproducibility
 
 For `feasible`, the constructor builds commitment, transition, and dispatch
 trajectories first, then defines demand and reserve from that trajectory. The
 stored witness satisfies every model row by construction. For `infeasible`, one
-period has demand plus reserve strictly above all available nameplate capacity;
-the stored certificate records the corresponding aggregate cut. For `unknown`,
-the constructor resolves to one of these two profiles and records the result.
+period has demand plus reserve strictly above all available nameplate capacity
+(while demand alone still fits, and every other period keeps demand plus reserve
+at most 97 % of its available capacity); the stored certificate records the
+corresponding aggregate cut, which needs the balance row, the reserve row and
+the commitment bounds together. For `unknown`, the instance is natural: natural
+availability (outages, wind and hydro profiles), a natural initial state, and a
+peak load of 50–82 % of nameplate capacity with an 8–18 % reserve — whether the
+peak hours fit is undetermined.
 """
 function UnitCommitmentProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
-    resolved_status = if feasibility_status == unknown
-        (rand(rng) < 0.65 ? feasible : infeasible)
-    else
-        feasibility_status
-    end
-    sizing_target = max(target_variables, 48)
+    # `unknown` is a natural instance (no planted artifact), not a coin flip
+    # into one of the planted profiles.
+    resolved_status = feasibility_status
+    sizing_target = max(target_variables, 60)
 
-    # Variable-count formula: 4 * n_units * n_periods (g, on, startup, shutdown
-    # are each indexed by unit × period). Dimensions are sized below so this
+    # Variable-count formula: 5 * n_units * n_periods (g, on, startup, shutdown,
+    # reserve are each indexed by unit × period). Dimensions are sized below so this
     # product lands within ~10% of target_variables.
     # Switch bands at the smallest formulation supported by the next band. This
     # avoids artificial jumps (for example, 3,000 requested variables formerly
-    # jumped to the 3,840-variable large-band floor).
-    scale = if sizing_target < 192
+    # jumped to the large-band floor).
+    scale = if sizing_target < 240
         :tiny
-    elseif sizing_target < 960
+    elseif sizing_target < 1200
         :small
-    elseif sizing_target < 3840
+    elseif sizing_target < 4800
         :medium
     else
         :large
@@ -166,7 +180,7 @@ function UnitCommitmentProblem(
 
     if scale == :tiny
         # Small synthetic instances: allow short horizons / few units so the
-        # variable count (4 * n_units * n_periods) can reach low targets.
+        # variable count (5 * n_units * n_periods) can reach low targets.
         unit_range = (2, 6)
         period_range = (6, 24)
     elseif scale == :small
@@ -178,7 +192,7 @@ function UnitCommitmentProblem(
     else
         # Keep operational horizons at one week or less and grow the fleet for
         # large matrix requests instead of silently saturating near 32k variables.
-        max_large_units = max(48, ceil(Int, sizing_target / (4 * 48)))
+        max_large_units = max(48, ceil(Int, sizing_target / (5 * 48)))
         unit_range = (20, max_large_units)
         period_range = (48, 168)
     end
@@ -187,7 +201,7 @@ function UnitCommitmentProblem(
     n_periods = period_range[1]
 
     for _ in 1:20
-        current_vars = n_units * n_periods * 4
+        current_vars = n_units * n_periods * 5
         if abs(current_vars - sizing_target) / sizing_target <= 0.1
             break
         end
@@ -312,6 +326,8 @@ function UnitCommitmentProblem(
     initial_on = Dict{String, Float64}()
     initial_generation = Dict{String, Float64}()
     unit_types = Dict{String, Symbol}()
+    reserve_capability = Dict{String, Float64}()
+    reserve_costs = Dict{String, Float64}()
 
     total_capacity = 0.0
 
@@ -338,6 +354,8 @@ function UnitCommitmentProblem(
         no_load_costs[u] = runif(profile.no_load)
         startup_costs[u] = runif(profile.startup)
         shutdown_costs[u] = runif(profile.shutdown)
+        reserve_capability[u] = min(cap, 0.5 * ramp_up[u])
+        reserve_costs[u] = 0.5 + 0.08 * variable_costs[u]
         min_up_times[u] = max(1, rand(rng, profile.min_up[1]:profile.min_up[2]))
         min_down_times[u] = max(1, rand(rng, profile.min_down[1]:profile.min_down[2]))
 
@@ -496,7 +514,8 @@ function UnitCommitmentProblem(
     demand = zeros(Float64, n_periods)
     reserve_requirements = zeros(Float64, n_periods)
 
-    base_peak = total_capacity * rand(rng, Uniform(0.55, 0.85))
+    peak_range = resolved_status == unknown ? (0.50, 0.82) : (0.55, 0.85)
+    base_peak = total_capacity * rand(rng, Uniform(peak_range...))
     day_count = max(1, ceil(Int, n_periods / 24))
     weekly_shape = [rand(rng, Uniform(0.9, 1.1)) for _ in 1:day_count]
 
@@ -556,16 +575,20 @@ function UnitCommitmentProblem(
             initial_generation[u] = generation[u_idx, 1]
         end
 
-        # Define load from the dispatch so demand balance is exact. Reserve is a
-        # realistic percentage of load, capped below the witness's online headroom.
+        # Define load from the dispatch so demand balance is exact. Each unit holds
+        # reserve up to its headroom and ramp capability; the requirement is a
+        # realistic percentage of load, capped below 85 % of what the witness holds.
+        reserve = zeros(Float64, n_u, n_periods)
+        for (u_idx, u) in enumerate(units), t in 1:n_periods
+            headroom = max_output[u] * availability_factors[u][t] - generation[u_idx, t]
+            reserve[u_idx, t] = max(0.0, min(headroom, reserve_capability[u]))
+        end
         for t in 1:n_periods
             demand[t] = sum(generation[:, t])
-            available = sum(max_output[u] * availability_factors[u][t] for u in units)
-            headroom = max(0.0, available - demand[t])
-            reserve_requirements[t] = min(reserve_fraction * demand[t], 0.85 * headroom)
+            reserve_requirements[t] = min(reserve_fraction * demand[t], 0.85 * sum(reserve[:, t]))
         end
-        feasible_witness = UnitCommitmentWitness(generation, commitment, startup, shutdown)
-    else
+        feasible_witness = UnitCommitmentWitness(generation, commitment, startup, shutdown, reserve)
+    elseif resolved_status == infeasible
         # Retain several operational stress profiles for data diversity, then add
         # one explicit aggregate certificate rather than relying on the scenario to
         # happen to be infeasible.
@@ -599,22 +622,57 @@ function UnitCommitmentProblem(
             (demand[t] + reserve_requirements[t]) / max(capacity_per_period[t], 1.0) for
             t in 1:n_periods
         ]
-        critical_period = argmax(stress_ratio)
-        available = capacity_per_period[critical_period]
-        local_reserve_fraction =
-            reserve_requirements[critical_period] / max(demand[critical_period], eps())
-        local_reserve_fraction = clamp(local_reserve_fraction, 0.08, 0.35)
-        required = if available > 0
-            available * (1.0 + 0.35 * local_reserve_fraction)
+        offers = [
+            _uc_reserve_offer(units, max_output, min_output, reserve_capability, availability_factors, t) for
+            t in 1:n_periods
+        ]
+        # The contradiction is split between load and reserve: demand alone stays
+        # at most 95 % of available capacity and the requirement at most 90 % of
+        # what reserve offers could cover, so no single row is violated and the
+        # shortfall needs the balance, headroom and requirement rows together.
+        # Plant it in the stressed period that can host it with the most room.
+        excess_ratio = rand(rng, Uniform(0.03, 0.08))
+        hostable = [
+            0.9 * offers[t] / max(capacity_per_period[t], 1.0) - 0.05 for t in 1:n_periods
+        ]
+        candidates = [t for t in 1:n_periods if hostable[t] >= excess_ratio && capacity_per_period[t] > 0]
+        critical_period = if isempty(candidates)
+            argmax(hostable)
         else
-            max(1.0, demand[critical_period] + reserve_requirements[critical_period])
+            candidates[argmax([stress_ratio[t] for t in candidates])]
         end
-        demand[critical_period] = required / (1.0 + local_reserve_fraction)
-        reserve_requirements[critical_period] = required - demand[critical_period]
+        excess_ratio = clamp(min(excess_ratio, hostable[critical_period]), 0.01, 0.08)
+        # Every other period keeps demand + reserve at most 97 % of its available
+        # capacity, so the planted contradiction is the only one and no period's
+        # demand row alone is violated (a single-row infeasibility presolve would
+        # spot at once).
+        for t in 1:n_periods
+            t == critical_period && continue
+            if stress_ratio[t] > 0.97
+                scale = 0.97 / stress_ratio[t]
+                demand[t] *= scale
+                reserve_requirements[t] *= scale
+            end
+        end
+        available = capacity_per_period[critical_period]
+        required = max(1.0, available * (1.0 + excess_ratio))
+        reserve_requirements[critical_period] = min(0.9 * offers[critical_period], available * (excess_ratio + 0.05))
+        demand[critical_period] = required - reserve_requirements[critical_period]
         excess = required - available
         infeasibility_certificate = UnitCommitmentCapacityCertificate(
             critical_period, available, required, excess
         )
+    end
+
+    if resolved_status != feasible
+        # No period's requirement may exceed what reserve offers could ever
+        # cover (that would be a single infeasible row, not a natural shortage).
+        for t in 1:n_periods
+            offer = _uc_reserve_offer(units, max_output, min_output, reserve_capability, availability_factors, t)
+            if resolved_status == unknown || t != something(infeasibility_certificate).period
+                reserve_requirements[t] = min(reserve_requirements[t], 0.9 * offer)
+            end
+        end
     end
 
     problem = UnitCommitmentProblem(
@@ -638,16 +696,33 @@ function UnitCommitmentProblem(
         initial_on,
         initial_generation,
         unit_types,
+        reserve_capability,
+        reserve_costs,
         resolved_status,
         feasible_witness,
         infeasibility_certificate,
     )
     if resolved_status == feasible
         @assert _unit_commitment_witness_is_valid(problem)
-    else
+    elseif resolved_status == infeasible
         @assert _unit_commitment_certificate_is_valid(problem)
     end
     return problem
+end
+
+"""
+Largest reserve the fleet could hold in period `t`: each unit able to run
+(available capacity at least its stable minimum) offers its ramp capability,
+capped by the room above its minimum output.
+"""
+function _uc_reserve_offer(units, max_output, min_output, reserve_capability, availability_factors, t)
+    total = 0.0
+    for u in units
+        available = max_output[u] * availability_factors[u][t]
+        available >= min_output[u] || continue
+        total += min(reserve_capability[u], available - min_output[u])
+    end
+    return total
 end
 
 """
@@ -668,6 +743,7 @@ function _unit_commitment_witness_is_valid(prob::UnitCommitmentProblem; atol::Fl
     size(witness.commitment) == expected_size || return false
     size(witness.startup) == expected_size || return false
     size(witness.shutdown) == expected_size || return false
+    size(witness.reserve) == expected_size || return false
 
     for (u_idx, u) in enumerate(prob.units)
         for t in prob.time_periods
@@ -685,7 +761,10 @@ function _unit_commitment_witness_is_valid(prob::UnitCommitmentProblem; atol::Fl
             abs(startup - round(startup)) <= atol || return false
             abs(shutdown - round(shutdown)) <= atol || return false
             startup + shutdown <= 1.0 + atol || return false
+            reserve = witness.reserve[u_idx, t]
             generation <= available + atol || return false
+            -atol <= reserve <= prob.reserve_capability[u] * commitment + atol || return false
+            generation + reserve <= available * commitment + atol || return false
             generation <= prob.max_output[u] * commitment + atol || return false
             generation + atol >= prob.min_output[u] * commitment || return false
 
@@ -721,11 +800,7 @@ function _unit_commitment_witness_is_valid(prob::UnitCommitmentProblem; atol::Fl
     for t in prob.time_periods
         generation = sum(witness.generation[:, t])
         abs(generation - prob.demand[t]) <= atol * max(1.0, prob.demand[t]) || return false
-        headroom = sum(
-            prob.max_output[u] * prob.availability_factors[u][t] * witness.commitment[u_idx, t] -
-            witness.generation[u_idx, t] for (u_idx, u) in enumerate(prob.units)
-        )
-        headroom + atol >= prob.reserve_requirements[t] || return false
+        sum(witness.reserve[:, t]) + atol >= prob.reserve_requirements[t] || return false
     end
     return true
 end
@@ -734,7 +809,8 @@ end
     _unit_commitment_certificate_is_valid(prob; atol=1e-7)
 
 Check the aggregate capacity certificate stored for an infeasible instance.
-Demand balance and the reserve row imply
+Demand balance, the per-unit headroom rows `g + reserve ≤ available·on`,
+`on ≤ 1`, and the reserve requirement imply
 `demand[t] + reserve[t] <= available_capacity[t]`; the certificate records a
 strict violation of that necessary condition.
 """
@@ -771,11 +847,16 @@ function build_model(prob::UnitCommitmentProblem)
     units = prob.units
     periods = prob.time_periods
 
-    # Decision variables: 4 * n_units * n_periods total.
-    @variable(model, g[u in units, t in periods] >= 0)
+    # Decision variables: 5 * n_units * n_periods total.
+    # Available capacity is a variable bound (not a singleton row).
+    @variable(
+        model,
+        0 <= g[u in units, t in periods] <= prob.max_output[u] * prob.availability_factors[u][t]
+    )
     @variable(model, on[u in units, t in periods], Bin)
     @variable(model, startup[u in units, t in periods], Bin)
     @variable(model, shutdown[u in units, t in periods], Bin)
+    @variable(model, 0 <= reserve[u in units, t in periods] <= prob.reserve_capability[u])
 
     if prob.feasible_witness !== nothing
         witness = prob.feasible_witness
@@ -784,6 +865,7 @@ function build_model(prob::UnitCommitmentProblem)
             set_start_value(on[u, t], witness.commitment[u_idx, t])
             set_start_value(startup[u, t], witness.startup[u_idx, t])
             set_start_value(shutdown[u, t], witness.shutdown[u_idx, t])
+            set_start_value(reserve[u, t], witness.reserve[u_idx, t])
         end
     end
 
@@ -794,15 +876,18 @@ function build_model(prob::UnitCommitmentProblem)
             prob.variable_costs[u] * g[u, t] +
             prob.no_load_costs[u] * on[u, t] +
             prob.startup_costs[u] * startup[u, t] +
-            prob.shutdown_costs[u] * shutdown[u, t] for u in units, t in periods
+            prob.shutdown_costs[u] * shutdown[u, t] +
+            prob.reserve_costs[u] * reserve[u, t] for u in units, t in periods
         )
     )
 
     for u in units
-        for (idx, t) in enumerate(periods)
-            max_cap = prob.max_output[u] * prob.availability_factors[u][idx]
-            @constraint(model, g[u, t] <= max_cap)
-            @constraint(model, g[u, t] <= prob.max_output[u] * on[u, t])
+        for t in periods
+            # Generation and held reserve share the committed available capacity;
+            # reserve is also capped by the unit's ramp capability while online.
+            available = prob.max_output[u] * prob.availability_factors[u][t]
+            @constraint(model, g[u, t] + reserve[u, t] <= available * on[u, t])
+            @constraint(model, reserve[u, t] <= prob.reserve_capability[u] * on[u, t])
             @constraint(model, g[u, t] >= prob.min_output[u] * on[u, t])
         end
     end
@@ -811,9 +896,7 @@ function build_model(prob::UnitCommitmentProblem)
     @constraint(
         model,
         reserve_requirement[t in periods],
-        sum(
-            prob.max_output[u] * prob.availability_factors[u][t] * on[u, t] - g[u, t] for u in units
-        ) >= prob.reserve_requirements[t],
+        sum(reserve[u, t] for u in units) >= prob.reserve_requirements[t],
     )
 
     for u in units
