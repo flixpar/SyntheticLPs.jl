@@ -30,8 +30,8 @@ the weighted sum of all node rows says
     sum_v demand[v] / efficiency[v]  <=  sum_s supply[s]
 
 for any feasible flow, whatever the capacities. The certificate stores both
-sides, with `required_supply > total_supply` by at least 20% of the loss volume
-`required_supply - total_demand`: the network loses more in transit than the supply surplus can cover.
+sides, with `total_supply` 3%-8% below `required_supply` (and, whenever the
+losses allow, above the lossless total demand): the network loses more in transit than the supply surplus can cover.
 No single row or bound shows this, so presolve cannot detect it.
 """
 struct GeneralizedFlowLossCertificate
@@ -80,15 +80,18 @@ is close to the loss-adjusted minimum.
 
   - `feasible`: each supply node gets at least 1.05-1.6x what the planted routing
     draws from it; the planted routing is stored as the witness.
-  - `infeasible`: total supply is placed 20%-80% of the way from the lossless
-    total demand to the loss-adjusted requirement `sum demand/efficiency` (so
-    the naive supply >= demand check passes), spread over sites in proportion
-    to their planted draw with mild noise; the efficiency potentials are the
-    certificate. No region is short in isolation, so presolve cannot see it.
-  - `unknown`: total supply is 1.0-1.35x the loss-adjusted requirement, spread
-    by planted draw with lognormal site noise (sigma 0.15): some sites run
-    short and must be relieved through the network, which may or may not have
-    the capacity — a natural instance on either side.
+  - `infeasible`: total supply is 3%-8% below the loss-adjusted requirement
+    `sum demand/efficiency` (and above the lossless total demand whenever the
+    losses allow, so the naive supply >= demand check passes): every site
+    starts at its planted draw and the shortfall is taken in proportion to
+    draw x out-degree^2 (the best-connected hubs run short, not a district's
+    only source), then locally repaired (`_generalized_flow_local_repair!`:
+    no demand node refutable by one step of bound propagation, total
+    unchanged); the efficiency potentials are the certificate.
+  - `unknown`: every site holds a common reserve factor in [0.9, 1.1] of its
+    planted draw (4% site noise), starved sites topped up by the same local
+    check: below 1 the routing must beat the planted (near-efficient, noisy)
+    paths, above 1 it has slack — a natural instance on either side.
 
 # Fields
 
@@ -130,6 +133,73 @@ function _generalized_flow_efficiency(
 )
     d, _ = _geo_dijkstra(n, arcs, out_adj, [-log(g) for g in gains], supply_nodes)
     return exp.(-d)
+end
+
+"""
+    _generalized_flow_local_repair!(supplies, n, arcs, capacities, gains, demands, supply_nodes;
+                                    keep_total=true)
+
+Keep every demand node deliverable under ONE step of bound propagation, the
+reasoning presolve applies: an arc can carry at most its capacity and at most
+what its tail can pass on (a supply site: its supply plus its lossy inflow
+capacity; a transit node: its inflow capacity; a demand node: that minus its
+own demand). Where a demand node's post-gain intake under these bounds falls
+below 1.3x its demand (slack for sites feeding several neighbours) because a
+supplying site is short, that site's supply is
+raised and (with `keep_total`) the same total is taken back proportionally
+from the sites not involved (at most 20 rounds), so the total — and hence the
+loss-adjusted certificate — is unchanged while no local pair of rows refutes
+the model.
+"""
+function _generalized_flow_local_repair!(
+    supplies::Vector{Float64},
+    n::Int,
+    arcs::Vector{Tuple{Int, Int}},
+    capacities::Vector{Float64},
+    gains::Vector{Float64},
+    demands::Vector{Float64},
+    supply_nodes::Vector{Int};
+    keep_total::Bool=true,
+)
+    out_adj, in_adj = _geo_adjacency(n, arcs)
+    is_supply = falses(n)
+    is_supply[supply_nodes] .= true
+    total = sum(supplies)
+    inflow_cap = [sum(gains[a] * capacities[a] for a in in_adj[v]; init=0.0) for v in 1:n]
+    for _ in 1:20
+        touched = falses(n)
+        for v in 1:n
+            demands[v] > 0 || continue
+            avail(u) = is_supply[u] ? supplies[u] + inflow_cap[u] :
+                (demands[u] > 0 ? max(inflow_cap[u] - demands[u], 0.0) : inflow_cap[u])
+            intake = sum(gains[a] * min(capacities[a], avail(arcs[a][1])) for a in in_adj[v]; init=0.0)
+            deficit = 1.3 * demands[v] - intake
+            deficit > 0 || continue
+            for a in in_adj[v]
+                u = arcs[a][1]
+                is_supply[u] || continue
+                room = capacities[a] - avail(u)
+                room > 0 || continue
+                raise = min(room, deficit / gains[a])
+                supplies[u] = ceil(supplies[u] + raise; digits=2)
+                touched[u] = true
+                deficit -= gains[a] * raise
+                deficit <= 0 && break
+            end
+        end
+        any(touched) || break
+        keep_total || continue
+        # Give the total back from the untouched sites.
+        free = [u for u in supply_nodes if !touched[u]]
+        isempty(free) && break
+        excess = sum(supplies) - total
+        pool = sum(supplies[free])
+        excess >= pool && break
+        for u in free
+            supplies[u] = max(floor(supplies[u] * (1 - excess / pool); digits=2), 0.01)
+        end
+    end
+    return supplies
 end
 
 """
@@ -229,21 +299,45 @@ function GeneralizedFlowProblem(
         caps
     else
         total = if feasibility_status == infeasible
-            lossless + (0.2 + 0.6 * rand(rng)) * (required - lossless)
+            # 3%-8% below the loss-adjusted requirement, and when possible
+            # above the lossless demand (the naive check passes).
+            t = required * (0.92 + 0.05 * rand(rng))
+            t < 1.005 * lossless < 0.99 * required ? 1.005 * lossless : t
         else
-            required * (1.0 + 0.35 * rand(rng))
+            0.0  # unused: unknown supplies are set per site below
         end
-        # Spread by where the historical routing drew supply (sites are sized
-        # for their market), with lognormal site noise.
-        noise = feasibility_status == infeasible ? 0.1 : 0.15
-        share = [
-            (source_draw[i] + 1e-9) * supply_weight[i]^(noise / 0.6) for i in eachindex(supply_nodes)
-        ]
-        caps = floor.(total .* share ./ sum(share); digits=2)
-        max.(caps, 0.01)
+        if feasibility_status == infeasible
+            # Every site starts at its planted draw; the shortfall is taken
+            # from sites in proportion to draw x out-degree^2, so the
+            # best-connected hubs (whose customers have alternatives) run
+            # short rather than a site that is some district's only source.
+            deg = [length(out_adj[u]) for u in supply_nodes]
+            w = [source_draw[i] * deg[i]^2 * supply_weight[i]^(0.1 / 0.6) for i in eachindex(supply_nodes)]
+            shortfall = sum(source_draw) - total
+            caps = [source_draw[i] - shortfall * w[i] / sum(w) for i in eachindex(supply_nodes)]
+            if minimum(caps) < 0.05 * maximum(source_draw)
+                # Rare: fall back to a plain proportional cut.
+                caps = total .* source_draw ./ sum(source_draw)
+            end
+            max.(floor.(caps; digits=2), 0.01)
+        else
+            # Each site sized at a common reserve factor of its planted draw
+            # (with 4% site noise): below 1 the routing must find more
+            # efficient paths than the planted ones, above 1 it has slack.
+            phi = 0.9 + 0.2 * rand(rng)
+            [max(floor(source_draw[i] * phi * rand(rng, LogNormal(0.0, 0.04)); digits=2), 0.01) for i in eachindex(supply_nodes)]
+        end
     end
     supplies = zeros(n)
     supplies[supply_nodes] .= supply_caps
+    if feasibility_status != feasible
+        # Infeasible: keep the total (the certificate depends on it). Unknown:
+        # just top up starved sites (a natural instance).
+        _generalized_flow_local_repair!(
+            supplies, n, arcs, capacities, gains, demands, supply_nodes;
+            keep_total=feasibility_status == infeasible,
+        )
+    end
 
     if feasibility_status == infeasible
         total_supply = sum(supply_caps)

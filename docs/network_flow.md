@@ -125,15 +125,17 @@ floor).
   from any site to `v` (Dijkstra on `-log(gain)`). Weighting node `v`'s row by
   `1 / efficiency[v]` makes every column coefficient nonpositive, so any
   feasible flow satisfies `sum_v demand[v] / efficiency[v] <= total supply`.
-  Total supply is placed 20%-80% of the way from the lossless total demand to
-  that loss-adjusted requirement and spread over sites by their planted draw
-  (mild noise): the naive supply >= demand check passes and no region is short
-  in isolation, yet the network loses more in transit than the surplus covers.
-  The certificate stores the potentials and both sides; presolve cannot see
-  it.
-- `unknown`: total supply is 1.0-1.35x the loss-adjusted requirement, spread by
-  planted draw with lognormal site noise — some sites run short and must be
-  relieved through the network, which may or may not have the capacity.
+  Total supply is 3%-8% below that loss-adjusted requirement (and, whenever
+  the losses allow, above the lossless total demand, so the naive supply >=
+  demand check passes). Every site starts at its planted draw and the
+  shortfall is taken in proportion to draw x out-degree^2 — the
+  best-connected hubs run short, not a district's only source — and a local
+  repair keeps every demand node deliverable under one step of bound
+  propagation with 30% slack (total unchanged), so presolve rarely sees it.
+  The certificate stores the potentials and both sides.
+- `unknown`: every site holds a common reserve factor in [0.9, 1.1] of its
+  planted draw (4% site noise), starved sites topped up: below 1 the routing
+  must beat the planted (near-efficient, noisy) paths, above 1 it has slack.
 
 ## `time_expanded` formulation
 
