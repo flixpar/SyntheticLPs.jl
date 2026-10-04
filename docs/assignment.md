@@ -1,107 +1,107 @@
 # Assignment
 
-The assignment generator creates worker-task matching models with binary assignment variables, compatibility restrictions, and randomized cost structure.
+Field-service assignment of jobs to workers (technicians, crews, drivers) over
+**sparse** compatibility graphs: each job is reachable only by its nearest
+workers holding the skill it needs. Only compatible pairs become variables —
+the previous dense `n_workers x n_tasks` matrix with `x[i,j] == 0` rows for
+forbidden pairs (dead columns plus singleton rows; HiGHS presolve kept 27% of
+the columns and 2% of the rows, and the infeasible branch overshot the size
+target by up to 95%) is gone. Both variants scale to the documented
+1,000,000-variable cap (`ASSIGNMENT_MAX_VARIABLES`) and use a constructor-local
+RNG; `build_model` does no sampling.
 
-## Overview
+## Variants
 
-This generator represents assigning workers to tasks at minimum cost. Each task must receive exactly one worker, each worker can perform at most one task, and some worker-task pairs may be forbidden by a compatibility matrix. Costs can reflect specialization and worker/task group affinity.
+| Variant | Model class | Key structure |
+|---|---|---|
+| `standard` (default) | binary (TU LP relaxation) | sparse linear assignment: job rows `= 1`, worker rows `<= 1` |
+| `workload_balance` | binary + continuous makespan | unrelated workers: worker-specific processing times, availability-scaled makespan rows, overtime cap, cost term |
 
-## Generator Data and Sizing
+## Shared data model (`assignment.jl`)
 
-`target_variables` maps to the worker-task matrix size:
+- **Geography**: workers and jobs drawn from one `_geo_positions` population
+  (metro clusters, uniform coverage or a corridor; region side `12 sqrt(n)`).
+- **Skills**: Zipf-like skill popularity; every job needs one skill; every
+  worker holds a primary skill plus up to two cross-trained ones.
+- **Eligibility**: per-skill grid kNN (`_asg_skill_candidates`) finds each
+  job's nearest skill holders in near-linear time; per-job edge counts are
+  lognormal and summed exactly to the variable budget (`_asg_edge_counts`).
 
-```text
-target_variables ~= n_workers * n_tasks
-```
-
-The constructor seeds Julia's global RNG with `Random.seed!(seed)`, so all dimension choices, compatibility choices, and costs are reproducible for the same inputs.
-
-Size-dependent parameters:
-
-| Target variables | Balanced probability | Base cost range | Specialization probability | Cost variation weights |
-| --- | --- | --- | --- | --- |
-| `<= 250` | `0.8` | `5` to `30` | `0.2` | low `0.6`, medium `0.3`, high `0.1` |
-| `<= 1000` | `0.6` | `10` to `100` | `0.4` | low `0.3`, medium `0.5`, high `0.2` |
-| `> 1000` | `0.4` | `50` to `500` | `0.6` | low `0.2`, medium `0.3`, high `0.5` |
-
-Balanced instances use a square matrix with `n_workers = n_tasks` near `sqrt(target_variables)`, both at least 5. Unbalanced instances use a random ratio in `[0.5, 2.0)` and then make up to three adjustment passes to move the product closer to the target.
-
-After feasibility adjustments, the generator assigns workers and tasks to random skill groups. The number of groups is sampled from `2:gmax`, where `gmax = min(6, max(2, round(sqrt(min(n_workers, n_tasks)))))`. Compatibility density is based on final matrix size:
-
-- `0.85` for `<= 250` possible assignments
-- `0.70` for `<= 1000`
-- `0.50` for larger matrices
-
-Within-group compatibility probability is `min(0.98, base_density)`. Cross-group compatibility probability is `max(0.02, 0.3 * base_density)`.
-
-The `allowed` matrix is only randomized when `feasibility_status` is `feasible` or `infeasible`. For `unknown`, it remains all `true`.
-
-Costs are integer values. The upper end of the base cost range is multiplied by a random factor in `[0.8, 1.2)`, with a minimum spread of 5 above the low cost. Specialized workers have a few low-cost tasks and higher costs elsewhere. Non-specialized costs use low, medium, or high variation, with lower expected costs for matching worker/task groups.
-
-The struct stores:
-
-- `n_workers::Int`
-- `n_tasks::Int`
-- `costs::Matrix{Int}`
-- `allowed::Matrix{Bool}`
-
-## LP Formulation
-
-Sets:
-
-- `W = {1, ..., n_workers}` for workers
-- `T = {1, ..., n_tasks}` for tasks
-
-Decision variable:
+## `standard`
 
 ```text
-x[i,j] in {0,1} = 1 if worker i is assigned to task j
+minimize    sum_e cost[e] x[e]
+subject to  sum_{e serving j} x[e]  = 1        every job
+            sum_{e of w}      x[e] <= 1        every worker with an edge
+            x binary
 ```
 
-Objective:
+Each job has a lognormal number (mean 5-12, at least 2) of edges to its
+nearest skill holders, followed by the nearest other workers at a 40
+cross-skill premium. Cost = worker wage (lognormal, median 30/h) x job duration
+(lognormal, median 2 h) + 0.8 x travel distance (+ premium).
+
+The constraint matrix is a bipartite incidence matrix, so the LP relaxation is
+totally unimodular and integral: this is the classic assignment LP, valuable
+for its heavy primal degeneracy at scale on realistic sparse graphs rather
+than for fractional structure (use `workload_balance` for that).
+
+- `feasible`: 3%-25% more workers than jobs; a planted matching (jobs in
+  random order to their nearest free candidate) is forced into the edge set
+  and stored as `AssignmentWitness`.
+- `infeasible`: a skill group with at least 4 jobs (and at least 3% of all
+  jobs) is served only by holders of that skill, and their number is cut to
+  70%-90% of the group's jobs — a Hall violation
+  (`AssignmentHallCertificate(jobs, workers)` with fewer workers than jobs)
+  that spans a whole trade, so presolve does not see it. Tiny instances
+  without such a group fall back to a worker shortfall.
+- `unknown`: 97%-120% as many workers as jobs, every job restricted to
+  qualified workers, no planting — scarce trades may or may not be coverable.
+
+Sizing: variables = edges, exactly `max(target, 2)` (tiny instances may offer
+fewer compatible pairs); rows = jobs + workers with at least one edge.
+
+## `workload_balance`
 
 ```text
-minimize sum_{i in W, j in T} costs[i,j] * x[i,j]
+minimize    makespan_weight * L + sum_e cost[e] x[e]
+subject to  sum_{e serving t} x[e] = 1                                   every task
+            sum_{e of w} processing_time[e] x[e] - availability[w] L <= 0  every worker
+            0 <= L <= max_makespan,  x binary
 ```
 
-Worker capacity:
+Each task is eligible for a lognormal number (mean 3-7) of its nearest skill
+holders (only a skill nobody holds falls back to the nearest workers, 40%
+slower). Processing time = task base duration (lognormal, median 4 h, clipped
+to 0.5-10 h) / worker speed (lognormal) x skill fit (1.0 primary trade, 1.15
+cross-trained) x noise; availability is 1.0, 0.75 or 0.5 (full/part time);
+cost = wage x time + travel. Worker-specific times make the relaxation a
+genuine unrelated-machines LP (the old identical-load version relaxed to the
+trivial `L = total / n_workers`), and the cost term breaks the degeneracy of a
+pure makespan objective. The weight balances the two terms (0.5-2x the ratio
+of typical assignment cost to makespan).
 
-```text
-sum_{j in T} x[i,j] <= 1    for each worker i
-```
+- `feasible`: `max_makespan` (the overtime cap) is 1.05-1.3x the makespan of a
+  planted greedy plan (longest tasks first, each to the eligible worker whose
+  availability-scaled load grows least) — `WorkloadBalanceWitness`.
+- `infeasible`: a skill group (at least 4 tasks, at least 3%) has its
+  durations surged until its fastest-possible workload exceeds its workforce's
+  `sum availability * max_makespan` by 5%-15%
+  (`WorkloadBalanceCertificate(tasks, workers, required, available)`, valid in
+  the relaxation). The group is chosen so the surge leaves every single task
+  doable within 90% of some eligible worker's cap — no single row refutes the
+  model. Without such a group, all tasks and workers are used.
+- `unknown`: `max_makespan` is 0.75-1.15x the greedy makespan; the fractional
+  optimum may sit below the greedy one, so it may or may not fit.
 
-Task coverage:
+Sizing: variables = edges + 1, exactly `max(target, 3)`; rows = tasks +
+workers.
 
-```text
-sum_{i in W} x[i,j] = 1     for each task j
-```
+## References
 
-Compatibility restrictions:
-
-```text
-x[i,j] = 0                  for each forbidden pair where allowed[i,j] == false
-```
-
-Bounds are binary bounds from the JuMP `Bin` declaration.
-
-## Feasibility Controls
-
-The constructor maps statuses to internal symbols: `feasible` becomes `:feasible`, `infeasible` becomes `:infeasible`, and `unknown` becomes `:all`.
-
-- `feasible`: if there are fewer workers than tasks, it adds enough workers to cover all tasks and may add 1 to 3 extra workers with probability 0.3. If randomized compatibility is active, it then constructs a task order and ensures each task has at least one allowed, previously unused worker, editing `allowed` when necessary. This creates a matching witness at the compatibility level.
-- `infeasible`: forces an unbalanced shortage when needed by setting `n_tasks` above `n_workers` by a gap of about 5% to 25% of workers. Since every task must be assigned and every worker can take at most one task, this capacity shortfall is infeasible. With probability 0.4, it instead or additionally creates a Hall violation by selecting a subset of tasks and allowing them to be served only by a smaller subset of workers.
-- `unknown`: does not adjust dimensions for feasibility and does not randomize compatibility; `allowed` remains all true.
-
-For `infeasible`, the worker/task count shortfall is a direct infeasibility certificate when applied. Hall violations are also designed to be infeasible because more tasks are restricted to fewer workers.
-
-## Model Characteristics
-
-The model has `n_workers * n_tasks` binary variables. It has `n_workers` worker-capacity constraints, `n_tasks` task-coverage constraints, and one equality-fixing constraint for each forbidden assignment.
-
-This is a mixed-integer model as built by `build_model`, not a pure continuous LP. If the package-level generation path is called with integer relaxation enabled, the binary variables may be relaxed outside this file; the generator itself declares them as `Bin`.
-
-The dense variable matrix is structurally sparse in constraints: each assignment variable appears in one worker row and one task row, plus one compatibility-fixing row if forbidden.
-
-## Practical Notes
-
-These instances are useful for testing assignment structure, binary relaxation behavior, and compatibility-driven infeasibility. The `unknown` mode is unusual because it keeps all assignments allowed, so infeasibility in that mode is mainly from a natural worker/task count imbalance rather than compatibility. The generator stores costs for forbidden pairs too, but the model fixes those variables to zero.
+- Burkard, R., Dell'Amico, M., Martello, S. (2012). Assignment Problems,
+  revised reprint. SIAM.
+- Lenstra, J.K., Shmoys, D.B., Tardos, É. (1990). Approximation algorithms for
+  scheduling unrelated parallel machines. Mathematical Programming 46.
+- Hall, P. (1935). On representatives of subsets. Journal of the London
+  Mathematical Society 10.
