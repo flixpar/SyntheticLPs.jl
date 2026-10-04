@@ -4,21 +4,357 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## 2026-10-04 (tiny-target robustness)
+## 2026-10-04 (major upgrade: scale, presolve survival, five new categories, transforms, dataset control)
 
-**Previous Commit**: `0618cfa`
+**Previous Commit**: `02599df`
 
-**Commits**: `0cf1e03`
+**Commits**: branch `upgrade/integration` (merges of 16 workstream branches plus integration fixes; see `git log 02599df..`)
 
 **Datetime**: 2026-10-04 UTC
 
-**Summary**: A sweep of every registered variant at targets 1–40, 45–120 step 5,
-150, 200 and 300 × seeds 0–12 × all three statuses found five variants that
-threw at tiny sizes. All five now generate at every target ≥ their registered
-`min_target_variables` (no new minimums were needed), and a framework-level
-`Tiny Target Robustness` testset guards the whole registry.
+**Summary**: A corpus-wide upgrade driven by a measured audit rather than by
+inspection. A new audit tool (`scripts/audit_generators.jl`) generated every
+variant at 1k/10k/50k variables in all three feasibility statuses and recorded,
+per instance, size fidelity, build time, HiGHS presolve survival, and the
+presolve-on simplex outcome. The baseline exposed four corpus-wide failure
+classes that the old ±25%-at-target-500 smoke test could not see:
+
+1. **Presolve collapse** — `airline_crew`, `crop_planning`,
+   `resource_allocation`, and the single-row knapsacks presolved to empty;
+   `diet_problem`, `feed_blending`, and `product_mix` lost every row;
+   `supply_chain/network_planning` collapsed at 50k. Downstream consumers
+   (SimplexRL presolves every artifact once) received a fraction of the model
+   the size statistics advertised.
+2. **Saturation and blowups** — silent caps (`energy/standard` at 1,400
+   columns, `blending/standard` at 500, `generalized_flow` at 0.12× at 50k,
+   `production_planning` at 2,000, `two_echelon` at 20,600), super-linear builds
+   (`regression/chebyshev` 81 s at 1k, `lad` 287 s and `tracking_error` 380 s at
+   10k, `vertex_cover` 176 s at 50k), and unbounded density
+   (`knapsack/mixed_integer_set` wrote an 18.7 GB MPS file at 50k).
+3. **Trivial infeasibility** — in about 50 variants the `infeasible` instance
+   was refuted by presolve with zero simplex iterations, and many `unknown`
+   requests were disguised coin flips or always presolve-infeasible.
+4. **Relaxation collapse and duplication** (from the 2026-10-01 quality review)
+   — big-M disjunctive models whose LP relaxation carried none of the variant's
+   structure, and variants that were the same LP as a sibling.
+
+Every generator family was rebuilt or repaired against one quality bar: size
+within a few percent of the target from tiny requests to 100k+ (documented
+1,000,000 caps with `ArgumentError` above), near-linear builds (every audited
+variant builds 100k variables in ≤ ~8 s), bounded nonzeros, presolve keeping
+most of the model, LP-meaningful structure under the default relaxation, typed
+`feasible_witness`/`infeasibility_certificate` artifacts built from LP rows with
+numeric margins, infeasibility that needs real simplex work, and genuinely
+two-sided `unknown`. Five new categories and twelve new variants add structure
+the corpus lacked; eleven redundant or unrepairable variants were removed. On
+the framework side: registry metadata (tags, size caps, LP/MIP class) with
+filtering, a rebuilt planned/sharded `generate_dataset`, four practitioner-style
+model transforms measured to survive presolve, and an optimizer escalation
+chain for feasibility verification.
+
+Corpus: 45 → 50 categories, 129 → 142 variants. Measured before → after
+(seed 0, all three statuses, HiGHS 1.13 presolve then simplex with a 60 s limit;
+"before" from `main` at 1k/10k/50k, "after" from the integrated tree at
+1k/10k/100k):
+
+| metric | before (10k) | after (10k) | after (100k) |
+|---|---|---|---|
+| feasible/unknown instances presolved to empty | 21 / 253 | 0 / 284 | 0 / 284 |
+| feasible/unknown instances keeping < 60% of cols or rows | 82 | 0 | 0 |
+| infeasible instances refuted by presolve alone | 64 / 125 | 0 / 142 | 0 / 142 |
+| feasible instances off-target by > 10% | 9 | 0 | 0 |
+| slowest build | 380 s | 1.0 s | 8.1 s |
+| median simplex iterations (solved instances) | 435 | 4,043 | 19,807 |
+| contract violations / errors | 0 / 0 | 0 / 0 | 0 / 0 |
+
+At 1k the after-numbers are equally clean (0 empty, 0 below 60%, 0
+presolve-refuted). The remaining audit flags are 60 s solve limits (20 of 426
+instances at 10k, 185 of 426 at 100k — hard LPs, not malformed ones) and one
+`operating_room_scheduling/elective_assignment` instance at 0.89× its target.
 
 **Details**:
+
+### Framework, registry, and dataset control
+
+- **Registry metadata.** `register_variant` accepts `tags` (validated against
+  `VARIANT_TAGS`; `register_tag`/`list_tags`; exactly one domain tag from
+  `DOMAIN_TAGS` per variant), `min_target_variables`/`max_target_variables`,
+  and a `model_class` override. `model_class(ref)` (`:lp`/`:mip`) is derived
+  lazily from one probe build and cached. New `variant_tags`, `supports_target`,
+  `model_statistics`. Every one of the 142 variants is tagged; new domain tags
+  `:machine_learning`, `:economics`, `:game_theory`, `:markov`, `:mining`,
+  `:forestry`. A "Registry Tag Coverage" testset enforces it.
+- **Filtering.** `list_problems(; problem_types, exclude, model_class, tags,
+  any_tags, exclude_tags, target_variables)`; `problem_info` reports tags, size
+  range, model class, and default flag. `generate_random_problem` samples
+  category-uniformly (`variant_weighting`) and only among variants whose size
+  range supports the request.
+- **`generate_dataset` rebuilt** as a seed-determined plan (`plan_dataset` →
+  `PlannedInstance`) followed by independent per-index builds:
+  - `variant_weighting=:category` default (categories with 8 variants no longer
+    dominate), `:variant`, or explicit Dict weights;
+  - stratified variant mix and low-discrepancy feasibility-status mixes
+    (`feasibility_status` accepts a weight Dict);
+  - stratified size quantiles with per-instance size calibration (rescale the
+    request by target/actual on the same seed), replacing the candidate-pool
+    matcher (`candidate_multiplier`, `max_candidate_multiplier` removed;
+    `match_size_by_type` → `match_size_by_category`; new `size_match_attempts`);
+  - `size_distribution=:normal|:uniform|:loguniform` shortcuts;
+  - exact sharding (`shard_index`/`num_shards`; per-shard manifests;
+    `merge_manifests`) whose union equals the unsharded dataset;
+  - `on_failure=:skip` returns a short `GeneratedDataset` with `DatasetFailure`
+    records instead of aborting;
+  - capped variants are dropped automatically when the size range exceeds them;
+  - the drawn master seed is recorded when `seed=0`;
+  - the quality filter rejects `infeasible` requests that solve feasible
+    (`"contract_violated"`).
+- **Instance metadata and manifest v2.** `GeneratedInstance` gains
+  `requested_variables`, `num_nonzeros`, `num_integer` (pre-relaxation),
+  `transforms`, `verified_status`, `solve_status`, `build_time`,
+  `generation_time`, `attempts`. The manifest adds provenance (package version,
+  git commit/dirty flag, Julia version), selection weights, shard info, failure
+  statistics, and a size-fit summary.
+- **Feasibility verification escalation chain.** `optimizer` may be a vector of
+  optimizers tried in order when a solve certifies nothing (a `:violated`
+  verdict is final). Several large infeasible families (MDP, forest planning,
+  the refinery family, multistage ALM, some blending) defeat HiGHS dual
+  simplex's infeasibility proof (`OTHER_ERROR`) while its IPM proves
+  `INFEASIBLE` in seconds; `[HiGHS.Optimizer, optimizer_with_attributes(
+  HiGHS.Optimizer, "solver" => "ipm")]` verifies them without raising.
+- **CLI.** `scripts/generate_lps.jl` exposes selection filters, weighting,
+  feasibility mixes, log-uniform sizes, sharding, `--merge-manifests`,
+  `--on-failure`, `--dry-run`, and the transform flags; `generate_problem.jl
+  list` shows tags, caps, and model class.
+- **Audit tool.** New `scripts/audit_generators.jl`: per-instance JSONL of size,
+  nonzeros, build time, HiGHS presolved size, presolve-on simplex status,
+  iterations, and solve time; registry filters; a `--max-nnz` guard and
+  temp-file cleanup in `finally` (an early sweep left 37 GB of MPS files); and a
+  `--report` mode producing a flagged per-variant markdown table.
+- **Tests.** New framework testsets "Registry Metadata", "Registry Tag
+  Coverage", "Dataset Planning", "Dataset Generation Controls"; the escalation
+  chain; `test_problem_generator` checks sizing on two seeds.
+
+### Model transforms (`src/transforms.jl`)
+
+Evaluated by measurement (15 variants at 20k, HiGHS presolve on, dual and
+primal simplex); kept only transforms that are realistic, change pivot paths
+well beyond the permutation noise floor, and survive presolve.
+
+- `ModelTransforms(; unit_scale_decades, scale_objective, aggregate_probability,
+  aggregate_max_block, elastic_probability, elastic_penalty, permute)` passed as
+  `transforms=` to `generate_problem`, `generate_random_problem`, and
+  `generate_dataset` (recorded in the manifest). Applied after relaxation,
+  bounds-to-constraints, and verification, before dualization, in the order
+  aggregate → elastic → permute → scale, each with its own RNG stream seeded by
+  the resolved instance seed.
+- `scale_units!`/`UnitScaling`: per-family power-of-ten units for columns (JuMP
+  base name), rows (base name, or sense plus touched families for anonymous
+  rows), and the objective, kept inside a [1e-6, 1e6] magnitude window; integer
+  columns unscaled; exactly equivalent. Coefficient range +2.5 decades median;
+  mean |log2| iteration change 0.24/0.33 (dual/primal) vs 0.13/0.16 for
+  permutation; presolved size unchanged.
+- `aggregate_rows!`: implied block-total rows per row family (equivalent; adds
+  degeneracy). Inequality totals survive presolve (presolved rows up to ×1.49).
+- `elasticize_rows!`: penalized violation columns per row family — a relaxation,
+  refused for `infeasible` requests; presolved columns ×1.56 median.
+- `permute_model`: random row/column order (removes generator index-order
+  artifacts).
+- Rejected with measurements: objective cost-accounting rows (substituted out
+  by presolve), free-variable splitting (survives, but not modeler practice),
+  ε-constraint rows (a safe ε needs a solve). `bounds_to_constraints!` now
+  documents that presolve undoes it (presolved size identical within 0.3%).
+- New always-run `test/transforms.jl`.
+
+### New categories
+
+- **`mine_planning`** (`cpit` default, `pcpsp`, `stockpile`): MineLib-style
+  open-pit production scheduling over a precedence-closed 3D block model (buried
+  anisotropic ore bodies, oxide cap, arsenic zone, depth-dependent costs), 1-5/1-9
+  transitively reduced slope precedence, cumulative "by" extraction variables,
+  mining/milling capacities, mill-feed contracts, mill/heap-leach destinations
+  with head-grade and arsenic blending, grade-binned stockpiles. Planted
+  `MinePlanWitness`; `MineClosureCertificate` (Lagrangian max-closure bound with
+  a stored Dinic flow; ramp-up/exhaustion/head-grade modes). Presolve keeps
+  90–100%; 100k builds in ~1 s; cap 1M. UPIT deliberately omitted (TU,
+  dissolved by presolve).
+- **`forest_planning`** (`model_i` default, `model_ii`): Johnson–Scheurman Model I
+  (whole-horizon prescriptions) and Model II (regeneration-node network) harvest
+  scheduling over four regional profiles with Chapman–Richards yields,
+  thinning, planting/conversion, even flow, watershed green-up, and
+  ending-inventory rows. Area-control witness; Lagrangian/DP certificate.
+  Presolve keeps 97–100%; cap 1M.
+- **`markov_decision_process`** (`inventory_control` default,
+  `queueing_control`, `machine_maintenance`, `constrained`): occupation-measure
+  LPs (Manne; Altman constrained MDPs) of realistic operational MDPs under
+  discounted or average-cost criteria, sparse kernels, exact LU-computed
+  occupation-measure witnesses, and value-function Farkas certificates
+  (MacQueen/Odoni-corrected). Presolve keeps ~100%; cap 1M state-action pairs.
+- **`economic_planning`** (`dynamic_leontief` default, `energy_system`):
+  PILOT-style dynamic input–output planning (productive sparse block-structured
+  tables, capital accumulation with build lags, labor by skill, external debt,
+  hybrid physical/value units spanning 4–7 orders of magnitude) and a
+  TIMES/MESSAGE-style multi-region energy system (37 technology templates,
+  vintaging, timeslices, emission caps and budgets). Multi-period certificates
+  invisible to presolve; cap 1M.
+- **`game_theory`** (`poker_sequence_form` default, `colonel_blotto`,
+  `patrol_security`): equilibrium LPs of two-player zero-sum games —
+  Koller–Megiddo–von Stengel sequence form for generalized Kuhn/Leduc poker
+  (full tree enumeration with suit isomorphism; tests check the Kuhn −1/18 and
+  Leduc ≈ −0.0856 values), the compact Colonel Blotto LP, and a Bayesian patrol
+  security game. Guaranteed-value requirements are placed against rigorous
+  bounds (CFR+/fictitious play/Hedge plus exact best responses) with typed
+  witnesses and Farkas certificates. Cap 1M; 1M builds in < 8 s.
+
+### Generator families (rebuilt or repaired)
+
+- **energy** (shared multi-area dispatch core `energy/common.jl`): `standard`
+  rebuilt as multi-area economic dispatch with ramping, lossy ties, and an
+  emissions budget (no saturation); `reserves`, `storage` rebuilt (storage's
+  incorrect certificate argument replaced); new `hydrothermal` (cascaded
+  reservoirs) and `security_constrained_dc_opf` (preventive N-1 SCOPF);
+  `dc_opf` rebuilt (B-θ with bounded angles; presolve 59% → ~82%; Laplacian
+  witness now tested). Deleted `ramping`, `transmission` (folded into the core)
+  and `optimal_transmission_switching` (relaxation collapses to phantom
+  transport). `unit_commitment`: unit-level reserve, natural `unknown`, split
+  contradiction.
+- **flows** (shared `network_flow/geo_network.jl`: geographic positions, grid
+  k-NN, strongly connected exact-arc networks, Dinic max flow, exact
+  max-deliverable-scale via Dinkelbach): `network_flow/standard` and
+  `generalized_flow` rebuilt (saturation and singleton capacity rows gone; exact
+  boundary placement; region and loss-weighted certificates); new
+  `network_flow/time_expanded` (evacuation); `transportation` rebuilt on sparse
+  geographic lanes (`balanced`, `capacitated` deleted as TU duplicates;
+  `fixed_charge` with strong linking; multimodal `emission_constrained`;
+  plant→DC→customer `transshipment`); `multi_commodity_flow/standard` rebuilt
+  with planted routings and metric certificates, `binary_capacity` as strong
+  network design (`integer_flow` deleted); `assignment` sparse eligibility
+  (fixes the 1.95× overshoot); `load_balancing/standard` as path-based traffic
+  engineering.
+- **packing/cutting/knapsack**: `knapsack/standard` deleted (one-row LP, solved
+  greedily); new `knapsack/multiple_choice` (default); `bounded` rebuilt as a
+  bounded multiple knapsack; `multidimensional` with scaling resource rows;
+  `mixed_integer_set` with bounded nonzeros and a Lagrangian certificate;
+  `project_selection` rebuilt (was O(n²); multi-year multi-division capital
+  portfolio); `cutting_stock` on a shared near-linear pattern enumerator
+  (`integer_patterns` replaced by Valério de Carvalho `arc_flow`; multi-machine
+  `setup_cost`; multi-period `due_dates`); `container_loading/standard` fleet
+  scales, `two_dimensional_bin_packing` rebuilt as a two-stage guillotine
+  pattern LP; `bin_packing/heterogeneous` sparse eligibility.
+- **dense/data-driven**: `regression` rebuilt with distinct realistic data
+  profiles and certificates, linear nonzeros (`chebyshev` as a B-spline
+  minimax surface fit; `basis_pursuit` sparse column-capped; new `l1_svm`);
+  `portfolio` on a sparse factor-structured scenario market (dense S×n block
+  gone; `cvar` clip-then-renormalize witness bug and unproven mode fixed);
+  `inverse_optimization` quadratic build fixed (`linf` 50k: 90–105 s → < 1 s) and
+  presolve-visible certificate replaced; `radiotherapy` beamlet cap (100k nnz
+  25–32M → 2–6M) and overlap-interpolation certificates;
+  `neural_network_verification` sparse architectures with stable neurons
+  eliminated (presolve 52% → 92–100%).
+- **production/inventory/scheduling**: `production_planning` rebuilt as
+  multi-level multi-period MRP; `product_mix` as routing choice over a
+  many-resource shop (presolve 0% → 100% of rows; area/plant material-shortage
+  certificate); `resource_allocation` as multi-period skilled-pool allocation
+  (was presolve-empty); `job_shop_scheduling` time-indexed (big-M relaxation
+  collapse removed); all four `inventory` variants rebuilt (`lot_sizing` in the
+  Krarup–Bilde reformulation with setup times); `scheduling` as multi-department
+  rostering. Ranged (`MOI.Interval`) rows reappear in generated instances.
+- **blending/diet/agriculture**: `diet_problem` on a USDA/DRI-style catalog
+  (multi-cohort `standard`, multi-week `food_groups`, new WFP-style `food_aid`;
+  `nutrient_bounds` deleted; the invalid summed "proof" removed); `blending`
+  rebuilt as secondary-aluminium alloy blending (`standard`, new `multi_period`,
+  new Bertsimas–Sim `robust`; `multi_product` and `equipment_batches` deleted);
+  `feed_blending` multi-mill; `crop_planning` regional rotation planning (was
+  presolve-empty); `land_use` sparse.
+- **crew/workforce/healthcare**: `airline_crew` rebuilt (through-flight pairing
+  generation, ~20 pairings per flight, crew-availability and block-hour rows; was
+  presolve-empty); `nurse_scheduling` variables only for available slots;
+  `workforce_shift_scheduling` multi-site weekly (rows scale; build 20× faster);
+  all six `operating_room_scheduling` variants rebuilt (scaling hospitals,
+  surgeon-overload/ward-shortage/overbooking certificates, time-indexed
+  `case_sequencing`).
+- **graph/set/location/routing**: `graph_optimization` rebuilt on application
+  graphs with clique formulations (WLAN channel assignment replaces the
+  collapsing coloring model; capacitated link-monitoring cover replaces the
+  O(n²) duplicate vertex cover; densest-k-subgraph quasi-clique); `set_system`
+  rebuilt (location covering, railway path packing, multi-unit XOR auctions);
+  `tsp` district Hall-deficit certificates invisible to presolve and a sparse
+  candidate-arc `asymmetric`; `hub_location` certificate fixes;
+  `facility_location` strong formulations with typed metadata (`two_echelon`
+  cap removed); `vehicle_routing/cvrp` witness, certificate, tests, docs.
+- **supply chain/process/stochastic**: `supply_chain` standard/carbon/
+  multi_product rebuilt on a shared multi-echelon multi-period network (rows
+  0.4–0.65× columns, planted witnesses); `network_planning` 50k collapse fixed;
+  `stochastic_program/standard` coherent with service-level rows, new
+  `multistage_alm` (pension ALM on a scenario tree); `revenue_management/
+  standard` as a choice-based (MNL) sales LP (presolve 5–32% → ~99%);
+  `process_planning/campaign` scales to the 1M cap; telecom/resilient/maritime
+  certificate and formulation fixes.
+
+### Removed variants
+
+`energy/ramping`, `energy/transmission`, `energy/optimal_transmission_switching`,
+`transportation/balanced`, `transportation/capacitated`,
+`multi_commodity_flow/integer_flow`, `knapsack/standard`,
+`cutting_stock/integer_patterns` (replaced by `arc_flow`),
+`diet_problem/nutrient_bounds`, `blending/multi_product`,
+`blending/equipment_batches`.
+
+### New variants in existing categories
+
+`energy/hydrothermal`, `energy/security_constrained_dc_opf`,
+`network_flow/time_expanded`, `knapsack/multiple_choice`,
+`cutting_stock/arc_flow`, `regression/l1_svm`, `stochastic_program/multistage_alm`,
+`diet_problem/food_aid`, `blending/multi_period`, `blending/robust`.
+
+### Follow-up fixes from the integrated audits
+
+After all workstreams were merged, the integrated tree was re-audited
+(1k/10k/100k, all statuses) and swept at tiny targets; the residuals were fixed:
+
+- **Presolve-decided residuals (polish).** `hub_location` reach windows are
+  floored (≥ 2 candidates for `p_hub_median`/`multiple_allocation`, r+1 for
+  `r_allocation`, 3 in-region gateways for `hub_network`) — single- and
+  two-candidate windows let presolve force hubs open and substitute doubleton
+  supply rows away (presolve keep at the worst instance 0.37–0.56 → ≥ 0.72);
+  `p_hub_median`/`r_allocation` sizing within 2.5%. `supply_chain/single_source`
+  exact incremental sizing (100k build 3.6 s → 0.35 s); `supply_chain/standard`
+  infeasible regions of ≥ 4 customers. `telecom_network_design` budget
+  certificate over bridge-forced spend plus a balanced-cut knapsack;
+  `resilient_network_design` hardening-budget certificate
+  (`ResilientHardeningBudgetCertificate`) replacing a region cut that presolve
+  aggregation refuted; `resource_allocation` commitment floors trimmed below
+  their standalone maxima; `process_planning` lost the single-row
+  specification-range mode, `campaign` curtails broad feedstock pools, and
+  `capacity_expansion` gains a capital-budget row with a capital-potential dual
+  certificate. Across these categories, presolve-decided infeasible/unknown
+  instances over seeds 0–3 at 1k/10k/100k fell from 37 to 0.
+- **`operating_room_scheduling` greedy-plan bug.** `_orsched_greedy_schedule`
+  iterated `for i in order, slot in slots_for[i] … break`; in Julia that `break`
+  leaves both loops, so every greedy plan placed exactly one case (trivial
+  witnesses, mis-sized urgent/referral sets in `elective_assignment`,
+  `robust_elective`, `weekly_planning`). Plans now place 75–97% of the list. The
+  surgeon-overload certificate prefers three shared days with an optional case
+  on each (defeating presolve's doubleton substitution and parallel-row
+  combination; `weekly_planning` 100k seed 0: 0 → 32k iterations), slots are
+  admissible only if the case fits alone, non-binding rows are not emitted
+  (`weekly_planning` presolve row keep 0.60–0.76 → 0.95–0.98), and the
+  `unknown` profiles were recalibrated to be two-sided at 3k/30k/100k.
+- **`crop_planning` tiny targets.** Infeasible requests in one- or two-field
+  regions could not reach the certificate margin with contracts capped at 80% of
+  each crop's solo output and tripped an assertion; they now fall back to an
+  uncapped land shortage (a regression test sweeps targets 2–200 × seeds 0–60).
+- **Dataset CLI verification.** `scripts/generate_lps.jl` verifies with a
+  dual-simplex-then-IPM HiGHS chain; `generate_dataset` accepts a chain (the
+  quality filter uses its first entry).
+- **Formatting.** The integrated tree was formatted with the repository's
+  JuliaFormatter/Ruff configuration (two passes were needed on seven files with
+  nested multi-line expressions); `make lint` passes.
+
+#### Tiny-target robustness
+
+A sweep of every registered variant at targets 1–40, 45–120 step 5, 150, 200,
+300 × seeds 0–12 × all statuses found five variants that threw at tiny sizes;
+all five now generate at every target ≥ their registered minimum.
 
 - `graph_optimization/vertex_cover` (target 6, every infeasible seed): the rich
   club size was `clamp(round(0.05n), 4, n)`, and Julia's `clamp` returns the lower
@@ -57,6 +393,21 @@ threw at tiny sizes. All five now generate at every target ≥ their registered
   compilation: about 6 s warm, against about 2 min cold when run on its own.
 - All tiny infeasible/feasible instances of the five variants were checked with
   HiGHS (statuses match), and the full sweep reruns with zero failures.
+
+### Known limitations
+
+- Many 100k instances (and some 10k dense/degenerate ones: crew pairing,
+  Leontief, chebyshev, basis pursuit) exceed a 60 s single-thread HiGHS
+  simplex solve. They are hard, not malformed; downstream pivot budgets should
+  account for it.
+- HiGHS dual simplex returns `OTHER_ERROR` on a fraction of large infeasible
+  instances in several families (see the escalation chain above); the stored
+  certificates remain exact proofs.
+- A few `unknown` profiles skew to one side at 100k (`energy` dispatch variants
+  and `generalized_flow` toward infeasible); several TU variants
+  (`assignment/standard`, `network_flow/standard`,
+  `transportation/standard`/`transshipment`, `time_expanded`) remain TU by the
+  nature of the problem and are tagged `:unimodular`/documented.
 
 ## 2026-09-25 (remove the generic_milp category)
 
