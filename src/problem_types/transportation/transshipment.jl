@@ -395,5 +395,7 @@ register_variant(
     :transportation,
     :transshipment,
     TransshipmentProblem,
-    "Two-echelon plant -> DC -> customer distribution LP with direct lanes, DC conservation and throughput rows, and capped linehaul/direct lanes on sparse geographic lane sets; exact max-flow placement with a DC-split min-cut region certificate",
+    "Two-echelon plant -> DC -> customer distribution LP with direct lanes, DC conservation and throughput rows, and capped linehaul/direct lanes on sparse geographic lane sets; exact max-flow placement with a DC-split min-cut region certificate";
+    tags=[:logistics, :network, :unimodular],
+    max_target_variables=1_000_000,
 )

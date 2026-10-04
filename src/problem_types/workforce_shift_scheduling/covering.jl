@@ -968,5 +968,6 @@ register_variant(
     :workforce_shift_scheduling,
     :covering,
     WorkforceShiftCoveringProblem,
-    "Multi-site, multi-day, multi-skill shift-pattern covering LP with profile-specific weekly and intraday demand, cross-trained and floating labor pools, breaks, pool-day and weekly capacities, and capacity-certified feasibility controls",
+    "Multi-site, multi-day, multi-skill shift-pattern covering LP with profile-specific weekly and intraday demand, cross-trained and floating labor pools, breaks, pool-day and weekly capacities, and capacity-certified feasibility controls";
+    tags=[:scheduling, :covering],
 )

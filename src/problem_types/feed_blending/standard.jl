@@ -674,5 +674,6 @@ register_variant(
     :standard,
     FeedBlendingProblem,
     "Least-cost feed formulation for a network of feed mills: species/phase formula books in fixed " *
-    "batches, NRC-style nutrient and Ca:P specs, inclusion limits, mill stock and shared supplier contracts",
+    "batches, NRC-style nutrient and Ca:P specs, inclusion limits, mill stock and shared supplier contracts";
+    tags=[:agriculture, :blending, :block_angular],
 )

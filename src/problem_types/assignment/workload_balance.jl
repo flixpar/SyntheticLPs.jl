@@ -283,5 +283,7 @@ register_variant(
     :assignment,
     :workload_balance,
     WorkloadBalanceAssignmentProblem,
-    "Workload-balanced assignment on unrelated workers over a sparse eligibility graph: worker-specific processing times, availability-scaled makespan rows, an overtime cap, and a cost term; planted greedy witness and a skill-group pigeonhole certificate",
+    "Workload-balanced assignment on unrelated workers over a sparse eligibility graph: worker-specific processing times, availability-scaled makespan rows, an overtime cap, and a cost term; planted greedy witness and a skill-group pigeonhole certificate";
+    tags=[:scheduling, :bipartite, :partitioning],
+    max_target_variables=1_000_000,
 )

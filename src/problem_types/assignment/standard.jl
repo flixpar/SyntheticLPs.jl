@@ -260,4 +260,6 @@ register_variant(
     AssignmentProblem,
     "Sparse linear assignment of field-service jobs to their nearest qualified workers (skill groups, cross-training premiums, wage x duration + travel costs); planted matching witness and a skill-group Hall-violator certificate";
     default=true,
+    tags=[:scheduling, :bipartite, :unimodular, :degenerate],
+    max_target_variables=1_000_000,
 )

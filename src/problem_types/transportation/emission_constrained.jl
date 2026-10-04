@@ -332,5 +332,7 @@ register_variant(
     :transportation,
     :emission_constrained,
     EmissionConstrainedTransportationProblem,
-    "Multimodal (truck/rail/intermodal) transportation on sparse geographic lanes under regional and corporate CO2 caps and rail-terminal capacities; planted lowest-emission plan and an emission lower-bound certificate",
+    "Multimodal (truck/rail/intermodal) transportation on sparse geographic lanes under regional and corporate CO2 caps and rail-terminal capacities; planted lowest-emission plan and an emission lower-bound certificate";
+    tags=[:logistics, :bipartite],
+    max_target_variables=1_000_000,
 )

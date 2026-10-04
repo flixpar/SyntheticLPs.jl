@@ -241,5 +241,7 @@ register_variant(
     :multi_commodity_flow,
     :binary_capacity,
     BinaryCapacityMultiCommodityFlowProblem,
-    "Multicommodity capacitated network design on a sparse geographic network: origin-destination commodities, three capacity modules per arc with economies of scale, and the strong linking inequalities that keep the LP relaxation meaningful; planted design witness and metric-inequality certificate",
+    "Multicommodity capacitated network design on a sparse geographic network: origin-destination commodities, three capacity modules per arc with economies of scale, and the strong linking inequalities that keep the LP relaxation meaningful; planted design witness and metric-inequality certificate";
+    tags=[:logistics, :multicommodity, :network, :big_m],
+    max_target_variables=1_000_000,
 )

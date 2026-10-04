@@ -561,5 +561,6 @@ register_variant(
     :standard,
     LandUseProblem,
     "Spatial zoning plan: parcel-zone assignment with district infrastructure capacities, housing and " *
-    "jobs targets, green-space accessibility, and residential-industrial buffer rules",
+    "jobs targets, green-space accessibility, and residential-industrial buffer rules";
+    tags=[:agriculture, :partitioning, :packing],
 )

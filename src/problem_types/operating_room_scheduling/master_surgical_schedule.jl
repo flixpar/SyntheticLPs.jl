@@ -448,5 +448,6 @@ register_variant(
     :operating_room_scheduling,
     :master_surgical_schedule,
     OperatingRoomMasterScheduleProblem,
-    "Sparse tactical cyclic master-surgical-schedule block allocation for surgical services over specialty room clusters, with quotas, specialty wards and ICU occupancy leveling",
+    "Sparse tactical cyclic master-surgical-schedule block allocation for surgical services over specialty room clusters, with quotas, specialty wards and ICU occupancy leveling";
+    tags=[:healthcare, :packing],
 )

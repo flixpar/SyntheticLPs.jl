@@ -513,4 +513,6 @@ register_variant(
     MultiCommodityFlow,
     "Multicommodity min-cost flow on a sparse geographic network: origin-aggregated gravity commodities sharing arc capacities through bundle rows, planted shortest-path routing as witness, and metric-inequality (length or regional-cut) infeasibility certificates";
     default=true,
+    tags=[:logistics, :multicommodity, :network, :block_angular],
+    max_target_variables=1_000_000,
 )

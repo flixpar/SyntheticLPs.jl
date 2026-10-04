@@ -220,5 +220,6 @@ register_variant(
     :operating_room_scheduling,
     :robust_elective,
     RobustElectiveSurgeryAssignmentProblem,
-    "Sparse Bertsimas--Sim robust elective assignment with empirical duration deviations, surgeon availability, capped overtime, and postponement",
+    "Sparse Bertsimas--Sim robust elective assignment with empirical duration deviations, surgeon availability, capped overtime, and postponement";
+    tags=[:healthcare, :robust, :partitioning, :packing],
 )

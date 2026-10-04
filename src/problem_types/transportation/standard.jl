@@ -270,4 +270,6 @@ register_variant(
     TransportationProblem,
     "Capacitated transportation LP on a sparse geographic lane network (customers served by their nearest sources plus long-haul lanes, truck-allotment lane capacities as bounds), with feasibility placed by an exact max-flow boundary and a Hall-region certificate";
     default=true,
+    tags=[:logistics, :bipartite, :unimodular],
+    max_target_variables=1_000_000,
 )

@@ -440,5 +440,7 @@ register_variant(
     :load_balancing,
     :standard,
     LoadBalancingProblem,
-    "Path-based traffic engineering on an ISP-style geographic backbone: route a gravity traffic matrix over diverse candidate paths to minimise maximum link utilization under an SLA bound, with standard router-port capacities, a planted routing witness and a latency-metric infeasibility certificate",
+    "Path-based traffic engineering on an ISP-style geographic backbone: route a gravity traffic matrix over diverse candidate paths to minimise maximum link utilization under an SLA bound, with standard router-port capacities, a planted routing witness and a latency-metric infeasibility certificate";
+    tags=[:telecom, :multicommodity],
+    max_target_variables=1_000_000,
 )

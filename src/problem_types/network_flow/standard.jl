@@ -394,5 +394,7 @@ register_variant(
     :network_flow,
     :standard,
     NetworkFlowProblem,
-    "Single-commodity min-cost flow (NETGEN-style transshipment) on a sparse geographic network with supply, demand and transit nodes, arc capacities as bounds, and feasibility placed by an exact max-flow boundary with a min-cut region certificate",
+    "Single-commodity min-cost flow (NETGEN-style transshipment) on a sparse geographic network with supply, demand and transit nodes, arc capacities as bounds, and feasibility placed by an exact max-flow boundary with a min-cut region certificate";
+    tags=[:logistics, :network, :unimodular],
+    max_target_variables=1_000_000,
 )

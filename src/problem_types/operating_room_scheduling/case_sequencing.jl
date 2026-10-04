@@ -453,5 +453,6 @@ register_variant(
     :operating_room_scheduling,
     :case_sequencing,
     SurgicalCaseSequencingProblem,
-    "Time-indexed weekly surgical case scheduling: rooms, days and 15-minute start slots with room and surgeon capacity per slot, turnovers, surgeon windows, and weighted tardiness",
+    "Time-indexed weekly surgical case scheduling: rooms, days and 15-minute start slots with room and surgeon capacity per slot, turnovers, surgeon windows, and weighted tardiness";
+    tags=[:healthcare, :time_indexed, :partitioning, :packing],
 )

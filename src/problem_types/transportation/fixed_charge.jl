@@ -258,5 +258,7 @@ register_variant(
     :transportation,
     :fixed_charge,
     FixedChargeTransportationProblem,
-    "Fixed-charge transportation on sparse geographic lanes with strong linking x <= min(supply, demand, capacity) * y and per-source lane-count limits, so the LP relaxation keeps non-unimodular lane-budget structure; exact max-flow placement, MIP-feasible planted plan, Hall-region certificate",
+    "Fixed-charge transportation on sparse geographic lanes with strong linking x <= min(supply, demand, capacity) * y and per-source lane-count limits, so the LP relaxation keeps non-unimodular lane-budget structure; exact max-flow placement, MIP-feasible planted plan, Hall-region certificate";
+    tags=[:logistics, :bipartite, :big_m],
+    max_target_variables=1_000_000,
 )

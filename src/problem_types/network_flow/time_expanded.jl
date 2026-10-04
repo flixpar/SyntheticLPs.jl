@@ -410,5 +410,7 @@ register_variant(
     :network_flow,
     :time_expanded,
     TimeExpandedEvacuationProblem,
-    "Evacuation planning as a time-expanded (dynamic) network flow: road copies per period with travel times, waiting arcs, shelter intake rates and a deadline, minimizing total evacuation time; exact max-flow placement with a trapped space-time region certificate",
+    "Evacuation planning as a time-expanded (dynamic) network flow: road copies per period with travel times, waiting arcs, shelter intake rates and a deadline, minimizing total evacuation time; exact max-flow placement with a trapped space-time region certificate";
+    tags=[:logistics, :network, :unimodular, :staircase],
+    max_target_variables=1_000_000,
 )

@@ -341,5 +341,6 @@ register_variant(
     :robust,
     RobustBlendingProblem,
     "Alloy blending robust to scrap-assay uncertainty: Bertsimas-Sim budgeted protection of the " *
-    "tramp-element limits (auxiliary protection variables and three-term rows per scrap lot)",
+    "tramp-element limits (auxiliary protection variables and three-term rows per scrap lot)";
+    tags=[:production, :blending, :robust, :block_angular],
 )

@@ -470,5 +470,6 @@ register_variant(
     :operating_room_scheduling,
     :weekly_planning,
     WeeklySurgeryPlanningProblem,
-    "Multi-day surgery planning with aggregate specialty OR capacity, surgeon budgets, and downstream ward/ICU bed leveling",
+    "Multi-day surgery planning with aggregate specialty OR capacity, surgeon budgets, and downstream ward/ICU bed leveling";
+    tags=[:healthcare, :partitioning, :packing],
 )

@@ -462,4 +462,5 @@ register_variant(
     "Least-cost population diet: DRI-based nutrient rows, energy band and guideline share " *
     "limits for many cohorts sharing limited regional food supplies";
     default=true,
+    tags=[:agriculture, :block_angular, :blending, :covering],
 )

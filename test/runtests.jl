@@ -53,26 +53,6 @@ end
 
 const CONTRACT_TEST_SEEDS = Int[]
 
-# TEMPORARY: categories still being rewritten that have not declared registry tags
-# yet, so the "Registry Tag Coverage" testset skips them. Empty this set (and then
-# delete it) once every category is tagged.
-const _UNTAGGED_CATEGORIES_PENDING = Set([
-    :diet_problem,
-    :blending,
-    :feed_blending,
-    :crop_planning,
-    :land_use,
-    :transportation,
-    :network_flow,
-    :multi_commodity_flow,
-    :assignment,
-    :load_balancing,
-    :airline_crew,
-    :nurse_scheduling,
-    :operating_room_scheduling,
-    :workforce_shift_scheduling,
-])
-
 function ContractViolationTestProblem(::Int, ::FeasibilityStatus, seed::Int)
     push!(CONTRACT_TEST_SEEDS, seed)
     return ContractViolationTestProblem(seed)
@@ -590,7 +570,6 @@ end
     @testset "Registry Tag Coverage" begin
         @test DOMAIN_TAGS ⊆ keys(SyntheticLPs.VARIANT_TAGS)
         for ref in list_problems()
-            ref.category in _UNTAGGED_CATEGORIES_PENDING && continue
             tags = variant_tags(ref)
             n_domain = count(in(DOMAIN_TAGS), tags)
             n_domain == 1 || @info "$ref carries $n_domain domain tags" tags

@@ -365,5 +365,6 @@ register_variant(
     :operating_room_scheduling,
     :benchmark_loading,
     LeeftinkHansORSchedulingProblem,
-    "Leeftink--Hans benchmark-informed 480-minute OR-day loading with empirical three-parameter-lognormal surgery types, calibrated 0.80--1.20 load, and sparse specialty-block scheduling windows",
+    "Leeftink--Hans benchmark-informed 480-minute OR-day loading with empirical three-parameter-lognormal surgery types, calibrated 0.80--1.20 load, and sparse specialty-block scheduling windows";
+    tags=[:healthcare, :partitioning, :packing],
 )

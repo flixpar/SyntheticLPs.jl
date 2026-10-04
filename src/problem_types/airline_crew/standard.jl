@@ -1212,5 +1212,6 @@ register_variant(
     :airline_crew,
     :standard,
     AirlineCrewProblem,
-    "Airline crew pairing over operationally legal pairings (airport continuity, connection and rest times, duty limits, base return) with credit-hour costs, dense per-flight coverage, base-day crew availability and base block-hour balance rows",
+    "Airline crew pairing over operationally legal pairings (airport continuity, connection and rest times, duty limits, base return) with credit-hour costs, dense per-flight coverage, base-day crew availability and base block-hour balance rows";
+    tags=[:scheduling, :partitioning, :degenerate],
 )

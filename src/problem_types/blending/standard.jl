@@ -477,4 +477,5 @@ register_variant(
     "Multi-plant secondary-aluminium alloy blending: scrap lots, primary metal and master " *
     "alloys charged to customer orders inside registered composition windows at maximum margin";
     default=true,
+    tags=[:production, :blending, :block_angular],
 )

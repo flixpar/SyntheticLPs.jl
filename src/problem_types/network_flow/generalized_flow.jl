@@ -402,5 +402,7 @@ register_variant(
     :network_flow,
     :generalized_flow,
     GeneralizedFlowProblem,
-    "Generalized (lossy) min-cost flow on a sparse geographic network: distance-decaying arc gains below one, supply/demand/transit balance rows, a planted lossy routing as witness, and a loss-adjusted supply-adequacy (node-potential Farkas) certificate",
+    "Generalized (lossy) min-cost flow on a sparse geographic network: distance-decaying arc gains below one, supply/demand/transit balance rows, a planted lossy routing as witness, and a loss-adjusted supply-adequacy (node-potential Farkas) certificate";
+    tags=[:energy, :network],
+    max_target_variables=1_000_000,
 )

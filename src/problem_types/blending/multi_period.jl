@@ -450,5 +450,6 @@ register_variant(
     :multi_period,
     MultiPeriodBlendingProblem,
     "Multi-plant, multi-period alloy production planning: scrap and primary purchasing on a " *
-    "moving market, raw and finished-goods inventories, melt and yard capacities, composition windows",
+    "moving market, raw and finished-goods inventories, melt and yard capacities, composition windows";
+    tags=[:production, :blending, :staircase, :block_angular],
 )

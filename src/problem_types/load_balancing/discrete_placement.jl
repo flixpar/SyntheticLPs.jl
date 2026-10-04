@@ -253,5 +253,6 @@ register_variant(
     :load_balancing,
     :discrete_placement,
     DiscretePlacementLoadBalancingProblem,
-    "Discrete service placement with binary deployments, continuous workload routing, machine capacities, and makespan minimization",
+    "Discrete service placement with binary deployments, continuous workload routing, machine capacities, and makespan minimization";
+    tags=[:scheduling, :big_m],
 )

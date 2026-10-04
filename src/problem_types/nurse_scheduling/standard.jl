@@ -825,5 +825,6 @@ register_variant(
     :nurse_scheduling,
     :standard,
     NurseSchedulingProblem,
-    "Multi-ward nurse rostering MIP over available assignment slots with float-pool nurses, skill mix, shift coverage, and realistic labor-contract rules",
+    "Multi-ward nurse rostering MIP over available assignment slots with float-pool nurses, skill mix, shift coverage, and realistic labor-contract rules";
+    tags=[:healthcare, :covering, :packing],
 )

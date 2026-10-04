@@ -430,4 +430,5 @@ register_variant(
     ElectiveSurgeryAssignmentProblem,
     "Elective surgery assignment to OR blocks under a master surgical schedule with surgeon availability, overtime, and urgency-weighted postponement";
     default=true,
+    tags=[:healthcare, :partitioning, :packing],
 )

@@ -658,5 +658,6 @@ register_variant(
     :food_aid,
     FoodAidDietProblem,
     "Humanitarian food-basket design with sourcing (WFP Optimus-style): NutVal ration rows " *
-    "per distribution site linked to a source-hub-site procurement and delivery network",
+    "per distribution site linked to a source-hub-site procurement and delivery network";
+    tags=[:agriculture, :network, :multicommodity, :covering, :blending],
 )

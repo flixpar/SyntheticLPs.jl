@@ -698,5 +698,6 @@ register_variant(
     :standard,
     CropPlanningProblem,
     "Regional multi-year crop-rotation planning: fields across farms and irrigation districts with " *
-    "rotation breaks, nitrogen carry-over, seasonal labour, water allocations, tiered markets and contracts",
+    "rotation breaks, nitrogen carry-over, seasonal labour, water allocations, tiered markets and contracts";
+    tags=[:agriculture, :packing],
 )

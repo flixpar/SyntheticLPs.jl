@@ -545,5 +545,6 @@ register_variant(
     :food_groups,
     FoodGroupsDietProblem,
     "Multi-week menu planning with daily food-group servings bands, weekly nutrient " *
-    "targets, variety caps, and a perishable weekly-delivery inventory with storage limits",
+    "targets, variety caps, and a perishable weekly-delivery inventory with storage limits";
+    tags=[:agriculture, :staircase, :blending],
 )
