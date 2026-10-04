@@ -183,4 +183,5 @@ register_variant(
     EconomicDispatchProblem,
     "Multi-area multi-period economic dispatch: technology-grounded fleet with must-run floors and ramp limits, curtailable renewables, lossy tie-lines between zones, and a horizon emissions budget";
     default=true,
+    tags=[:energy, :network],
 )

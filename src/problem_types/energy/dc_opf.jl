@@ -417,5 +417,6 @@ register_variant(
     :energy,
     :dc_opf,
     DCOptimalPowerFlowProblem,
-    "DC optimal power flow snapshot on a geometric meshed grid: technology-grounded fleet, susceptance-weighted flows, voltage-class thermal ratings, nodal balance",
+    "DC optimal power flow snapshot on a geometric meshed grid: technology-grounded fleet, susceptance-weighted flows, voltage-class thermal ratings, nodal balance";
+    tags=[:energy],
 )

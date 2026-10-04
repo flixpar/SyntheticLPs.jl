@@ -234,5 +234,6 @@ register_variant(
     :facility_location,
     :p_median,
     PMedianFacilityLocationProblem,
-    "Capacitated p-median: open exactly p sites and assign every customer to one, minimizing demand-weighted distance under demand-weighted site capacities",
+    "Capacitated p-median: open exactly p sites and assign every customer to one, minimizing demand-weighted distance under demand-weighted site capacities";
+    tags=[:location, :bipartite, :partitioning, :big_m],
 )

@@ -553,5 +553,6 @@ register_variant(
     :job_shop_scheduling,
     :standard,
     JobShopSchedulingProblem,
-    "Time-indexed job shop scheduling with parallel-machine work centers, release dates, hard deadlines, and weighted tardiness; LP relaxation keeps machine contention, with a planted list schedule and an energetic interval-load infeasibility certificate",
+    "Time-indexed job shop scheduling with parallel-machine work centers, release dates, hard deadlines, and weighted tardiness; LP relaxation keeps machine contention, with a planted list schedule and an energetic interval-load infeasibility certificate";
+    tags=[:scheduling, :time_indexed, :partitioning, :packing],
 )

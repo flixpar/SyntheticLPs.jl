@@ -350,5 +350,6 @@ register_variant(
     :container_loading,
     :two_dimensional_bin_packing,
     TwoDimensionalBinPackingProblem,
-    "Two-dimensional bin packing with two-stage guillotine strip and sheet patterns (Gilmore-Gomory)",
+    "Two-dimensional bin packing with two-stage guillotine strip and sheet patterns (Gilmore-Gomory)";
+    tags=[:production, :covering],
 )

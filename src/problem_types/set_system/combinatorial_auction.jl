@@ -221,5 +221,7 @@ register_variant(
     :set_system,
     :combinatorial_auction,
     CombinatorialAuctionProblem,
-    "Multi-unit combinatorial-auction winner determination with XOR bidders, regional bundles, and a reserve revenue",
+    "Multi-unit combinatorial-auction winner determination with XOR bidders, regional bundles, and a reserve revenue";
+    tags=[:economics, :packing],
+    min_target_variables=2,
 )

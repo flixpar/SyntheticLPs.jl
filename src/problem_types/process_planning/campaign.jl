@@ -1590,5 +1590,7 @@ register_variant(
     :process_planning,
     :campaign,
     CampaignPlanningProblem,
-    "Multi-period petrochemical campaign-planning MIP over state-task networks: one or several complexes with tiered raw purchasing from shared regional feedstock pools, shared trains running product grades as campaigns with minimum lengths and changeovers, storage, and seasonal term and spot demand in shared regional markets",
+    "Multi-period petrochemical campaign-planning MIP over state-task networks: one or several complexes with tiered raw purchasing from shared regional feedstock pools, shared trains running product grades as campaigns with minimum lengths and changeovers, storage, and seasonal term and spot demand in shared regional markets";
+    tags=[:production, :staircase, :big_m],
+    max_target_variables=1_000_000,
 )

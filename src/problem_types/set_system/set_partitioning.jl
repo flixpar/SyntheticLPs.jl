@@ -102,5 +102,6 @@ register_variant(
     :set_system,
     :set_partitioning,
     SetPartitioningProblem,
-    "Minimum-cost generic exact set partitioning with a planted partition",
+    "Minimum-cost generic exact set partitioning with a planted partition";
+    tags=[:combinatorial, :partitioning, :degenerate],
 )

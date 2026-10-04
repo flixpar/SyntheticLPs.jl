@@ -891,5 +891,7 @@ register_variant(
     :dynamic_leontief,
     DynamicLeontiefProblem,
     "Dynamic multi-sector Leontief planning LP (PILOT/Dantzig staircase): sparse hybrid-unit input-output and capital matrices, capacity accumulation with gestation lags, labor, import ceilings and external debt, maximizing discounted consumption; planted balanced-growth witness and Leontief-inverse labor/capacity certificates",
-    default=true,
+    default=true;
+    tags=[:economics, :staircase],
+    max_target_variables=1_000_000,
 )

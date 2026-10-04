@@ -419,4 +419,5 @@ register_variant(
     PHubMedianProblem,
     "Uncapacitated single-allocation p-hub median with reach windows (tight four-index path-flow formulation, CAB airline conventions)";
     default=true,
+    tags=[:location, :multicommodity, :dual_block_angular],
 )

@@ -632,5 +632,8 @@ register_variant(
     :inverse_optimization,
     :shortest_path,
     InverseShortestPathProblem,
-    "Weighted-L1 inverse shortest path on sparse spatial road networks with multiple observed routes",
+    "Weighted-L1 inverse shortest path on sparse spatial road networks with multiple observed routes";
+    tags=[:routing, :network, :dual_block_angular],
+    min_target_variables=2,
+    max_target_variables=250_000,
 )

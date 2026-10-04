@@ -336,4 +336,5 @@ register_variant(
     LADRegressionProblem,
     "Robust fixed-effects LAD regression with correlated covariates, categorical effects, heavy-tailed outliers, replicates, and an absolute-error budget";
     default=true,
+    tags=[:statistics, :dense],
 )

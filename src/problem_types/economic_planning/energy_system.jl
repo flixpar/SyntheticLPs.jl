@@ -1473,5 +1473,7 @@ register_variant(
     :economic_planning,
     :energy_system,
     EnergySystemProblem,
-    "TIMES/MESSAGE-style multi-region energy-system capacity-expansion LP: supply steps, power plants by timeslice, conversion and end-use device classes, vintaged capacity, growth limits, peak reserve, emission caps and carbon budget; planted reference-mix witness and dual-value (emission/supply) Farkas certificates",
+    "TIMES/MESSAGE-style multi-region energy-system capacity-expansion LP: supply steps, power plants by timeslice, conversion and end-use device classes, vintaged capacity, growth limits, peak reserve, emission caps and carbon budget; planted reference-mix witness and dual-value (emission/supply) Farkas certificates";
+    tags=[:energy, :staircase],
+    max_target_variables=1_000_000,
 )

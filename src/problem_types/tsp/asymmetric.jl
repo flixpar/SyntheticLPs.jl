@@ -468,5 +468,6 @@ register_variant(
     :tsp,
     :asymmetric,
     TSPAsymmetricProblem,
-    "Sparse asymmetric TSP for large urban courier routes: candidate-arc graph over thousands of stops with one-way detours and uphill penalties, lifted MTZ subtour elimination",
+    "Sparse asymmetric TSP for large urban courier routes: candidate-arc graph over thousands of stops with one-way detours and uphill penalties, lifted MTZ subtour elimination";
+    tags=[:routing, :big_m],
 )

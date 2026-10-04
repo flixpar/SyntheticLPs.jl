@@ -287,4 +287,5 @@ register_variant(
     FacilityLocationProblem,
     "Budgeted capacitated facility location in the strong formulation: open facilities and ship to clustered customers with disaggregated x ≤ d·y linking";
     default=true,
+    tags=[:location, :bipartite, :big_m],
 )

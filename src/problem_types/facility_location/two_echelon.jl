@@ -454,5 +454,6 @@ register_variant(
     :facility_location,
     :two_echelon,
     TwoEchelonFacilityLocationProblem,
-    "Two-echelon plant→DC→customer facility location with discrete DC sizing, sparse nearest-site lanes, and strong delivery-lane linking",
+    "Two-echelon plant→DC→customer facility location with discrete DC sizing, sparse nearest-site lanes, and strong delivery-lane linking";
+    tags=[:location, :network, :big_m],
 )

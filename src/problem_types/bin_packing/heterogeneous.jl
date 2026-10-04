@@ -587,5 +587,6 @@ register_variant(
     :bin_packing,
     :heterogeneous,
     HeterogeneousBinPackingProblem,
-    "Typed-fleet bin packing with type-specific capacity, fixed cost, availability, and handling eligibility",
+    "Typed-fleet bin packing with type-specific capacity, fixed cost, availability, and handling eligibility";
+    tags=[:logistics, :partitioning, :big_m],
 )

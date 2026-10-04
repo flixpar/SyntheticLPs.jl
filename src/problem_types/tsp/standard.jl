@@ -186,4 +186,5 @@ register_variant(
     TSPStandardProblem,
     "Symmetric travelling-salesman problem over clustered delivery stops with lifted Miller-Tucker-Zemlin subtour elimination";
     default=true,
+    tags=[:routing, :big_m],
 )

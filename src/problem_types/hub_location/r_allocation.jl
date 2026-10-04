@@ -289,5 +289,6 @@ register_variant(
     :hub_location,
     :r_allocation,
     RAllocationHubProblem,
-    "Uncapacitated r-allocation p-hub median with reach windows: every node keeps r primary/backup hubs (four-index path flows)",
+    "Uncapacitated r-allocation p-hub median with reach windows: every node keeps r primary/backup hubs (four-index path flows)";
+    tags=[:location, :multicommodity, :dual_block_angular],
 )

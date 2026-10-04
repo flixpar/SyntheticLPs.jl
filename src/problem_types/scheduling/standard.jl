@@ -463,5 +463,6 @@ register_variant(
     :scheduling,
     :standard,
     SchedulingProblem,
-    "Multi-department staff rostering with cross-training efficiencies, shift templates, ranged weekly contract hours, consecutive-day and quick-return rest rules, a planted roster, and a department-week staffing certificate",
+    "Multi-department staff rostering with cross-training efficiencies, shift templates, ranged weekly contract hours, consecutive-day and quick-return rest rules, a planted roster, and a department-week staffing certificate";
+    tags=[:scheduling, :block_angular, :covering, :packing],
 )

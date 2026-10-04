@@ -380,5 +380,6 @@ register_variant(
     :inventory,
     :lot_sizing,
     LotSizingInventoryProblem,
-    "Multi-item capacitated lot sizing with setup times in the facility-location reformulation: demand-assignment, disaggregated setup-linking, and shared capacity rows whose LP relaxation keeps the setup trade-off, with a planted POQ plan and a prefix capacity certificate",
+    "Multi-item capacitated lot sizing with setup times in the facility-location reformulation: demand-assignment, disaggregated setup-linking, and shared capacity rows whose LP relaxation keeps the setup trade-off, with a planted POQ plan and a prefix capacity certificate";
+    tags=[:production, :partitioning],
 )

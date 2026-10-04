@@ -379,5 +379,6 @@ register_variant(
     :regression,
     :basis_pursuit,
     BasisPursuitProblem,
-    "Weighted basis-pursuit sparse recovery with Gaussian, coherent-column, and sparse measurement profiles (column-capped nonzeros)",
+    "Weighted basis-pursuit sparse recovery with Gaussian, coherent-column, and sparse measurement profiles (column-capped nonzeros)";
+    tags=[:statistics, :dense, :degenerate],
 )

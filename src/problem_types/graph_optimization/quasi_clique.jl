@@ -154,5 +154,7 @@ register_variant(
     :graph_optimization,
     :quasi_clique,
     QuasiCliqueProblem,
-    "Densest-k-subgraph / quasi-clique community extraction on a heavy-tailed community network",
+    "Densest-k-subgraph / quasi-clique community extraction on a heavy-tailed community network";
+    tags=[:combinatorial],
+    min_target_variables=20,
 )

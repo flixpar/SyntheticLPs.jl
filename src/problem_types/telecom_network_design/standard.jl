@@ -1083,5 +1083,7 @@ register_variant(
     :telecom_network_design,
     :standard,
     TelecomNetworkDesignProblem,
-    "Telecommunication network design problem that minimizes installation and routing costs while satisfying capacity constraints and traffic demands",
+    "Telecommunication network design problem that minimizes installation and routing costs while satisfying capacity constraints and traffic demands";
+    tags=[:telecom, :network, :multicommodity, :block_angular, :big_m],
+    max_target_variables=1_000_000,
 )

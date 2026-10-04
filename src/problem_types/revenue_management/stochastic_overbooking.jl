@@ -414,5 +414,6 @@ register_variant(
     :revenue_management,
     :stochastic_overbooking,
     StochasticOverbookingRevenueProblem,
-    "Two-stage stochastic network overbooking with scenario show-ups, denied-service recourse, compensation, and service guarantees",
+    "Two-stage stochastic network overbooking with scenario show-ups, denied-service recourse, compensation, and service guarantees";
+    tags=[:finance, :dual_block_angular],
 )

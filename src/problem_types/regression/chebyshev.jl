@@ -334,5 +334,6 @@ register_variant(
     :regression,
     :chebyshev,
     ChebyshevRegressionProblem,
-    "Weighted Chebyshev (minimax) tensor B-spline surface fit to scattered measurements under an accuracy cap",
+    "Weighted Chebyshev (minimax) tensor B-spline surface fit to scattered measurements under an accuracy cap";
+    tags=[:statistics],
 )

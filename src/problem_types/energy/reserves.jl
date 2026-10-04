@@ -333,5 +333,6 @@ register_variant(
     :energy,
     :reserves,
     ReservesDispatchProblem,
-    "Multi-area dispatch co-optimized with spinning and non-spinning reserves: shared headroom, reserve-aware ramping, a dynamic largest-unit contingency rule, and system and zonal requirements",
+    "Multi-area dispatch co-optimized with spinning and non-spinning reserves: shared headroom, reserve-aware ramping, a dynamic largest-unit contingency rule, and system and zonal requirements";
+    tags=[:energy, :network],
 )

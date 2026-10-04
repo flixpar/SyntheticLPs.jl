@@ -256,5 +256,6 @@ register_variant(
     :regression,
     :l1_svm,
     L1SVMProblem,
-    "1-norm linear SVM text classification on sparse tf-idf features with a hinge-loss budget",
+    "1-norm linear SVM text classification on sparse tf-idf features with a hinge-loss budget";
+    tags=[:machine_learning],
 )

@@ -134,4 +134,5 @@ register_variant(
     SupplyChainProblem,
     "Multi-echelon, multi-period supply-chain network design: plants -> candidate DCs -> customers with DC opening decisions and disaggregated linking, truck/rail/intermodal linehaul with modal capacity, DC inventory, throughput and storage limits";
     default=true,
+    tags=[:logistics, :network, :staircase, :big_m],
 )

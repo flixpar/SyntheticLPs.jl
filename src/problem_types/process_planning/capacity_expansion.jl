@@ -957,5 +957,6 @@ register_variant(
     ProcessCapacityExpansionProblem,
     "Long-range capacity expansion of a chemical process network: discrete " *
     "capacity additions, fixed-ratio conversion, feedstock availability and " *
-    "contracted demand, on a discounted net-present-value objective",
+    "contracted demand, on a discounted net-present-value objective";
+    tags=[:production, :staircase, :big_m],
 )

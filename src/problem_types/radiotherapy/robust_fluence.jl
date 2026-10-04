@@ -199,5 +199,6 @@ register_variant(
     :radiotherapy,
     :robust_fluence,
     RobustFluenceIMRTProblem,
-    "Scenario-based robust IMRT fluence-map LP with coherent rigid setup shifts",
+    "Scenario-based robust IMRT fluence-map LP with coherent rigid setup shifts";
+    tags=[:healthcare, :dual_block_angular, :robust],
 )

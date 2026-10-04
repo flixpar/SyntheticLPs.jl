@@ -436,5 +436,7 @@ register_variant(
     :game_theory,
     :colonel_blotto,
     ColonelBlottoProblem,
-    "Compact Colonel Blotto equilibrium LP: a primal unit flow over the seat player's layered allocation DAG, per-battlefield marginal and dense payoff-definition rows (majority or Tullock lottery contests with incumbency advantages), and the dualized shortest-path best response of the opponent, with a guaranteed-value requirement certified by fictitious-play strategies and exact DP best responses",
+    "Compact Colonel Blotto equilibrium LP: a primal unit flow over the seat player's layered allocation DAG, per-battlefield marginal and dense payoff-definition rows (majority or Tullock lottery contests with incumbency advantages), and the dualized shortest-path best response of the opponent, with a guaranteed-value requirement certified by fictitious-play strategies and exact DP best responses";
+    tags=[:game_theory, :network],
+    max_target_variables=1_000_000,
 )

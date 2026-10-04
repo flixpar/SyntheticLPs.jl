@@ -365,4 +365,5 @@ register_variant(
     InventoryProblem,
     "Multi-SKU distribution-center replenishment LP: SKU stock chains with vendor lead times, lost sales and service-level rows, coupled by vendor allocation, zone storage, and receiving capacity rows, with a planted order-up-to plan and a vendor-allocation certificate";
     default=true,
+    tags=[:logistics, :staircase, :block_angular],
 )

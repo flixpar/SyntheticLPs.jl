@@ -289,5 +289,6 @@ register_variant(
     :knapsack,
     :bounded,
     BoundedKnapsackProblem,
-    "Bounded multiple knapsack: allocate bounded stock lots to capacity-limited vehicles with lane-specific weights and contracted minimum deliveries",
+    "Bounded multiple knapsack: allocate bounded stock lots to capacity-limited vehicles with lane-specific weights and contracted minimum deliveries";
+    tags=[:logistics, :packing, :bipartite],
 )

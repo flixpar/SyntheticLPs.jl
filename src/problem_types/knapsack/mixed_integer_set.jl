@@ -322,5 +322,6 @@ register_variant(
     :knapsack,
     :mixed_integer_set,
     MixedIntegerKnapsackSetProblem,
-    "HEM-MIK-style many-row knapsack set with bounded general integers, a small continuous block, sparse and a few dense rows, and a profit floor",
+    "HEM-MIK-style many-row knapsack set with bounded general integers, a small continuous block, sparse and a few dense rows, and a profit floor";
+    tags=[:combinatorial, :packing, :dense],
 )

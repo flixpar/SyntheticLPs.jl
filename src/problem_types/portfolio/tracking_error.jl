@@ -306,5 +306,6 @@ register_variant(
     :portfolio,
     :tracking_error,
     TrackingErrorPortfolioProblem,
-    "Enhanced-index tracking under an ESG exclusion list: max alpha under a MAD tracking-error budget, factor and sector bands, and position caps",
+    "Enhanced-index tracking under an ESG exclusion list: max alpha under a MAD tracking-error budget, factor and sector bands, and position caps";
+    tags=[:finance, :dense],
 )

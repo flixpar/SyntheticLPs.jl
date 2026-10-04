@@ -517,5 +517,7 @@ register_variant(
     :game_theory,
     :patrol_security,
     PatrolSecurityProblem,
-    "Bayesian zero-sum patrol security game (TRUSTS/PROTECT-style compact LP): a time-expanded patrol flow over a street-grid network feeds bounded coverage variables that couple into attacker-type epigraph rows, minimizing expected loss under a risk-budget requirement certified by a Hedge/greedy-patrol equilibrium approximation and a threshold-Lagrangian longest-path lower bound",
+    "Bayesian zero-sum patrol security game (TRUSTS/PROTECT-style compact LP): a time-expanded patrol flow over a street-grid network feeds bounded coverage variables that couple into attacker-type epigraph rows, minimizing expected loss under a risk-budget requirement certified by a Hedge/greedy-patrol equilibrium approximation and a threshold-Lagrangian longest-path lower bound";
+    tags=[:game_theory, :network],
+    max_target_variables=1_000_000,
 )

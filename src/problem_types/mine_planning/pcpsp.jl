@@ -417,5 +417,7 @@ register_variant(
     :mine_planning,
     :pcpsp,
     MinePCPSPProblem,
-    "Precedence-constrained production scheduling with destinations (MineLib PCPSP): cumulative block extraction plus mill / heap-leach / dump split variables, head-grade and arsenic blending rows, mill and leach tonnage and metal capacities, minimum mill feed, maximizing NPV",
+    "Precedence-constrained production scheduling with destinations (MineLib PCPSP): cumulative block extraction plus mill / heap-leach / dump split variables, head-grade and arsenic blending rows, mill and leach tonnage and metal capacities, minimum mill feed, maximizing NPV";
+    tags=[:mining, :blending, :degenerate],
+    max_target_variables=1_000_000,
 )

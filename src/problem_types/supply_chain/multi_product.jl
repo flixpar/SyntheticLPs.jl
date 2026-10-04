@@ -132,5 +132,6 @@ register_variant(
     :supply_chain,
     :multi_product,
     MultiProductSupplyChainProblem,
-    "Multi-commodity, multi-echelon, multi-period production-distribution LP: specialized plants with product-line and shared resource capacity, lane bundle capacity shared by products, DC inventory, throughput and storage limits",
+    "Multi-commodity, multi-echelon, multi-period production-distribution LP: specialized plants with product-line and shared resource capacity, lane bundle capacity shared by products, DC inventory, throughput and storage limits";
+    tags=[:logistics, :network, :multicommodity, :staircase],
 )

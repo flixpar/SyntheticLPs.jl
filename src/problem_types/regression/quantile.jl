@@ -367,5 +367,6 @@ register_variant(
     :regression,
     :quantile,
     QuantileRegressionProblem,
-    "L1-penalized quantile regression of a heteroscedastic cost on sparse indicator codes with cohort prediction bands",
+    "L1-penalized quantile regression of a heteroscedastic cost on sparse indicator codes with cohort prediction bands";
+    tags=[:statistics],
 )

@@ -385,5 +385,6 @@ register_variant(
     :energy,
     :hydrothermal,
     HydrothermalDispatchProblem,
-    "Short-term hydrothermal scheduling: multi-area thermal dispatch with cascaded reservoirs (travel delays, water balance, environmental flows, end-of-horizon water value)",
+    "Short-term hydrothermal scheduling: multi-area thermal dispatch with cascaded reservoirs (travel delays, water balance, environmental flows, end-of-horizon water value)";
+    tags=[:energy, :network, :staircase],
 )

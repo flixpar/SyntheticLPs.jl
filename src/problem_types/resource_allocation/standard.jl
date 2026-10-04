@@ -514,5 +514,6 @@ register_variant(
     :resource_allocation,
     :standard,
     ResourceAllocationProblem,
-    "Multi-period allocation of skilled resource pools to a portfolio of windowed activities: pool-period capacity rows, ranged commitment/scope rows with pool-specific efficiencies, absorption-rate rows, and a department over-commitment infeasibility certificate",
+    "Multi-period allocation of skilled resource pools to a portfolio of windowed activities: pool-period capacity rows, ranged commitment/scope rows with pool-specific efficiencies, absorption-rate rows, and a department over-commitment infeasibility certificate";
+    tags=[:scheduling, :bipartite, :packing],
 )

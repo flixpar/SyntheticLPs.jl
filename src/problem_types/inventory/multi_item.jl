@@ -250,5 +250,6 @@ register_variant(
     :inventory,
     :multi_item,
     MultiItemInventoryProblem,
-    "Multi-item production/inventory planning with a shared time-varying capacity and seasonal peaks: feasibility decided exactly by the binding demand prefix, with a planted as-late-as-possible plan and a prefix capacity certificate",
+    "Multi-item production/inventory planning with a shared time-varying capacity and seasonal peaks: feasibility decided exactly by the binding demand prefix, with a planted as-late-as-possible plan and a prefix capacity certificate";
+    tags=[:production, :staircase, :block_angular],
 )

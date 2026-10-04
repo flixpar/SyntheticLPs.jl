@@ -133,4 +133,5 @@ register_variant(
     WeightedDeviationIMRTProblem,
     "IMRT fluence-map LP with voxelwise underdose/overdose hinge penalties and total-variation smoothing";
     default=true,
+    tags=[:healthcare],
 )

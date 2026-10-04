@@ -965,5 +965,6 @@ register_variant(
     :unit_commitment,
     :standard,
     UnitCommitmentProblem,
-    "Unit-commitment MILP (LP-relaxed by default through the package API) with exact demand balance, ramping, reserves, minimum up/down times, and auditable status artifacts",
+    "Unit-commitment MILP (LP-relaxed by default through the package API) with exact demand balance, ramping, reserves, minimum up/down times, and auditable status artifacts";
+    tags=[:energy, :big_m, :staircase],
 )

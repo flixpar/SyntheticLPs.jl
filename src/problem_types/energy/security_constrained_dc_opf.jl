@@ -323,5 +323,6 @@ register_variant(
     :energy,
     :security_constrained_dc_opf,
     SecurityConstrainedDCOPFProblem,
-    "Preventive N-1 security-constrained DC-OPF: a shared dispatch with a base-case and one post-contingency B-θ network block per screened line outage (emergency ratings), block-angular",
+    "Preventive N-1 security-constrained DC-OPF: a shared dispatch with a base-case and one post-contingency B-θ network block per screened line outage (emergency ratings), block-angular";
+    tags=[:energy, :dual_block_angular],
 )

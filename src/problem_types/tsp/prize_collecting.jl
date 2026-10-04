@@ -142,5 +142,6 @@ register_variant(
     :tsp,
     :prize_collecting,
     TSPPrizeCollectingProblem,
-    "Prize-collecting quota TSP with optional visits, omission penalties, and depot-anchored single-commodity flow",
+    "Prize-collecting quota TSP with optional visits, omission penalties, and depot-anchored single-commodity flow";
+    tags=[:routing, :network, :big_m],
 )

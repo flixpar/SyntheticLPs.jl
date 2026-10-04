@@ -215,5 +215,7 @@ register_variant(
     :markov_decision_process,
     :queueing_control,
     QueueingControlMDP,
-    "Occupation-measure LP of uniformized admission and service-rate control of an overloaded two-station tandem queue with finite buffers (holding, convex energy, and rejection costs), with an optional blocking-rate SLA row refuted by a value-function Farkas certificate",
+    "Occupation-measure LP of uniformized admission and service-rate control of an overloaded two-station tandem queue with finite buffers (holding, convex energy, and rejection costs), with an optional blocking-rate SLA row refuted by a value-function Farkas certificate";
+    tags=[:markov],
+    max_target_variables=1_000_000,
 )

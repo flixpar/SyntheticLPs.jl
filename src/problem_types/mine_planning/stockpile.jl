@@ -398,5 +398,7 @@ register_variant(
     :mine_planning,
     :stockpile,
     MineStockpileProblem,
-    "Open-pit production scheduling with grade-binned stockpiles (linear stockpile model of Moreno et al. 2017): cumulative block extraction, direct-feed and stockpile split variables, per-bin inventory balances carried across periods, reclaim and rehandling capacities, head-grade blending, minimum mill feed, maximizing NPV",
+    "Open-pit production scheduling with grade-binned stockpiles (linear stockpile model of Moreno et al. 2017): cumulative block extraction, direct-feed and stockpile split variables, per-bin inventory balances carried across periods, reclaim and rehandling capacities, head-grade blending, minimum mill feed, maximizing NPV";
+    tags=[:mining, :staircase, :blending, :degenerate],
+    max_target_variables=1_000_000,
 )

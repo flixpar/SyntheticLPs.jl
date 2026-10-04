@@ -557,5 +557,6 @@ register_variant(
     :hub_location,
     :hub_network,
     HubNetworkDesignProblem,
-    "Single allocation over an incomplete hub network: design a capacitated modular backbone between regional gateways with feeder reach windows (telecom conventions)",
+    "Single allocation over an incomplete hub network: design a capacitated modular backbone between regional gateways with feeder reach windows (telecom conventions)";
+    tags=[:telecom, :network, :multicommodity, :big_m],
 )

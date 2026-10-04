@@ -388,5 +388,7 @@ register_variant(
     :inventory_control,
     InventoryControlMDP,
     "Occupation-measure LP of a seasonal joint pricing-and-replenishment MDP (lead-time pipeline, backlogging, position cap, negative-binomial demand, fixed ordering cost) under discounted or average cost, with an optional shortage service-level row refuted by a value-function Farkas certificate",
-    default=true,
+    default=true;
+    tags=[:markov],
+    max_target_variables=1_000_000,
 )

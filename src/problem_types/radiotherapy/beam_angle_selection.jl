@@ -187,5 +187,6 @@ register_variant(
     :radiotherapy,
     :beam_angle_selection,
     BeamAngleSelectionIMRTProblem,
-    "Joint beam-angle selection and fluence-map MILP over candidate coplanar fields",
+    "Joint beam-angle selection and fluence-map MILP over candidate coplanar fields";
+    tags=[:healthcare, :big_m],
 )

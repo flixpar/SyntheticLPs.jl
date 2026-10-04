@@ -258,4 +258,5 @@ register_variant(
     MultipleChoiceKnapsackProblem,
     "Multiple-choice multi-dimensional knapsack: one configuration per workload under per-cluster and shared resource limits";
     default=true,
+    tags=[:combinatorial, :packing, :partitioning],
 )

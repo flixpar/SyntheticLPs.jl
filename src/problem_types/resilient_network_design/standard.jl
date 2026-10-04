@@ -359,5 +359,6 @@ register_variant(
     :resilient_network_design,
     :standard,
     ResilientNetworkDesignProblem,
-    "Two-stage network build and hardening under spatially correlated hazard scenarios: geometric candidate links, scenario flow routing with failed links usable only if hardened, and a design budget",
+    "Two-stage network build and hardening under spatially correlated hazard scenarios: geometric candidate links, scenario flow routing with failed links usable only if hardened, and a design budget";
+    tags=[:telecom, :network, :dual_block_angular, :big_m],
 )

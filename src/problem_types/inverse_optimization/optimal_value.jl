@@ -287,5 +287,8 @@ register_variant(
     :inverse_optimization,
     :restricted_optimal_value,
     InverseOptimalValueProblem,
-    "Inverse optimal value problem (Ahmed-Guan / Jia-Guan-Qian-Pardalos restricted LP form): adjust box-bounded costs minimally so an observed plan stays optimal while its optimal value hits a target",
+    "Inverse optimal value problem (Ahmed-Guan / Jia-Guan-Qian-Pardalos restricted LP form): adjust box-bounded costs minimally so an observed plan stays optimal while its optimal value hits a target";
+    tags=[:production],
+    min_target_variables=2,
+    max_target_variables=250_000,
 )

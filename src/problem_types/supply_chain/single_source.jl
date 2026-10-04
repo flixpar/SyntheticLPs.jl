@@ -508,5 +508,6 @@ register_variant(
     :supply_chain,
     :single_source,
     SingleSourceSupplyChainProblem,
-    "Single-source capacitated supply chain where each customer is served in full by exactly one facility",
+    "Single-source capacitated supply chain where each customer is served in full by exactly one facility";
+    tags=[:location, :bipartite, :partitioning, :big_m],
 )

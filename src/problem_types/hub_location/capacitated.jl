@@ -449,5 +449,6 @@ register_variant(
     :hub_location,
     :capacitated,
     CapacitatedHubLocationProblem,
-    "Capacitated single-allocation hub location with fixed costs and collection-inflow capacities in loose/tight AP profiles (per-destination flow formulation)",
+    "Capacitated single-allocation hub location with fixed costs and collection-inflow capacities in loose/tight AP profiles (per-destination flow formulation)";
+    tags=[:location, :network, :multicommodity, :big_m],
 )

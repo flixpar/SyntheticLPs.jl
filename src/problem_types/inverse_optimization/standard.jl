@@ -193,4 +193,7 @@ register_variant(
     InverseLPProblem,
     "Weighted-L1 inverse linear program (Ahuja-Orlin): recover the box-bounded cost vector closest to a prior that makes an observed plan optimal for a forward LP";
     default=true,
+    tags=[:production],
+    min_target_variables=2,
+    max_target_variables=250_000,
 )

@@ -414,5 +414,6 @@ register_variant(
     :hydrogen_network,
     RefineryHydrogenPlanningProblem,
     "Clean-fuels refinery LP with feed-linked hydrogen demand, reformer H2, " *
-    "SMR/import/storage decisions, sulfur recovery, and carbon caps",
+    "SMR/import/storage decisions, sulfur recovery, and carbon caps";
+    tags=[:production, :staircase, :blending],
 )

@@ -221,5 +221,7 @@ register_variant(
     :graph_optimization,
     :map_labeling,
     MapLabelingProblem,
-    "Point-feature map labeling with geometric box-overlap conflicts in the clique formulation",
+    "Point-feature map labeling with geometric box-overlap conflicts in the clique formulation";
+    tags=[:combinatorial, :packing],
+    min_target_variables=8,
 )
