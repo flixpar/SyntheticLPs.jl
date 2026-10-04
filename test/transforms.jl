@@ -130,11 +130,19 @@ _set_values(s) = (MOI.constant(s),)
             @test costs["big"] <= 1e8 * (1 + 1e-9)
             @test all(c -> c >= 1e-6 * (1 - 1e-9), values(costs))
         end
-        # Unicode base names (energy/dc_opf's θ) are handled.
+        # Unicode base names (e.g. voltage angles named θ) are handled.
+        u = Model()
+        @variable(u, -1 <= θ[1:3] <= 1)
+        @variable(u, p[1:3] >= 0)
+        @constraint(u, flow[i = 1:3], 5.0 * θ[i] - p[i] == -1.0)
+        @objective(u, Min, sum(p))
+        scale_units!(u, MersenneTwister(2); decades=2)
+        @test haskey(u.ext[:SyntheticLPs_unit_scaling].column_exponents, "θ")
+        # And a real generator's model scales end to end.
         dc, _ = generate_problem(
             "energy/dc_opf", 300, feasible, 2; transforms=(unit_scale_decades=2,)
         )
-        @test haskey(dc.ext[:SyntheticLPs_unit_scaling].column_exponents, "θ")
+        @test haskey(dc.ext[:SyntheticLPs_unit_scaling].column_exponents, "theta")
     end
 
     @testset "Aggregate rows" begin
