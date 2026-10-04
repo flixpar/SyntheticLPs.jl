@@ -52,9 +52,14 @@ status, so no urgent case is stranded). For `infeasible` instances a surgeon
 overload is planted on top ([`SurgeonOverloadCertificate`]): three or more of
 one surgeon's cases sharing two or three admissible days become mandatory with
 each of those days budgeted only the longest case, a contradiction only
-visible by aggregating many rows. For `unknown`, urgent referrals of a random
-0-100% of the cases the plan could not place (each fitting two days on its
-own) are added ([`_orsched_add_referrals!`]), so both outcomes occur.
+visible by aggregating many rows. For `unknown`, after planning the OR
+capacity receives one global shock - the plan's OR utilization times U(0.95,
+1.30), so the pressure does not drift with hospital size - a share U(0.5, 1.0)
+of the planned cases are already booked (mandatory), and urgent referrals of a
+random 0-50% of the cases the plan could not place are added
+([`_orsched_add_referrals!`]); booked cases and referrals must fit two days on
+their own after the shock. Both outcomes occur at every size (measured 6/8,
+2/8, 2/8 infeasible at 3k, 30k, 100k).
 
 The hospital grows linearly with the target from 2,500 variables up (about
 `target / 190` rooms, see [`_orsched_hospital_scale`]).
@@ -194,7 +199,13 @@ function WeeklySurgeryPlanningProblem(
             specialty_capacity,
             n_days,
         )
-        n_mandatory = round(Int, wl.requested_urgent_fraction * n_surgeries)
+        # Mandatory cases carry no postponement column: the urgent share, plus
+        # for `unknown` the booked cases (measured: about a quarter of the
+        # remaining list in small hospitals, half in large ones).
+        urgent_share = wl.requested_urgent_fraction
+        booked_estimate = target < 5000 ? 0.25 : 0.5
+        feasibility_status == unknown && (urgent_share += booked_estimate * (1 - urgent_share))
+        n_mandatory = round(Int, urgent_share * n_surgeries)
         total = sum(length, admissible_days) + n_surgeries - n_mandatory
         gap = abs(total - target) / target
         if gap < best_gap
@@ -318,7 +329,33 @@ function WeeklySurgeryPlanningProblem(
         if feasibility_status == feasible
             witness = assignment
         elseif feasibility_status == unknown
-            _orsched_add_referrals!(rng, mandatory, urgency, penalty, assignment, has_option)
+            # After planning, OR capacity receives one global shock (staff
+            # shortage or extra sessions) relative to the plan's utilization; most planned cases are already
+            # booked with the patient and urgent referrals of unplaced cases
+            # come on top. Booked cases and referrals must still fit two days
+            # after the shock, so presolve cannot pin any of them.
+            # Relative to how full the plan left the OR (utilization differs
+            # between hospital sizes), so the outcome mix does not drift with
+            # size.
+            planned = sum(
+                (wl.duration[i] + turnover for i in 1:n_surgeries if assignment[i] > 0); init=0.0
+            )
+            utilization = planned / sum(specialty_capacity)
+            shock = clamp(utilization * rand(rng, Uniform(0.95, 1.30)), 0.5, 1.1)
+            specialty_capacity .= round.(specialty_capacity .* shock)
+            fits_twice = [
+                count(
+                    day_fits(i, d) && surgeon_budget[surgery_surgeon[i], d] >= wl.duration[i] for
+                    d in admissible_days[i]
+                ) >= 2 for i in 1:n_surgeries
+            ]
+            booked = rand(rng, Uniform(0.5, 1.0))
+            for i in 1:n_surgeries
+                (assignment[i] > 0 && fits_twice[i] && rand(rng) < booked) && (mandatory[i] = true)
+            end
+            _orsched_add_referrals!(
+                rng, mandatory, urgency, penalty, assignment, fits_twice; max_share=0.5
+            )
         end
     end
     if feasibility_status == infeasible
