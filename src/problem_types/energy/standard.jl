@@ -1,602 +1,186 @@
 using JuMP
 using Random
-using StatsBase
 using Distributions
 
 """
-    EnergyProblem <: ProblemGenerator
+    EconomicDispatchProblem <: ProblemGenerator
 
-Generator for energy generation mix optimization problems.
+Multi-area, multi-period economic dispatch with ramping and a horizon emissions
+budget — the base of the energy dispatch family.
 
 # Overview
 
-Models short-horizon power dispatch. The decisions are generation levels for
-each selected source in each time period. The objective minimizes total
-generation cost. Constraints require demand satisfaction in every period,
-respect source capacity bounds, impose a minimum zero-emission generation share,
-and include a period-level emissions-intensity row.
+A look-ahead security-constrained economic dispatch (SCED) run after unit
+commitment: the committed fleet of every balancing zone is dispatched hour by
+hour over a horizon of 4–168 periods to serve zonal load at minimum cost.
+
+  - **Fleet**: technology-grounded units (nuclear, coal, CCGT, gas CT, oil,
+    biomass, hydro, wind, solar; see `ENERGY_TECHNOLOGIES`) with heterogeneous
+    sizes, costs and emission rates, placed in zones with regional resource
+    mixes. Committed thermal units carry must-run floors; wind, solar and hydro
+    follow zone-correlated weather profiles and may be curtailed.
+  - **Ramping**: every ramp-limited unit has `x[g,t] − x[g,t−1] ≤ RU_g` and
+    `x[g,t−1] − x[g,t] ≤ RD_g` (nuclear 2–5 %/h, coal 8–18 %/h, CCGT 30–60 %/h);
+    the first period's window around the pre-horizon output is folded into the
+    bounds.
+  - **Network**: zones sit on a map joined by lossy tie-lines (a spanning tree
+    plus meshing ties). Each tie has two directional flows bounded by its
+    transfer capability; the receiving zone gets `(1 − loss)` of what is sent.
+  - **Emissions budget**: one horizon-wide cap-and-trade row
+    `Σ_{g,t} e_g x[g,t] ≤ emission_cap` couples every emitting unit in every
+    period.
+
+Size grows with the target through the horizon (snapped to natural planning
+lengths), the number of zones (≈ per-period columns / 16), and the fleet — not by
+replicating identical blocks. Variables: `n_periods × (n_units + 2·n_ties)`,
+matching the target to within one unit per period.
+
+# Feasibility control
+
+  - `feasible`: tie flows are planted first; each zone's controllable units then
+    track its natural residual load inside their ramp windows, and zonal demand
+    is defined as the resulting supply plus net imports, so the planted
+    `EnergyDispatchWitness` satisfies every row exactly. The emissions budget is
+    3–15 % above the witness's emissions.
+  - `infeasible`: the same planted data, then one of two contradictions that need
+    many rows to expose (presolve sees no single violated row):
+    `:emissions_budget` — the cap is set below a lower bound on horizon emissions
+    implied by the balance rows and the clean fleet's capacity; or
+    `:import_pocket` — a connected set of ≥ 2 zones has its peak-hour demand
+    raised above local capacity plus delivered import capability (no zone and no
+    proper subset of the pocket is short on its own). The typed
+    `EnergyAggregateCertificate` records the bound and the requirement.
+  - `unknown`: natural load with a tighter random planning margin, natural
+    initial state, and an emissions cap of 60–100 % of the business-as-usual
+    (load-tracking) emissions — genuinely undetermined.
 
 # Fields
 
-  - `n_sources::Int`: Number of power generation sources
-  - `n_periods::Int`: Number of time periods
-  - `sources::Vector{String}`: Names of energy sources
-  - `time_periods::Vector{Int}`: Time period indices
-  - `generation_costs::Dict{String,Float64}`: Cost per MWh for each source
-  - `capacities::Dict{String,Float64}`: Maximum capacity (MW) for each source
-  - `demands::Vector{Float64}`: Demand (MW) in each period
-  - `emission_limits::Dict{String,Float64}`: Emission rate per MWh for each source
-  - `renewable_fraction::Float64`: Minimum fraction of generation from renewables
+  - `core::EnergyDispatchCore`: zones, ties, fleet, profiles, demand
+  - `emission_cap::Float64`: horizon emissions budget (tCO2)
+  - `feasibility_status::FeasibilityStatus`: requested status
+  - `feasible_witness::Union{Nothing,EnergyDispatchWitness}`
+  - `infeasibility_certificate::Union{Nothing,EnergyAggregateCertificate}`
 """
-struct EnergyProblem <: ProblemGenerator
-    n_sources::Int
-    n_periods::Int
-    sources::Vector{String}
-    time_periods::Vector{Int}
-    generation_costs::Dict{String, Float64}
-    capacities::Dict{String, Float64}
-    demands::Vector{Float64}
-    emission_limits::Dict{String, Float64}
-    renewable_fraction::Float64
-    emission_intensity_target::Float64
+struct EconomicDispatchProblem <: ProblemGenerator
+    core::EnergyDispatchCore
+    emission_cap::Float64
+    feasibility_status::FeasibilityStatus
+    feasible_witness::Union{Nothing, EnergyDispatchWitness}
+    infeasibility_certificate::Union{Nothing, EnergyAggregateCertificate}
 end
 
 """
-    EnergyProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+    _ed_plant_emissions(rng, c) -> Union{Nothing, Tuple{Float64,EnergyAggregateCertificate}}
 
-Construct an energy generation mix problem instance.
-
-# Arguments
-
-  - `target_variables`: Target number of variables (n_sources × n_periods)
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
+Pick an emissions budget strictly between the emission row's own minimum
+activity (what presolve sees) and 93 % of the balance-implied lower bound.
 """
-function EnergyProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function _ed_plant_emissions(rng::AbstractRNG, c::EnergyDispatchCore)
+    bound, row_min = _ed_emission_lower_bound(c)
+    hi = 0.93 * bound
+    lo = 1.04 * row_min + 1e-6 * bound
+    hi > lo || return nothing
+    cap = lo + _e_unif(rng, (0.3, 0.8)) * (hi - lo)
+    cert = EnergyAggregateCertificate(:emissions_budget, collect(1:c.n_zones), collect(1:c.n_periods), cap, bound)
+    return cap, cert
+end
+
+"""
+    EconomicDispatchProblem(target_variables, feasibility_status, seed)
+
+Build a multi-area economic dispatch instance with about `target_variables`
+columns (`n_periods × (n_units + 2·n_ties)`). See the type docstring.
+"""
+function EconomicDispatchProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+    return _economic_dispatch(target_variables, feasibility_status, seed)
+end
+
+"""
+    _economic_dispatch(target, status, seed; infeasible_mode=nothing)
+
+Constructor body. `infeasible_mode` (`:emissions_budget` or `:import_pocket`)
+forces the contradiction planted for `infeasible` requests (tests use it);
+`nothing` samples it (pocket 15 % when there are ≥ 3 zones, else the emissions
+budget, which presolve cannot see).
+"""
+function _economic_dispatch(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int; infeasible_mode=nothing
+)
     rng = MersenneTwister(seed)
+    T, Z, layout, per_period = _ed_dimensions(rng, target_variables)
+    L = length(layout[3])
+    techs, zones = _ed_sample_fleet(rng, Z, max(Z, per_period - 2L), _ -> 1)
+    margin = feasibility_status == unknown ? _e_unif(rng, (1.02, 1.30)) : _e_unif(rng, (1.12, 1.35))
+    nt = _ed_sample_core(rng, layout, T, techs, zones; margin=margin)
 
-    # Determine scale
-    if target_variables < 250
-        scale = :small
-        min_sources, max_sources = 3, 8
-        min_periods, max_periods = 12, 48
-        peak_demand_range = (10.0, 100.0)
-    elseif target_variables < 1000
-        scale = :medium
-        min_sources, max_sources = 5, 12
-        min_periods, max_periods = 24, 72
-        peak_demand_range = (100.0, 1000.0)
+    witness = nothing
+    certificate = nothing
+    if feasibility_status == unknown
+        demand, x0 = _ed_natural(rng, nt, techs, zones, Z, T)
+        core = _ed_assemble(nt, techs, zones, Z, T, demand, x0)
+        # Business-as-usual emissions of a load-tracking dispatch without trade.
+        L0 = length(nt.tie_from)
+        xb, _, _ = _ed_tracking_dispatch(rng, nt, techs, zones, T, demand, zeros(L0, T), zeros(L0, T))
+        cap = _ed_emissions(core, xb) * _e_unif(rng, (0.60, 1.00))
     else
-        scale = :large
-        min_sources, max_sources = 8, 20
-        min_periods, max_periods = 48, 200
-        peak_demand_range = (1000.0, 10000.0)
-    end
-
-    # Start with reasonable defaults
-    n_sources = min_sources + 2
-    n_periods = min_periods + 12
-
-    # Iteratively adjust to reach target
-    for _ in 1:15
-        current_vars = n_sources * n_periods
-
-        if abs(current_vars - target_variables) / target_variables < 0.1
-            break
-        end
-
-        ratio = target_variables / current_vars
-
-        if ratio > 1.1
-            if n_periods < max_periods
-                n_periods = min(max_periods, round(Int, n_periods * sqrt(ratio)))
-            elseif n_sources < max_sources
-                n_sources = min(max_sources, round(Int, n_sources * sqrt(ratio)))
+        demand, x0, witness = _ed_plant(rng, nt, techs, zones, Z, T)
+        core = _ed_assemble(nt, techs, zones, Z, T, demand, x0)
+        cap = _ed_emissions(core, witness.output) * _e_unif(rng, (1.03, 1.15))
+        if feasibility_status == infeasible
+            witness = nothing
+            margin_inf = _e_unif(rng, (0.06, 0.15))
+            draw = rand(rng)
+            prefer_pocket = infeasible_mode === nothing ? (Z >= 3 && draw < 0.15) : infeasible_mode == :import_pocket
+            if prefer_pocket
+                certificate = _ed_plant_pocket!(rng, core; margin=margin_inf)
             end
-        elseif ratio < 0.9
-            if n_periods > min_periods
-                n_periods = max(min_periods, round(Int, n_periods * sqrt(ratio)))
-            elseif n_sources > min_sources
-                n_sources = max(min_sources, round(Int, n_sources * sqrt(ratio)))
-            end
-        end
-    end
-
-    # Sample parameters based on scale
-    if scale == :small
-        renewable_fraction_target = rand(rng, Beta(2, 3))
-        demand_variation = rand(rng, Beta(2, 3))
-        peak_demand = rand(rng, Uniform(peak_demand_range...))
-        base_generation_cost = rand(rng, LogNormal(log(60.0), 0.4))
-        renewable_cost_factor = rand(rng, Gamma(3, 0.4))
-        capacity_margin = max(1.15, min(1.6, rand(rng, Normal(1.35, 0.08))))
-        emission_limit = rand(rng, Beta(2, 2))
-    elseif scale == :medium
-        renewable_fraction_target = rand(rng, Beta(3, 4))
-        demand_variation = rand(rng, Beta(3, 5))
-        peak_demand = rand(rng, Uniform(peak_demand_range...))
-        base_generation_cost = rand(rng, LogNormal(log(45.0), 0.3))
-        renewable_cost_factor = rand(rng, Gamma(2.5, 0.35))
-        capacity_margin = max(1.1, min(1.5, rand(rng, Normal(1.25, 0.05))))
-        emission_limit = rand(rng, Beta(3, 3))
-    else
-        renewable_fraction_target = rand(rng, Beta(4, 5))
-        demand_variation = rand(rng, Beta(4, 8))
-        peak_demand = rand(rng, Uniform(peak_demand_range...))
-        base_generation_cost = rand(rng, LogNormal(log(35.0), 0.25))
-        renewable_cost_factor = rand(rng, Gamma(2, 0.3))
-        capacity_margin = max(1.05, min(1.3, rand(rng, Normal(1.15, 0.04))))
-        emission_limit = rand(rng, Beta(4, 6))
-    end
-
-    # Source types
-    source_types = [
-        ("coal", false, 0.95, 0.9, 1.0),
-        ("gas", false, 0.98, 0.85, 1.2),
-        ("nuclear", false, 0.92, 0.95, 0.8),
-        ("solar", true, 0.99, 0.25, 0.3),
-        ("wind", true, 0.95, 0.35, 0.4),
-        ("hydro", true, 0.90, 0.50, 0.6),
-        ("biomass", true, 0.88, 0.75, 1.1),
-    ]
-
-    # Select sources
-    n_renewables = max(1, ceil(Int, n_sources * renewable_fraction_target))
-    n_conventional = n_sources - n_renewables
-
-    renewable_indices = findall(s -> s[2], source_types)
-    conventional_indices = findall(s -> !s[2], source_types)
-
-    n_renewables = min(n_renewables, length(renewable_indices))
-    n_conventional = min(n_conventional, length(conventional_indices))
-
-    renewable_sources = source_types[sample(rng, renewable_indices, n_renewables; replace=false)]
-    conventional_sources = source_types[sample(
-        rng, conventional_indices, n_conventional; replace=false
-    )]
-    selected_sources = vcat(renewable_sources, conventional_sources)
-
-    sources = [s[1] for s in selected_sources]
-    time_periods = collect(1:n_periods)
-
-    # Generate costs
-    generation_costs = Dict{String, Float64}()
-    for (name, is_renewable, _, _, cost_factor) in selected_sources
-        base_cost = base_generation_cost * cost_factor
-        if is_renewable
-            base_cost *= renewable_cost_factor
-        end
-
-        variation = if name in ["coal", "gas"]
-            rand(rng, LogNormal(log(1.0), 0.15))
-        elseif name == "nuclear"
-            rand(rng, Normal(1.0, 0.08))
-        elseif name in ["solar", "wind"]
-            rand(rng, Gamma(8, 0.12))
-        else
-            rand(rng, Normal(1.0, 0.12))
-        end
-
-        generation_costs[name] = base_cost * max(0.3, variation)
-    end
-
-    # Generate capacities
-    capacities = Dict{String, Float64}()
-    total_required_capacity = peak_demand * capacity_margin
-
-    capacity_shares = Float64[]
-    for (name, is_renewable, availability, capacity_factor, _) in selected_sources
-        share = if name == "coal"
-            rand(rng, Gamma(2, 0.25))
-        elseif name == "gas"
-            rand(rng, Gamma(3, 0.15))
-        elseif name == "nuclear"
-            rand(rng, Gamma(1.5, 0.4))
-        elseif name == "solar"
-            rand(rng, Beta(2, 4))
-        elseif name == "wind"
-            rand(rng, Beta(3, 3))
-        elseif name == "hydro"
-            rand(rng, LogNormal(log(0.3), 0.6))
-        else
-            rand(rng, Beta(2, 5))
-        end
-
-        push!(capacity_shares, share)
-    end
-
-    total_share = sum(capacity_shares)
-    for (i, (name, _, availability, capacity_factor, _)) in enumerate(selected_sources)
-        normalized_share = capacity_shares[i] / total_share
-        effective_capacity =
-            total_required_capacity * normalized_share / (availability * capacity_factor)
-        capacities[name] = max(10.0, effective_capacity)
-    end
-
-    # Generate demands
-    demands = Float64[]
-
-    residential_pattern = [
-        0.6,
-        0.55,
-        0.5,
-        0.5,
-        0.55,
-        0.7,
-        0.85,
-        1.0,
-        0.95,
-        0.9,
-        0.85,
-        0.9,
-        0.95,
-        1.0,
-        0.9,
-        0.85,
-        0.9,
-        0.95,
-        1.0,
-        0.95,
-        0.9,
-        0.8,
-        0.7,
-        0.65,
-    ]
-    commercial_pattern = [
-        0.4,
-        0.35,
-        0.3,
-        0.3,
-        0.35,
-        0.5,
-        0.7,
-        0.9,
-        1.0,
-        1.0,
-        0.95,
-        0.9,
-        0.85,
-        0.9,
-        0.95,
-        1.0,
-        0.95,
-        0.9,
-        0.75,
-        0.6,
-        0.5,
-        0.45,
-        0.4,
-        0.35,
-    ]
-    industrial_pattern = [
-        0.8,
-        0.75,
-        0.7,
-        0.7,
-        0.75,
-        0.85,
-        0.95,
-        1.0,
-        1.0,
-        0.95,
-        0.9,
-        0.85,
-        0.9,
-        0.95,
-        1.0,
-        0.95,
-        0.9,
-        0.85,
-        0.8,
-        0.75,
-        0.7,
-        0.7,
-        0.75,
-        0.8,
-    ]
-
-    hour_factors = if peak_demand < 100
-        residential_pattern
-    elseif peak_demand < 1000
-        commercial_pattern
-    else
-        industrial_pattern
-    end
-
-    base_demand = peak_demand * (1 - demand_variation)
-
-    if n_periods == 24
-        for h in 1:24
-            pattern_demand = base_demand + (peak_demand - base_demand) * hour_factors[h]
-
-            weather_effect = rand(rng, Normal(1.0, 0.03))
-            economic_effect = rand(rng, Normal(1.0, 0.02))
-            random_effect = rand(rng, Normal(1.0, 0.025))
-            seasonal_effect = rand(rng, Normal(1.0, 0.01))
-
-            total_effect = weather_effect * economic_effect * random_effect * seasonal_effect
-            demand = pattern_demand * max(0.7, min(1.4, total_effect))
-
-            push!(demands, demand)
-        end
-    else
-        for p in 1:n_periods
-            relative_hour = (p - 1) * 24 / n_periods
-            hour_idx = 1 + floor(Int, relative_hour % 24)
-            if hour_idx > 24
-                hour_idx = 24
-            end
-
-            pattern_demand = base_demand + (peak_demand - base_demand) * hour_factors[hour_idx]
-
-            variability_scale = sqrt(24 / n_periods)
-
-            weather_effect = rand(rng, Normal(1.0, 0.03 * variability_scale))
-            economic_effect = rand(rng, Normal(1.0, 0.02 * variability_scale))
-            random_effect = rand(rng, Normal(1.0, 0.025 * variability_scale))
-            seasonal_effect = rand(rng, Normal(1.0, 0.01 * variability_scale))
-
-            total_effect = weather_effect * economic_effect * random_effect * seasonal_effect
-            demand = pattern_demand * max(0.7, min(1.4, total_effect))
-
-            push!(demands, demand)
-        end
-    end
-
-    # Generate emission limits
-    emission_limits = Dict{String, Float64}()
-    for (name, is_renewable, _, _, _) in selected_sources
-        if is_renewable
-            emission_limits[name] = 0.0
-        else
-            if name == "coal"
-                emission_limits[name] = emission_limit
-            elseif name == "gas"
-                emission_limits[name] = emission_limit * 0.5
-            else
-                emission_limits[name] = 0.0
-            end
-        end
-    end
-
-    # Adjust for feasibility
-    solution_status = if feasibility_status == feasible
-        :feasible
-    elseif feasibility_status == infeasible
-        :infeasible
-    else
-        :all
-    end
-    actual_status = solution_status
-    if solution_status == :all
-        actual_status = rand(rng) < 0.7 ? :feasible : :infeasible
-    end
-
-    renewable_fraction = renewable_fraction_target
-
-    if actual_status == :infeasible
-        scenario = rand(rng, 1:4)
-
-        if scenario == 1
-            # Capacity crisis
-            reduction_factor = 0.6 + rand(rng) * 0.2
-            target_total_capacity = peak_demand * reduction_factor
-            current_total_capacity = sum(values(capacities))
-            capacity_scale = target_total_capacity / current_total_capacity
-
-            for source in sources
-                capacities[source] *= capacity_scale
-            end
-
-        elseif scenario == 2
-            # Renewable intermittency
-            renewable_fraction = 0.7 + rand(rng) * 0.2
-
-            renewable_sources_list = [s for s in sources if emission_limits[s] == 0.0]
-            total_renewable_capacity = sum(capacities[s] for s in renewable_sources_list)
-
-            required_renewable_capacity = peak_demand * renewable_fraction
-            target_renewable_capacity = required_renewable_capacity * (0.4 + rand(rng) * 0.2)
-
-            if total_renewable_capacity > 0
-                renewable_scale = target_renewable_capacity / total_renewable_capacity
-                for source in renewable_sources_list
-                    capacities[source] *= renewable_scale
+            if certificate === nothing
+                planted = _ed_plant_emissions(rng, core)
+                if planted !== nothing
+                    cap, certificate = planted
                 end
             end
-
-        elseif scenario == 3
-            # Emission impossibility
-            new_emission_limit = emission_limit * (0.01 + rand(rng) * 0.05)
-
-            for (name, is_renewable, _, _, _) in selected_sources
-                if !is_renewable && name != "nuclear"
-                    emission_limits[name] = new_emission_limit
-                end
+            if certificate === nothing
+                certificate = _ed_plant_pocket!(rng, core; margin=margin_inf)
             end
-
-            clean_sources = [s for s in sources if emission_limits[s] == 0.0]
-            total_clean_capacity = sum(capacities[s] for s in clean_sources)
-
-            target_clean_capacity = peak_demand * (0.5 + rand(rng) * 0.2)
-
-            if total_clean_capacity > target_clean_capacity
-                clean_scale = target_clean_capacity / total_clean_capacity
-                for source in clean_sources
-                    capacities[source] *= clean_scale
-                end
-            end
-
-        else  # scenario == 4
-            # Demand surge
-            current_total_capacity = sum(values(capacities))
-
-            surge_factor = (current_total_capacity * (1.1 + rand(rng) * 0.2)) / peak_demand
-
-            for i in 1:length(demands)
-                demands[i] *= surge_factor
-            end
-
-            peak_demand *= surge_factor
-        end
-    else
-        # Feasible: ensure capacity
-        total_capacity = sum(values(capacities))
-        required_capacity = peak_demand * capacity_margin
-
-        if total_capacity < required_capacity
-            scale_factor = required_capacity / total_capacity
-            for source in sources
-                capacities[source] *= scale_factor
+            if certificate === nothing
+                certificate = _ed_plant_system_shortage!(rng, core; margin=margin_inf)
             end
         end
     end
-
-    # --- Model-consistent feasibility guard ---
-    # A feasible dispatch must satisfy total capacity, renewable-share, and
-    # emissions-intensity constraints simultaneously. First make demand attainable
-    # from the fleet, then ensure zero-emission capacity can meet the renewable floor.
-    # (The model classifies every zero-emission source, including nuclear, as renewable,
-    # so use that same definition here.)
-    total_capacity = sum(values(capacities))
-    max_demand = isempty(demands) ? 0.0 : maximum(demands)
-    if actual_status == :feasible
-        if max_demand > total_capacity * 0.9 && max_demand > 0
-            scale_factor = (total_capacity * 0.9) / max_demand
-            demands .= demands .* scale_factor
-            max_demand = maximum(demands)
-        end
-
-        clean_sources = [s for s in sources if iszero(emission_limits[s])]
-        clean_capacity = isempty(clean_sources) ? 0.0 : sum(capacities[s] for s in clean_sources)
-        required_clean_capacity = renewable_fraction * max_demand
-        if isempty(clean_sources)
-            # No zero-emission source exists, so any positive renewable floor is
-            # unsatisfiable no matter how capacity is scaled. Drop the floor rather
-            # than emitting a "feasible" instance that cannot be solved. (Source
-            # selection guarantees at least one renewable, so this is a safety net.)
-            renewable_fraction = 0.0
-        elseif clean_capacity <= 0
-            # Clean sources exist but carry no capacity: give them exactly enough to
-            # cover the floor. Scaling by a ratio cannot escape zero, which is why
-            # this case needs its own branch.
-            per_source = 1.05 * required_clean_capacity / length(clean_sources)
-            for source in clean_sources
-                capacities[source] = per_source
-            end
-        elseif clean_capacity < required_clean_capacity
-            clean_scale = 1.05 * required_clean_capacity / clean_capacity
-            for source in clean_sources
-                capacities[source] *= clean_scale
-            end
-        end
-    else
-        if max_demand <= total_capacity
-            scale_factor = (total_capacity * 1.10) / max(max_demand, 1e-9)
-            demands .= demands .* scale_factor
-        end
-    end
-
-    # Emissions intensity target: a fixed cap strictly below the dirtiest source's
-    # emission rate, so the per-period emissions constraint can actually bind. For a
-    # feasible request, derive the cap from the minimum-emission dispatch at peak
-    # demand. This makes the cap attainable without requiring solver-backed retries
-    # while retaining a nontrivial amount of slack above the cleanest dispatch.
-    # (The previous `<= max_emission * sum(x)` form was an algebraic tautology — a
-    # weighted average is always <= its maximum weight.)
-    max_emission = isempty(emission_limits) ? 0.0 : maximum(values(emission_limits))
-    emission_intensity_target = if iszero(max_emission)
-        1.0
-    elseif actual_status == :feasible && max_demand > 0
-        remaining_demand = max_demand
-        minimum_emissions = 0.0
-        for source in sort(sources; by=s -> emission_limits[s])
-            generation = min(capacities[source], remaining_demand)
-            minimum_emissions += emission_limits[source] * generation
-            remaining_demand -= generation
-            remaining_demand <= 0 && break
-        end
-        minimum_intensity = minimum_emissions / max_demand
-        slack_fraction = rand(rng, Uniform(0.05, 0.25))
-        minimum_intensity + slack_fraction * (max_emission - minimum_intensity)
-    else
-        max_emission * rand(rng, Uniform(0.7, 0.95))
-    end
-
-    return EnergyProblem(
-        n_sources,
-        n_periods,
-        sources,
-        time_periods,
-        generation_costs,
-        capacities,
-        demands,
-        emission_limits,
-        renewable_fraction,
-        emission_intensity_target,
-    )
+    return EconomicDispatchProblem(core, cap, feasibility_status, witness, certificate)
 end
 
 """
-    build_model(prob::EnergyProblem)
+    build_model(prob::EconomicDispatchProblem)
 
-Build a JuMP model for the energy generation mix problem.
-
-# Arguments
-
-  - `prob`: EnergyProblem instance
-
-# Returns
-
-  - `model`: The JuMP model
+Dispatch core (bounded unit outputs, directional tie flows, zonal balance
+equalities, ramp rows) plus the horizon emissions-budget row; minimize energy
+cost plus wheeling charges.
 """
-function build_model(prob::EnergyProblem)
+function build_model(prob::EconomicDispatchProblem)
     model = Model()
-
-    # Variables
-    @variable(model, 0 <= x[s in prob.sources, t in prob.time_periods] <= prob.capacities[s])
-
-    # Objective
-    @objective(
-        model,
-        Min,
-        sum(prob.generation_costs[s] * x[s, t] for s in prob.sources, t in prob.time_periods)
-    )
-
-    # Meet demand
-    for t in prob.time_periods
-        @constraint(model, sum(x[s, t] for s in prob.sources) >= prob.demands[t])
+    c = prob.core
+    x, _, _, balance, objective = _ed_core_variables!(model, c)
+    _ed_core_rows!(model, c, x, balance)
+    emissions = AffExpr(0.0)
+    for g in 1:_ed_n_units(c)
+        e = c.emission_rate[g]
+        e > 0 || continue
+        for t in 1:c.n_periods
+            add_to_expression!(emissions, e, x[g, t])
+        end
     end
-
-    # Emissions: cap the generation-weighted average emission intensity at a fixed
-    # target below the dirtiest source's rate, so the row can actually bind (a
-    # `<= max_rate * sum(x)` form would be a tautology — a weighted average never
-    # exceeds its largest weight).
-    for t in prob.time_periods
-        @constraint(
-            model,
-            sum(prob.emission_limits[s] * x[s, t] for s in prob.sources) <=
-                prob.emission_intensity_target * sum(x[s, t] for s in prob.sources)
-        )
-    end
-
-    # Renewables
-    renewable_sources = [s for s in prob.sources if prob.emission_limits[s] == 0.0]
-    for t in prob.time_periods
-        @constraint(
-            model,
-            sum(x[s, t] for s in renewable_sources) >=
-                prob.renewable_fraction * sum(x[s, t] for s in prob.sources)
-        )
-    end
-
+    @constraint(model, emissions_budget, emissions <= prob.emission_cap)
+    @objective(model, Min, objective)
     return model
 end
 
-# Register the variant
 register_variant(
     :energy,
     :standard,
-    EnergyProblem,
-    "Energy generation mix problem that optimizes the allocation of different energy sources to meet demand while minimizing costs and emissions",
+    EconomicDispatchProblem,
+    "Multi-area multi-period economic dispatch: technology-grounded fleet with must-run floors and ramp limits, curtailable renewables, lossy tie-lines between zones, and a horizon emissions budget";
+    default=true,
 )

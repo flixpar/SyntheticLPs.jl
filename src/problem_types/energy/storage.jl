@@ -1,411 +1,296 @@
 using JuMP
 using Random
-using StatsBase
 using Distributions
 
 """
-    StorageEnergyProblem <: ProblemGenerator
+Planted feasible point of the storage variant: the dispatch-core witness plus
+per-device charging `charge[s, t]`, discharging `discharge[s, t]` and state of
+charge `soc[s, t]` (MWh at the end of period `t`).
+"""
+struct StorageDispatchWitness
+    dispatch::EnergyDispatchWitness
+    charge::Matrix{Float64}
+    discharge::Matrix{Float64}
+    soc::Matrix{Float64}
+end
 
-Generator for energy generation mix optimization with battery storage.
+"""
+    StorageDispatchProblem <: ProblemGenerator
+
+Multi-area economic dispatch with grid-scale energy storage.
 
 # Overview
 
-Models a power dispatch problem over a sequence of time periods where, in addition
-to dispatchable generation sources, a single battery can charge, discharge, and
-carry a state of charge between periods. The objective minimizes total generation
-cost. Demand in each period must be met by generation plus net discharge, the
-battery state of charge follows a balance equation with round-trip efficiency
-applied on charging, and a minimum renewable fraction must be met each period.
+The dispatch core of `energy/standard` (zones, lossy tie-lines, a committed
+fleet with must-run floors and ramp limits, curtailable wind and solar; see
+`EnergyDispatchCore`) without the emissions budget, plus a fleet of storage
+devices sited in the zones:
 
-A terminal state-of-charge constraint requires the battery to end no lower than it
-started, so the battery cannot be drained "for free" to subsidize generation.
+  - **Devices**: lithium-ion batteries (2–4 h duration, ≈ 85–92 % round trip,
+    small degradation cost) and pumped hydro (6–12 h, ≈ 72–80 % round trip).
+    Charging power, discharging power and energy capacity are separate limits.
+  - **State of charge**: `soc[s,t] = soc[s,t−1] + η_ch·charge[s,t] −
+    discharge[s,t]/η_dis` (the initial level is data), bounded by
+    `[soc_min, soc_max]`; the end-of-horizon level must be at least the initial
+    one (no free draindown), folded into the last period's bound.
+  - Storage net discharge enters its zone's balance, so storage arbitrages
+    across hours (cheap night/solar energy into the evening peak), absorbs
+    curtailable renewables, and couples periods far more than ramp rows do.
+
+Columns per period: units + 2·ties + 3·devices (≈ one device per 25 per-period
+columns); the fleet absorbs the rest of the budget exactly.
+
+# Feasibility control
+
+  - `feasible`: the planted dispatch witness tracks load net of a planted daily
+    storage cycle (charge in the lowest-load hours of each day, discharge the
+    same energy times the round-trip efficiency in the highest-load hours,
+    returning exactly to the initial level). The `StorageDispatchWitness` meets
+    every row.
+  - `infeasible`: `:energy_limited_peak` — over a window of consecutive peak
+    hours the load is raised above available generation by more than the
+    storage fleet's usable energy (`Σ η_dis·(soc_max − soc_min)`, plus a 6–15 %
+    margin), while every single hour stays within generation plus storage
+    *power*. Only the sum over the window of the balance and state-of-charge
+    rows exposes it; no single row does.
+  - `unknown`: natural load and a tighter random planning margin, natural
+    initial storage levels.
 
 # Fields
 
-  - `n_sources::Int`: Number of power generation sources
-  - `n_periods::Int`: Number of time periods
-  - `sources::Vector{String}`: Names of energy sources
-  - `time_periods::Vector{Int}`: Time period indices (1:n_periods)
-  - `generation_costs::Dict{String,Float64}`: Cost per MWh for each source
-  - `capacities::Dict{String,Float64}`: Maximum capacity (MW) for each source
-  - `demands::Vector{Float64}`: Demand (MW) in each period
-  - `renewable_sources::Vector{String}`: Subset of sources that count as renewable
-  - `renewable_fraction::Float64`: Minimum fraction of generation from renewables
-  - `storage_capacity::Float64`: Maximum battery energy storage (MWh)
-  - `storage_power::Float64`: Maximum charge/discharge rate (MW)
-  - `storage_efficiency::Float64`: Round-trip (charging) efficiency in (0, 1]
-  - `initial_level::Float64`: Initial battery state of charge (MWh)
+  - `core::EnergyDispatchCore`
+  - `storage_zone::Vector{Int}`, `storage_kind::Vector{Symbol}` (`:battery` /
+    `:pumped_hydro`)
+  - `charge_max`, `discharge_max` (MW), `soc_min`, `soc_max`, `soc_initial`
+    (MWh), `eta_charge`, `eta_discharge`, `cycle_cost` (\$/MWh discharged)
+  - `feasibility_status`, `feasible_witness`, `infeasibility_certificate`
 """
-struct StorageEnergyProblem <: ProblemGenerator
-    n_sources::Int
-    n_periods::Int
-    sources::Vector{String}
-    time_periods::Vector{Int}
-    generation_costs::Dict{String, Float64}
-    capacities::Dict{String, Float64}
-    demands::Vector{Float64}
-    renewable_sources::Vector{String}
-    renewable_fraction::Float64
-    storage_capacity::Float64
-    storage_power::Float64
-    storage_efficiency::Float64
-    initial_level::Float64
+struct StorageDispatchProblem <: ProblemGenerator
+    core::EnergyDispatchCore
+    storage_zone::Vector{Int}
+    storage_kind::Vector{Symbol}
+    charge_max::Vector{Float64}
+    discharge_max::Vector{Float64}
+    soc_min::Vector{Float64}
+    soc_max::Vector{Float64}
+    soc_initial::Vector{Float64}
+    eta_charge::Vector{Float64}
+    eta_discharge::Vector{Float64}
+    cycle_cost::Vector{Float64}
+    feasibility_status::FeasibilityStatus
+    feasible_witness::Union{Nothing, StorageDispatchWitness}
+    infeasibility_certificate::Union{Nothing, EnergyAggregateCertificate}
 end
 
 """
-    StorageEnergyProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+    _storage_cycle(T, sysload, P_ch, P_dis, η_ch, η_dis, e0, emin, emax)
 
-Construct an energy-with-storage problem instance.
-
-Variable count in `build_model`:
-
-  - generation `x[s, t]`            => n_sources * n_periods
-  - `storage_level[t in 0:T]`       => n_periods + 1
-  - `charge[t]`                     => n_periods
-  - `discharge[t]`                  => n_periods
-    Total = n_sources * n_periods + 3 * n_periods + 1
-    = (n_sources + 3) * n_periods + 1
-    The dimensions are sized so this total lands near `target_variables`.
-
-# Arguments
-
-  - `target_variables`: Target number of decision variables
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
+Planted daily cycle for one device: in each 24-hour block (or the whole horizon
+when shorter) charge in the `k` lowest-load hours and discharge the stored
+energy in the `k` highest-load hours, scaled so the state of charge stays inside
+its bounds and returns to `e0` at the end of every block.
 """
-function StorageEnergyProblem(
-    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
-)
+function _storage_cycle(T, sysload, P_ch, P_dis, η_ch, η_dis, e0, emin, emax)
+    charge = zeros(T)
+    discharge = zeros(T)
+    block = min(T, 24)
+    k = max(1, block ÷ 6)
+    start = 1
+    while start + block - 1 <= T
+        hours = start:(start + block - 1)
+        order = sortperm(sysload[hours])
+        low = hours[order[1:k]]
+        high = hours[order[(end - k + 1):end]]
+        # Per-hour charge level a: energy in = η_ch·a·k, out = η_dis·η_ch·a·k
+        # spread over k discharge hours.
+        a = min(P_ch, P_dis / η_dis / η_ch)
+        # Keep the SoC trajectory inside its band (worst case: all charging or
+        # all discharging happens first).
+        a = min(a, 0.9 * (emax - e0) / (η_ch * k), 0.9 * (e0 - emin) / (η_ch * k))
+        a = 0.8 * max(a, 0.0)
+        charge[low] .= a
+        discharge[high] .= η_dis * η_ch * a
+        start += block
+    end
+    soc = zeros(T)
+    e = e0
+    for t in 1:T
+        e = e + η_ch * charge[t] - discharge[t] / η_dis
+        soc[t] = e
+    end
+    return charge, discharge, soc
+end
+
+"""
+    StorageDispatchProblem(target_variables, feasibility_status, seed)
+
+Build a storage-coupled dispatch instance with about `target_variables`
+columns. See the type docstring.
+"""
+function StorageDispatchProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
+    T, Z, layout, per_period = _ed_dimensions(rng, target_variables)
+    L = length(layout[3])
+    S = max(1, round(Int, per_period / 25))
+    techs, zones = _ed_sample_fleet(rng, Z, max(Z, per_period - 2L - 3S), _ -> 1)
+    margin = feasibility_status == unknown ? _e_unif(rng, (0.80, 1.12)) : _e_unif(rng, (1.12, 1.35))
+    nt = _ed_sample_core(rng, layout, T, techs, zones; margin=margin)
 
-    # Determine scale
-    if target_variables < 250
-        min_sources, max_sources = 2, 8
-        min_periods, max_periods = 4, 60
-        peak_demand_range = (10.0, 100.0)
-    elseif target_variables < 1000
-        min_sources, max_sources = 5, 12
-        min_periods, max_periods = 24, 120
-        peak_demand_range = (100.0, 1000.0)
-    else
-        min_sources, max_sources = 8, 40
-        min_periods, max_periods = 48, 300
-        peak_demand_range = (1000.0, 10000.0)
-    end
-
-    # Sizing: total = (n_sources + 3) * n_periods + 1
-    n_sources = min_sources + 1
-    n_sources = clamp(n_sources, min_sources, max_sources)
-    # Clamp to max_periods up front: otherwise an over-cap initial estimate makes
-    # the loop believe it is already on target and break before scaling n_sources.
-    n_periods = clamp(
-        round(Int, (target_variables - 1) / (n_sources + 3)), min_periods, max_periods
-    )
-
-    # Iteratively adjust to reach target (accounting for the +3 storage var sets)
-    for _ in 1:20
-        current_vars = (n_sources + 3) * n_periods + 1
-        if abs(current_vars - target_variables) / target_variables < 0.10
-            break
-        end
-        ratio = target_variables / current_vars
-        if ratio > 1.05
-            if n_periods < max_periods
-                n_periods = min(
-                    max_periods,
-                    max(min_periods, round(Int, (target_variables - 1) / (n_sources + 3))),
-                )
-            elseif n_sources < max_sources
-                n_sources = min(max_sources, n_sources + 1)
-            else
-                break
-            end
-        elseif ratio < 0.95
-            if n_periods > min_periods
-                n_periods = max(min_periods, round(Int, (target_variables - 1) / (n_sources + 3)))
-            elseif n_sources > min_sources
-                n_sources = max(min_sources, n_sources - 1)
-            else
-                break
-            end
+    # Storage fleet, sited in proportion to zonal peak load.
+    zone_peak = [maximum(nt.natural_demand[z, :]) for z in 1:Z]
+    zcdf = cumsum(zone_peak ./ sum(zone_peak))
+    storage_zone = [min(Z, searchsortedfirst(zcdf, rand(rng))) for _ in 1:S]
+    storage_kind = [rand(rng) < 0.7 ? :battery : :pumped_hydro for _ in 1:S]
+    per_device = sum(zone_peak) * _e_unif(rng, (0.10, 0.25)) / S
+    charge_max = zeros(S)
+    discharge_max = zeros(S)
+    soc_min = zeros(S)
+    soc_max = zeros(S)
+    soc_initial = zeros(S)
+    eta_ch = zeros(S)
+    eta_dis = zeros(S)
+    cycle_cost = zeros(S)
+    for s in 1:S
+        P = per_device * exp(0.4 * randn(rng))
+        if storage_kind[s] == :battery
+            hours = _e_unif(rng, (2.0, 4.0))
+            rt = _e_unif(rng, (0.85, 0.92))
+            discharge_max[s] = P
+            charge_max[s] = P
+            soc_min[s] = 0.05 * P * hours
+            cycle_cost[s] = _e_unif(rng, (2.0, 8.0))
         else
-            break
+            hours = _e_unif(rng, (6.0, 12.0))
+            rt = _e_unif(rng, (0.72, 0.80))
+            discharge_max[s] = P
+            charge_max[s] = P * _e_unif(rng, (0.85, 1.0))
+            soc_min[s] = 0.10 * P * hours
+            cycle_cost[s] = _e_unif(rng, (0.5, 2.0))
         end
-    end
-    n_periods = clamp(n_periods, min_periods, max_periods)
-
-    # Sample parameters
-    renewable_fraction_target = rand(rng, Beta(2, 3))
-    demand_variation = rand(rng, Beta(2, 3))
-    peak_demand = rand(rng, Uniform(peak_demand_range...))
-    base_generation_cost = rand(rng, LogNormal(log(50.0), 0.3))
-    renewable_cost_factor = rand(rng, Gamma(2.5, 0.4))
-    capacity_margin = max(1.15, min(1.6, rand(rng, Normal(1.3, 0.08))))
-
-    # Source types: (name, is_renewable, availability, capacity_factor, cost_factor)
-    source_types = [
-        ("coal", false, 0.95, 0.9, 1.0),
-        ("gas", false, 0.98, 0.85, 1.2),
-        ("nuclear", false, 0.92, 0.95, 0.8),
-        ("solar", true, 0.99, 0.25, 0.3),
-        ("wind", true, 0.95, 0.35, 0.4),
-        ("hydro", true, 0.90, 0.50, 0.6),
-        ("biomass", true, 0.88, 0.75, 1.1),
-    ]
-
-    # Build the generation fleet. Real grids run many units per technology, so the
-    # fleet may exceed the number of distinct catalogue types. Distinct types are
-    # used first (diversity at small sizes); beyond that, types repeat with unique
-    # names and jittered techno-economic attributes, so the fleet — and the
-    # variable count — scales with n_sources instead of being capped at the
-    # catalogue size.
-    n_renewables = clamp(ceil(Int, n_sources * renewable_fraction_target), 1, n_sources - 1)
-    n_conventional = n_sources - n_renewables
-
-    renewable_indices = findall(s -> s[2], source_types)
-    conventional_indices = findall(s -> !s[2], source_types)
-
-    name_counter = Dict{String, Int}()
-    function build_fleet(indices, n)
-        fleet = Tuple{String, String, Bool, Float64, Float64, Float64}[]
-        (isempty(indices) || n <= 0) && return fleet
-        order = shuffle(rng, indices)
-        for k in 1:n
-            base = source_types[order[((k - 1) % length(order)) + 1]]
-            name_counter[base[1]] = get(name_counter, base[1], 0) + 1
-            uname =
-                name_counter[base[1]] == 1 ? base[1] : string(base[1], "_", name_counter[base[1]])
-            push!(
-                fleet,
-                (
-                    uname,
-                    base[1],
-                    base[2],
-                    clamp(base[3] * rand(rng, Uniform(0.97, 1.03)), 0.5, 1.0),
-                    base[4] * rand(rng, Uniform(0.9, 1.1)),
-                    base[5] * rand(rng, Uniform(0.9, 1.1)),
-                ),
-            )
-        end
-        return fleet
-    end
-    selected_sources = vcat(
-        build_fleet(renewable_indices, n_renewables),
-        build_fleet(conventional_indices, n_conventional),
-    )
-    # Keep total sources consistent with the variable-count sizing
-    n_sources = length(selected_sources)
-
-    sources = [s[1] for s in selected_sources]
-    renewable_sources = [s[1] for s in selected_sources if s[3]]
-    time_periods = collect(1:n_periods)
-
-    # Generation costs
-    generation_costs = Dict{String, Float64}()
-    for (name, _technology, is_renewable, _, _, cost_factor) in selected_sources
-        base_cost = base_generation_cost * cost_factor
-        if is_renewable
-            base_cost *= renewable_cost_factor
-        end
-        variation = rand(rng, Normal(1.0, 0.12))
-        generation_costs[name] = max(5.0, base_cost * variation)
+        soc_max[s] = P * hours
+        eta_ch[s] = sqrt(rt)
+        eta_dis[s] = sqrt(rt)
+        soc_initial[s] = soc_min[s] + _e_unif(rng, (0.3, 0.6)) * (soc_max[s] - soc_min[s])
     end
 
-    # Capacities
-    capacities = Dict{String, Float64}()
-    total_required_capacity = peak_demand * capacity_margin
-    capacity_shares = Float64[]
-    for (_name, technology, _, _, _, _) in selected_sources
-        share = if technology == "coal"
-            rand(rng, Gamma(2, 0.25))
-        elseif technology == "gas"
-            rand(rng, Gamma(3, 0.15))
-        elseif technology == "nuclear"
-            rand(rng, Gamma(1.5, 0.4))
-        elseif technology in ("solar", "wind")
-            rand(rng, Beta(2, 4))
-        else
-            rand(rng, Beta(2, 5))
-        end
-        push!(capacity_shares, share)
-    end
-    total_share = sum(capacity_shares)
-    for (i, (name, _technology, _, availability, capacity_factor, _)) in enumerate(selected_sources)
-        normalized_share = capacity_shares[i] / total_share
-        effective_capacity =
-            total_required_capacity * normalized_share / (availability * capacity_factor)
-        capacities[name] = max(10.0, effective_capacity)
-    end
-
-    # Demands (daily load pattern with mild noise)
-    demands = Float64[]
-    hour_factors = [
-        0.6,
-        0.55,
-        0.5,
-        0.5,
-        0.55,
-        0.7,
-        0.85,
-        1.0,
-        0.95,
-        0.9,
-        0.85,
-        0.9,
-        0.95,
-        1.0,
-        0.9,
-        0.85,
-        0.9,
-        0.95,
-        1.0,
-        0.95,
-        0.9,
-        0.8,
-        0.7,
-        0.65,
-    ]
-    base_demand = peak_demand * (1 - demand_variation)
-    for p in 1:n_periods
-        hour_idx = 1 + (p - 1) % 24
-        pattern_demand = base_demand + (peak_demand - base_demand) * hour_factors[hour_idx]
-        noise = rand(rng, Normal(1.0, 0.05))
-        push!(demands, pattern_demand * clamp(noise, 0.7, 1.3))
-    end
-
-    renewable_fraction = renewable_fraction_target
-
-    # Battery storage parameters
-    storage_capacity = peak_demand * rand(rng, Uniform(0.5, 2.0))      # MWh
-    storage_power = storage_capacity / rand(rng, Uniform(2.0, 6.0))    # MW (2-6 hour duration)
-    storage_efficiency = rand(rng, Uniform(0.85, 0.95))
-    initial_level = storage_capacity / 2                          # start half-charged
-
-    # Feasibility handling
-    actual_status = feasibility_status
+    witness = nothing
+    certificate = nothing
     if feasibility_status == unknown
-        # Natural instance: no forced infeasibility either way.
-        actual_status = unknown
+        demand, x0 = _ed_natural(rng, nt, techs, zones, Z, T)
+        core = _ed_assemble(nt, techs, zones, Z, T, demand, x0)
+    else
+        sysload = vec(sum(nt.natural_demand; dims=1))
+        charge = zeros(S, T)
+        discharge = zeros(S, T)
+        soc = zeros(S, T)
+        net = zeros(Z, T)
+        for s in 1:S
+            c_s, d_s, e_s = _storage_cycle(
+                T, sysload, charge_max[s], discharge_max[s], eta_ch[s], eta_dis[s], soc_initial[s],
+                soc_min[s], soc_max[s],
+            )
+            charge[s, :] .= c_s
+            discharge[s, :] .= d_s
+            soc[s, :] .= e_s
+            net[storage_zone[s], :] .+= d_s .- c_s
+        end
+        demand, x0, dw = _ed_plant(rng, nt, techs, zones, Z, T; extra=net)
+        core = _ed_assemble(nt, techs, zones, Z, T, demand, x0)
+        witness = StorageDispatchWitness(dw, charge, discharge, soc)
+
+        if feasibility_status == infeasible
+            witness = nothing
+            m = _e_unif(rng, (0.06, 0.15))
+            energy = sum(eta_dis[s] * (soc_max[s] - soc_min[s]) for s in 1:S)
+            power = sum(discharge_max)
+            width = clamp(ceil(Int, (1 + m) * energy / (0.8 * power)), 1, T)
+            stress = [_ed_system_demand(core, t) - _ed_system_upper(core, t) for t in 1:T]
+            # Window of `width` consecutive hours with the largest total stress.
+            best = 1
+            bestv = -Inf
+            for s0 in 1:(T - width + 1)
+                v = sum(stress[s0:(s0 + width - 1)])
+                v > bestv && ((bestv, best) = (v, s0))
+            end
+            W = collect(best:(best + width - 1))
+            delta = (1 + m) * energy / width
+            local_dis = zeros(Z)
+            for s in 1:S
+                local_dis[storage_zone[s]] += discharge_max[s]
+            end
+            ok = true
+            for t in W
+                target = _ed_system_upper(core, t) + delta
+                ok &= _ed_spread_demand!(core, collect(1:Z), t, target; extra=local_dis)
+            end
+            ok || error("energy/storage: could not plant the energy-limited peak")
+            bound = sum(_ed_system_upper(core, t) for t in W) + energy
+            req = sum(_ed_system_demand(core, t) for t in W)
+            certificate = EnergyAggregateCertificate(:energy_limited_peak, collect(1:Z), W, bound, req)
+        end
     end
 
-    if actual_status == feasible
-        max_demand = maximum(demands)
-        # Ensure total generation can meet peak demand with margin.
-        total_capacity = sum(values(capacities))
-        if total_capacity < max_demand * 1.3
-            scale_factor = (max_demand * 1.3) / total_capacity
-            for s in sources
-                capacities[s] *= scale_factor
-            end
-        end
-        # Ensure renewable capacity alone can satisfy the renewable-fraction
-        # requirement at peak demand (renewable gen >= rf * total gen, and total
-        # gen >= demand, so renewables must be able to supply rf * demand).
-        renewable_capacity = sum(capacities[s] for s in renewable_sources)
-        required_renewable = renewable_fraction * max_demand * 1.05
-        if renewable_capacity < required_renewable
-            scale_factor = required_renewable / renewable_capacity
-            for s in renewable_sources
-                capacities[s] *= scale_factor
-            end
-        end
-    elseif actual_status == infeasible
-        # Force a deterministic capacity shortage: total generation cannot meet
-        # peak demand even with full discharge, since discharge is bounded by
-        # storage_power and the terminal SoC constraint forbids net draindown.
-        max_demand = maximum(demands)
-        # Shrink all generation so that gen + storage_power < demand with margin.
-        target_total = (max_demand - storage_power) * 0.5
-        target_total = max(target_total, 1.0)
-        total_capacity = sum(values(capacities))
-        scale_factor = target_total / total_capacity
-        for s in sources
-            capacities[s] *= scale_factor
-        end
-    end
-
-    return StorageEnergyProblem(
-        n_sources,
-        n_periods,
-        sources,
-        time_periods,
-        generation_costs,
-        capacities,
-        demands,
-        renewable_sources,
-        renewable_fraction,
-        storage_capacity,
-        storage_power,
-        storage_efficiency,
-        initial_level,
+    return StorageDispatchProblem(
+        core,
+        storage_zone,
+        storage_kind,
+        charge_max,
+        discharge_max,
+        soc_min,
+        soc_max,
+        soc_initial,
+        eta_ch,
+        eta_dis,
+        cycle_cost,
+        feasibility_status,
+        witness,
+        certificate,
     )
 end
 
 """
-    build_model(prob::StorageEnergyProblem)
+    build_model(prob::StorageDispatchProblem)
 
-Build a JuMP model for the energy-with-storage problem. Completely deterministic —
-uses only data from the struct fields.
-
-# Returns
-
-  - `model`: The JuMP model
+Dispatch core + storage charge/discharge/state-of-charge columns, the
+state-of-charge recursion, and storage net discharge in the zonal balances;
+minimize energy + wheeling + cycling cost.
 """
-function build_model(prob::StorageEnergyProblem)
+function build_model(prob::StorageDispatchProblem)
     model = Model()
+    c = prob.core
+    T = c.n_periods
+    S = length(prob.storage_zone)
+    x, _, _, balance, objective = _ed_core_variables!(model, c)
 
-    sources = prob.sources
-    T = prob.time_periods
+    @variable(model, 0 <= charge[s=1:S, t=1:T] <= prob.charge_max[s])
+    @variable(model, 0 <= discharge[s=1:S, t=1:T] <= prob.discharge_max[s])
+    # Terminal level ≥ initial level, folded into the last period's bound.
+    soc_lb = [t == T ? max(prob.soc_min[s], prob.soc_initial[s]) : prob.soc_min[s] for s in 1:S, t in 1:T]
+    @variable(model, soc_lb[s, t] <= soc[s=1:S, t=1:T] <= prob.soc_max[s])
 
-    # Variables
-    # x[s, t]: generation; storage_level[t]: state of charge (t = 0..n_periods);
-    # charge[t], discharge[t]: battery power flows.
-    # Total = n_sources*n_periods + (n_periods+1) + n_periods + n_periods
-    @variable(model, 0 <= x[s in sources, t in T] <= prob.capacities[s])
-    @variable(model, 0 <= storage_level[t in 0:prob.n_periods] <= prob.storage_capacity)
-    @variable(model, 0 <= charge[t in T] <= prob.storage_power)
-    @variable(model, 0 <= discharge[t in T] <= prob.storage_power)
+    for s in 1:S, t in 1:T
+        z = prob.storage_zone[s]
+        add_to_expression!(balance[z, t], 1.0, discharge[s, t])
+        add_to_expression!(balance[z, t], -1.0, charge[s, t])
+        add_to_expression!(objective, prob.cycle_cost[s], discharge[s, t])
+    end
+    _ed_core_rows!(model, c, x, balance)
 
-    # Objective: minimize total generation cost
-    @objective(model, Min, sum(prob.generation_costs[s] * x[s, t] for s in sources, t in T))
-
-    # Initial state of charge
-    @constraint(model, storage_level[0] == prob.initial_level)
-
-    for t in T
-        # Meet demand: generation + net discharge >= demand
-        @constraint(
-            model, sum(x[s, t] for s in sources) + discharge[t] - charge[t] >= prob.demands[t]
-        )
-
-        # Storage balance: round-trip efficiency applied on charging
+    for s in 1:S, t in 1:T
+        prev = t == 1 ? prob.soc_initial[s] : soc[s, t - 1]
         @constraint(
             model,
-            storage_level[t] ==
-                storage_level[t - 1] + prob.storage_efficiency * charge[t] - discharge[t]
+            soc[s, t] - prob.eta_charge[s] * charge[s, t] + discharge[s, t] / prob.eta_discharge[s] == prev
         )
     end
 
-    # Terminal state-of-charge: battery cannot end below where it started,
-    # preventing a "free" draindown of stored energy.
-    @constraint(model, storage_level[prob.n_periods] >= storage_level[0])
-
-    # Minimum renewable fraction each period
-    for t in T
-        @constraint(
-            model,
-            sum(x[s, t] for s in prob.renewable_sources) >=
-                prob.renewable_fraction * sum(x[s, t] for s in sources)
-        )
-    end
-
+    @objective(model, Min, objective)
     return model
 end
 
-# Register the variant
 register_variant(
     :energy,
     :storage,
-    StorageEnergyProblem,
-    "Energy generation mix with battery storage: charge/discharge, state-of-charge balance with round-trip efficiency, and a terminal SoC floor",
+    StorageDispatchProblem,
+    "Multi-area dispatch with batteries and pumped hydro: charge/discharge limits, state-of-charge recursion with round-trip losses, terminal level floor, and storage arbitrage across zones and hours",
 )
