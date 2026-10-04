@@ -409,8 +409,10 @@ then trimmed (never below that minimum) to land exactly on the target.
     night shortage ([`NurseNightShortageCertificate`]) that holds for the LP
     relaxation and needs an aggregation of many rows to see.
   - `unknown`: the same construction with natural, two-sided perturbations -
-    every slot's demand redrawn at 92-112% of the planted coverage, nurses'
-    maximum totals tightened by 0-2 shifts and night limits by 0-1 - so the
+    demand redrawn as the planted coverage times a global census factor in
+    `[1.00, 1.20]` with ±3% per-slot noise (capped one below the slot's
+    variable count), nurses' maximum totals tightened by 0-2 shifts and night
+    limits by 0-1 (never below one for a nurse who worked nights) - so the
     instance may or may not be feasible. No metadata is attached.
 """
 function NurseSchedulingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
@@ -637,17 +639,23 @@ function NurseSchedulingProblem(target_variables::Int, feasibility_status::Feasi
         end
         certificate = NurseNightShortageCertificate(night_demand, sum(night_limits))
     else
-        # Natural, two-sided perturbations of the planted instance.
+        # Natural, two-sided perturbations of the planted instance: a global
+        # census factor on demand with mild per-slot noise (never more than
+        # one below the slot's variable count, so no slot is contradictory on
+        # its own), and tighter contracts. Night limits never drop below one
+        # for a nurse who worked nights.
+        census = rand(rng, Uniform(1.0, 1.2))
         for w in 1:n_wards, d in 1:n_days, s in 1:n_shifts
             c = coverage[w, d, s]
             c == 0 && continue
-            demand[w, d, s] = max(1, round(Int, c * rand(rng, Uniform(0.92, 1.12))))
-            demand[w, d, s] = min(demand[w, d, s], length(slot_nurses[w, d, s]))
+            target_demand = round(Int, c * census * rand(rng, Uniform(0.97, 1.03)))
+            cap = max(1, length(slot_nurses[w, d, s]) - 1)
+            demand[w, d, s] = clamp(target_demand, 1, max(cap, demand[w, d, s]))
             skill_requirements[w, d, s, 1] = demand[w, d, s]
         end
         for n in 1:n_nurses
             max_shifts[n] = max(min_shifts[n], max_shifts[n] - rand(rng, 0:2))
-            night_limits[n] = max(0, night_limits[n] - rand(rng, 0:1))
+            night_limits[n] = max(min(1, night_limits[n]), night_limits[n] - rand(rng, 0:1))
         end
     end
 

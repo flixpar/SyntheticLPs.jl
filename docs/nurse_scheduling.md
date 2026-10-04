@@ -49,7 +49,7 @@ All three statuses share one construction: a greedy integral roster is built day
 
 - `feasible`: the roster satisfies every row of the integer model and is stored in `feasible_witness::NurseRosterWitness` (`assigned` variable indices plus per-nurse totals, night and weekend counts and longest runs).
 - `infeasible`: a hospital-wide night shortage. Nurses' night limits are cut (largest first, keeping one night per nurse while possible) until their sum is at most `min(0.95 * night_demand, night_demand - 1)`. Summing every night coverage row and every night-limit row (each night variable appears in exactly one of each) gives `night_demand <= sum_v x[v] <= night_capacity`, a contradiction for any `x >= 0`. `infeasibility_certificate::NurseNightShortageCertificate` records both totals. Every coverage row stays individually satisfiable, so the refutation needs simplex work rather than presolve; at 10k variables HiGHS needs 18-42k iterations.
-- `unknown`: natural, two-sided perturbations of the same instance - every slot's demand is redrawn at 92-112% of the planted coverage (capped by the slot's variable count), maximum totals are tightened by 0-2 shifts and night limits by 0-1. Both outcomes occur at every size. No metadata is attached.
+- `unknown`: natural, two-sided perturbations of the same instance - demand is the planted coverage times a global census factor in `[1.00, 1.20]` with ±3% per-slot noise (capped one below the slot's variable count, so no slot is contradictory on its own), maximum totals are tightened by 0-2 shifts and night limits by 0-1 (never below one for a nurse who worked nights). Both outcomes occur. No metadata is attached.
 
 ## Model Characteristics
 
