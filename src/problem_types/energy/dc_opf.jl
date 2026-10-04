@@ -115,7 +115,9 @@ function _dc_regional_balance(x, y, shares, fleet)
     nr = max(1, round(Int, sqrt(B / 50)))
     lo_x, hi_x = extrema(x)
     lo_y, hi_y = extrema(y)
-    region(b) = 1 + min(nr - 1, floor(Int, nr * (x[b] - lo_x) / max(hi_x - lo_x, eps()))) +
+    region(b) =
+        1 +
+        min(nr - 1, floor(Int, nr * (x[b] - lo_x) / max(hi_x - lo_x, eps()))) +
         nr * min(nr - 1, floor(Int, nr * (y[b] - lo_y) / max(hi_y - lo_y, eps())))
     R = nr * nr
     reg = [region(b) for b in 1:B]
@@ -169,7 +171,9 @@ proper subset of the pocket is short on its own (small pockets are exactly what
 presolve's bound propagation detects), only the whole pocket is. Mutates
 `demand` and the internal entries of the rating vectors.
 """
-function _dc_plant_pocket!(rng::AbstractRNG, B, from, to, gen_bus, pmax, demand, S, states; margin, certify=1)
+function _dc_plant_pocket!(
+    rng::AbstractRNG, B, from, to, gen_bus, pmax, demand, S, states; margin, certify=1
+)
     length(S) >= 2 || return nothing
     cert_rating, cert_outage = states[certify]
     cut = _grid_cut(B, from, to, S)
@@ -205,9 +209,11 @@ function _dc_plant_pocket!(rng::AbstractRNG, B, from, to, gen_bus, pmax, demand,
         haskey(pos, to[l]) && push!(incident[pos[to[l]]], l)
     end
     for (r, out) in states, (i, b) in enumerate(S)
-        cap = gen[b] + sum(
-            (internal(l) ? max(r[l], 1.2 * deficit) : r[l] for l in incident[i] if l != out); init=0.0
-        )
+        cap =
+            gen[b] + sum(
+                (internal(l) ? max(r[l], 1.2 * deficit) : r[l] for l in incident[i] if l != out);
+                init=0.0,
+            )
         cap >= 1.02 * need * w[b] / W || return nothing
     end
     for b in S
@@ -232,7 +238,9 @@ below their reference flow — and every bus is adequately connected: its incide
 110 % of both its load beyond local generation and its must-run output beyond
 local load.
 """
-function _dc_planning_ratings!(rng::AbstractRNG, B, from, to, sus, rating, fl, demand, total, ref, voltage)
+function _dc_planning_ratings!(
+    rng::AbstractRNG, B, from, to, sus, rating, fl, demand, total, ref, voltage
+)
     p = _dc_proportional_dispatch(fl.pmin, fl.pmax, total)
     θ, flow = _dc_flows(B, from, to, sus, _dc_injection(B, fl.gen_bus, p, demand), ref)
     # One system-wide planning-stress factor (below 1: the network is tighter
@@ -277,7 +285,8 @@ Bus angle bound (centiradians): 60° or 1.3 × the largest reference-dispatch
 angle (with a little noise), whichever is larger. Angles are measured in
 centiradians so that `flow[MW] = B_pu·(θ_from − θ_to)` on a 100 MVA base.
 """
-_dc_angle_limit(rng::AbstractRNG, θ) = max(100 * π / 3, 1.3 * maximum(abs, θ) * _e_unif(rng, (1.0, 1.1)))
+_dc_angle_limit(rng::AbstractRNG, θ) =
+    max(100 * π / 3, 1.3 * maximum(abs, θ) * _e_unif(rng, (1.0, 1.1)))
 
 """
     DCOptimalPowerFlowProblem(target_variables, feasibility_status, seed)
@@ -285,7 +294,9 @@ _dc_angle_limit(rng::AbstractRNG, θ) = max(100 * π / 3, 1.3 * maximum(abs, θ)
 Build a DC-OPF snapshot with exactly `target_variables` columns
 (`n_generators + n_buses + n_lines`, for targets ≥ 10). See the type docstring.
 """
-function DCOptimalPowerFlowProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function DCOptimalPowerFlowProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
     target = max(target_variables, 10)
     ef = _e_unif(rng, (1.30, 1.55))
@@ -311,11 +322,15 @@ function DCOptimalPowerFlowProblem(target_variables::Int, feasibility_status::Fe
     witness = nothing
     certificate = nothing
     if feasibility_status == unknown
-        θn = _dc_planning_ratings!(rng, B, net.from, net.to, net.sus, rating, fl, demand, total, ref, net.voltage)
+        θn = _dc_planning_ratings!(
+            rng, B, net.from, net.to, net.sus, rating, fl, demand, total, ref, net.voltage
+        )
         angle_limit = _dc_angle_limit(rng, θn)
     else
         p = _dc_proportional_dispatch(fl.pmin, fl.pmax, total)
-        θ, flow = _dc_flows(B, net.from, net.to, net.sus, _dc_injection(B, fl.gen_bus, p, demand), ref)
+        θ, flow = _dc_flows(
+            B, net.from, net.to, net.sus, _dc_injection(B, fl.gen_bus, p, demand), ref
+        )
         for l in 1:L
             rating[l] = max(rating[l], 1.15 * abs(flow[l]) + 1.0)
         end
@@ -328,9 +343,22 @@ function DCOptimalPowerFlowProblem(target_variables::Int, feasibility_status::Fe
             for _ in 1:20
                 size = clamp(round(Int, B * _e_unif(rng, (0.02, 0.06))), min(3, B - 1), B - 1)
                 S = _grid_bfs(B, net.from, net.to, loaded[rand(rng, eachindex(loaded))], size)
-                pk = _dc_plant_pocket!(rng, B, net.from, net.to, fl.gen_bus, fl.pmax, demand, S, [(rating, 0)]; margin=m)
+                pk = _dc_plant_pocket!(
+                    rng,
+                    B,
+                    net.from,
+                    net.to,
+                    fl.gen_bus,
+                    fl.pmax,
+                    demand,
+                    S,
+                    [(rating, 0)];
+                    margin=m,
+                )
                 pk === nothing && continue
-                certificate = DCPocketCertificate(pk.S, pk.cut, 0, 0, pk.local_cap, pk.imports, sum(demand[pk.S]))
+                certificate = DCPocketCertificate(
+                    pk.S, pk.cut, 0, 0, pk.local_cap, pk.imports, sum(demand[pk.S])
+                )
                 break
             end
             certificate === nothing && error("energy/dc_opf: could not plant a load pocket")
@@ -371,10 +399,24 @@ omitted), and nodal balance rows `Σ_{g at b} p[g] − Σ_{l ∋ b} B_l·(θ_b �
 (base case + each contingency) by `security_constrained_dc_opf`.
 """
 function _dc_network_block!(
-    model::Model, B, from, to, sus, limit, gen_bus, demand, ref, p, angle_limit; outage::Int=0, tag::String=""
+    model::Model,
+    B,
+    from,
+    to,
+    sus,
+    limit,
+    gen_bus,
+    demand,
+    ref,
+    p,
+    angle_limit;
+    outage::Int=0,
+    tag::String="",
 )
     L = length(from)
-    θ = @variable(model, [b=1:B], lower_bound=-angle_limit, upper_bound=angle_limit, base_name="theta$tag")
+    θ = @variable(
+        model, [b=1:B], lower_bound=-angle_limit, upper_bound=angle_limit, base_name="theta$tag"
+    )
     fix(θ[ref], 0.0; force=true)
     balance = [AffExpr(0.0) for _ in 1:B]
     for g in eachindex(p)
@@ -404,10 +446,19 @@ Generator limits, one DC network block, and minimum generation cost.
 function build_model(prob::DCOptimalPowerFlowProblem)
     model = Model()
     G = prob.n_generators
-    @variable(model, prob.pmin[g] <= p[g=1:G] <= prob.pmax[g])
+    @variable(model, prob.pmin[g] <= p[g = 1:G] <= prob.pmax[g])
     model[:theta] = _dc_network_block!(
-        model, prob.n_buses, prob.line_from, prob.line_to, prob.susceptance, prob.line_limit, prob.gen_bus,
-        prob.demand, prob.ref_bus, p, prob.angle_limit,
+        model,
+        prob.n_buses,
+        prob.line_from,
+        prob.line_to,
+        prob.susceptance,
+        prob.line_limit,
+        prob.gen_bus,
+        prob.demand,
+        prob.ref_bus,
+        p,
+        prob.angle_limit,
     )
     @objective(model, Min, sum(prob.gen_cost[g] * p[g] for g in 1:G))
     return model

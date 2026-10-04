@@ -82,7 +82,9 @@ function _ed_plant_emissions(rng::AbstractRNG, c::EnergyDispatchCore)
     lo = 1.04 * row_min + 1e-6 * bound
     hi > lo || return nothing
     cap = lo + _e_unif(rng, (0.3, 0.8)) * (hi - lo)
-    cert = EnergyAggregateCertificate(:emissions_budget, collect(1:c.n_zones), collect(1:c.n_periods), cap, bound)
+    cert = EnergyAggregateCertificate(
+        :emissions_budget, collect(1:c.n_zones), collect(1:c.n_periods), cap, bound
+    )
     return cap, cert
 end
 
@@ -92,7 +94,9 @@ end
 Build a multi-area economic dispatch instance with about `target_variables`
 columns (`n_periods × (n_units + 2·n_ties)`). See the type docstring.
 """
-function EconomicDispatchProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function EconomicDispatchProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     return _economic_dispatch(target_variables, feasibility_status, seed)
 end
 
@@ -121,7 +125,9 @@ function _economic_dispatch(
         core = _ed_assemble(nt, techs, zones, Z, T, demand, x0)
         # Business-as-usual emissions of a load-tracking dispatch without trade.
         L0 = length(nt.tie_from)
-        xb, _, _ = _ed_tracking_dispatch(rng, nt, techs, zones, T, demand, zeros(L0, T), zeros(L0, T))
+        xb, _, _ = _ed_tracking_dispatch(
+            rng, nt, techs, zones, T, demand, zeros(L0, T), zeros(L0, T)
+        )
         cap = _ed_emissions(core, xb) * _e_unif(rng, (0.60, 1.00))
     else
         demand, x0, witness = _ed_plant(rng, nt, techs, zones, Z, T)
@@ -131,7 +137,11 @@ function _economic_dispatch(
             witness = nothing
             margin_inf = _e_unif(rng, (0.06, 0.15))
             draw = rand(rng)
-            prefer_pocket = infeasible_mode === nothing ? (Z >= 3 && draw < 0.15) : infeasible_mode == :import_pocket
+            prefer_pocket = if infeasible_mode === nothing
+                (Z >= 3 && draw < 0.15)
+            else
+                infeasible_mode == :import_pocket
+            end
             if prefer_pocket
                 certificate = _ed_plant_pocket!(rng, core; margin=margin_inf)
             end

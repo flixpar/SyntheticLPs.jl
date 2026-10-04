@@ -151,7 +151,10 @@ state-action pairs (exact count `_maintenance_mdp_pairs`). Targets above
 optional service row on (`true`) or off (`false`) instead of sampling it
 (`nothing`); `ConstrainedMDP` builds its base model with `service_row=false`.
 """
-function MachineMaintenanceMDP(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int;
+function MachineMaintenanceMDP(
+    target_variables::Int,
+    feasibility_status::FeasibilityStatus,
+    seed::Int;
     service_row::Union{Nothing, Bool}=nothing,
 )
     _mdp_check_target(target_variables, "machine_maintenance")
@@ -175,12 +178,19 @@ function MachineMaintenanceMDP(target_variables::Int, feasibility_status::Feasib
     amp = 0.1 + 0.3 * rand(rng)
     shift = rand(rng)
     season = [E == 1 ? 1.0 : 1.0 + amp * sin(2π * ((e - 1) / E - shift)) for e in 1:E]
-    phase_load = 0.9 .+ 0.2 .* (season .- minimum(season)) ./ max(maximum(season) - minimum(season), 1e-9)
+    phase_load =
+        0.9 .+ 0.2 .* (season .- minimum(season)) ./ max(maximum(season) - minimum(season), 1e-9)
     margin = 50.0 + 450.0 * rand(rng)
     phase_margin = margin .* season
     efficiency_loss = 0.1 + 0.3 * rand(rng)
     # repair, preventive, corrective, emergency, wait
-    downtime = [0.1 + 0.2 * rand(rng), 0.2 + 0.3 * rand(rng), 0.5 + 0.4 * rand(rng), 0.6 + 0.4 * rand(rng), 1.0]
+    downtime = [
+        0.1 + 0.2 * rand(rng),
+        0.2 + 0.3 * rand(rng),
+        0.5 + 0.4 * rand(rng),
+        0.6 + 0.4 * rand(rng),
+        1.0,
+    ]
     part = margin * (1.0 + 3.0 * rand(rng))
     action_cost = [
         0.1 * part * (1 + rand(rng)),
@@ -189,7 +199,13 @@ function MachineMaintenanceMDP(target_variables::Int, feasibility_status::Feasib
         part * (3.0 + 3.0 * rand(rng)),
         0.0,
     ]
-    labour_hours = [4.0 + 8.0 * rand(rng), 8.0 + 8.0 * rand(rng), 16.0 + 16.0 * rand(rng), 20.0 + 20.0 * rand(rng), 0.0]
+    labour_hours = [
+        4.0 + 8.0 * rand(rng),
+        8.0 + 8.0 * rand(rng),
+        16.0 + 16.0 * rand(rng),
+        20.0 + 20.0 * rand(rng),
+        0.0,
+    ]
     spare_cost = part * (0.6 + 0.3 * rand(rng))
     spare_holding = spare_cost * (0.2 + 0.2 * rand(rng)) / 52
     order_fixed = spare_cost * (0.1 + 0.4 * rand(rng))

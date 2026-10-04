@@ -160,7 +160,9 @@ function _chebyshev_surface(rng::AbstractRNG)
     return function (x, y)
         value = trend[1] * x + trend[2] * y
         for b in 1:n_bumps
-            value += heights[b] * exp(-((x - centres[1, b])^2 + (y - centres[2, b])^2) / (2 * widths[b]^2))
+            value +=
+                heights[b] *
+                exp(-((x - centres[1, b])^2 + (y - centres[2, b])^2) / (2 * widths[b]^2))
         end
         dist = nrm[1] * x + nrm[2] * y - offset
         value += ridge_height * exp(-dist^2 / (2 * ridge_width^2))
@@ -254,8 +256,9 @@ function ChebyshevRegressionProblem(
         y[i] = clean + (2 * rand(rng, Beta(0.8, 0.8)) - 1) * eta / weights[i]
     end
     max_residual(yy) = maximum(
-        weights[i] * abs(yy[i] - dot(view(basis_vals, :, i), view(coefficients, view(basis_cols, :, i))))
-        for i in 1:n_samples
+        weights[i] *
+        abs(yy[i] - dot(view(basis_vals, :, i), view(coefficients, view(basis_cols, :, i)))) for
+        i in 1:n_samples
     )
     witness_residual = max_residual(y)
 
@@ -323,7 +326,9 @@ function build_model(prob::ChebyshevRegressionProblem)
 
     for i in 1:prob.n_samples
         w = prob.weights[i]
-        fit = _regression_affine_expr(coef, view(prob.basis_cols, :, i), w .* view(prob.basis_vals, :, i))
+        fit = _regression_affine_expr(
+            coef, view(prob.basis_cols, :, i), w .* view(prob.basis_vals, :, i)
+        )
         @constraint(model, fit + t >= w * prob.y[i])
         @constraint(model, fit - t <= w * prob.y[i])
     end

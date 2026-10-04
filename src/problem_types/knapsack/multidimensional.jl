@@ -101,9 +101,7 @@ const MDKP_GLOBAL = 3
 # Local resource index of position k (1-based) in item i's window.
 _mdkp_resource(start::Int, k::Int, n_local::Int) = mod(start + k - 2, n_local) + 1
 
-function _mdkp_local_totals(
-    sel::AbstractVector{Bool}, window_start, local_usage, n_local::Int
-)
+function _mdkp_local_totals(sel::AbstractVector{Bool}, window_start, local_usage, n_local::Int)
     tot = zeros(n_local)
     for i in eachindex(sel)
         sel[i] || continue
@@ -134,14 +132,17 @@ function MultidimensionalKnapsackProblem(
     for i in 1:n
         w = min(rand(rng, 2:6), n_local)
         local_usage[i] = [
-            size[i] * local_intensity[_mdkp_resource(window_start[i], k, n_local)] *
+            size[i] *
+            local_intensity[_mdkp_resource(window_start[i], k, n_local)] *
             exp(0.3 * randn(rng)) for k in 1:w
         ]
         for s in 1:MDKP_GLOBAL
             global_usage[s, i] = size[i] * global_intensity[s] * exp(0.3 * randn(rng))
         end
     end
-    total_use = [sum(local_usage[i]) / length(local_usage[i]) + sum(global_usage[:, i]) for i in 1:n]
+    total_use = [
+        sum(local_usage[i]) / length(local_usage[i]) + sum(global_usage[:, i]) for i in 1:n
+    ]
     mean_use = sum(total_use) / n
     values = [
         max(1.0, 50.0 * (0.4 + 0.6 * (total_use[i] / mean_use) * (0.6 + 0.8 * rand(rng)))) for
@@ -169,16 +170,15 @@ function MultidimensionalKnapsackProblem(
         local_capacity = [
             max(
                 planted_local[r],
-                min(
-                    planted_local[r] * (1.03 + 0.22 * rand(rng)) + allowance,
-                    0.9 * local_total[r],
-                ),
+                min(planted_local[r] * (1.03 + 0.22 * rand(rng)) + allowance, 0.9 * local_total[r]),
             ) for r in 1:n_local
         ]
         planted_global = [sum(global_usage[s, i] for i in 1:n if sel[i]) for s in 1:MDKP_GLOBAL]
         global_capacity = planted_global .* (1.02 .+ 0.08 .* rand(rng, MDKP_GLOBAL))
         planted_count = [count(i -> sel[i], members[p]) for p in 1:n_programs]
-        program_floor = [floor(Int, planted_count[p] * (0.5 + 0.45 * rand(rng))) for p in 1:n_programs]
+        program_floor = [
+            floor(Int, planted_count[p] * (0.5 + 0.45 * rand(rng))) for p in 1:n_programs
+        ]
         if feasibility_status == feasible
             feasible_witness = MultidimensionalSelectionWitness(findall(sel))
         else
@@ -214,8 +214,11 @@ function MultidimensionalKnapsackProblem(
         global_capacity = global_total .* (0.30 .+ 0.25 .* rand(rng, MDKP_GLOBAL))
         f = 0.35 + 0.50 * rand(rng)
         program_floor = [
-            clamp(round(Int, length(members[p]) * (f + 0.05 * (2 * rand(rng) - 1))), 0, length(members[p])) for
-            p in 1:n_programs
+            clamp(
+                round(Int, length(members[p]) * (f + 0.05 * (2 * rand(rng) - 1))),
+                0,
+                length(members[p]),
+            ) for p in 1:n_programs
         ]
     end
 

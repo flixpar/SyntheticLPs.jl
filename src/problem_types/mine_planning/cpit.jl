@@ -90,7 +90,8 @@ Construct a CPIT instance with about `target_variables` schedule variables
 (at most `MINE_PLANNING_MAX_VARIABLES`).
 """
 function MineCPITProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    target_variables >= 1 || throw(ArgumentError("target_variables must be >= 1 (got $target_variables)."))
+    target_variables >= 1 ||
+        throw(ArgumentError("target_variables must be >= 1 (got $target_variables)."))
     target_variables <= MINE_PLANNING_MAX_VARIABLES || throw(
         ArgumentError(
             "mine_planning/cpit supports at most $MINE_PLANNING_MAX_VARIABLES variables; " *
@@ -108,7 +109,16 @@ function MineCPITProblem(target_variables::Int, feasibility_status::FeasibilityS
     # Fixed destinations and block values.
     is_ore = [bm.grade[b] > _mine_mill_cutoff(econ, bm.oxide[b]) for b in 1:B]
     block_value = [
-        (is_ore[b] ? w[b] * (bm.grade[b] / 100 * _mine_mill_recovery(econ, bm.oxide[b]) * econ.price - econ.mill_cost) : 0.0) - bm.mining_cost[b] for b in 1:B
+        (
+            if is_ore[b]
+                w[b] * (
+                    bm.grade[b] / 100 * _mine_mill_recovery(econ, bm.oxide[b]) * econ.price -
+                    econ.mill_cost
+                )
+            else
+                0.0
+            end
+        ) - bm.mining_cost[b] for b in 1:B
     ]
 
     # Natural capacities: the fleet moves the pit in about T / rho periods and
@@ -150,7 +160,9 @@ function MineCPITProblem(target_variables::Int, feasibility_status::FeasibilityS
             end
         end
         min_processing = [min(min_processing[t], (1 - eps_feed) * ore_mined[t]) for t in 1:T]
-        witness = MinePlanWitness(mining_period, [is_ore[b] ? 1 : 0 for b in 1:B], zeros(0, T), zeros(0, T))
+        witness = MinePlanWitness(
+            mining_period, [is_ore[b] ? 1 : 0 for b in 1:B], zeros(0, T), zeros(0, T)
+        )
     elseif feasibility_status == infeasible
         margin = rand(rng, Uniform(0.1, 0.35))
         weights = [is_ore[b] ? w[b] : 0.0 for b in 1:B]
@@ -159,7 +171,9 @@ function MineCPITProblem(target_variables::Int, feasibility_status::FeasibilityS
         )
     else
         weights = [is_ore[b] ? w[b] : 0.0 for b in 1:B]
-        _mine_unknown_startup!(rng, bm, weights, mining_capacity, processing_capacity, min_processing)
+        _mine_unknown_startup!(
+            rng, bm, weights, mining_capacity, processing_capacity, min_processing
+        )
     end
 
     return MineCPITProblem(

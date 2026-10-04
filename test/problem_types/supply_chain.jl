@@ -27,15 +27,16 @@
         @test abs(num_variables(model) - target) <= 0.25 * target
         @test p.n_products >= 2
 
-        if status == infeasible && p.infeasibility_certificate isa SyntheticLPs.NetworkPlanningResourceCertificate
+        if status == infeasible &&
+            p.infeasibility_certificate isa SyntheticLPs.NetworkPlanningResourceCertificate
             cert = p.infeasibility_certificate
             tau = cert.period
             @test cert.cumulative_demand ≈ [sum(p.demand[:, k, 1:tau]) for k in 1:p.n_products]
             @test cert.initial_stock ≈ vec(sum(p.initial_inventory; dims=1))
             @test cert.min_resource_use == [minimum(p.resource_use[:, k]) for k in 1:p.n_products]
             required = sum(
-                cert.min_resource_use[k] * max(0.0, cert.cumulative_demand[k] - cert.initial_stock[k]) for
-                k in 1:p.n_products
+                cert.min_resource_use[k] *
+                max(0.0, cert.cumulative_demand[k] - cert.initial_stock[k]) for k in 1:p.n_products
             )
             @test cert.required_resource ≈ required
             @test cert.available_resource ≈ sum(p.plant_capacity[:, 1:tau])
@@ -423,7 +424,6 @@
     end
 end
 
-
 # Shared helpers for the multi-echelon network variants (standard, carbon,
 # multi_product): exact row formula and planted-plan evaluation.
 function scn_expected_rows(net)
@@ -438,8 +438,14 @@ function scn_expected_rows(net)
     lane_rows = count(isfinite, net.lane_capacity) * T
     mode_rows = count(mi -> all(isfinite, net.mode_capacity[mi, :]), eachindex(net.modes)) * T
     demand_rows = sum(length(net.customer_products[c]) for c in 1:net.n_customers) * T
-    return net.n_plants * T + line_rows + lane_rows + mode_rows + net.n_dcs * net.n_products * T +
-           2 * net.n_dcs * T + demand_rows + (net.design ? length(net.arcs) * T : 0)
+    return net.n_plants * T +
+           line_rows +
+           lane_rows +
+           mode_rows +
+           net.n_dcs * net.n_products * T +
+           2 * net.n_dcs * T +
+           demand_rows +
+           (net.design ? length(net.arcs) * T : 0)
 end
 
 function scn_witness_point(model, net, w)
@@ -469,14 +475,18 @@ end
     refs = ("supply_chain/standard", "supply_chain/carbon", "supply_chain/multi_product")
 
     # Exact variable and row formulas, size fidelity, and design structure.
-    for ref in refs, target in (100, 1000, 6000), status in (feasible, infeasible, unknown), seed in 0:1
+    for ref in refs,
+        target in (100, 1000, 6000), status in (feasible, infeasible, unknown),
+        seed in 0:1
+
         model, p = generate_problem(ref, target, status, seed; relax_integer=false)
         net = p.network
         @test num_variables(model) == SyntheticLPs._scn_num_variables(net)
         extra_rows = ref == "supply_chain/carbon" ? net.n_periods : 0
         @test num_constraints(model; count_variable_in_set_constraints=false) ==
             scn_expected_rows(net) + extra_rows
-        tolerance = target >= 1000 ? max(0.02 * target, net.n_products * net.n_periods) : 0.3 * target
+        tolerance =
+            target >= 1000 ? max(0.02 * target, net.n_products * net.n_periods) : 0.3 * target
         @test abs(num_variables(model) - target) <= tolerance
         @test net.design == (ref != "supply_chain/multi_product")
         @test count(is_binary, all_variables(model)) == (net.design ? net.n_dcs : 0)
@@ -547,7 +557,8 @@ end
             sum(
                 net.demand[c, k, t] * unit[c] for c in 1:net.n_customers for
                 k in net.customer_products[c] for t in 1:net.n_periods
-            ) - sum(inbound[d] * net.initial_stock[d, k] for d in 1:net.n_dcs, k in 1:net.n_products)
+            ) -
+            sum(inbound[d] * net.initial_stock[d, k] for d in 1:net.n_dcs, k in 1:net.n_products)
         @test cert.lower_bound ≈ bound
         @test cert.budget ≈ sum(p.period_budget)
         @test p.carbon_budget ≈ cert.budget
@@ -658,7 +669,9 @@ end
 
 @testset "supply_chain/single_source sizing and structure" begin
     for target in (500, 2_000, 20_000), status in (feasible, infeasible, unknown), seed in 0:1
-        model, p = generate_problem("supply_chain/single_source", target, status, seed; relax_integer=false)
+        model, p = generate_problem(
+            "supply_chain/single_source", target, status, seed; relax_integer=false
+        )
         n_lanes = length(p.transport_costs)
         # Exact column formula: y, z, and one x per available lane.
         @test num_variables(model) == p.n_facilities * (1 + p.n_customers) + n_lanes

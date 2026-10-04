@@ -406,9 +406,7 @@ function _rt_plan_dimensions(
     # The mean-tail formulation spends two columns per voxel (dose and tail
     # excess), so it gets a smaller beamlet share to keep voxels >> beamlets.
     beamlet_share = formulation == :mean_tail_dose ? 0.10 : 0.16
-    center = clamp(
-        round(Int, beamlet_share * target / n_beams), 1, _RT_MAX_BEAMLETS_PER_BEAM
-    )
+    center = clamp(round(Int, beamlet_share * target / n_beams), 1, _RT_MAX_BEAMLETS_PER_BEAM)
     candidates = unique(
         vcat(1, collect(max(1, center - 100):min(center + 100, _RT_MAX_BEAMLETS_PER_BEAM)))
     )
@@ -1090,9 +1088,7 @@ given dose matrix, the weights are a convex combination, the cited voxels
 belong to the right structures, and the hard bounds stored on `problem`
 contradict each other with a relative margin of at least 10%.
 """
-function _rt_certificate_is_valid(
-    problem; matrices=_rt_scenario_matrices(problem)
-)
+function _rt_certificate_is_valid(problem; matrices=_rt_scenario_matrices(problem))
     certificate = problem.infeasibility_certificate
     certificate === nothing && return false
     case = problem.case_data
@@ -1117,8 +1113,11 @@ function _rt_certificate_is_valid(
 end
 
 _rt_scenario_matrices(problem) =
-    hasproperty(problem, :scenario_dose_matrices) ? problem.scenario_dose_matrices :
-    [problem.case_data.dose_matrix]
+    if hasproperty(problem, :scenario_dose_matrices)
+        problem.scenario_dose_matrices
+    else
+        [problem.case_data.dose_matrix]
+    end
 
 function _rt_witness_is_valid(problem; atol::Float64=1.0e-9)
     witness = problem.feasible_witness
@@ -1194,8 +1193,9 @@ function _rt_desired_dose(spec, case::RadiotherapyCaseData, structure_max)
     desired = zeros(Float64, size(case.voxel_locations_cm, 1))
     desired[case.structure_voxels[:ptv]] .= 1.0
     for structure in spec.structures[2:end]
-        desired[case.structure_voxels[structure]] .=
-            min(0.72 * spec.clinical_caps[structure], 0.9 * structure_max[structure])
+        desired[case.structure_voxels[structure]] .= min(
+            0.72 * spec.clinical_caps[structure], 0.9 * structure_max[structure]
+        )
     end
     return desired
 end

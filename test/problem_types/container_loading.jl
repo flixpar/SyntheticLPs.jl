@@ -64,36 +64,52 @@ end
     end
 
     @testset "two_dimensional_bin_packing" begin
-        @test_nowarn generate_problem("container_loading/two_dimensional_bin_packing", 2, unknown, 1)
+        @test_nowarn generate_problem(
+            "container_loading/two_dimensional_bin_packing", 2, unknown, 1
+        )
         for target in (4, 30, 300, 3000, 20_000), status in (feasible, infeasible, unknown)
-            m, p = generate_problem("container_loading/two_dimensional_bin_packing", target, status, 2)
+            m, p = generate_problem(
+                "container_loading/two_dimensional_bin_packing", target, status, 2
+            )
             P, Q = length(p.strip_class), length(p.sheet_type)
             @test num_variables(m) == P + Q == max(target, 4)
             S, K = length(p.sheet_widths), length(p.class_heights)
-            used_cs = length(unique(vcat(
-                [(p.strip_class[q], p.strip_sheet[q]) for q in 1:P],
-                [(c, p.sheet_type[q]) for q in 1:Q for c in p.sheet_classes[q]],
-            )))
+            used_cs = length(
+                unique(
+                    vcat(
+                        [(p.strip_class[q], p.strip_sheet[q]) for q in 1:P],
+                        [(c, p.sheet_type[q]) for q in 1:Q for c in p.sheet_classes[q]],
+                    ),
+                ),
+            )
             @test cl_rows(m) == length(p.demands) + used_cs + length(unique(p.sheet_type))
             @test p.class_heights == sort(unique(p.item_heights))
             # Strip patterns fit across the sheet width with items no taller
             # than the class; sheet patterns stack strips within the height.
             for q in 1:P
-                @test all(p.item_heights[i] <= p.class_heights[p.strip_class[q]] for i in p.strip_items[q])
-                @test sum(p.item_widths[p.strip_items[q]] .* p.strip_counts[q]) <= p.sheet_widths[p.strip_sheet[q]]
+                @test all(
+                    p.item_heights[i] <= p.class_heights[p.strip_class[q]] for i in p.strip_items[q]
+                )
+                @test sum(p.item_widths[p.strip_items[q]] .* p.strip_counts[q]) <=
+                    p.sheet_widths[p.strip_sheet[q]]
             end
             for q in 1:Q
-                @test sum(p.class_heights[p.sheet_classes[q]] .* p.sheet_counts[q]) <= p.sheet_heights[p.sheet_type[q]]
+                @test sum(p.class_heights[p.sheet_classes[q]] .* p.sheet_counts[q]) <=
+                    p.sheet_heights[p.sheet_type[q]]
             end
             @test allunique(zip(p.strip_class, p.strip_sheet, p.strip_items, p.strip_counts))
             @test allunique(zip(p.sheet_type, p.sheet_classes, p.sheet_counts))
         end
-        _, big = generate_problem("container_loading/two_dimensional_bin_packing", 100_000, unknown, 0)
+        _, big = generate_problem(
+            "container_loading/two_dimensional_bin_packing", 100_000, unknown, 0
+        )
         @test length(big.strip_class) + length(big.sheet_type) == 100_000
         @test length(big.demands) >= 0.04 * 100_000
 
         for target in (60, 900, 5000), seed in 0:2
-            m, p = generate_problem("container_loading/two_dimensional_bin_packing", target, feasible, seed)
+            m, p = generate_problem(
+                "container_loading/two_dimensional_bin_packing", target, feasible, seed
+            )
             w = p.feasible_witness
             point = Dict(v => 0.0 for v in all_variables(m))
             for i in eachindex(p.demands)
@@ -109,7 +125,9 @@ end
             @test isempty(primal_feasibility_report(m, point; atol=1e-6))
         end
         for target in (60, 900, 5000), seed in 0:2
-            _, p = generate_problem("container_loading/two_dimensional_bin_packing", target, infeasible, seed)
+            _, p = generate_problem(
+                "container_loading/two_dimensional_bin_packing", target, infeasible, seed
+            )
             c = p.infeasibility_certificate
             @test c.demand_area ≈ sum(p.item_widths .* p.item_heights .* p.demands)
             @test c.supply_area ≈ sum(p.sheet_widths .* p.sheet_heights .* p.availability)

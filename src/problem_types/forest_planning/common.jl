@@ -59,22 +59,81 @@ end
 
 const FOREST_TYPE_CATALOG = Dict{Symbol, ForestTypeSpec}(
     # Pacific Northwest
-    :douglas_fir => ForestTypeSpec(:douglas_fir, true, 1100.0, 0.030, 2.8, 35.0, (20.0, 30.0), 0.85, 35.0, 6.0, 8.0, 1.15),
-    :western_hemlock => ForestTypeSpec(:western_hemlock, true, 1000.0, 0.028, 2.6, 40.0, (20.0, 30.0), 0.80, 40.0, 7.0, 5.0, 0.85),
-    :red_alder => ForestTypeSpec(:red_alder, false, 550.0, 0.060, 2.0, 25.0, (0.0, 0.0), 0.50, 30.0, 5.0, 3.0, 0.90),
+    :douglas_fir => ForestTypeSpec(
+        :douglas_fir, true, 1100.0, 0.030, 2.8, 35.0, (20.0, 30.0), 0.85, 35.0, 6.0, 8.0, 1.15
+    ),
+    :western_hemlock => ForestTypeSpec(
+        :western_hemlock,
+        true,
+        1000.0,
+        0.028,
+        2.6,
+        40.0,
+        (20.0, 30.0),
+        0.80,
+        40.0,
+        7.0,
+        5.0,
+        0.85,
+    ),
+    :red_alder => ForestTypeSpec(
+        :red_alder, false, 550.0, 0.060, 2.0, 25.0, (0.0, 0.0), 0.50, 30.0, 5.0, 3.0, 0.90
+    ),
     # Southeast
-    :loblolly_pine => ForestTypeSpec(:loblolly_pine, true, 500.0, 0.070, 2.5, 15.0, (12.0, 18.0), 0.70, 25.0, 4.0, 4.0, 1.05),
-    :slash_pine => ForestTypeSpec(:slash_pine, true, 430.0, 0.065, 2.4, 15.0, (12.0, 18.0), 0.65, 26.0, 4.0, 4.0, 0.95),
-    :upland_hardwood => ForestTypeSpec(:upland_hardwood, false, 330.0, 0.030, 2.2, 40.0, (0.0, 0.0), 0.55, 50.0, 8.0, 3.0, 1.00),
+    :loblolly_pine => ForestTypeSpec(
+        :loblolly_pine, true, 500.0, 0.070, 2.5, 15.0, (12.0, 18.0), 0.70, 25.0, 4.0, 4.0, 1.05
+    ),
+    :slash_pine => ForestTypeSpec(
+        :slash_pine, true, 430.0, 0.065, 2.4, 15.0, (12.0, 18.0), 0.65, 26.0, 4.0, 4.0, 0.95
+    ),
+    :upland_hardwood => ForestTypeSpec(
+        :upland_hardwood, false, 330.0, 0.030, 2.2, 40.0, (0.0, 0.0), 0.55, 50.0, 8.0, 3.0, 1.00
+    ),
     # Lake States
-    :aspen => ForestTypeSpec(:aspen, false, 300.0, 0.060, 2.3, 30.0, (0.0, 0.0), 0.25, 40.0, 6.0, 1.0, 0.70),
-    :northern_hardwood => ForestTypeSpec(:northern_hardwood, false, 350.0, 0.025, 2.0, 50.0, (0.0, 0.0), 0.60, 60.0, 9.0, 6.0, 1.20),
-    :red_pine => ForestTypeSpec(:red_pine, true, 600.0, 0.035, 2.5, 35.0, (25.0, 40.0), 0.80, 40.0, 6.0, 8.0, 1.00),
-    :spruce_fir => ForestTypeSpec(:spruce_fir, true, 380.0, 0.030, 2.6, 45.0, (0.0, 0.0), 0.55, 55.0, 8.0, 6.0, 0.90),
+    :aspen => ForestTypeSpec(
+        :aspen, false, 300.0, 0.060, 2.3, 30.0, (0.0, 0.0), 0.25, 40.0, 6.0, 1.0, 0.70
+    ),
+    :northern_hardwood => ForestTypeSpec(
+        :northern_hardwood,
+        false,
+        350.0,
+        0.025,
+        2.0,
+        50.0,
+        (0.0, 0.0),
+        0.60,
+        60.0,
+        9.0,
+        6.0,
+        1.20,
+    ),
+    :red_pine => ForestTypeSpec(
+        :red_pine, true, 600.0, 0.035, 2.5, 35.0, (25.0, 40.0), 0.80, 40.0, 6.0, 8.0, 1.00
+    ),
+    :spruce_fir => ForestTypeSpec(
+        :spruce_fir, true, 380.0, 0.030, 2.6, 45.0, (0.0, 0.0), 0.55, 55.0, 8.0, 6.0, 0.90
+    ),
     # Interior West
-    :ponderosa_pine => ForestTypeSpec(:ponderosa_pine, true, 420.0, 0.022, 2.3, 50.0, (30.0, 45.0), 0.85, 50.0, 8.0, 10.0, 1.10),
-    :lodgepole_pine => ForestTypeSpec(:lodgepole_pine, true, 380.0, 0.030, 2.5, 50.0, (0.0, 0.0), 0.60, 55.0, 8.0, 5.0, 0.85),
-    :mixed_conifer => ForestTypeSpec(:mixed_conifer, true, 650.0, 0.025, 2.5, 50.0, (30.0, 50.0), 0.75, 50.0, 8.0, 8.0, 1.00),
+    :ponderosa_pine => ForestTypeSpec(
+        :ponderosa_pine,
+        true,
+        420.0,
+        0.022,
+        2.3,
+        50.0,
+        (30.0, 45.0),
+        0.85,
+        50.0,
+        8.0,
+        10.0,
+        1.10,
+    ),
+    :lodgepole_pine => ForestTypeSpec(
+        :lodgepole_pine, true, 380.0, 0.030, 2.5, 50.0, (0.0, 0.0), 0.60, 55.0, 8.0, 5.0, 0.85
+    ),
+    :mixed_conifer => ForestTypeSpec(
+        :mixed_conifer, true, 650.0, 0.025, 2.5, 50.0, (30.0, 50.0), 0.75, 50.0, 8.0, 8.0, 1.00
+    ),
 )
 
 """
@@ -100,14 +159,58 @@ struct ForestRegionSpec
 end
 
 const FOREST_REGIONS = (
-    ForestRegionSpec(:pacific_northwest, 10, [:douglas_fir, :western_hemlock, :red_alder], [0.55, 0.30, 0.15],
-        :douglas_fir, [:red_alder], (60.0, 85.0), (45.0, 70.0), (8.0, 15.0), (150.0, 300.0), (700.0, 1200.0)),
-    ForestRegionSpec(:southeast, 5, [:loblolly_pine, :slash_pine, :upland_hardwood], [0.50, 0.25, 0.25],
-        :loblolly_pine, [:upland_hardwood], (25.0, 40.0), (25.0, 45.0), (8.0, 14.0), (100.0, 250.0), (450.0, 800.0)),
-    ForestRegionSpec(:lake_states, 10, [:aspen, :northern_hardwood, :red_pine, :spruce_fir], [0.35, 0.30, 0.20, 0.15],
-        :red_pine, [:aspen], (30.0, 50.0), (40.0, 80.0), (10.0, 20.0), (80.0, 200.0), (500.0, 900.0)),
-    ForestRegionSpec(:interior_west, 10, [:ponderosa_pine, :lodgepole_pine, :mixed_conifer], [0.40, 0.30, 0.30],
-        :ponderosa_pine, [:lodgepole_pine], (25.0, 45.0), (20.0, 35.0), (3.0, 10.0), (120.0, 250.0), (600.0, 1100.0)),
+    ForestRegionSpec(
+        :pacific_northwest,
+        10,
+        [:douglas_fir, :western_hemlock, :red_alder],
+        [0.55, 0.30, 0.15],
+        :douglas_fir,
+        [:red_alder],
+        (60.0, 85.0),
+        (45.0, 70.0),
+        (8.0, 15.0),
+        (150.0, 300.0),
+        (700.0, 1200.0),
+    ),
+    ForestRegionSpec(
+        :southeast,
+        5,
+        [:loblolly_pine, :slash_pine, :upland_hardwood],
+        [0.50, 0.25, 0.25],
+        :loblolly_pine,
+        [:upland_hardwood],
+        (25.0, 40.0),
+        (25.0, 45.0),
+        (8.0, 14.0),
+        (100.0, 250.0),
+        (450.0, 800.0),
+    ),
+    ForestRegionSpec(
+        :lake_states,
+        10,
+        [:aspen, :northern_hardwood, :red_pine, :spruce_fir],
+        [0.35, 0.30, 0.20, 0.15],
+        :red_pine,
+        [:aspen],
+        (30.0, 50.0),
+        (40.0, 80.0),
+        (10.0, 20.0),
+        (80.0, 200.0),
+        (500.0, 900.0),
+    ),
+    ForestRegionSpec(
+        :interior_west,
+        10,
+        [:ponderosa_pine, :lodgepole_pine, :mixed_conifer],
+        [0.40, 0.30, 0.30],
+        :ponderosa_pine,
+        [:lodgepole_pine],
+        (25.0, 45.0),
+        (20.0, 35.0),
+        (3.0, 10.0),
+        (120.0, 250.0),
+        (600.0, 1100.0),
+    ),
 )
 
 """
@@ -363,8 +466,13 @@ function _forest_model!(b::_ForestBuilder, ti::Int, site::Int, regime::Symbol)
     gain = regime == :planted ? b.planted_gain : 1.0
     lag = regime == :natural ? spec.natural_lag : 0.0
     sm = ForestStandModel(
-        ti, site, regime, spec.max_volume * FOREST_SITE_VOLUME[site] * gain,
-        spec.growth_rate * FOREST_SITE_GROWTH[site], spec.shape, lag,
+        ti,
+        site,
+        regime,
+        spec.max_volume * FOREST_SITE_VOLUME[site] * gain,
+        spec.growth_rate * FOREST_SITE_GROWTH[site],
+        spec.shape,
+        lag,
     )
     push!(b.models, sm)
     idx = length(b.models)
@@ -398,7 +506,8 @@ function _forest_same_regime_option(b::_ForestBuilder, m::Int)
     sm = b.models[m]
     for (r, tgt) in enumerate(b.regen_targets[m])
         tm = b.models[tgt]
-        if tm.type_index == sm.type_index && tm.regime == (sm.regime == :planted ? :planted : :natural)
+        if tm.type_index == sm.type_index &&
+            tm.regime == (sm.regime == :planted ? :planted : :natural)
             return r
         end
     end
@@ -433,7 +542,9 @@ function _forest_terminal_regen_keep(b::_ForestBuilder, m::Int, t::Int, candidat
         candidates[r] || continue
         for q in 1:nopt
             (q == r || !candidates[q]) && continue
-            if cost[q] <= cost[r] && ei[q] >= ei[r] - FOREST_REGEN_EI_TOL && (cost[q] < cost[r] || q < r)
+            if cost[q] <= cost[r] &&
+                ei[q] >= ei[r] - FOREST_REGEN_EI_TOL &&
+                (cost[q] < cost[r] || q < r)
                 keep[r] = false
                 break
             end
@@ -512,7 +623,9 @@ function _forest_thin_event!(d::_ForestColumnDraft, b::_ForestBuilder, m::Int, t
     kp = b.product_index[3]
     _forest_draft_add!(d, t, ks, saw)
     _forest_draft_add!(d, t, kp, pulp)
-    revenue = 0.75 * (saw * b.saw_price[sm.type_index] + pulp * b.pulp_price[sm.type_index]) - b.thinning_cost
+    revenue =
+        0.75 * (saw * b.saw_price[sm.type_index] + pulp * b.pulp_price[sm.type_index]) -
+        b.thinning_cost
     d.npv += b.discount[t] * revenue
     return nothing
 end
@@ -525,7 +638,10 @@ function _forest_standing(b::_ForestBuilder, m::Int, age::Float64, thin_age::Flo
     sm = b.models[m]
     v = _forest_volume(sm, age)
     if thin_age >= 0.0
-        v -= b.thinning_fraction * _forest_volume(sm, thin_age) * exp(-b.thinning_recovery * (age - thin_age))
+        v -=
+            b.thinning_fraction *
+            _forest_volume(sm, thin_age) *
+            exp(-b.thinning_recovery * (age - thin_age))
     end
     return v < FOREST_MIN_MERCH ? 0.0 : v
 end
@@ -565,8 +681,15 @@ const FOREST_UNIT = 1000.0
 
 "Append a finished draft to the column store (rescaled by `FOREST_UNIT`); returns the column index."
 function _forest_push_column!(
-    b::_ForestBuilder, d::_ForestColumnDraft, src::Int, dest::Int, thin::Int, cut1::Int, r1::Int,
-    cut2::Int, ei::Float64,
+    b::_ForestBuilder,
+    d::_ForestColumnDraft,
+    src::Int,
+    dest::Int,
+    thin::Int,
+    cut1::Int,
+    r1::Int,
+    cut2::Int,
+    ei::Float64,
 )
     push!(b.col_source, Int32(src))
     push!(b.col_dest, Int32(dest))
@@ -658,25 +781,67 @@ function _forest_builder(rng::AbstractRNG, target::Int)
     sw_saw = _forest_uniform(rng, region.softwood_saw_price)
     hw_saw = _forest_uniform(rng, region.hardwood_saw_price)
     pulp = _forest_uniform(rng, region.pulp_price)
-    saw_price = [(s.softwood ? sw_saw : hw_saw) * s.price_premium * (0.92 + 0.16 * rand(rng)) for s in types]
+    saw_price = [
+        (s.softwood ? sw_saw : hw_saw) * s.price_premium * (0.92 + 0.16 * rand(rng)) for s in types
+    ]
     pulp_price = [pulp * (0.9 + 0.2 * rand(rng)) for _ in types]
     nat_cost = [_forest_uniform(rng, region.natural_regen_cost) for _ in types]
     plant_cost = [_forest_uniform(rng, region.plant_cost) for _ in types]
     conversion_cost = 1.25 * _forest_uniform(rng, region.plant_cost)
 
     return _ForestBuilder(
-        region, L, T, discount, r, product_index, products, types, type_lookup,
-        ForestStandModel[], Dict{Tuple{Int, Int, Symbol}, Int}(), Vector{Int}[], Vector{Float64}[],
-        1.10 + 0.15 * rand(rng), nat_cost, plant_cost, conversion_cost, saw_price, pulp_price,
+        region,
+        L,
+        T,
+        discount,
+        r,
+        product_index,
+        products,
+        types,
+        type_lookup,
+        ForestStandModel[],
+        Dict{Tuple{Int, Int, Symbol}, Int}(),
+        Vector{Int}[],
+        Vector{Float64}[],
+        1.10 + 0.15 * rand(rng),
+        nat_cost,
+        plant_cost,
+        conversion_cost,
+        saw_price,
+        pulp_price,
         80.0 + 120.0 * rand(rng),                 # clearcut fixed cost $/ha (roads, layout, admin)
         60.0 + 60.0 * rand(rng),                  # thinning fixed cost $/ha
         0.25 + 0.10 * rand(rng),                  # thinning removal fraction
         0.02 + 0.02 * rand(rng),                  # thinning recovery rate (1/yr)
-        Int[], Int[], Float64[], Float64[], Float64[], Float64[],
+        Int[],
+        Int[],
+        Float64[],
+        Float64[],
+        Float64[],
+        Float64[],
         max(1, ceil(Int, 20 / L)),                # 20-year green-up / hydrologic recovery window
-        Int[], Int[], Int[], Dict{Tuple{Int, Int, Int}, Int}(), Int[], Int[],
-        Int32[], Int32[], Int16[], Int16[], Int8[], Int16[], [1], Int16[], Int8[], Float64[],
-        Float64[], Float64[], Float64[], Float64[], Dict{Int, Int}(), Int[],
+        Int[],
+        Int[],
+        Int[],
+        Dict{Tuple{Int, Int, Int}, Int}(),
+        Int[],
+        Int[],
+        Int32[],
+        Int32[],
+        Int16[],
+        Int16[],
+        Int8[],
+        Int16[],
+        [1],
+        Int16[],
+        Int8[],
+        Float64[],
+        Float64[],
+        Float64[],
+        Float64[],
+        Float64[],
+        Dict{Int, Int}(),
+        Int[],
     )
 end
 
@@ -747,7 +912,11 @@ Commit a sampled stratum (opening watershed `zone` on first use with
 green-up fraction `greenup`); returns the stratum index.
 """
 function _forest_commit_stratum!(
-    rng::AbstractRNG, b::_ForestBuilder, zone::Int, greenup::Float64, cand::Tuple{Int, Int, Int, Float64}
+    rng::AbstractRNG,
+    b::_ForestBuilder,
+    zone::Int,
+    greenup::Float64,
+    cand::Tuple{Int, Int, Int, Float64},
 )
     if zone > length(b.zone_area)
         push!(b.zone_area, 0.0)
@@ -821,8 +990,13 @@ DP values `π` for inventory weight `μ`: `π[src] = max_j (CH[j] + μ EI[j] + �
 over the columns of `src`. Returns `(π, bound = Σ_s area[s] π[s])`.
 """
 function _forest_dp_values(
-    idx::_ForestSourceIndex, col_dest, n_strata::Int, ch::Vector{Float64}, ei::Vector{Float64},
-    areas::Vector{Float64}, mu::Float64,
+    idx::_ForestSourceIndex,
+    col_dest,
+    n_strata::Int,
+    ch::Vector{Float64},
+    ei::Vector{Float64},
+    areas::Vector{Float64},
+    mu::Float64,
 )
     pi_vals = fill(-Inf, length(idx.ptr) - 1)
     for src in idx.order
@@ -990,7 +1164,11 @@ function _forest_harvest_option(b::_ForestBuilder, F::Symbol, p::_ForestParcel, 
         return 0, 0.0
     else
         src = p.src
-        m = src <= length(b.stratum_area) ? b.stratum_model[src] : b.node_model[src - length(b.stratum_area)]
+        m = if src <= length(b.stratum_area)
+            b.stratum_model[src]
+        else
+            b.node_model[src - length(b.stratum_area)]
+        end
         pref = b.source_pref[src]
         nopt = length(b.regen_targets[m])
         for k in 0:(nopt - 1)
@@ -1022,7 +1200,9 @@ end
 Find the largest flat flow the area-control heuristic sustains (bisection on
 `V`), then plant a schedule at `λ ∈ [0.70, 0.95]` of it.
 """
-function _forest_plant_witness(rng::AbstractRNG, b::_ForestBuilder, F::Symbol, cumulative_max::Float64)
+function _forest_plant_witness(
+    rng::AbstractRNG, b::_ForestBuilder, F::Symbol, cumulative_max::Float64
+)
     caps = [0.9 * b.greenup_fraction[z] * b.zone_area[z] for z in eachindex(b.zone_area)]
     lo, hi = 0.0, cumulative_max / b.T
     for _ in 1:22
@@ -1066,8 +1246,11 @@ function _forest_finalize(
 
     a = T * sum(base_min_supply)
     bb = base_ei
-    _, ei_max = _forest_dp_values(idx, b.col_dest, S, zeros(length(ch)), b.col_ei, b.stratum_area, 1.0)
-    ratio(mu) = _forest_dp_values(idx, b.col_dest, S, ch, b.col_ei, b.stratum_area, mu)[2] / (a + mu * bb)
+    _, ei_max = _forest_dp_values(
+        idx, b.col_dest, S, zeros(length(ch)), b.col_ei, b.stratum_area, 1.0
+    )
+    ratio(mu) =
+        _forest_dp_values(idx, b.col_dest, S, ch, b.col_ei, b.stratum_area, mu)[2] / (a + mu * bb)
     mu_star, theta_star = _forest_minimize_mu(ratio)
     theta_star >= 1.0 - 1.0e-9 ||
         error("forest_planning: Lagrangian bound below the planted schedule (internal error)")
@@ -1101,19 +1284,20 @@ function _forest_finalize(
             # its own (a single-row contradiction presolve detects). Hold
             # inventory just below its maximum and raise supply instead.
             inventory_scale = max(1.0, ei_cap)
-            g(mu) = (1.0 + margin) * _forest_dp_values(idx, b.col_dest, S, ch, b.col_ei, b.stratum_area, mu)[2] -
+            g(mu) =
+                (1.0 + margin) *
+                _forest_dp_values(idx, b.col_dest, S, ch, b.col_ei, b.stratum_area, mu)[2] -
                 mu * bb * inventory_scale
             mu_c, gval = _forest_minimize_mu(g)
             supply_scale = max(1.0, gval / a)
         end
         pi_vals, bound = _forest_dp_values(idx, b.col_dest, S, ch, b.col_ei, b.stratum_area, mu_c)
         required = a * supply_scale + mu_c * bb * inventory_scale
-        bound * (1.0 + 0.5 * margin) <= required ||
-            error(
-                "forest_planning: infeasibility certificate lacks margin (internal error: " *
-                "bound=$bound required=$required a=$a b=$bb mu=$mu_c theta=$theta_star " *
-                "scales=($supply_scale, $inventory_scale) ei_cap=$ei_cap)",
-            )
+        bound * (1.0 + 0.5 * margin) <= required || error(
+            "forest_planning: infeasibility certificate lacks margin (internal error: " *
+            "bound=$bound required=$required a=$a b=$bb mu=$mu_c theta=$theta_star " *
+            "scales=($supply_scale, $inventory_scale) ei_cap=$ei_cap)",
+        )
         certificate = ForestPlanningCertificate(mu_c, pi_vals, bound, required)
     else
         # Natural contract levels drawn on a continuum from the planted
@@ -1128,14 +1312,55 @@ function _forest_finalize(
     min_ei = inventory_scale * base_ei
 
     return ForestPlanningProblem{F}(
-        b.region.name, b.L, T, b.discount_rate, b.products, b.types, b.models, b.regen_targets,
-        b.regen_costs, b.saw_price, b.pulp_price, b.harvest_cost, b.thinning_cost,
-        b.thinning_fraction, b.thinning_recovery, b.stratum_zone, b.stratum_model, b.stratum_age,
-        b.stratum_area, b.zone_area, b.greenup_fraction, b.greenup_window, b.node_model,
-        b.node_zone, b.node_period, b.col_source, b.col_dest, b.col_thin, b.col_cut1,
-        b.col_regen1, b.col_cut2, b.vol_ptr, b.vol_period, b.vol_product, b.vol_amount,
-        b.col_npv, b.col_ei, delta, base_min_supply, base_ei, supply_scale, inventory_scale,
-        theta_star, min_supply, max_supply, min_ei, witness, certificate, status,
+        b.region.name,
+        b.L,
+        T,
+        b.discount_rate,
+        b.products,
+        b.types,
+        b.models,
+        b.regen_targets,
+        b.regen_costs,
+        b.saw_price,
+        b.pulp_price,
+        b.harvest_cost,
+        b.thinning_cost,
+        b.thinning_fraction,
+        b.thinning_recovery,
+        b.stratum_zone,
+        b.stratum_model,
+        b.stratum_age,
+        b.stratum_area,
+        b.zone_area,
+        b.greenup_fraction,
+        b.greenup_window,
+        b.node_model,
+        b.node_zone,
+        b.node_period,
+        b.col_source,
+        b.col_dest,
+        b.col_thin,
+        b.col_cut1,
+        b.col_regen1,
+        b.col_cut2,
+        b.vol_ptr,
+        b.vol_period,
+        b.vol_product,
+        b.vol_amount,
+        b.col_npv,
+        b.col_ei,
+        delta,
+        base_min_supply,
+        base_ei,
+        supply_scale,
+        inventory_scale,
+        theta_star,
+        min_supply,
+        max_supply,
+        min_ei,
+        witness,
+        certificate,
+        status,
     )
 end
 
@@ -1156,7 +1381,8 @@ function _forest_start(target_variables::Int, seed::Int)
 end
 
 "Total columns (area variables plus `harvest[t, k]` accounting variables)."
-forest_num_variables(prob::ForestPlanningProblem) = length(prob.col_source) + prob.n_periods * length(prob.products)
+forest_num_variables(prob::ForestPlanningProblem) =
+    length(prob.col_source) + prob.n_periods * length(prob.products)
 
 # -----------------------------------------------------------------------------
 # Model
@@ -1183,7 +1409,7 @@ function build_model(prob::ForestPlanningProblem)
     w = prob.greenup_window
 
     @variable(model, area[1:n] >= 0)
-    @variable(model, prob.min_supply[k] <= harvest[t=1:T, k=1:K] <= prob.max_supply[k])
+    @variable(model, prob.min_supply[k] <= harvest[t = 1:T, k = 1:K] <= prob.max_supply[k])
     @objective(model, Max, sum(prob.col_npv[j] * area[j] for j in 1:n))
 
     src_expr = [AffExpr(0.0) for _ in 1:(S + N)]
@@ -1197,7 +1423,9 @@ function build_model(prob::ForestPlanningProblem)
         d = Int(prob.col_dest[j])
         d > 0 && add_to_expression!(src_expr[S + d], -1.0, v)
         for e in prob.vol_ptr[j]:(prob.vol_ptr[j + 1] - 1)
-            add_to_expression!(hexpr[prob.vol_period[e], prob.vol_product[e]], prob.vol_amount[e], v)
+            add_to_expression!(
+                hexpr[prob.vol_period[e], prob.vol_product[e]], prob.vol_amount[e], v
+            )
         end
         z = src <= S ? prob.stratum_zone[src] : prob.node_zone[src - S]
         for c in (Int(prob.col_cut1[j]), Int(prob.col_cut2[j]))
@@ -1210,21 +1438,23 @@ function build_model(prob::ForestPlanningProblem)
         ei != 0.0 && add_to_expression!(ei_expr, ei, v)
     end
 
-    @constraint(model, stratum_area[s=1:S], src_expr[s] == prob.stratum_area[s])
+    @constraint(model, stratum_area[s = 1:S], src_expr[s] == prob.stratum_area[s])
     if N > 0
-        @constraint(model, node_balance[i=1:N], src_expr[S + i] == 0.0)
+        @constraint(model, node_balance[i = 1:N], src_expr[S + i] == 0.0)
     end
     for t in 1:T, k in 1:K
         add_to_expression!(hexpr[t, k], -1.0, harvest[t, k])
     end
-    @constraint(model, harvest_definition[t=1:T, k=1:K], hexpr[t, k] == 0.0)
+    @constraint(model, harvest_definition[t = 1:T, k = 1:K], hexpr[t, k] == 0.0)
     δ = prob.even_flow_tolerance
     @constraint(
-        model, even_flow_lower[t=2:T],
+        model,
+        even_flow_lower[t = 2:T],
         sum(harvest[t, k] for k in 1:K) - (1.0 - δ) * sum(harvest[t - 1, k] for k in 1:K) >= 0.0
     )
     @constraint(
-        model, even_flow_upper[t=2:T],
+        model,
+        even_flow_upper[t = 2:T],
         sum(harvest[t, k] for k in 1:K) - (1.0 + δ) * sum(harvest[t - 1, k] for k in 1:K) <= 0.0
     )
     for z in 1:Z, t in 1:T

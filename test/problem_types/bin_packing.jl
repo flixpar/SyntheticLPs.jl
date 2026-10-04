@@ -27,17 +27,16 @@ function assert_common_bin_packing_data(problem)
         compat(category, bin) =
             problem.type_category_compatibility[problem.bin_types[bin], category]
         eligible_x = count(
-            compat(problem.item_categories[item], bin) for item in 1:problem.n_items,
-            bin in 1:problem.n_bins
+            compat(problem.item_categories[item], bin) for
+            item in 1:problem.n_items, bin in 1:problem.n_bins
         )
         eligible_presence = count(
             compat(category, bin) for category in 1:problem.n_categories, bin in 1:problem.n_bins
         )
         @test problem.actual_variables == eligible_x + problem.n_bins + eligible_presence
-        @test problem.actual_variables ==
-            SyntheticLPs._heterogeneous_variable_count(
-                problem.n_items, problem.n_bins, problem.n_categories
-            )
+        @test problem.actual_variables == SyntheticLPs._heterogeneous_variable_count(
+            problem.n_items, problem.n_bins, problem.n_categories
+        )
     end
     @test length(problem.item_sizes) == problem.n_items
     @test all(>(0.0), problem.item_sizes)
@@ -298,8 +297,8 @@ end
         compat(category, bin) =
             problem.type_category_compatibility[problem.bin_types[bin], category]
         eligible_x = count(
-            compat(problem.item_categories[item], bin) for item in 1:problem.n_items,
-            bin in 1:problem.n_bins
+            compat(problem.item_categories[item], bin) for
+            item in 1:problem.n_items, bin in 1:problem.n_bins
         )
         eligible_presence = count(
             compat(category, bin) for category in 1:problem.n_categories, bin in 1:problem.n_bins
@@ -308,8 +307,8 @@ end
         @test eligible_x < problem.n_items * problem.n_bins
         @test length(model[:presence_upper]) == length(model[:presence_used]) == eligible_presence
         @test length(model[:category_conflict]) == count(
-            compat(a, bin) && compat(b, bin) for (a, b) in problem.incompatible_pairs,
-            bin in 1:problem.n_bins
+            compat(a, bin) && compat(b, bin) for
+            (a, b) in problem.incompatible_pairs, bin in 1:problem.n_bins
         )
         # No `x == 0` eligibility rows: ineligible pairs simply have no column.
         @test !haskey(object_dictionary(model), :category_eligibility)

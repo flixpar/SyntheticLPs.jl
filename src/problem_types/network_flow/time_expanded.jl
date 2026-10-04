@@ -138,10 +138,16 @@ function _te_structure(
     rev_adj, _ = _geo_adjacency(n, rev)
     shelters = findall(>(0.0), intake)
     to_shelter, _ = _geo_dijkstra(n, rev, rev_adj, Float64.(tau), shelters)
-    useful(v, t) = isfinite(earliest[v]) && isfinite(to_shelter[v]) && earliest[v] <= t <= H - to_shelter[v]
+    useful(v, t) =
+        isfinite(earliest[v]) && isfinite(to_shelter[v]) && earliest[v] <= t <= H - to_shelter[v]
     node_copies = [(v, t) for t in 0:H for v in 1:n if useful(v, t)]
-    moves = [(a, t) for (a, (u, v)) in enumerate(arcs) for t in 0:(H - tau[a]) if useful(u, t) && useful(v, t + tau[a])]
-    waits = [(v, t) for v in 1:n for t in 0:(H - 1) if hold[v] > 0 && useful(v, t) && useful(v, t + 1)]
+    moves = [
+        (a, t) for (a, (u, v)) in enumerate(arcs) for
+        t in 0:(H - tau[a]) if useful(u, t) && useful(v, t + tau[a])
+    ]
+    waits = [
+        (v, t) for v in 1:n for t in 0:(H - 1) if hold[v] > 0 && useful(v, t) && useful(v, t + 1)
+    ]
     intakes = [(v, t) for v in shelters for t in 0:H if useful(v, t)]
     return (; node_copies, moves, waits, intakes)
 end
@@ -203,7 +209,9 @@ function _te_max_scale(fa, fc, S::Int, Z::Int, zone_nodes::Vector{Int}, s0::Vect
     return lambda * (1 - 1e-9)
 end
 
-function TimeExpandedEvacuationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function TimeExpandedEvacuationProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     target_variables >= 1 ||
         throw(ArgumentError("target_variables must be >= 1 (got $target_variables)."))
     target_variables <= NETWORK_FLOW_MAX_ARCS || throw(
@@ -235,7 +243,10 @@ function TimeExpandedEvacuationProblem(target_variables::Int, feasibility_status
         dist = [_geo_dist(positions, u, v) for (u, v) in arcs]
         speed = median(dist) / 1.6
         tau = [clamp(ceil(Int, dist[a] / speed), 1, 4) for a in 1:m]
-        road_capacity = [round(40.0 * rand(rng, LogNormal(0.0, 0.5)) * (trunk[a] ? 1.8 : 1.0); digits=1) for a in 1:m]
+        road_capacity = [
+            round(40.0 * rand(rng, LogNormal(0.0, 0.5)) * (trunk[a] ? 1.8 : 1.0); digits=1) for
+            a in 1:m
+        ]
         road_cost = [round(dist[a] * rand(rng, LogNormal(0.0, 0.2)); digits=3) for a in 1:m]
 
         # Shelters spread over the region (randomised farthest-point
@@ -244,7 +255,13 @@ function TimeExpandedEvacuationProblem(target_variables::Int, feasibility_status
         nearest = fill(Inf, n)
         shelters = Int[]
         for _ in 1:n_shelter
-            score = [v in shelters ? -Inf : min(nearest[v], 1e9) / sqrt(weights[v]) * rand(rng, LogNormal(0.0, 0.3)) for v in 1:n]
+            score = [
+                if v in shelters
+                    -Inf
+                else
+                    min(nearest[v], 1e9) / sqrt(weights[v]) * rand(rng, LogNormal(0.0, 0.3))
+                end for v in 1:n
+            ]
             v = argmax(score)
             push!(shelters, v)
             for u in 1:n
@@ -256,7 +273,9 @@ function TimeExpandedEvacuationProblem(target_variables::Int, feasibility_status
         n_zone = clamp(round(Int, n * (0.12 + 0.08 * rand(rng))), 1, length(rest))
         zones = sort(sample(rng, rest, Weights(weights[rest]), n_zone; replace=false))
         intake_rate = zeros(n)
-        intake_rate[shelters] .= [round(60.0 * rand(rng, LogNormal(0.0, 0.5)); digits=1) for _ in shelters]
+        intake_rate[shelters] .= [
+            round(60.0 * rand(rng, LogNormal(0.0, 0.5)); digits=1) for _ in shelters
+        ]
         s0 = 100.0 .* weights[zones] ./ (sum(weights[zones]) / n_zone)
         hold_capacity = zeros(n)
         for v in 1:n
@@ -285,16 +304,46 @@ function TimeExpandedEvacuationProblem(target_variables::Int, feasibility_status
 
         st = _te_structure(n, H, arcs, tau, hold_capacity, intake_rate, zones)
         count = length(st.moves) + length(st.waits) + length(st.intakes)
-        draw = (; n, H, arcs, trunk, positions, weights, geography, tau, road_capacity, road_cost,
-            zones, intake_rate, hold_capacity, s0, st)
+        draw = (;
+            n,
+            H,
+            arcs,
+            trunk,
+            positions,
+            weights,
+            geography,
+            tau,
+            road_capacity,
+            road_cost,
+            zones,
+            intake_rate,
+            hold_capacity,
+            s0,
+            st,
+        )
         if best === nothing || abs(count - target_variables) < best_gap
             best, best_gap = draw, abs(count - target_variables)
         end
         best_gap <= 0.08 * target_variables && break
         n = max(4, round(Int, n * (target_variables / max(count, 1))^0.8))
     end
-    (; n, H, arcs, trunk, positions, weights, geography, tau, road_capacity, road_cost,
-        zones, intake_rate, hold_capacity, s0, st) = best
+    (;
+        n,
+        H,
+        arcs,
+        trunk,
+        positions,
+        weights,
+        geography,
+        tau,
+        road_capacity,
+        road_cost,
+        zones,
+        intake_rate,
+        hold_capacity,
+        s0,
+        st,
+    ) = best
     n_zone = length(zones)
     fa, fc, S, Z = _te_flow_network(n, H, arcs, tau, road_capacity, hold_capacity, intake_rate, st)
     zone_nodes = [v for v in zones]  # copies (v, 0) have id v
@@ -331,7 +380,9 @@ function TimeExpandedEvacuationProblem(target_variables::Int, feasibility_status
         exit_moves = [i for i in 1:nm if on[fa[i][1]] && !on[fa[i][2]]]
         exit_waits = [i for i in 1:nw if on[fa[nm + i][1]] && !on[fa[nm + i][2]]]
         exit_intakes = [i for i in 1:ni if on[fa[nm + nw + i][1]]]
-        exit_capacity = sum(fc[i] for i in exit_moves; init=0.0) + sum(fc[nm + i] for i in exit_waits; init=0.0) +
+        exit_capacity =
+            sum(fc[i] for i in exit_moves; init=0.0) +
+            sum(fc[nm + i] for i in exit_waits; init=0.0) +
             sum(fc[nm + nw + i] for i in exit_intakes; init=0.0)
         trapped = sum(supply[v] for v in zones if on[v]; init=0.0)
         infeasibility_certificate = TimeExpandedCertificate(
@@ -383,7 +434,8 @@ function build_model(prob::TimeExpandedEvacuationProblem)
         model,
         Min,
         sum(prob.intakes[i][2] * intake[i] for i in 1:ni) +
-            prob.travel_weight * sum(prob.road_cost[prob.moves[i][1]] * move[i] for i in 1:nm; init=0.0)
+            prob.travel_weight *
+        sum(prob.road_cost[prob.moves[i][1]] * move[i] for i in 1:nm; init=0.0)
     )
     row_of = Dict(c => k for (k, c) in enumerate(prob.node_copies))
     expr = [AffExpr(0.0) for _ in prob.node_copies]  # inflow - outflow

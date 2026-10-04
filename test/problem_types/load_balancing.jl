@@ -37,10 +37,15 @@
                 path = p.paths[pi]
                 # A path is a contiguous walk from the OD's origin to its destination.
                 @test p.links[path[1]][1] == o && p.links[path[end]][2] == d
-                @test all(p.links[path[i]][2] == p.links[path[i + 1]][1] for i in 1:(length(path) - 1))
+                @test all(
+                    p.links[path[i]][2] == p.links[path[i + 1]][1] for i in 1:(length(path) - 1)
+                )
             end
             @test all(>=(3), counts)          # every TE pair has real choices
-            @test all(allunique(p.paths[q] for q in eachindex(p.paths) if p.path_od[q] == k) for k in eachindex(p.od_pairs)[1:20])
+            @test all(
+                allunique(p.paths[q] for q in eachindex(p.paths) if p.path_od[q] == k) for
+                k in eachindex(p.od_pairs)[1:20]
+            )
         end
     end
 
@@ -54,7 +59,9 @@
             end
             @test w.utilization ≈ maximum(load ./ p.capacities)
             @test w.utilization <= p.max_utilization
-            vals = Dict{VariableRef, Float64}(m[:x][q] => w.path_flows[q] for q in eachindex(p.paths))
+            vals = Dict{VariableRef, Float64}(
+                m[:x][q] => w.path_flows[q] for q in eachindex(p.paths)
+            )
             vals[m[:U]] = w.utilization
             @test isempty(primal_feasibility_report(m, vals; atol=1e-6))
         end
@@ -77,8 +84,10 @@
             c = p.infeasibility_certificate
             @test all(l -> l == 0 || l in p.link_latency, c.lengths)
             min_len = [
-                minimum(sum(c.lengths[a] for a in p.paths[q]) for q in eachindex(p.paths) if p.path_od[q] == k)
-                for k in eachindex(p.od_pairs)
+                minimum(
+                    sum(c.lengths[a] for a in p.paths[q]) for
+                    q in eachindex(p.paths) if p.path_od[q] == k
+                ) for k in eachindex(p.od_pairs)
             ]
             @test c.required ≈ sum(p.demands .* min_len) + sum(p.background .* c.lengths)
             @test !isempty(p.od_pairs)
@@ -131,7 +140,10 @@
             @test isempty(primal_feasibility_report(m, vals; atol=1e-6))
             _, q = generate_problem("load_balancing/discrete_placement", 800, infeasible, seed)
             c = q.infeasibility_certificate
-            lb = sum(q.demand[k, s] * minimum(q.processing_time[s, :]) for k in 1:(q.n_classes), s in 1:(q.n_services))
+            lb = sum(
+                q.demand[k, s] * minimum(q.processing_time[s, :]) for
+                k in 1:(q.n_classes), s in 1:(q.n_services)
+            )
             @test c.workload_lower_bound ≈ lb
             @test c.total_capacity ≈ sum(q.machine_capacity)
             @test c.total_capacity < c.workload_lower_bound
@@ -139,8 +151,9 @@
     end
 
     @testset "reproducibility" begin
-        for ref in ("load_balancing/standard", "load_balancing/discrete_placement"), status in
-                                                                                   (feasible, infeasible, unknown)
+        for ref in ("load_balancing/standard", "load_balancing/discrete_placement"),
+            status in (feasible, infeasible, unknown)
+
             Random.seed!(5)
             _, p1 = generate_problem(ref, 700, status, 21)
             Random.seed!(6)
@@ -151,7 +164,9 @@
                 if a === nothing || a isa Union{Number, Symbol, AbstractArray, FeasibilityStatus}
                     @test isequal(a, b)
                 else
-                    @test all(isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a)))
+                    @test all(
+                        isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a))
+                    )
                 end
             end
         end
@@ -165,7 +180,8 @@
                 optimize!(m)
                 return termination_status(m), MOI.get(m, MOI.SimplexIterations())
             end
-            for ref in ("load_balancing/standard", "load_balancing/discrete_placement"), target in (150, 3000),
+            for ref in ("load_balancing/standard", "load_balancing/discrete_placement"),
+                target in (150, 3000),
                 seed in 0:2
 
                 ts, _ = lb_solve(generate_problem(ref, target, feasible, seed)[1])

@@ -78,7 +78,10 @@ struct LeeftinkHansORSchedulingProblem <: ProblemGenerator
 end
 
 function _benchmark_case_list(
-    rng::AbstractRNG, n_or_days::Int, load::Float64, allowed::Vector{Int}=collect(eachindex(_ORSCHED_SPECIALTIES))
+    rng::AbstractRNG,
+    n_or_days::Int,
+    load::Float64,
+    allowed::Vector{Int}=collect(eachindex(_ORSCHED_SPECIALTIES)),
 )
     target_minutes = load * 480.0 * n_or_days
     tolerance_minutes = 0.025 * 480.0 * n_or_days
@@ -286,9 +289,7 @@ function LeeftinkHansORSchedulingProblem(
         # factor on either side of what that plan needs, and a large share of
         # the list is mandatory: feasible or not depending on how much better
         # than LPT the LP can pack the blocks.
-        n_mandatory = clamp(
-            round(Int, rand(rng, Uniform(0.6, 1.0)) * n_surgeries), 0, n_surgeries
-        )
+        n_mandatory = clamp(round(Int, rand(rng, Uniform(0.6, 1.0)) * n_surgeries), 0, n_surgeries)
         n_mandatory > 0 && (mandatory[shuffle(rng, 1:n_surgeries)[1:n_mandatory]] .= true)
         _, room_load = _benchmark_lpt_assignment(expected, admissible, n_or_days)
         budget = rand(rng, Uniform(0.3, 1.3))

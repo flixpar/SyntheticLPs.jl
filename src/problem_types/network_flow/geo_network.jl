@@ -100,7 +100,9 @@ end
 Rejection-sample `q` points in `[0, span]^2` pairwise at least `min_sep`
 apart, relaxing the separation geometrically when it cannot be met.
 """
-function _geo_centers(rng::AbstractRNG, q::Int, min_sep::Float64; span::Float64=100.0, tries::Int=400)
+function _geo_centers(
+    rng::AbstractRNG, q::Int, min_sep::Float64; span::Float64=100.0, tries::Int=400
+)
     centers = Tuple{Float64, Float64}[]
     sep = min_sep
     margin = 0.05span
@@ -280,8 +282,11 @@ function _geo_spanning_edges(positions::Vector{Tuple{Float64, Float64}}, knn::Ve
     n = length(positions)
     cand = Tuple{Float64, Int, Int}[]
     for i in 1:n, j in knn[i]
-        i < j ? push!(cand, (_geo_dist(positions, i, j), i, j)) :
-        (i ∉ knn[j] && push!(cand, (_geo_dist(positions, i, j), j, i)))
+        if i < j
+            push!(cand, (_geo_dist(positions, i, j), i, j))
+        else
+            (i ∉ knn[j] && push!(cand, (_geo_dist(positions, i, j), j, i)))
+        end
     end
     sort!(cand)
     parent = collect(1:n)
@@ -377,9 +382,8 @@ function _geo_network(
 )
     n = length(positions)
     n >= 2 || throw(ArgumentError("a network needs at least 2 nodes (got $n)"))
-    2 * (n - 1) <= n_arcs <= n * (n - 1) || throw(
-        ArgumentError("n_arcs=$n_arcs outside [$(2 * (n - 1)), $(n * (n - 1))] for $n nodes")
-    )
+    2 * (n - 1) <= n_arcs <= n * (n - 1) ||
+        throw(ArgumentError("n_arcs=$n_arcs outside [$(2 * (n - 1)), $(n * (n - 1))] for $n nodes"))
     knn = _geo_knn(positions, k_cand)
     tree = _geo_spanning_edges(positions, knn)
 

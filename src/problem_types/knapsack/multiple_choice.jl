@@ -116,7 +116,9 @@ function _mck_class_sizes(rng::AbstractRNG, n::Int)
     return sizes
 end
 
-function _mck_totals(usage::Matrix{Float64}, pick::Vector{Int}, group_of::Vector{Int}, n_groups::Int)
+function _mck_totals(
+    usage::Matrix{Float64}, pick::Vector{Int}, group_of::Vector{Int}, n_groups::Int
+)
     tot = zeros(size(usage, 1), n_groups)
     for (g, j) in enumerate(pick)
         for r in 1:size(usage, 1)

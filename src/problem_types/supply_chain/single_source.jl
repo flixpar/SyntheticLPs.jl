@@ -173,7 +173,9 @@ function SingleSourceSupplyChainProblem(
     # Geographic clusters, sized from a first estimate of the customer count
     # (the exact count is settled while customers are generated below).
     eff = 0.6 * n_transport_modes * infrastructure_density
-    n_customers_hint = max(4, round(Int, (target_variables - n_facilities) / (n_facilities * (1.0 + eff))))
+    n_customers_hint = max(
+        4, round(Int, (target_variables - n_facilities) / (n_facilities * (1.0 + eff)))
+    )
     n_clusters = max(2, round(Int, sqrt(n_customers_hint) * clustering_factor))
     cluster_centers = [(grid_width * rand(rng), grid_height * rand(rng)) for _ in 1:n_clusters]
     cluster_weights = rand(rng, Dirichlet(ones(n_clusters)))
@@ -215,7 +217,10 @@ function SingleSourceSupplyChainProblem(
             clamp(center[2] + rand(rng, Normal(0, spread)), 0, grid_height),
         )
         multiplier = rand(rng, LogNormal(log(1.0), 0.4))
-        dvec = [hypot(facility_locs[f][1] - loc[1], facility_locs[f][2] - loc[2]) for f in 1:n_facilities]
+        dvec = [
+            hypot(facility_locs[f][1] - loc[1], facility_locs[f][2] - loc[2]) for
+            f in 1:n_facilities
+        ]
         lanes = Tuple{Int, Int, String}[]
         draws = NTuple{3, Float64}[]
         for f in 1:n_facilities, mode in transport_modes
@@ -232,7 +237,11 @@ function SingleSourceSupplyChainProblem(
                 push!(lanes, (f, c, mode))
                 push!(
                     draws,
-                    (dvec[f], rand(rng, LogNormal(log(1.0), 0.15)), rand(rng, Beta(3, 2)) * 0.4 + 0.8),
+                    (
+                        dvec[f],
+                        rand(rng, LogNormal(log(1.0), 0.15)),
+                        rand(rng, Beta(3, 2)) * 0.4 + 0.8,
+                    ),
                 )
             end
         end
@@ -242,7 +251,11 @@ function SingleSourceSupplyChainProblem(
                 push!(lanes, (f, c, fallback_mode))
                 push!(
                     draws,
-                    (dvec[f], rand(rng, LogNormal(log(1.0), 0.15)), rand(rng, Beta(3, 2)) * 0.4 + 0.8),
+                    (
+                        dvec[f],
+                        rand(rng, LogNormal(log(1.0), 0.15)),
+                        rand(rng, Beta(3, 2)) * 0.4 + 0.8,
+                    ),
                 )
             end
         end
@@ -491,7 +504,9 @@ function build_model(prob::SingleSourceSupplyChainProblem)
 
     # Transport mode capacity (restored for consistency with the standard SC model)
     for m in prob.transport_modes
-        @constraint(model, sum(x[combo] for combo in by_mode[m]; init=0.0) <= prob.mode_capacities[m])
+        @constraint(
+            model, sum(x[combo] for combo in by_mode[m]; init=0.0) <= prob.mode_capacities[m]
+        )
     end
 
     return model

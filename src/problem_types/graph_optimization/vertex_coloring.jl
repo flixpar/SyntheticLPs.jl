@@ -187,8 +187,8 @@ function VertexColoringProblem(
     side = maximum(xs; init=1.0)
     costs = Vector{Vector{Float64}}(undef, n)
     sources = [
-        [(side * rand(rng), side * rand(rng), 5.0 + 20.0 * rand(rng)) for _ in 1:rand(rng, 1:4)]
-        for _ in 1:k
+        [(side * rand(rng), side * rand(rng), 5.0 + 20.0 * rand(rng)) for _ in 1:rand(rng, 1:4)] for
+        _ in 1:k
     ]
     base = [1.0 + (c > 0.6k ? 2.0 : 0.0) + 2.0 * rand(rng) for c in 1:k]
     spread = max(2.0, side / 6)
@@ -196,16 +196,17 @@ function VertexColoringProblem(
         costs[v] = [
             round(
                 base[c] +
-                sum(s * exp(-((xs[v] - sx)^2 + (ys[v] - sy)^2) / (2spread^2)) for (sx, sy, s) in sources[c]) +
-                rand(rng),
+                sum(
+                    s * exp(-((xs[v] - sx)^2 + (ys[v] - sy)^2) / (2spread^2)) for
+                    (sx, sy, s) in sources[c]
+                ) +
+                rand(rng);
                 digits=2,
             ) for c in domains[v]
         ]
     end
 
-    return VertexColoringProblem(
-        n, k, xs, ys, edges, cliques, domains, costs, witness, certificate
-    )
+    return VertexColoringProblem(n, k, xs, ys, edges, cliques, domains, costs, witness, certificate)
 end
 
 function build_model(prob::VertexColoringProblem)

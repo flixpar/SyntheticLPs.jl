@@ -51,8 +51,7 @@ end
 _map_overlap(a::NTuple{4, Float64}, b::NTuple{4, Float64}) =
     a[1] < b[3] && b[1] < a[3] && a[2] < b[4] && b[2] < a[4]
 
-_map_contains(a::NTuple{4, Float64}, x::Float64, y::Float64) =
-    a[1] < x < a[3] && a[2] < y < a[4]
+_map_contains(a::NTuple{4, Float64}, x::Float64, y::Float64) = a[1] < x < a[3] && a[2] < y < a[4]
 
 function MapLabelingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     target_variables >= 8 || throw(ArgumentError("map labeling needs at least 8 variables"))

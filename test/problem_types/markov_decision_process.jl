@@ -40,8 +40,11 @@
     end
     function expected_states(p)
         if p isa SL.InventoryControlMDP
-            return p.n_phases *
-                   length(SL._inventory_mdp_phase_states(p.lead_time, p.max_inventory, p.max_backlog, p.max_order))
+            return p.n_phases * length(
+                SL._inventory_mdp_phase_states(
+                    p.lead_time, p.max_inventory, p.max_backlog, p.max_order
+                ),
+            )
         elseif p isa SL.QueueingControlMDP
             return (p.buffer1 + 1) * (p.buffer2 + 1)
         elseif p isa SL.MachineMaintenanceMDP
@@ -70,13 +73,15 @@
     end
 
     # --- sizing -----------------------------------------------------------------
-    for v in variants, target in (60, 1000, 5000), status in (feasible, infeasible, unknown), seed in 0:1
+    for v in variants,
+        target in (60, 1000, 5000), status in (feasible, infeasible, unknown),
+        seed in 0:1
+
         model, p = gen(v, target, status, seed)
         n = num_variables(model)
         @test n == length(p.mdp.cost) == expected_pairs(p)
         @test p.mdp.n_states == expected_states(p)
-        @test nrows(model) ==
-              p.mdp.n_states + (p.criterion == :average ? 1 : 0) + length(p.budgets)
+        @test nrows(model) == p.mdp.n_states + (p.criterion == :average ? 1 : 0) + length(p.budgets)
         @test abs(n - target) <= 0.1 * target || target < 100 && abs(n - target) <= 0.35 * target
         # Rows grow with the model: at most ~25 columns per balance row.
         target >= 1000 && @test n <= 25 * p.mdp.n_states
@@ -85,7 +90,8 @@
 
     # Sizing cap: rejected above MDP_MAX_PAIRS before any data is built.
     @test SL.MDP_MAX_PAIRS == 1_000_000
-    for T in (SL.InventoryControlMDP, SL.QueueingControlMDP, SL.MachineMaintenanceMDP, SL.ConstrainedMDP)
+    for T in
+        (SL.InventoryControlMDP, SL.QueueingControlMDP, SL.MachineMaintenanceMDP, SL.ConstrainedMDP)
         @test_throws ArgumentError T(SL.MDP_MAX_PAIRS + 1, unknown, 0)
         @test_throws ArgumentError T(0, unknown, 0)
     end
@@ -116,7 +122,9 @@
         @test all(1 .<= m.trans_next .<= m.n_states)
         @test length(m.streams) == length(m.stream_names) == 3
         @test all(all(>=(0.0), st) for st in m.streams)   # budget metrics are nonnegative
-        @test all(m.state_ptr[s] <= m.reference_policy[s] < m.state_ptr[s + 1] for s in 1:(m.n_states))
+        @test all(
+            m.state_ptr[s] <= m.reference_policy[s] < m.state_ptr[s + 1] for s in 1:(m.n_states)
+        )
         @test p.criterion in (:discounted, :average)
         if p.criterion == :discounted
             @test 0.9 < p.discount < 1.0
@@ -145,7 +153,10 @@
         _, p = gen(:inventory_control, 3000, unknown, seed)
         @test p.lead_time in 0:2
         @test length(p.price_multipliers) in 1:3
-        @test all(p.state_i[s] + sum(p.state_pipeline[s]; init=0) <= p.max_inventory for s in 1:(p.mdp.n_states))
+        @test all(
+            p.state_i[s] + sum(p.state_pipeline[s]; init=0) <= p.max_inventory for
+            s in 1:(p.mdp.n_states)
+        )
         @test all(p.state_i .>= -p.max_backlog)
         qs = [div(l, 100) for l in p.mdp.action_label]
         @test all(0 .<= qs .<= p.max_order)
@@ -159,8 +170,12 @@
         laws_distinct = true
         for s in 1:(m.n_states)
             laws = [
-                Dict(zip(m.trans_next[m.trans_ptr[k]:(m.trans_ptr[k + 1] - 1)], m.trans_prob[m.trans_ptr[k]:(m.trans_ptr[k + 1] - 1)]))
-                for k in m.state_ptr[s]:(m.state_ptr[s + 1] - 1)
+                Dict(
+                    zip(
+                        m.trans_next[m.trans_ptr[k]:(m.trans_ptr[k + 1] - 1)],
+                        m.trans_prob[m.trans_ptr[k]:(m.trans_ptr[k + 1] - 1)],
+                    ),
+                ) for k in m.state_ptr[s]:(m.state_ptr[s + 1] - 1)
             ]
             laws_distinct &= allunique(laws)
         end
@@ -196,7 +211,9 @@
         @test sum(x) ≈ p.normalization rtol = 1e-8          # implied by the rows
         @test all(vals .< p.budgets)                        # every budget row, strictly
         if target == 300
-            report = primal_feasibility_report(model, Dict(model[:x][k] => x[k] for k in eachindex(x)); atol=1e-7)
+            report = primal_feasibility_report(
+                model, Dict(model[:x][k] => x[k] for k in eachindex(x)); atol=1e-7
+            )
             @test isempty(report)
         end
     end
@@ -215,7 +232,10 @@
         # Dual feasibility of the potential at EVERY state-action pair.
         worst = -Inf
         for s in 1:(m.n_states), k in m.state_ptr[s]:(m.state_ptr[s + 1] - 1)
-            ev = sum(m.trans_prob[t] * c.potential[m.trans_next[t]] for t in m.trans_ptr[k]:(m.trans_ptr[k + 1] - 1))
+            ev = sum(
+                m.trans_prob[t] * c.potential[m.trans_next[t]] for
+                t in m.trans_ptr[k]:(m.trans_ptr[k + 1] - 1)
+            )
             worst = max(worst, c.gain + c.potential[s] - γ * ev - dw[k])
         end
         @test worst <= 0.0
@@ -227,7 +247,9 @@
         # Algebraic Farkas check on the witness-free side: any point satisfying
         # the balance rows has weighted budget value >= lower bound, so the
         # reference policy's own occupation measure must respect it.
-        xref = SL._mdp_occupation(m, m.reference_policy, p.criterion, p.discount, p.rhs, p.normalization)
+        xref = SL._mdp_occupation(
+            m, m.reference_policy, p.criterion, p.discount, p.rhs, p.normalization
+        )
         @test sum(dw .* xref) >= c.lower_bound * (1 - 1e-9)
     end
 
@@ -292,9 +314,13 @@
 
             # Framework verify-and-retry path.
             for v in variants
-                m, _ = generate_problem(:markov_decision_process, 300, feasible, 0; variant=v, optimizer=HiGHS.Optimizer)
+                m, _ = generate_problem(
+                    :markov_decision_process, 300, feasible, 0; variant=v, optimizer=HiGHS.Optimizer
+                )
                 @test num_variables(m) > 0
-                m, _ = generate_problem(:markov_decision_process, 300, infeasible, 0; variant=v, optimizer=ipm)
+                m, _ = generate_problem(
+                    :markov_decision_process, 300, infeasible, 0; variant=v, optimizer=ipm
+                )
                 @test num_variables(m) > 0
             end
 
@@ -307,8 +333,12 @@
                 isempty(p.budget_streams) || continue
                 @test solve_status(model, HiGHS.Optimizer) == MOI.OPTIMAL
                 m = p.mdp
-                lb = SL._mdp_lower_bound(m, m.cost, p.criterion, p.discount, p.rhs, p.normalization)[3]
-                xref = SL._mdp_occupation(m, m.reference_policy, p.criterion, p.discount, p.rhs, p.normalization)
+                lb = SL._mdp_lower_bound(
+                    m, m.cost, p.criterion, p.discount, p.rhs, p.normalization
+                )[3]
+                xref = SL._mdp_occupation(
+                    m, m.reference_policy, p.criterion, p.discount, p.rhs, p.normalization
+                )
                 opt = objective_value(model)
                 scale = sum(abs.(m.cost .* xref)) + 1.0
                 @test opt >= lb - 1e-6 * scale

@@ -529,7 +529,9 @@ function build_model(prob::HeterogeneousBinPackingProblem)
     @objective(model, Min, sum(prob.type_costs[prob.bin_types[bin]] * y[bin] for bin in B))
 
     @constraint(
-        model, item_assignment[item in I], sum(x[item, bin] for bin in B if eligible(item, bin)) == 1
+        model,
+        item_assignment[item in I],
+        sum(x[item, bin] for bin in B if eligible(item, bin)) == 1
     )
     @constraint(
         model,
@@ -557,7 +559,8 @@ function build_model(prob::HeterogeneousBinPackingProblem)
         category_conflict[
             pair in eachindex(prob.incompatible_pairs),
             bin in B;
-            compat(prob.incompatible_pairs[pair][1], bin) && compat(prob.incompatible_pairs[pair][2], bin),
+            compat(prob.incompatible_pairs[pair][1], bin) &&
+                compat(prob.incompatible_pairs[pair][2], bin),
         ],
         category_present[prob.incompatible_pairs[pair][1], bin] +
         category_present[prob.incompatible_pairs[pair][2], bin] <= 1

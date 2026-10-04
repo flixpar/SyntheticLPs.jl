@@ -72,7 +72,8 @@
         @test sum(p.capital_use .* p.existing_capacity) < p.capital_budget
     end
     # The greedy bound itself, on a tiny hand-checked case.
-    @test SyntheticLPs._stochastic_program_min_capital([2.0, 1.0], [1.0, 0.0], [3.0, 2.0], 4.0) == 2.0 + 2.0 + 2.0
+    @test SyntheticLPs._stochastic_program_min_capital([2.0, 1.0], [1.0, 0.0], [3.0, 2.0], 4.0) ==
+        2.0 + 2.0 + 2.0
     @test SyntheticLPs._stochastic_program_min_capital([1.0], [0.0], [1.0], 2.0) == Inf
 
     # ------------------------------------------------------------ multistage_alm
@@ -107,15 +108,23 @@
         @test sum(w.weights) ≈ 1.0
         @test all(w.weights .<= p.max_weight .+ 1e-12)
         for n in 1:N
-            prev(a) = p.parent[n] == 0 ? p.initial_holdings[a] : p.returns[a, n] * w.holdings[a, p.parent[n]]
+            prev(a) =
+                if p.parent[n] == 0
+                    p.initial_holdings[a]
+                else
+                    p.returns[a, n] * w.holdings[a, p.parent[n]]
+                end
             for a in 2:A
                 @test w.holdings[a, n] ≈ prev(a) + w.buys[a, n] - w.sells[a, n] atol = 1e-9
                 if p.max_weight[a] < 1.0
-                    @test w.holdings[a, n] <= p.max_weight[a] * p.exposure_scale * p.liability_value[n] + 1e-9
+                    @test w.holdings[a, n] <=
+                        p.max_weight[a] * p.exposure_scale * p.liability_value[n] + 1e-9
                 end
             end
-            cash = prev(1) + sum((1 - tc[a]) * w.sells[a, n] - (1 + tc[a]) * w.buys[a, n] for a in 2:A) +
-                   p.inflow[n] - p.outflow[n]
+            cash =
+                prev(1) +
+                sum((1 - tc[a]) * w.sells[a, n] - (1 + tc[a]) * w.buys[a, n] for a in 2:A) +
+                p.inflow[n] - p.outflow[n]
             @test w.holdings[1, n] ≈ cash atol = 1e-9
             @test all(>=(-1e-12), w.holdings[:, n])
             wealth = sum(w.holdings[:, n])
@@ -137,8 +146,11 @@
         for k in 2:length(c.path)
             n, parent = c.path[k], c.path[k - 1]
             caps = [
-                p.max_weight[a] < 1.0 ? p.max_weight[a] * p.exposure_scale * p.liability_value[parent] : Inf for
-                a in 1:p.n_assets
+                if p.max_weight[a] < 1.0
+                    p.max_weight[a] * p.exposure_scale * p.liability_value[parent]
+                else
+                    Inf
+                end for a in 1:p.n_assets
             ]
             growth = SyntheticLPs._alm_best_growth(p.returns[:, n], caps, c.wealth_bound[k - 1])
             @test c.growth_bound[k] ≈ growth
@@ -149,7 +161,8 @@
         @test c.margin ≈ c.required_wealth - c.wealth_bound[end]
         @test c.margin > 0.03 * c.required_wealth
     end
-    @test SyntheticLPs._alm_best_growth([1.1, 1.5, 0.9], [Inf, 2.0, Inf], 4.0) ≈ (1.5 * 2 + 1.1 * 2) / 4
+    @test SyntheticLPs._alm_best_growth([1.1, 1.5, 0.9], [Inf, 2.0, Inf], 4.0) ≈
+        (1.5 * 2 + 1.1 * 2) / 4
 
     # Reproducibility of the stored data.
     for ref in ("stochastic_program/standard", "stochastic_program/multistage_alm")
@@ -170,8 +183,10 @@
             end
             for ref in ("stochastic_program/standard", "stochastic_program/multistage_alm")
                 for target in (300, 3000), seed in 0:3
-                    @test sp_status(first(generate_problem(ref, target, feasible, seed))) == MOI.OPTIMAL
-                    @test sp_status(first(generate_problem(ref, target, infeasible, seed))) == MOI.INFEASIBLE
+                    @test sp_status(first(generate_problem(ref, target, feasible, seed))) ==
+                        MOI.OPTIMAL
+                    @test sp_status(first(generate_problem(ref, target, infeasible, seed))) ==
+                        MOI.INFEASIBLE
                 end
                 outcomes = [sp_status(first(generate_problem(ref, 2000, unknown, s))) for s in 0:15]
                 @test count(==(MOI.OPTIMAL), outcomes) >= 3
@@ -186,7 +201,9 @@
                 m, p = generate_problem("stochastic_program/standard", 3000, feasible, seed)
                 @test sp_status(m) == MOI.OPTIMAL
                 z = value.(m[:z])
-                expected_demand = sum(p.scenario_prob[s] * sum(p.demand[:, s]) for s in 1:p.n_scenarios)
+                expected_demand = sum(
+                    p.scenario_prob[s] * sum(p.demand[:, s]) for s in 1:p.n_scenarios
+                )
                 expected_short = sum(p.scenario_prob[s] * sum(z[:, s]) for s in 1:p.n_scenarios)
                 @test expected_short <= 0.10 * expected_demand
             end

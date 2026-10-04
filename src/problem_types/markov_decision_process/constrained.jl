@@ -66,7 +66,7 @@ function ConstrainedMDP(target_variables::Int, feasibility_status::FeasibilitySt
     _mdp_check_target(target_variables, "constrained")
     rng = MersenneTwister(seed)
     base_model = CONSTRAINED_MDP_BASES[rand(rng, 1:3)]
-    base_seed = rand(rng, 0:(2^31 - 1))
+    base_seed = rand(rng, 0:(2 ^ 31 - 1))
     all_three = rand(rng) < 0.5
     partner = rand(rng, 2:3)
     ctor = Dict(

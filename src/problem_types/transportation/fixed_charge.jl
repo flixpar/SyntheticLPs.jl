@@ -133,10 +133,15 @@ function FixedChargeTransportationProblem(
     lane_capacity = Vector{Float64}(undef, L)
     for (l, (i, j)) in enumerate(lanes)
         d = hypot(src_pos[i][1] - dst_pos[j][1], src_pos[i][2] - dst_pos[j][2])
-        unit_cost[l] = round(production[i] + rate * d * rand(rng, LogNormal(0.0, 0.15)) + 1.0; digits=3)
+        unit_cost[l] = round(
+            production[i] + rate * d * rand(rng, LogNormal(0.0, 0.15)) + 1.0; digits=3
+        )
         fixed_cost[l] = round(150.0 * rand(rng, LogNormal(0.0, 0.4)) + 8.0 * rate * d; digits=2)
-        lane_capacity[l] = (i != primary[j] && rand(rng) < capped_share) ?
-            round(max(d0[j] * (0.3 + 0.9 * rand(rng)), 0.01); digits=2) : Inf
+        lane_capacity[l] = if (i != primary[j] && rand(rng) < capped_share)
+            round(max(d0[j] * (0.3 + 0.9 * rand(rng)), 0.01); digits=2)
+        else
+            Inf
+        end
     end
 
     big = 4.0 * (sum(supplies) + 2.0 * D0)
@@ -153,19 +158,26 @@ function FixedChargeTransportationProblem(
     end
     demands = max.(round.(load_factor * lambda_star .* d0; digits=2), 0.01)
     total_demand = sum(demands)
-    value, ext_flows, source_side, _, _ =
-        _network_flow_extended(nS + nD, arcs, caps, src_nodes, supplies, dst_nodes, demands)
+    value, ext_flows, source_side, _, _ = _network_flow_extended(
+        nS + nD, arcs, caps, src_nodes, supplies, dst_nodes, demands
+    )
     flows = ext_flows[1:L]
 
-    link_bound = [min(supplies[i], demands[j], lane_capacity[l]) for (l, (i, j)) in enumerate(lanes)]
+    link_bound = [
+        min(supplies[i], demands[j], lane_capacity[l]) for (l, (i, j)) in enumerate(lanes)
+    ]
     used = zeros(Int, nS)
     for (l, (i, _)) in enumerate(lanes)
         flows[l] > 1e-9 && (used[i] += 1)
     end
     budget_range = feasibility_status == unknown ? (0.75, 1.3) : (1.1, 1.5)
     max_lanes = [
-        max(1, ceil(Int, used[i] * (budget_range[1] + (budget_range[2] - budget_range[1]) * rand(rng))))
-        for i in 1:nS
+        max(
+            1,
+            ceil(
+                Int, used[i] * (budget_range[1] + (budget_range[2] - budget_range[1]) * rand(rng))
+            ),
+        ) for i in 1:nS
     ]
 
     feasible_witness = nothing
@@ -230,9 +242,7 @@ function build_model(prob::FixedChargeTransportationProblem)
     L = length(prob.lanes)
     @variable(model, x[1:L] >= 0)
     @variable(model, y[1:L], Bin)
-    @objective(
-        model, Min, sum(prob.unit_cost[l] * x[l] + prob.fixed_cost[l] * y[l] for l in 1:L)
-    )
+    @objective(model, Min, sum(prob.unit_cost[l] * x[l] + prob.fixed_cost[l] * y[l] for l in 1:L))
     out_lanes = [Int[] for _ in 1:(prob.n_sources)]
     in_lanes = [Int[] for _ in 1:(prob.n_customers)]
     for (l, (i, j)) in enumerate(prob.lanes)

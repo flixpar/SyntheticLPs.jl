@@ -122,7 +122,10 @@ function AssignmentProblem(target_variables::Int, feasibility_status::Feasibilit
         if !isempty(groups)
             hall_skill = rand(rng, groups)
             holders = [w for w in 1:W if hall_skill in worker_skills[w]]
-            keep = min(counts[hall_skill] - 1, max(2, floor(Int, counts[hall_skill] * (0.7 + 0.2 * rand(rng)))))
+            keep = min(
+                counts[hall_skill] - 1,
+                max(2, floor(Int, counts[hall_skill] * (0.7 + 0.2 * rand(rng)))),
+            )
             if length(holders) > keep
                 for w in shuffle(rng, holders)[1:(length(holders) - keep)]
                     filter!(!=(hall_skill), worker_skills[w])
@@ -162,7 +165,17 @@ function AssignmentProblem(target_variables::Int, feasibility_status::Feasibilit
         for j in randperm(rng, T)
             w = findfirst(w -> free[w], cand[j])
             if w === nothing
-                w = argmin(v -> (free[v] ? hypot(worker_pos[v][1] - job_pos[j][1], worker_pos[v][2] - job_pos[j][2]) : Inf, v), 1:W)
+                w = argmin(
+                    v -> (
+                        if free[v]
+                            hypot(worker_pos[v][1] - job_pos[j][1], worker_pos[v][2] - job_pos[j][2])
+                        else
+                            Inf
+                        end,
+                        v,
+                    ),
+                    1:W,
+                )
                 pushfirst!(cand[j], w)
             else
                 w = cand[j][w]

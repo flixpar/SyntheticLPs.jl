@@ -223,7 +223,9 @@ function PortfolioProblem(target_variables::Int, feasibility_status::Feasibility
     cvar_level = rand(rng, (0.90, 0.95, 0.975, 0.99))
 
     # --- Natural mandate, drawn relative to the benchmark. ---
-    max_position = [max(b[i] * rand(rng, Uniform(1.5, 3.0)), rand(rng, Uniform(2.0, 5.0)) / n) for i in 1:n]
+    max_position = [
+        max(b[i] * rand(rng, Uniform(1.5, 3.0)), rand(rng, Uniform(2.0, 5.0)) / n) for i in 1:n
+    ]
     sum(max_position) < 1.5 && (max_position .*= 1.5 / sum(max_position))
     bench_exposure = _portfolio_exposures(market, b)
     exposure_lower = [bench_exposure[k] - rand(rng, Uniform(0.05, 0.25)) for k in 1:n_style_cols]
@@ -260,8 +262,12 @@ function PortfolioProblem(target_variables::Int, feasibility_status::Feasibility
         class_upper .= max.(class_upper, min.(1.0, ref_class .* 1.1 .+ 0.005))
         ref_turnover = sum(abs.(x_ref .- b))
         turnover_limit = max(turnover_limit, ref_turnover * 1.1 + 0.01)
-        ref_cvar, ref_alpha = _portfolio_cvar(-_portfolio_scenario_returns(market, x_ref), cvar_level)
-        cvar_limit = max(cvar_limit, ref_cvar + abs(ref_cvar) * rand(rng, Uniform(0.05, 0.2)) + 1e-4)
+        ref_cvar, ref_alpha = _portfolio_cvar(
+            -_portfolio_scenario_returns(market, x_ref), cvar_level
+        )
+        cvar_limit = max(
+            cvar_limit, ref_cvar + abs(ref_cvar) * rand(rng, Uniform(0.05, 0.2)) + 1e-4
+        )
 
         if feasibility_status == feasible
             witness = CVaRWitness(x_ref, f_ref, ref_alpha, ref_cvar, ref_turnover)
@@ -280,10 +286,14 @@ function PortfolioProblem(target_variables::Int, feasibility_status::Feasibility
                 end
                 idio_tail = market.idiosyncratic[:, tail]
                 tail_loss .-= vec(sum(idio_tail; dims=2)) ./ n_tail
-                bound, λ, μ = _portfolio_floor_bound(tail_loss, max_position, asset_class, class_lower)
+                bound, λ, μ = _portfolio_floor_bound(
+                    tail_loss, max_position, asset_class, class_lower
+                )
                 if bound > 1e-3
                     cvar_limit = bound * rand(rng, Uniform(0.6, 0.85))
-                    certificate = CVaRTailCertificate(sort(tail), tail_loss, λ, μ, bound, cvar_limit)
+                    certificate = CVaRTailCertificate(
+                        sort(tail), tail_loss, λ, μ, bound, cvar_limit
+                    )
                 else
                     mode = :class_floor                   # defensive assets gain in the crash
                 end
@@ -342,9 +352,12 @@ function build_model(prob::PortfolioProblem)
     n_style_cols = 1 + market.n_styles
     G = market.n_sectors
 
-    @variable(model, 0 <= x[i=1:n] <= prob.max_position[i])
-    @variable(model, prob.exposure_lower[k] <= style_exposure[k=1:n_style_cols] <= prob.exposure_upper[k])
-    @variable(model, 0 <= sector_exposure[g=1:G] <= prob.sector_upper[g])
+    @variable(model, 0 <= x[i = 1:n] <= prob.max_position[i])
+    @variable(
+        model,
+        prob.exposure_lower[k] <= style_exposure[k = 1:n_style_cols] <= prob.exposure_upper[k]
+    )
+    @variable(model, 0 <= sector_exposure[g = 1:G] <= prob.sector_upper[g])
     @variable(model, z[1:S] >= 0)
     @variable(model, -1.0 <= alpha <= 1.0)          # VaR level: a monthly loss fraction
     @variable(model, buy[1:n] >= 0)
@@ -396,7 +409,10 @@ function build_model(prob::PortfolioProblem)
 
     @constraint(model, budget, sum(x) == 1.0)
 
-    for (groups, n_groups, kind) in ((prob.region, length(prob.region_upper), :region), (prob.asset_class, length(prob.class_lower), :class))
+    for (groups, n_groups, kind) in (
+        (prob.region, length(prob.region_upper), :region),
+        (prob.asset_class, length(prob.class_lower), :class),
+    )
         members = [Int[] for _ in 1:n_groups]
         for i in 1:n
             push!(members[groups[i]], i)

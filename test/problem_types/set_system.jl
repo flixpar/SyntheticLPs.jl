@@ -17,16 +17,16 @@ _ss_ref(v) = ProblemVariant(:set_system, v)
             @test_nowarn generate_problem(_ss_ref(v), 3, infeasible, 1)
         end
         tiny = generate_dataset(
-            num_problems=4,
-            size_distribution=Uniform(2, 3),
-            problem_types=[:set_system],
-            seed=1,
+            num_problems=4, size_distribution=Uniform(2, 3), problem_types=[:set_system], seed=1
         )
         @test length(tiny) == 4
     end
 
     @testset "Exact sizing" begin
-        for v in SET_VARIANTS, target in (2, 7, 60, 500, 4000), status in (feasible, infeasible, unknown)
+        for v in SET_VARIANTS,
+            target in (2, 7, 60, 500, 4000),
+            status in (feasible, infeasible, unknown)
+
             m, _ = generate_problem(_ss_ref(v), target, status, 2)
             @test num_variables(m) == target
         end

@@ -130,7 +130,10 @@ function _quantile_unknown_noise_scale(
         push!(reach, half_widths[row] + sum(half_widths[members]) / k)
         push!(spread, sqrt(half_widths[row]^2 + sum(abs2, half_widths[members]) / k^2))
     end
-    logp(s) = sum(log(max(2 * cdf(Normal(), reach[c] / (s * spread[c])) - 1, 1e-300)) for c in eachindex(reach))
+    logp(s) = sum(
+        log(max(2 * cdf(Normal(), reach[c] / (s * spread[c])) - 1, 1e-300)) for
+        c in eachindex(reach)
+    )
     lo, hi = 1e-3, 1e3
     for _ in 1:80
         mid = sqrt(lo * hi)
@@ -255,7 +258,9 @@ function QuantileRegressionProblem(
         ) for r in 1:n_ref
     ]
     # Band half-widths scale with the local noise level.
-    half_widths = [sigma0 * (0.5 + 0.25 * abs(p)) * rand(rng, Uniform(0.6, 1.5)) for p in predictions]
+    half_widths = [
+        sigma0 * (0.5 + 0.25 * abs(p)) * rand(rng, Uniform(0.6, 1.5)) for p in predictions
+    ]
 
     witness = nothing
     certificate = nothing
@@ -356,7 +361,9 @@ function build_model(prob::QuantileRegressionProblem)
         @constraint(model, fit == prob.y[i])
     end
     for r in eachindex(prob.reference_codes)
-        band = prediction(prob.reference_codes[r], prob.reference_values[r], view(prob.reference_Z, r, :))
+        band = prediction(
+            prob.reference_codes[r], prob.reference_values[r], view(prob.reference_Z, r, :)
+        )
         @constraint(model, prob.band_lower[r] <= band <= prob.band_upper[r])
     end
 

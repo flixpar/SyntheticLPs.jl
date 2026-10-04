@@ -154,7 +154,9 @@ end
 
 # Demand (usage if every project were funded) per division-year.
 function _ps_demand(division, start_year, spend, fte, n_years, n_divisions)
-    return _ps_usage(trues(length(division)), division, start_year, spend, fte, n_years, n_divisions)
+    return _ps_usage(
+        trues(length(division)), division, start_year, spend, fte, n_years, n_divisions
+    )
 end
 
 # Add prerequisite closure to a portfolio (iterate to a fixed point; the
@@ -371,7 +373,9 @@ function ProjectSelectionProblem(
                 sum(division_budget[:, t]) * (0.82 + 0.10 * rand(rng)),
             ) for t in 1:n_years
         ]
-        division_mandate = [floor(Int, plant_count[d] * (0.55 + 0.4 * rand(rng))) for d in 1:n_divisions]
+        division_mandate = [
+            floor(Int, plant_count[d] * (0.55 + 0.4 * rand(rng))) for d in 1:n_divisions
+        ]
         planted_risk = sum(risk_scores[p] for p in 1:n if planted[p]; init=0.0)
         risk_budget = planted_risk * (1.05 + 0.15 * rand(rng)) + 1.0
         planted_high = count(p -> planted[p] && risk_scores[p] > high_risk_threshold, 1:n)
@@ -414,7 +418,9 @@ function ProjectSelectionProblem(
         # around the estimated cost of meeting every mandate.
         division_budget = div_dem .* (0.30 .+ 0.30 .* rand(rng, n_divisions, n_years))
         division_fte = fte_dem .* (0.35 .+ 0.30 .* rand(rng, n_divisions, n_years))
-        division_mandate = [floor(Int, div_size[d] * (0.15 + 0.25 * rand(rng))) for d in 1:n_divisions]
+        division_mandate = [
+            floor(Int, div_size[d] * (0.15 + 0.25 * rand(rng))) for d in 1:n_divisions
+        ]
         # Estimated mandate portfolio: cheapest m_d per division + closure.
         estimate = falses(n)
         for d in 1:n_divisions
@@ -424,10 +430,13 @@ function ProjectSelectionProblem(
             end
         end
         _ps_close!(estimate, prereqs_of)
-        est_corp, _, _, _ = _ps_usage(estimate, division, start_year, spend, fte, n_years, n_divisions)
+        est_corp, _, _, _ = _ps_usage(
+            estimate, division, start_year, spend, fte, n_years, n_divisions
+        )
         kappa = exp(0.35 * randn(rng) - 0.40)
         corporate_budget = [
-            min(sum(division_budget[:, t]), kappa * est_corp[t] * (0.9 + 0.2 * rand(rng))) for t in 1:n_years
+            min(sum(division_budget[:, t]), kappa * est_corp[t] * (0.9 + 0.2 * rand(rng))) for
+            t in 1:n_years
         ]
         risk_budget = sum(risk_scores) * (0.25 + 0.2 * rand(rng))
         max_high_risk = max(1, round(Int, n_high * (0.2 + 0.3 * rand(rng))))

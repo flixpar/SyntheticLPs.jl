@@ -691,8 +691,11 @@ function _telecom_cut_bounds(
             best_capacity_value = cap / share
             best_capacity = (side, links, cap, share, ratio)
         end
-        if length(side) >= 3 && n_nodes - length(side) >= 3 && length(crossing) >= 3 &&
-           !any(is_bridge[a] for a in crossing) && cap / share < best_regional_value
+        if length(side) >= 3 &&
+            n_nodes - length(side) >= 3 &&
+            length(crossing) >= 3 &&
+            !any(is_bridge[a] for a in crossing) &&
+            cap / share < best_regional_value
             best_regional_value = cap / share
             best_regional = (side, links, cap, share, ratio)
         end
@@ -701,7 +704,8 @@ function _telecom_cut_bounds(
         # forcing-row and bound propagation from the few incident links already
         # implies the spend, so the instance is refuted without simplex work.
         balanced =
-            4 * length(side) >= n_nodes && 4 * (n_nodes - length(side)) >= n_nodes &&
+            4 * length(side) >= n_nodes &&
+            4 * (n_nodes - length(side)) >= n_nodes &&
             length(crossing) >= 4
         balanced && push!(balanced_cuts, (side, crossing))
         return nothing
@@ -868,7 +872,16 @@ function TelecomNetworkDesignProblem(
     is_bridge = falses(n_arcs)
     is_bridge[bridges] .= true
     capacity_cut, balanced_cuts, regional_cut = _telecom_cut_bounds(
-        arcs, capacity, install_cost, n_nodes, node_locations, sources, sinks, shares, is_bridge, rng
+        arcs,
+        capacity,
+        install_cost,
+        n_nodes,
+        node_locations,
+        sources,
+        sinks,
+        shares,
+        is_bridge,
+        rng,
     )
     # A connected topology carrying at least one commodity always yields a
     # valid cut (that commodity's source singleton), so the `nothing` branch is
@@ -921,7 +934,8 @@ function TelecomNetworkDesignProblem(
         in_subtree(t, v) = dfs_in[bridge_child[t]] <= dfs_in[v] <= dfs_out[bridge_child[t]]
         bridge_flow = [
             sum(
-                demands[k] for k in 1:n_commodities if in_subtree(t, sources[k]) != in_subtree(t, sinks[k]);
+                demands[k] for
+                k in 1:n_commodities if in_subtree(t, sources[k]) != in_subtree(t, sinks[k]);
                 init=0.0,
             ) for t in eachindex(bridges)
         ]
@@ -986,7 +1000,11 @@ function TelecomNetworkDesignProblem(
             end
         end
         capacity_cut = (
-            capacity_cut[1], capacity_cut[2], sum(capacity[a] for a in crossing), capacity_cut[4], capacity_cut[5]
+            capacity_cut[1],
+            capacity_cut[2],
+            sum(capacity[a] for a in crossing),
+            capacity_cut[4],
+            capacity_cut[5],
         )
     end
 

@@ -108,8 +108,11 @@ end
 Construct a stockpiling instance with about `target_variables` variables (at
 most `MINE_PLANNING_MAX_VARIABLES`).
 """
-function MineStockpileProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    target_variables >= 1 || throw(ArgumentError("target_variables must be >= 1 (got $target_variables)."))
+function MineStockpileProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
+    target_variables >= 1 ||
+        throw(ArgumentError("target_variables must be >= 1 (got $target_variables)."))
     target_variables <= MINE_PLANNING_MAX_VARIABLES || throw(
         ArgumentError(
             "mine_planning/stockpile supports at most $MINE_PLANNING_MAX_VARIABLES variables; " *
@@ -131,7 +134,8 @@ function MineStockpileProblem(target_variables::Int, feasibility_status::Feasibi
     g_hi = g_lo * rand(rng, Uniform(2.0, 3.0))
     edges = [g_lo * (g_hi / g_lo)^(s / S) for s in 0:S]
     bin_lower, bin_upper = edges[1:S], edges[2:(S + 1)]
-    bin_of(bm, b) = (!bm.oxide[b] && g_lo <= bm.grade[b] < g_hi) ? searchsortedlast(edges, bm.grade[b]) : 0
+    bin_of(bm, b) =
+        (!bm.oxide[b] && g_lo <= bm.grade[b] < g_hi) ? searchsortedlast(edges, bm.grade[b]) : 0
 
     offset = 2 * S * T
     bm0 = _mine_block_model(rng, max(4, cld(max(target_variables - offset, 4), T)), econ)
@@ -151,15 +155,23 @@ function MineStockpileProblem(target_variables::Int, feasibility_status::Feasibi
     end
     mill_rec = [_mine_mill_recovery(econ, bm.oxide[b]) for b in 1:B]
     pair_value = [
-        pair_dest[j] == 1 ?
-        w[pair_block[j]] * (g[pair_block[j]] / 100 * mill_rec[pair_block[j]] * econ.price - econ.mill_cost) :
-        -w[pair_block[j]] * placement_cost for j in eachindex(pair_block)
+        if pair_dest[j] == 1
+            w[pair_block[j]] *
+            (g[pair_block[j]] / 100 * mill_rec[pair_block[j]] * econ.price - econ.mill_cost)
+        else
+            -w[pair_block[j]] * placement_cost
+        end for j in eachindex(pair_block)
     ]
     pair_metal = [
-        pair_dest[j] == 1 ? 10.0 * w[pair_block[j]] * g[pair_block[j]] * mill_rec[pair_block[j]] : 0.0 for
-        j in eachindex(pair_block)
+        if pair_dest[j] == 1
+            10.0 * w[pair_block[j]] * g[pair_block[j]] * mill_rec[pair_block[j]]
+        else
+            0.0
+        end for j in eachindex(pair_block)
     ]
-    reclaim_value = [bin_lower[s] / 100 * sulfide_rec * econ.price - econ.mill_cost - rehandle_cost for s in 1:S]
+    reclaim_value = [
+        bin_lower[s] / 100 * sulfide_rec * econ.price - econ.mill_cost - rehandle_cost for s in 1:S
+    ]
     reclaim_metal = [10.0 * bin_lower[s] * sulfide_rec for s in 1:S]
 
     mill_pair = zeros(Int, B)
@@ -181,7 +193,8 @@ function MineStockpileProblem(target_variables::Int, feasibility_status::Feasibi
     mill_capacity = fill(C, T)
     _mine_ramp_up!(rng, mining_capacity, mill_capacity)
     avg_mill_grade = isempty(mill_ore) ? maximum(g) : sum(w[b] * g[b] for b in mill_ore) / mill_t
-    mill_metal_capacity = rand(rng, Uniform(0.95, 1.3)) * 10.0 * sulfide_rec * avg_mill_grade .* mill_capacity
+    mill_metal_capacity =
+        rand(rng, Uniform(0.95, 1.3)) * 10.0 * sulfide_rec * avg_mill_grade .* mill_capacity
     mill_metal_capacity .= max.(mill_metal_capacity, 3.0 * maximum(pair_metal; init=1.0))
     reclaim_capacity = fill(rand(rng, Uniform(0.3, 0.6)) * C, T)
     stockpile_capacity = [rand(rng, Uniform(0.6, 1.5)) * C for _ in 1:S]
@@ -214,7 +227,7 @@ function MineStockpileProblem(target_variables::Int, feasibility_status::Feasibi
                 if profitable[b]
                     j = mill_pair[b]
                     if feed[t] + w[b] <= shrink * mill_capacity[t] &&
-                       metal + pair_metal[j] <= shrink * mill_metal_capacity[t]
+                        metal + pair_metal[j] <= shrink * mill_metal_capacity[t]
                         dest = 1
                         feed[t] += w[b]
                         feed_grade[t] += w[b] * g[b]
@@ -255,7 +268,9 @@ function MineStockpileProblem(target_variables::Int, feasibility_status::Feasibi
         end
         fed = [t for t in 1:T if feed[t] > 0]
         if !isempty(fed)
-            head_grade_min = min(head_grade_min, (1 - eps_spec) * minimum(feed_grade[t] / feed[t] for t in fed))
+            head_grade_min = min(
+                head_grade_min, (1 - eps_spec) * minimum(feed_grade[t] / feed[t] for t in fed)
+            )
         end
         min_mill_feed = [min(min_mill_feed[t], (1 - eps_spec) * feed[t]) for t in 1:T]
         witness = MinePlanWitness(mining_period, destination, reclaim, inventory)
@@ -264,7 +279,14 @@ function MineStockpileProblem(target_variables::Int, feasibility_status::Feasibi
         result = nothing
         if rand(rng) < 0.5
             result = _mine_head_grade_infeasibility!(
-                rng, bm, mill_ok, mining_capacity, mill_capacity, min_mill_feed, head_grade_min, margin
+                rng,
+                bm,
+                mill_ok,
+                mining_capacity,
+                mill_capacity,
+                min_mill_feed,
+                head_grade_min,
+                margin,
             )
         end
         if result === nothing

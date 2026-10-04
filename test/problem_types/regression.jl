@@ -38,11 +38,14 @@ _regression_same(a::AbstractArray, b::AbstractArray) = a == b
         model, prob = generate_problem(:regression, target, feasible, 3; variant=:lad)
         n_gamma = sum(l - 1 for l in prob.levels; init=0)
         @test num_variables(model) == 1 + prob.n_continuous + n_gamma + prob.n_samples == target
-        @test num_constraints(model; count_variable_in_set_constraints=false) == 2 * prob.n_samples + 1
+        @test num_constraints(model; count_variable_in_set_constraints=false) ==
+            2 * prob.n_samples + 1
 
         # Quantile: 1 + demographic + 2 codes + 2 samples, exact.
         model, prob = generate_problem(:regression, target, feasible, 3; variant=:quantile)
-        @test num_variables(model) == 1 + prob.n_demographic + 2 * prob.n_codes + 2 * prob.n_samples == target
+        @test num_variables(model) ==
+            1 + prob.n_demographic + 2 * prob.n_codes + 2 * prob.n_samples ==
+            target
         @test num_constraints(model; count_variable_in_set_constraints=false) ==
             prob.n_samples + length(prob.band_lower)
 
@@ -60,7 +63,8 @@ _regression_same(a::AbstractArray, b::AbstractArray) = a == b
         # 1-norm SVM: 2·terms + bias + documents, exact.
         model, prob = generate_problem(:regression, target, feasible, 3; variant=:l1_svm)
         @test num_variables(model) == 2 * prob.n_terms + 1 + prob.n_documents == target
-        @test num_constraints(model; count_variable_in_set_constraints=false) == prob.n_documents + 1
+        @test num_constraints(model; count_variable_in_set_constraints=false) ==
+            prob.n_documents + 1
     end
 
     # Tiny targets still build every status.
@@ -71,7 +75,9 @@ _regression_same(a::AbstractArray, b::AbstractArray) = a == b
 
     # 100k-variable requests: exact sizing, bounded nonzeros, seconds to build.
     for v in (:lad, :chebyshev, :l1_svm, :quantile)
-        elapsed = @elapsed model, _ = generate_problem(:regression, 100_000, infeasible, 0; variant=v)
+        elapsed = @elapsed model, _ = generate_problem(
+            :regression, 100_000, infeasible, 0; variant=v
+        )
         @test abs(num_variables(model) - 100_000) <= 500
         @test _regression_test_nnz(model) <= 8_000_000
         @test elapsed < 60
@@ -86,8 +92,9 @@ end
         @test w isa SyntheticLPs.LADWitness
         @test prob.infeasibility_certificate === nothing
         fitted = [
-            SyntheticLPs._lad_fitted(prob.X, prob.level_codes, offsets, w.intercept, w.beta, w.gamma, i)
-            for i in 1:prob.n_samples
+            SyntheticLPs._lad_fitted(
+                prob.X, prob.level_codes, offsets, w.intercept, w.beta, w.gamma, i
+            ) for i in 1:prob.n_samples
         ]
         @test sum(abs.(prob.y .- fitted)) ≈ w.loss
         @test w.loss * 1.04 < prob.loss_budget
@@ -124,7 +131,11 @@ end
 
 @testset "Regression Quantile Data and Contracts" begin
     predict(prob, w, r) = SyntheticLPs._quantile_predict(
-        w.intercept, w.demographic, w.code, prob.reference_codes[r], prob.reference_values[r],
+        w.intercept,
+        w.demographic,
+        w.code,
+        prob.reference_codes[r],
+        prob.reference_values[r],
         view(prob.reference_Z, r, :),
     )
     for seed in 1:4
@@ -146,14 +157,17 @@ end
             end
             @test dense[prob.reference_codes[row]] ≈ prob.reference_values[row]
             @test count(!iszero, dense) == length(prob.reference_codes[row])
-            @test vec(sum(prob.reference_Z[members, :]; dims=1)) ./ length(members) ≈ prob.reference_Z[row, :]
+            @test vec(sum(prob.reference_Z[members, :]; dims=1)) ./ length(members) ≈
+                prob.reference_Z[row, :]
         end
         w = prob.feasible_witness
         @test w isa SyntheticLPs.QuantileWitness
         for r in eachindex(prob.band_lower)
             p = predict(prob, w, r)
             half = (prob.band_upper[r] - prob.band_lower[r]) / 2
-            @test prob.band_lower[r] + 0.5 * half - 1e-9 <= p <= prob.band_upper[r] - 0.5 * half + 1e-9
+            @test prob.band_lower[r] + 0.5 * half - 1e-9 <=
+                p <=
+                prob.band_upper[r] - 0.5 * half + 1e-9
         end
 
         _, bad = generate_problem(:regression, 800, infeasible, seed; variant=:quantile)
@@ -179,8 +193,9 @@ end
         w = prob.feasible_witness
         @test w isa SyntheticLPs.ChebyshevWitness
         residual = maximum(
-            prob.weights[i] * abs(prob.y[i] - dot(prob.basis_vals[:, i], w.coefficients[prob.basis_cols[:, i]]))
-            for i in 1:prob.n_samples
+            prob.weights[i] *
+            abs(prob.y[i] - dot(prob.basis_vals[:, i], w.coefficients[prob.basis_cols[:, i]])) for
+            i in 1:prob.n_samples
         )
         @test residual ≈ w.max_weighted_residual
         @test 1.09 * residual <= prob.error_cap
@@ -193,7 +208,8 @@ end
         # Multipliers annihilate the local basis rows.
         acc = Dict{Int, Float64}()
         for (k, i) in enumerate(cert.points), q in axes(bad.basis_cols, 1)
-            acc[bad.basis_cols[q, i]] = get(acc, bad.basis_cols[q, i], 0.0) + cert.multipliers[k] * bad.basis_vals[q, i]
+            acc[bad.basis_cols[q, i]] =
+                get(acc, bad.basis_cols[q, i], 0.0) + cert.multipliers[k] * bad.basis_vals[q, i]
         end
         @test maximum(abs, values(acc)) <= 1e-10
         @test sum(cert.multipliers .* bad.y[cert.points]) ≈ cert.combined_residual
@@ -268,7 +284,8 @@ end
     # Column nonzeros respect the budget; large instances stay sparse.
     _, big = generate_problem("regression/basis_pursuit", 20_000, feasible, 2)
     @test nnz(big.A) <= SyntheticLPs.BASIS_PURSUIT_NNZ_BUDGET + big.n_measurements
-    @test maximum(diff(big.A.colptr)) <= SyntheticLPs._basis_pursuit_column_nnz(big.n_measurements, big.n_features) + 2
+    @test maximum(diff(big.A.colptr)) <=
+        SyntheticLPs._basis_pursuit_column_nnz(big.n_measurements, big.n_features) + 2
 
     for profile in profiles, seed in profile_seeds[profile]
         _, prob = generate_problem("regression/basis_pursuit", 150, feasible, seed)
@@ -348,12 +365,18 @@ end
             optimize!(model)
             return termination_status(model)
         end
-        targets = Dict(:lad => 400, :quantile => 400, :chebyshev => 250, :basis_pursuit => 200, :l1_svm => 400)
+        targets = Dict(
+            :lad => 400, :quantile => 400, :chebyshev => 250, :basis_pursuit => 200, :l1_svm => 400
+        )
         for v in REGRESSION_VARIANTS, seed in 1:3
             # Passing the optimizer runs the package-level contract check.
-            model, _ = generate_problem(:regression, targets[v], feasible, seed; variant=v, optimizer=HiGHS.Optimizer)
+            model, _ = generate_problem(
+                :regression, targets[v], feasible, seed; variant=v, optimizer=HiGHS.Optimizer
+            )
             @test solve_status(model) == MOI.OPTIMAL
-            model, _ = generate_problem(:regression, targets[v], infeasible, seed; variant=v, optimizer=HiGHS.Optimizer)
+            model, _ = generate_problem(
+                :regression, targets[v], infeasible, seed; variant=v, optimizer=HiGHS.Optimizer
+            )
             @test solve_status(model) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
         end
         # `unknown` is a natural two-sided draw for the data-driven variants.

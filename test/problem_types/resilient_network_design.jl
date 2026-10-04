@@ -13,7 +13,8 @@
         @test (S, N) == (S_target, N_target)
         @test 0.9 * E_target <= E <= E_target
         @test num_variables(model) == 2E * (1 + S)
-        @test num_constraints(model; count_variable_in_set_constraints=false) == 1 + E * (1 + S) + N * S
+        @test num_constraints(model; count_variable_in_set_constraints=false) ==
+            1 + E * (1 + S) + N * S
         @test count(is_binary, all_variables(model)) == 2E
         target >= 200 && @test abs(num_variables(model) - target) <= 0.1 * target
         # Topology: unique undirected links, the first N-1 a spanning tree.
@@ -38,9 +39,13 @@
     for seed in 0:3
         _, p = generate_problem(ref, 5000, unknown, seed)
         for s in 1:p.n_scenarios, (e, (i, j)) in enumerate(p.edges)
-            mid = ((p.positions[i][1] + p.positions[j][1]) / 2, (p.positions[i][2] + p.positions[j][2]) / 2)
+            mid = (
+                (p.positions[i][1] + p.positions[j][1]) / 2,
+                (p.positions[i][2] + p.positions[j][2]) / 2,
+            )
             r = hypot(mid[1] - p.hazard_center[s][1], mid[2] - p.hazard_center[s][2])
-            bucket = r < 0.5 * p.hazard_radius[s] ? near : (r > 2 * p.hazard_radius[s] ? far : nothing)
+            bucket =
+                r < 0.5 * p.hazard_radius[s] ? near : (r > 2 * p.hazard_radius[s] ? far : nothing)
             bucket === nothing && continue
             bucket[1] += p.failed[e, s]
             bucket[2] += 1
@@ -64,7 +69,8 @@
         @test isempty(primal_feasibility_report(model, point; atol=1e-7))
         tree = p.n_nodes - 1
         @test all(w.build[1:tree] .== 1.0) && all(w.build[(tree + 1):end] .== 0.0)
-        @test p.design_budget ≈ 1.05 * sum(p.build_cost[e] + p.hardening_cost[e] for e in 1:tree) + 1.0
+        @test p.design_budget ≈
+            1.05 * sum(p.build_cost[e] + p.hardening_cost[e] for e in 1:tree) + 1.0
     end
 
     # Hardening-budget certificate arithmetic, recomputed from the data.
@@ -89,14 +95,17 @@
             @test !(p.sources[t] in region) || p.sources[t] == p.sinks[s]
             @test !(p.sinks[t] in region) || p.sinks[t] == p.sinks[s]
         end
-        @test c.cut_edges == [e for (e, (i, j)) in enumerate(p.edges) if (i in region) != (j in region)]
+        @test c.cut_edges ==
+            [e for (e, (i, j)) in enumerate(p.edges) if (i in region) != (j in region)]
         @test all(p.failed[e, s] for e in c.cut_edges)   # the hazard takes out every access link
         @test c.demand == p.demands[s]
         @test c.cut_capacity ≈ sum(p.capacities[e] for e in c.cut_edges)
         @test c.cut_capacity >= 1.24 * c.demand          # capacity alone is not the obstruction
         # With everything built and hardened, every scenario routes with headroom.
         for t in 1:p.n_scenarios
-            value, _ = SyntheticLPs._resilient_max_flow(p.n_nodes, p.edges, p.capacities, p.sources[t], p.sinks[t])
+            value, _ = SyntheticLPs._resilient_max_flow(
+                p.n_nodes, p.edges, p.capacities, p.sources[t], p.sinks[t]
+            )
             @test value >= 1.24 * p.demands[t]
         end
         # Bridge-forced design levels.
@@ -128,8 +137,15 @@
         for e in c.cut_edges
             fb, fh = get(level_b, e, 0.0), get(level_h, e, 0.0)
             required -= p.capacities[e] * fh
-            fb > fh && push!(pieces, (p.hardening_cost[e] / p.capacities[e], p.capacities[e] * (fb - fh)))
-            push!(pieces, ((p.build_cost[e] + p.hardening_cost[e]) / p.capacities[e], p.capacities[e] * (1 - max(fb, fh))))
+            fb > fh &&
+                push!(pieces, (p.hardening_cost[e] / p.capacities[e], p.capacities[e] * (fb - fh)))
+            push!(
+                pieces,
+                (
+                    (p.build_cost[e] + p.hardening_cost[e]) / p.capacities[e],
+                    p.capacities[e] * (1 - max(fb, fh)),
+                ),
+            )
         end
         spend = 0.0
         for (ratio, cap) in sort(pieces)
@@ -162,8 +178,10 @@
                 return termination_status(m)
             end
             for target in (200, 2000), seed in 0:3
-                @test rnd_status(first(generate_problem(ref, target, feasible, seed))) == MOI.OPTIMAL
-                @test rnd_status(first(generate_problem(ref, target, infeasible, seed))) == MOI.INFEASIBLE
+                @test rnd_status(first(generate_problem(ref, target, feasible, seed))) ==
+                    MOI.OPTIMAL
+                @test rnd_status(first(generate_problem(ref, target, infeasible, seed))) ==
+                    MOI.INFEASIBLE
             end
             outcomes = [rnd_status(first(generate_problem(ref, 1000, unknown, s))) for s in 0:11]
             @test count(==(MOI.OPTIMAL), outcomes) >= 2

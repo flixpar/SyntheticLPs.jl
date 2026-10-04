@@ -35,9 +35,7 @@ const ES_COMMODITY_MODULE = Dict(
     :H2 => 5,
     :HET => 6,
 )
-const ES_COMMODITY_ORDER = (
-    :COA, :GAS, :OIL, :URN, :BIO, :PET, :H2, :HET, :RH, :RA, :IP, :TP, :TF
-)
+const ES_COMMODITY_ORDER = (:COA, :GAS, :OIL, :URN, :BIO, :PET, :H2, :HET, :RH, :RA, :IP, :TP, :TF)
 
 """
 Technology template: one row of the technology database. `eff` is output per
@@ -70,13 +68,48 @@ struct ESTemplate
 end
 
 function _es_t(
-    name, mod, kind, input, output, eff, avail, profile, life, inv, fom, vom;
-    output2=:none, ratio2=(0.0, 0.0), credit=(0.0, 0.0), growth=0.1, potential=false,
-    classes=false, incumbent=true, share=(0.0, 0.0),
+    name,
+    mod,
+    kind,
+    input,
+    output,
+    eff,
+    avail,
+    profile,
+    life,
+    inv,
+    fom,
+    vom;
+    output2=:none,
+    ratio2=(0.0, 0.0),
+    credit=(0.0, 0.0),
+    growth=0.1,
+    potential=false,
+    classes=false,
+    incumbent=true,
+    share=(0.0, 0.0),
 )
     return ESTemplate(
-        name, mod, kind, input, output, eff, output2, ratio2, avail, profile, life, inv, fom, vom,
-        credit, growth, potential, classes, incumbent, share,
+        name,
+        mod,
+        kind,
+        input,
+        output,
+        eff,
+        output2,
+        ratio2,
+        avail,
+        profile,
+        life,
+        inv,
+        fom,
+        vom,
+        credit,
+        growth,
+        potential,
+        classes,
+        incumbent,
+        share,
     )
 end
 
@@ -86,45 +119,643 @@ end
 # renewable target). Shares are renormalised over the templates present.
 const ES_TEMPLATES = ESTemplate[
     # ---- electricity generation (capacity in GW, activity per timeslice in PJ)
-    _es_t(:E_COAL, 1, :gen, :COA, :ELC, (0.33, 0.45), (0.85, 0.92), :flat, 40, (1800.0, 2600.0), (40.0, 60.0), (1.0, 2.0); credit=(0.9, 0.95), growth=0.05, share=(0.40, 0.15)),
-    _es_t(:E_GASCC, 1, :gen, :GAS, :ELC, (0.50, 0.60), (0.88, 0.93), :flat, 30, (800.0, 1100.0), (20.0, 30.0), (0.8, 1.5); credit=(0.9, 0.95), growth=0.08, share=(0.35, 0.40)),
-    _es_t(:E_WON, 1, :gen, :none, :ELC, (1.0, 1.0), (0.25, 0.38), :wind, 25, (1200.0, 1700.0), (30.0, 45.0), (0.0, 0.0); credit=(0.05, 0.15), growth=0.15, potential=true, classes=true, incumbent=false, share=(0.5, 0.4)),
-    _es_t(:E_SPV, 2, :gen, :none, :ELC, (1.0, 1.0), (0.12, 0.22), :solar, 25, (600.0, 1100.0), (10.0, 20.0), (0.0, 0.0); credit=(0.0, 0.05), growth=0.20, potential=true, classes=true, incumbent=false, share=(0.4, 0.45)),
-    _es_t(:E_GASGT, 2, :gen, :GAS, :ELC, (0.30, 0.38), (0.90, 0.95), :flat, 25, (450.0, 700.0), (10.0, 15.0), (2.0, 4.0); credit=(0.95, 1.0), growth=0.10, share=(0.05, 0.05)),
-    _es_t(:E_NUC, 2, :gen, :URN, :ELC, (0.33, 0.36), (0.85, 0.92), :flat, 60, (5000.0, 8000.0), (100.0, 150.0), (0.5, 1.0); credit=(0.9, 0.95), growth=0.05, potential=true, share=(0.15, 0.15)),
-    _es_t(:E_BIO, 4, :gen, :BIO, :ELC, (0.30, 0.38), (0.80, 0.90), :flat, 30, (2500.0, 3500.0), (60.0, 100.0), (1.0, 3.0); credit=(0.85, 0.9), growth=0.08, share=(0.05, 0.10)),
-    _es_t(:E_HYD, 4, :gen, :none, :ELC, (1.0, 1.0), (0.35, 0.50), :hydro, 80, (2500.0, 4000.0), (20.0, 40.0), (0.0, 0.0); credit=(0.5, 0.7), growth=0.03, potential=true, share=(0.0, 0.0)),
-    _es_t(:E_H2, 5, :gen, :H2, :ELC, (0.50, 0.60), (0.90, 0.95), :flat, 25, (700.0, 1000.0), (15.0, 25.0), (1.0, 2.0); credit=(0.9, 0.95), growth=0.15, incumbent=false, share=(0.0, 0.0)),
-    _es_t(:E_CHP, 6, :gen, :GAS, :ELC, (0.33, 0.40), (0.80, 0.90), :flat, 30, (1100.0, 1500.0), (30.0, 45.0), (1.0, 2.0); output2=:HET, ratio2=(1.0, 1.4), credit=(0.85, 0.9), growth=0.08, potential=true, share=(0.4, 0.4)),
-    _es_t(:E_WOFF, 6, :gen, :none, :ELC, (1.0, 1.0), (0.38, 0.50), :windoff, 25, (2500.0, 3500.0), (60.0, 90.0), (0.0, 0.0); credit=(0.1, 0.2), growth=0.15, potential=true, classes=true, incumbent=false, share=(0.1, 0.15)),
+    _es_t(
+        :E_COAL,
+        1,
+        :gen,
+        :COA,
+        :ELC,
+        (0.33, 0.45),
+        (0.85, 0.92),
+        :flat,
+        40,
+        (1800.0, 2600.0),
+        (40.0, 60.0),
+        (1.0, 2.0);
+        credit=(0.9, 0.95),
+        growth=0.05,
+        share=(0.40, 0.15),
+    ),
+    _es_t(
+        :E_GASCC,
+        1,
+        :gen,
+        :GAS,
+        :ELC,
+        (0.50, 0.60),
+        (0.88, 0.93),
+        :flat,
+        30,
+        (800.0, 1100.0),
+        (20.0, 30.0),
+        (0.8, 1.5);
+        credit=(0.9, 0.95),
+        growth=0.08,
+        share=(0.35, 0.40),
+    ),
+    _es_t(
+        :E_WON,
+        1,
+        :gen,
+        :none,
+        :ELC,
+        (1.0, 1.0),
+        (0.25, 0.38),
+        :wind,
+        25,
+        (1200.0, 1700.0),
+        (30.0, 45.0),
+        (0.0, 0.0);
+        credit=(0.05, 0.15),
+        growth=0.15,
+        potential=true,
+        classes=true,
+        incumbent=false,
+        share=(0.5, 0.4),
+    ),
+    _es_t(
+        :E_SPV,
+        2,
+        :gen,
+        :none,
+        :ELC,
+        (1.0, 1.0),
+        (0.12, 0.22),
+        :solar,
+        25,
+        (600.0, 1100.0),
+        (10.0, 20.0),
+        (0.0, 0.0);
+        credit=(0.0, 0.05),
+        growth=0.20,
+        potential=true,
+        classes=true,
+        incumbent=false,
+        share=(0.4, 0.45),
+    ),
+    _es_t(
+        :E_GASGT,
+        2,
+        :gen,
+        :GAS,
+        :ELC,
+        (0.30, 0.38),
+        (0.90, 0.95),
+        :flat,
+        25,
+        (450.0, 700.0),
+        (10.0, 15.0),
+        (2.0, 4.0);
+        credit=(0.95, 1.0),
+        growth=0.10,
+        share=(0.05, 0.05),
+    ),
+    _es_t(
+        :E_NUC,
+        2,
+        :gen,
+        :URN,
+        :ELC,
+        (0.33, 0.36),
+        (0.85, 0.92),
+        :flat,
+        60,
+        (5000.0, 8000.0),
+        (100.0, 150.0),
+        (0.5, 1.0);
+        credit=(0.9, 0.95),
+        growth=0.05,
+        potential=true,
+        share=(0.15, 0.15),
+    ),
+    _es_t(
+        :E_BIO,
+        4,
+        :gen,
+        :BIO,
+        :ELC,
+        (0.30, 0.38),
+        (0.80, 0.90),
+        :flat,
+        30,
+        (2500.0, 3500.0),
+        (60.0, 100.0),
+        (1.0, 3.0);
+        credit=(0.85, 0.9),
+        growth=0.08,
+        share=(0.05, 0.10),
+    ),
+    _es_t(
+        :E_HYD,
+        4,
+        :gen,
+        :none,
+        :ELC,
+        (1.0, 1.0),
+        (0.35, 0.50),
+        :hydro,
+        80,
+        (2500.0, 4000.0),
+        (20.0, 40.0),
+        (0.0, 0.0);
+        credit=(0.5, 0.7),
+        growth=0.03,
+        potential=true,
+        share=(0.0, 0.0),
+    ),
+    _es_t(
+        :E_H2,
+        5,
+        :gen,
+        :H2,
+        :ELC,
+        (0.50, 0.60),
+        (0.90, 0.95),
+        :flat,
+        25,
+        (700.0, 1000.0),
+        (15.0, 25.0),
+        (1.0, 2.0);
+        credit=(0.9, 0.95),
+        growth=0.15,
+        incumbent=false,
+        share=(0.0, 0.0),
+    ),
+    _es_t(
+        :E_CHP,
+        6,
+        :gen,
+        :GAS,
+        :ELC,
+        (0.33, 0.40),
+        (0.80, 0.90),
+        :flat,
+        30,
+        (1100.0, 1500.0),
+        (30.0, 45.0),
+        (1.0, 2.0);
+        output2=:HET,
+        ratio2=(1.0, 1.4),
+        credit=(0.85, 0.9),
+        growth=0.08,
+        potential=true,
+        share=(0.4, 0.4),
+    ),
+    _es_t(
+        :E_WOFF,
+        6,
+        :gen,
+        :none,
+        :ELC,
+        (1.0, 1.0),
+        (0.38, 0.50),
+        :windoff,
+        25,
+        (2500.0, 3500.0),
+        (60.0, 90.0),
+        (0.0, 0.0);
+        credit=(0.1, 0.2),
+        growth=0.15,
+        potential=true,
+        classes=true,
+        incumbent=false,
+        share=(0.1, 0.15),
+    ),
     # ---- conversion (capacity in PJ/yr of output)
-    _es_t(:REF, 3, :annual, :OIL, :PET, (0.90, 0.95), (0.85, 0.92), :flat, 40, (15.0, 25.0), (0.5, 1.0), (0.3, 0.6); growth=0.05, share=(1.0, 1.0)),
-    _es_t(:H2_ELY, 5, :annual, :ELC, :H2, (0.62, 0.72), (0.5, 0.7), :flat, 20, (30.0, 55.0), (1.0, 2.0), (0.1, 0.3); growth=0.25, incumbent=false, share=(0.2, 0.6)),
-    _es_t(:H2_SMR, 5, :annual, :GAS, :H2, (0.68, 0.76), (0.85, 0.92), :flat, 25, (15.0, 25.0), (0.5, 1.0), (0.3, 0.5); growth=0.08, share=(0.8, 0.4)),
-    _es_t(:H_BOIL_GAS, 6, :annual, :GAS, :HET, (0.88, 0.93), (0.5, 0.7), :flat, 25, (3.0, 6.0), (0.1, 0.2), (0.1, 0.3); growth=0.10, share=(0.5, 0.3)),
-    _es_t(:H_HP, 6, :annual, :ELC, :HET, (2.5, 3.5), (0.5, 0.7), :heat, 20, (20.0, 35.0), (0.4, 0.8), (0.1, 0.2); growth=0.15, incumbent=false, share=(0.25, 0.45)),
-    _es_t(:H_BOIL_BIO, 6, :annual, :BIO, :HET, (0.80, 0.88), (0.5, 0.7), :flat, 25, (6.0, 10.0), (0.2, 0.4), (0.2, 0.4); growth=0.10, share=(0.25, 0.25)),
+    _es_t(
+        :REF,
+        3,
+        :annual,
+        :OIL,
+        :PET,
+        (0.90, 0.95),
+        (0.85, 0.92),
+        :flat,
+        40,
+        (15.0, 25.0),
+        (0.5, 1.0),
+        (0.3, 0.6);
+        growth=0.05,
+        share=(1.0, 1.0),
+    ),
+    _es_t(
+        :H2_ELY,
+        5,
+        :annual,
+        :ELC,
+        :H2,
+        (0.62, 0.72),
+        (0.5, 0.7),
+        :flat,
+        20,
+        (30.0, 55.0),
+        (1.0, 2.0),
+        (0.1, 0.3);
+        growth=0.25,
+        incumbent=false,
+        share=(0.2, 0.6),
+    ),
+    _es_t(
+        :H2_SMR,
+        5,
+        :annual,
+        :GAS,
+        :H2,
+        (0.68, 0.76),
+        (0.85, 0.92),
+        :flat,
+        25,
+        (15.0, 25.0),
+        (0.5, 1.0),
+        (0.3, 0.5);
+        growth=0.08,
+        share=(0.8, 0.4),
+    ),
+    _es_t(
+        :H_BOIL_GAS,
+        6,
+        :annual,
+        :GAS,
+        :HET,
+        (0.88, 0.93),
+        (0.5, 0.7),
+        :flat,
+        25,
+        (3.0, 6.0),
+        (0.1, 0.2),
+        (0.1, 0.3);
+        growth=0.10,
+        share=(0.5, 0.3),
+    ),
+    _es_t(
+        :H_HP,
+        6,
+        :annual,
+        :ELC,
+        :HET,
+        (2.5, 3.5),
+        (0.5, 0.7),
+        :heat,
+        20,
+        (20.0, 35.0),
+        (0.4, 0.8),
+        (0.1, 0.2);
+        growth=0.15,
+        incumbent=false,
+        share=(0.25, 0.45),
+    ),
+    _es_t(
+        :H_BOIL_BIO,
+        6,
+        :annual,
+        :BIO,
+        :HET,
+        (0.80, 0.88),
+        (0.5, 0.7),
+        :flat,
+        25,
+        (6.0, 10.0),
+        (0.2, 0.4),
+        (0.2, 0.4);
+        growth=0.10,
+        share=(0.25, 0.25),
+    ),
     # ---- end-use devices (capacity in service units per year)
-    _es_t(:RA_STD, 1, :annual, :ELC, :RA, (1.0, 1.0), (0.85, 0.95), :appliance, 12, (20.0, 40.0), (0.5, 1.0), (0.0, 0.0); growth=0.10, classes=true, share=(1.0, 1.0)),
-    _es_t(:RH_GAS, 1, :annual, :GAS, :RH, (0.85, 0.95), (0.30, 0.40), :flat, 20, (30.0, 50.0), (1.0, 2.0), (0.0, 0.0); growth=0.08, classes=true, share=(0.55, 0.35)),
-    _es_t(:RH_HP, 1, :annual, :ELC, :RH, (2.5, 4.0), (0.30, 0.40), :heat, 18, (100.0, 160.0), (2.0, 3.0), (0.0, 0.0); growth=0.15, classes=true, incumbent=false, share=(0.10, 0.35)),
-    _es_t(:IP_GAS, 2, :annual, :GAS, :IP, (0.85, 0.90), (0.70, 0.85), :flat, 25, (10.0, 20.0), (0.3, 0.6), (0.1, 0.2); growth=0.08, share=(0.45, 0.35)),
-    _es_t(:IP_COAL, 2, :annual, :COA, :IP, (0.78, 0.85), (0.70, 0.85), :flat, 30, (12.0, 22.0), (0.4, 0.7), (0.1, 0.3); growth=0.05, share=(0.25, 0.10)),
-    _es_t(:IP_ELC, 2, :annual, :ELC, :IP, (0.95, 0.99), (0.70, 0.85), :industry, 25, (15.0, 30.0), (0.4, 0.8), (0.1, 0.2); growth=0.12, classes=true, share=(0.20, 0.35)),
-    _es_t(:TP_ICE, 3, :annual, :PET, :TP, (0.55, 0.75), (0.85, 0.95), :flat, 15, (900.0, 1400.0), (20.0, 40.0), (0.0, 0.0); growth=0.08, classes=true, share=(0.90, 0.50)),
-    _es_t(:TP_BEV, 3, :annual, :ELC, :TP, (1.8, 2.4), (0.85, 0.95), :ev, 15, (1100.0, 1700.0), (15.0, 30.0), (0.0, 0.0); growth=0.20, classes=true, incumbent=false, share=(0.05, 0.35)),
-    _es_t(:TF_DSL, 3, :annual, :PET, :TF, (0.9, 1.3), (0.85, 0.95), :flat, 12, (150.0, 250.0), (5.0, 10.0), (0.0, 0.0); growth=0.08, classes=true, share=(0.92, 0.60)),
-    _es_t(:TF_BEV, 3, :annual, :ELC, :TF, (2.0, 3.0), (0.85, 0.95), :ev, 12, (220.0, 350.0), (4.0, 8.0), (0.0, 0.0); growth=0.20, incumbent=false, share=(0.02, 0.20)),
-    _es_t(:RH_OIL, 3, :annual, :PET, :RH, (0.80, 0.88), (0.30, 0.40), :flat, 20, (30.0, 45.0), (1.0, 2.0), (0.0, 0.0); growth=0.05, share=(0.15, 0.05)),
-    _es_t(:RH_BIO, 4, :annual, :BIO, :RH, (0.70, 0.82), (0.30, 0.40), :flat, 20, (50.0, 80.0), (1.5, 2.5), (0.0, 0.0); growth=0.10, share=(0.08, 0.10)),
-    _es_t(:IP_BIO, 4, :annual, :BIO, :IP, (0.72, 0.80), (0.70, 0.85), :flat, 25, (15.0, 25.0), (0.4, 0.8), (0.1, 0.3); growth=0.10, share=(0.05, 0.10)),
-    _es_t(:IP_H2, 5, :annual, :H2, :IP, (0.85, 0.90), (0.70, 0.85), :flat, 25, (20.0, 35.0), (0.5, 0.9), (0.1, 0.2); growth=0.20, incumbent=false, share=(0.0, 0.10)),
-    _es_t(:TP_FCEV, 5, :annual, :H2, :TP, (0.9, 1.2), (0.85, 0.95), :flat, 15, (1300.0, 2000.0), (20.0, 40.0), (0.0, 0.0); growth=0.20, incumbent=false, share=(0.0, 0.05)),
-    _es_t(:TF_H2, 5, :annual, :H2, :TF, (1.2, 1.6), (0.85, 0.95), :flat, 12, (250.0, 400.0), (5.0, 10.0), (0.0, 0.0); growth=0.20, incumbent=false, share=(0.0, 0.10)),
-    _es_t(:RH_DH, 6, :annual, :HET, :RH, (0.93, 0.97), (0.30, 0.40), :flat, 30, (40.0, 70.0), (1.0, 2.0), (0.0, 0.0); growth=0.08, share=(0.08, 0.12)),
-    _es_t(:RH_RES, 6, :annual, :ELC, :RH, (0.99, 1.0), (0.30, 0.40), :heat, 20, (10.0, 20.0), (0.3, 0.6), (0.0, 0.0); growth=0.10, share=(0.04, 0.03)),
-    _es_t(:TP_RAIL, 6, :annual, :ELC, :TP, (3.0, 5.0), (0.80, 0.90), :flat, 40, (2000.0, 3000.0), (40.0, 80.0), (0.0, 0.0); growth=0.05, potential=true, share=(0.05, 0.10)),
-    _es_t(:TF_RAIL, 6, :annual, :ELC, :TF, (4.0, 6.0), (0.80, 0.90), :flat, 40, (300.0, 500.0), (8.0, 15.0), (0.0, 0.0); growth=0.05, potential=true, share=(0.08, 0.10)),
+    _es_t(
+        :RA_STD,
+        1,
+        :annual,
+        :ELC,
+        :RA,
+        (1.0, 1.0),
+        (0.85, 0.95),
+        :appliance,
+        12,
+        (20.0, 40.0),
+        (0.5, 1.0),
+        (0.0, 0.0);
+        growth=0.10,
+        classes=true,
+        share=(1.0, 1.0),
+    ),
+    _es_t(
+        :RH_GAS,
+        1,
+        :annual,
+        :GAS,
+        :RH,
+        (0.85, 0.95),
+        (0.30, 0.40),
+        :flat,
+        20,
+        (30.0, 50.0),
+        (1.0, 2.0),
+        (0.0, 0.0);
+        growth=0.08,
+        classes=true,
+        share=(0.55, 0.35),
+    ),
+    _es_t(
+        :RH_HP,
+        1,
+        :annual,
+        :ELC,
+        :RH,
+        (2.5, 4.0),
+        (0.30, 0.40),
+        :heat,
+        18,
+        (100.0, 160.0),
+        (2.0, 3.0),
+        (0.0, 0.0);
+        growth=0.15,
+        classes=true,
+        incumbent=false,
+        share=(0.10, 0.35),
+    ),
+    _es_t(
+        :IP_GAS,
+        2,
+        :annual,
+        :GAS,
+        :IP,
+        (0.85, 0.90),
+        (0.70, 0.85),
+        :flat,
+        25,
+        (10.0, 20.0),
+        (0.3, 0.6),
+        (0.1, 0.2);
+        growth=0.08,
+        share=(0.45, 0.35),
+    ),
+    _es_t(
+        :IP_COAL,
+        2,
+        :annual,
+        :COA,
+        :IP,
+        (0.78, 0.85),
+        (0.70, 0.85),
+        :flat,
+        30,
+        (12.0, 22.0),
+        (0.4, 0.7),
+        (0.1, 0.3);
+        growth=0.05,
+        share=(0.25, 0.10),
+    ),
+    _es_t(
+        :IP_ELC,
+        2,
+        :annual,
+        :ELC,
+        :IP,
+        (0.95, 0.99),
+        (0.70, 0.85),
+        :industry,
+        25,
+        (15.0, 30.0),
+        (0.4, 0.8),
+        (0.1, 0.2);
+        growth=0.12,
+        classes=true,
+        share=(0.20, 0.35),
+    ),
+    _es_t(
+        :TP_ICE,
+        3,
+        :annual,
+        :PET,
+        :TP,
+        (0.55, 0.75),
+        (0.85, 0.95),
+        :flat,
+        15,
+        (900.0, 1400.0),
+        (20.0, 40.0),
+        (0.0, 0.0);
+        growth=0.08,
+        classes=true,
+        share=(0.90, 0.50),
+    ),
+    _es_t(
+        :TP_BEV,
+        3,
+        :annual,
+        :ELC,
+        :TP,
+        (1.8, 2.4),
+        (0.85, 0.95),
+        :ev,
+        15,
+        (1100.0, 1700.0),
+        (15.0, 30.0),
+        (0.0, 0.0);
+        growth=0.20,
+        classes=true,
+        incumbent=false,
+        share=(0.05, 0.35),
+    ),
+    _es_t(
+        :TF_DSL,
+        3,
+        :annual,
+        :PET,
+        :TF,
+        (0.9, 1.3),
+        (0.85, 0.95),
+        :flat,
+        12,
+        (150.0, 250.0),
+        (5.0, 10.0),
+        (0.0, 0.0);
+        growth=0.08,
+        classes=true,
+        share=(0.92, 0.60),
+    ),
+    _es_t(
+        :TF_BEV,
+        3,
+        :annual,
+        :ELC,
+        :TF,
+        (2.0, 3.0),
+        (0.85, 0.95),
+        :ev,
+        12,
+        (220.0, 350.0),
+        (4.0, 8.0),
+        (0.0, 0.0);
+        growth=0.20,
+        incumbent=false,
+        share=(0.02, 0.20),
+    ),
+    _es_t(
+        :RH_OIL,
+        3,
+        :annual,
+        :PET,
+        :RH,
+        (0.80, 0.88),
+        (0.30, 0.40),
+        :flat,
+        20,
+        (30.0, 45.0),
+        (1.0, 2.0),
+        (0.0, 0.0);
+        growth=0.05,
+        share=(0.15, 0.05),
+    ),
+    _es_t(
+        :RH_BIO,
+        4,
+        :annual,
+        :BIO,
+        :RH,
+        (0.70, 0.82),
+        (0.30, 0.40),
+        :flat,
+        20,
+        (50.0, 80.0),
+        (1.5, 2.5),
+        (0.0, 0.0);
+        growth=0.10,
+        share=(0.08, 0.10),
+    ),
+    _es_t(
+        :IP_BIO,
+        4,
+        :annual,
+        :BIO,
+        :IP,
+        (0.72, 0.80),
+        (0.70, 0.85),
+        :flat,
+        25,
+        (15.0, 25.0),
+        (0.4, 0.8),
+        (0.1, 0.3);
+        growth=0.10,
+        share=(0.05, 0.10),
+    ),
+    _es_t(
+        :IP_H2,
+        5,
+        :annual,
+        :H2,
+        :IP,
+        (0.85, 0.90),
+        (0.70, 0.85),
+        :flat,
+        25,
+        (20.0, 35.0),
+        (0.5, 0.9),
+        (0.1, 0.2);
+        growth=0.20,
+        incumbent=false,
+        share=(0.0, 0.10),
+    ),
+    _es_t(
+        :TP_FCEV,
+        5,
+        :annual,
+        :H2,
+        :TP,
+        (0.9, 1.2),
+        (0.85, 0.95),
+        :flat,
+        15,
+        (1300.0, 2000.0),
+        (20.0, 40.0),
+        (0.0, 0.0);
+        growth=0.20,
+        incumbent=false,
+        share=(0.0, 0.05),
+    ),
+    _es_t(
+        :TF_H2,
+        5,
+        :annual,
+        :H2,
+        :TF,
+        (1.2, 1.6),
+        (0.85, 0.95),
+        :flat,
+        12,
+        (250.0, 400.0),
+        (5.0, 10.0),
+        (0.0, 0.0);
+        growth=0.20,
+        incumbent=false,
+        share=(0.0, 0.10),
+    ),
+    _es_t(
+        :RH_DH,
+        6,
+        :annual,
+        :HET,
+        :RH,
+        (0.93, 0.97),
+        (0.30, 0.40),
+        :flat,
+        30,
+        (40.0, 70.0),
+        (1.0, 2.0),
+        (0.0, 0.0);
+        growth=0.08,
+        share=(0.08, 0.12),
+    ),
+    _es_t(
+        :RH_RES,
+        6,
+        :annual,
+        :ELC,
+        :RH,
+        (0.99, 1.0),
+        (0.30, 0.40),
+        :heat,
+        20,
+        (10.0, 20.0),
+        (0.3, 0.6),
+        (0.0, 0.0);
+        growth=0.10,
+        share=(0.04, 0.03),
+    ),
+    _es_t(
+        :TP_RAIL,
+        6,
+        :annual,
+        :ELC,
+        :TP,
+        (3.0, 5.0),
+        (0.80, 0.90),
+        :flat,
+        40,
+        (2000.0, 3000.0),
+        (40.0, 80.0),
+        (0.0, 0.0);
+        growth=0.05,
+        potential=true,
+        share=(0.05, 0.10),
+    ),
+    _es_t(
+        :TF_RAIL,
+        6,
+        :annual,
+        :ELC,
+        :TF,
+        (4.0, 6.0),
+        (0.80, 0.90),
+        :flat,
+        40,
+        (300.0, 500.0),
+        (8.0, 15.0),
+        (0.0, 0.0);
+        growth=0.05,
+        potential=true,
+        share=(0.08, 0.10),
+    ),
 ]
 
 # Class multipliers: efficiency classes for devices, resource-quality classes
@@ -328,9 +959,7 @@ struct ESLayout
     n_flow::Int
 end
 
-function _es_layout(
-    tech_kind::Vector{Symbol}, n_periods::Int, n_slices::Int, n_lines::Int
-)
+function _es_layout(tech_kind::Vector{Symbol}, n_periods::Int, n_slices::Int, n_lines::Int)
     n = length(tech_kind)
     slots = [k == :gen ? n_slices : 1 for k in tech_kind]
     act_offset = zeros(Int, n)
@@ -347,7 +976,9 @@ function _es_layout(
             cap_index[k] = c
         end
     end
-    return ESLayout(slots, act_offset, off, cap_index, c * n_periods, 2 * n_lines * n_periods * n_slices)
+    return ESLayout(
+        slots, act_offset, off, cap_index, c * n_periods, 2 * n_lines * n_periods * n_slices
+    )
 end
 
 _es_layout(p::EnergySystemProblem) =
@@ -355,7 +986,8 @@ _es_layout(p::EnergySystemProblem) =
 
 es_act(L::ESLayout, k::Int, t::Int, s::Int=1) = L.act_offset[k] + (t - 1) * L.slots[k] + s
 es_cap(L::ESLayout, k::Int, t::Int, T::Int) = (L.cap_index[k] - 1) * T + t
-es_flow(l::Int, dir::Int, t::Int, s::Int, T::Int, S::Int) = ((2 * (l - 1) + dir - 1) * T + t - 1) * S + s
+es_flow(l::Int, dir::Int, t::Int, s::Int, T::Int, S::Int) =
+    ((2 * (l - 1) + dir - 1) * T + t - 1) * S + s
 
 # ---------------------------------------------------------------------------
 # Timeslices and profiles
@@ -382,7 +1014,10 @@ function _es_hour_factor(kind::Symbol, h::Float64)
     elseif kind == :heat
         return 0.7 + 0.5 * exp(-((h - 7) / 2.5)^2) + 0.6 * exp(-((h - 19) / 3)^2)
     elseif kind == :appliance
-        return 0.5 + 1.0 * exp(-((h - 19) / 3)^2) + 0.4 * exp(-((h - 8) / 2)^2) + (8 < h < 18 ? 0.3 : 0.0)
+        return 0.5 +
+               1.0 * exp(-((h - 19) / 3)^2) +
+               0.4 * exp(-((h - 8) / 2)^2) +
+               (8 < h < 18 ? 0.3 : 0.0)
     elseif kind == :ev
         return (h < 6 || h >= 22) ? 1.4 : (0.7 + 0.3 * exp(-((h - 18) / 1.5)^2))
     elseif kind == :industry
@@ -544,7 +1179,19 @@ function _es_dimensions(rng::AbstractRNG, target::Int)
             end
         end
     end
-    return (; Δ, T, S, n_seasons=seasons_days[1], n_dayparts=seasons_days[2], R, m, templates, fuels, n_classes, steps)
+    return (;
+        Δ,
+        T,
+        S,
+        n_seasons=seasons_days[1],
+        n_dayparts=seasons_days[2],
+        R,
+        m,
+        templates,
+        fuels,
+        n_classes,
+        steps,
+    )
 end
 
 # ---------------------------------------------------------------------------
@@ -618,7 +1265,8 @@ end
 # ---------------------------------------------------------------------------
 
 """Uniform draw from a `(lo, hi)` range that may be degenerate (`lo == hi`)."""
-_es_draw(rng::AbstractRNG, r::NTuple{2, Float64}) = r[1] == r[2] ? r[1] : rand(rng, Uniform(r[1], r[2]))
+_es_draw(rng::AbstractRNG, r::NTuple{2, Float64}) =
+    r[1] == r[2] ? r[1] : rand(rng, Uniform(r[1], r[2]))
 
 """
     EnergySystemProblem(target_variables, feasibility_status, seed)
@@ -626,7 +1274,9 @@ _es_draw(rng::AbstractRNG, r::NTuple{2, Float64}) = r[1] == r[2] ? r[1] : rand(r
 Construct an energy-system planning instance with about `target_variables`
 columns (exact formula in the type docstring).
 """
-function EnergySystemProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function EnergySystemProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     target_variables >= 1 ||
         throw(ArgumentError("target_variables must be >= 1 (got $target_variables)."))
     target_variables <= ENERGY_SYSTEM_MAX_VARIABLES || throw(
@@ -642,13 +1292,15 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
 
     # ---- timeslices and profiles ---------------------------------------------
     dur = fill(1.0 / S, S)
-    shapes = Dict(k => _es_shape(k, dims.n_seasons, dims.n_dayparts) for k in keys(ES_SEASON_FACTORS))
+    shapes = Dict(
+        k => _es_shape(k, dims.n_seasons, dims.n_dayparts) for k in keys(ES_SEASON_FACTORS)
+    )
     profiles = zeros(length(ES_PROFILE_NAMES), S)
     for (i, k) in enumerate(ES_PROFILE_NAMES)
         w = dur .* shapes[k]
         profiles[i, :] .= w ./ sum(w)
     end
-    avail_shape(k) = (sh = shapes[k]; sh ./ sum(dur .* sh))
+    avail_shape(k) = (sh=shapes[k]; sh ./ sum(dur .* sh))
 
     # ---- commodities -----------------------------------------------------------
     commodities = [c for c in ES_COMMODITY_ORDER if ES_COMMODITY_MODULE[c] <= dims.m]
@@ -661,8 +1313,20 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
     # ---- region geography, demands --------------------------------------------
     pos = [(100 * rand(rng), 100 * rand(rng)) for _ in 1:R]
     scale = [exp(rand(rng, Uniform(log(0.2), log(5.0)))) for _ in 1:R]
-    base_demand = Dict(:RH => (150.0, 300.0), :RA => (80.0, 150.0), :IP => (200.0, 400.0), :TP => (100.0, 150.0), :TF => (50.0, 200.0))
-    demand_growth = Dict(:RH => (0.0, 0.005), :RA => (0.01, 0.025), :IP => (0.005, 0.02), :TP => (0.005, 0.015), :TF => (0.01, 0.025))
+    base_demand = Dict(
+        :RH => (150.0, 300.0),
+        :RA => (80.0, 150.0),
+        :IP => (200.0, 400.0),
+        :TP => (100.0, 150.0),
+        :TF => (50.0, 200.0),
+    )
+    demand_growth = Dict(
+        :RH => (0.0, 0.005),
+        :RA => (0.01, 0.025),
+        :IP => (0.005, 0.02),
+        :TP => (0.005, 0.015),
+        :TF => (0.01, 0.025),
+    )
     D = zeros(R, NC, T)
     for r in 1:R, d in demands
         b = scale[r] * rand(rng, Uniform(base_demand[d]...))
@@ -709,30 +1373,60 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
             lo, hi = supply_price[f][1]
             costs = sort([rand(rng, Uniform(lo, hi)) for _ in 1:n_dom])
             for (i, cst) in enumerate(costs)
-                push!(tech_name, f); push!(tech_template, 0); push!(tech_class, i); push!(tech_region, r)
-                push!(tech_kind, :supply); push!(tech_input, 0); push!(tech_input_coef, 0.0)
-                push!(tech_output, cidx[f]); push!(tech_output2, 0); push!(tech_output2_coef, 0.0)
-                push!(tech_emission, 0.0); push!(tech_profile, 0); push!(tech_capfac, 0.0)
-                push!(avail_rows, zeros(S)); push!(tech_life, 0); push!(tech_varcost, cst)
-                push!(tech_invcost, 0.0); push!(tech_fixcost, 0.0); push!(tech_credit, 0.0); push!(tech_growth, 0.0)
+                push!(tech_name, f)
+                push!(tech_template, 0)
+                push!(tech_class, i)
+                push!(tech_region, r)
+                push!(tech_kind, :supply)
+                push!(tech_input, 0)
+                push!(tech_input_coef, 0.0)
+                push!(tech_output, cidx[f])
+                push!(tech_output2, 0)
+                push!(tech_output2_coef, 0.0)
+                push!(tech_emission, 0.0)
+                push!(tech_profile, 0)
+                push!(tech_capfac, 0.0)
+                push!(avail_rows, zeros(S))
+                push!(tech_life, 0)
+                push!(tech_varcost, cst)
+                push!(tech_invcost, 0.0)
+                push!(tech_fixcost, 0.0)
+                push!(tech_credit, 0.0)
+                push!(tech_growth, 0.0)
                 push!(supply_cost_rank, i)
             end
             if f != :BIO
                 ilo, ihi = supply_price[f][2]
-                push!(tech_name, f); push!(tech_template, 0); push!(tech_class, 0); push!(tech_region, r)
-                push!(tech_kind, :supply); push!(tech_input, 0); push!(tech_input_coef, 0.0)
-                push!(tech_output, cidx[f]); push!(tech_output2, 0); push!(tech_output2_coef, 0.0)
-                push!(tech_emission, 0.0); push!(tech_profile, 0); push!(tech_capfac, 0.0)
-                push!(avail_rows, zeros(S)); push!(tech_life, 0)
+                push!(tech_name, f)
+                push!(tech_template, 0)
+                push!(tech_class, 0)
+                push!(tech_region, r)
+                push!(tech_kind, :supply)
+                push!(tech_input, 0)
+                push!(tech_input_coef, 0.0)
+                push!(tech_output, cidx[f])
+                push!(tech_output2, 0)
+                push!(tech_output2_coef, 0.0)
+                push!(tech_emission, 0.0)
+                push!(tech_profile, 0)
+                push!(tech_capfac, 0.0)
+                push!(avail_rows, zeros(S))
+                push!(tech_life, 0)
                 push!(tech_varcost, max(rand(rng, Uniform(ilo, ihi)), costs[end] * 1.05))
-                push!(tech_invcost, 0.0); push!(tech_fixcost, 0.0); push!(tech_credit, 0.0); push!(tech_growth, 0.0)
+                push!(tech_invcost, 0.0)
+                push!(tech_fixcost, 0.0)
+                push!(tech_credit, 0.0)
+                push!(tech_growth, 0.0)
                 push!(supply_cost_rank, n_dom + 1)
             end
         end
         for tp in templates
             for c in 1:dims.n_classes[tp.name]
-                push!(tech_name, tp.name); push!(tech_template, template_index[tp.name]); push!(tech_class, c)
-                push!(tech_region, r); push!(tech_kind, tp.kind)
+                push!(tech_name, tp.name)
+                push!(tech_template, template_index[tp.name])
+                push!(tech_class, c)
+                push!(tech_region, r)
+                push!(tech_kind, tp.kind)
                 eff = _es_draw(rng, tp.eff)
                 inv = _es_draw(rng, tp.inv)
                 av = _es_draw(rng, tp.avail)
@@ -748,8 +1442,18 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
                 push!(tech_output, cid(tp.output))
                 push!(tech_output2, tp.output2 == :none ? 0 : cid(tp.output2))
                 push!(tech_output2_coef, tp.output2 == :none ? 0.0 : _es_draw(rng, tp.ratio2))
-                push!(tech_emission, get(ES_EMISSION_FACTOR, tp.input, 0.0) * (tp.input == :none ? 0.0 : 1.0 / eff))
-                push!(tech_profile, tp.kind == :annual && tp.input == :ELC ? findfirst(==(tp.profile), ES_PROFILE_NAMES) : 0)
+                push!(
+                    tech_emission,
+                    get(ES_EMISSION_FACTOR, tp.input, 0.0) * (tp.input == :none ? 0.0 : 1.0 / eff),
+                )
+                push!(
+                    tech_profile,
+                    if tp.kind == :annual && tp.input == :ELC
+                        findfirst(==(tp.profile), ES_PROFILE_NAMES)
+                    else
+                        0
+                    end,
+                )
                 push!(tech_capfac, tp.kind == :gen ? ES_PJ_PER_GW_YEAR : 1.0)
                 if tp.kind == :gen
                     if tp.profile == :flat
@@ -836,7 +1540,14 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
     end
     nL = length(lines)
     line_capacity = [rand(rng, Uniform(0.5, 5.0)) * sqrt(scale[a] * scale[b]) for (a, b) in lines]
-    line_efficiency = [clamp(1 - 0.0005 * hypot(pos[a][1] - pos[b][1], pos[a][2] - pos[b][2]) - rand(rng, Uniform(0.005, 0.02)), 0.9, 0.995) for (a, b) in lines]
+    line_efficiency = [
+        clamp(
+            1 - 0.0005 * hypot(pos[a][1] - pos[b][1], pos[a][2] - pos[b][2]) -
+            rand(rng, Uniform(0.005, 0.02)),
+            0.9,
+            0.995,
+        ) for (a, b) in lines
+    ]
     line_cost = [rand(rng, Uniform(0.5, 2.0)) for _ in lines]
 
     layout = _es_layout(tech_kind, T, S, nL)
@@ -852,7 +1563,10 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
     tau(t) = T == 1 ? 1.0 : (t - 1) / (T - 1)
     # region-specific reference share noise per template
     share_noise = [Dict(tp.name => rand(rng, LogNormal(0.0, 0.3)) for tp in templates) for _ in 1:R]
-    ren_share = [(s1 = rand(rng, Uniform(0.05, 0.3)); (s1, min(0.85, s1 + rand(rng, Uniform(0.2, 0.5))))) for _ in 1:R]
+    ren_share = [
+        (s1=rand(rng, Uniform(0.05, 0.3)); (s1, min(0.85, s1 + rand(rng, Uniform(0.2, 0.5))))) for
+        _ in 1:R
+    ]
     hydro_share = [rand(rng) < 0.6 ? rand(rng, Uniform(0.02, 0.15)) : 0.01 for _ in 1:R]
     chp_heat_share = [rand(rng, Uniform(0.25, 0.5)) for _ in 1:R]
     use = zeros(R, NC, T)                    # annual commodity use (inputs)
@@ -865,10 +1579,13 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
         for k in producers
             tp = ES_TEMPLATES[tech_template[k]]
             s = (tp.share[1] + (tp.share[2] - tp.share[1]) * tau(t)) * share_noise[r][tp.name]
-            push!(w, s * ES_CLASS_SHARE[tech_class[k]] / sum(ES_CLASS_SHARE[1:dims.n_classes[tp.name]]))
+            push!(
+                w,
+                s * ES_CLASS_SHARE[tech_class[k]] / sum(ES_CLASS_SHARE[1:dims.n_classes[tp.name]]),
+            )
         end
         tot = sum(w)
-        tot > 0 || (w .= 1.0; tot = length(w))
+        tot > 0 || (w.=1.0; tot=length(w))
         for (i, k) in enumerate(producers)
             a = amount * w[i] / tot
             act[es_act(layout, k, t)] += a
@@ -883,7 +1600,8 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
             req[k, t] = max(req[k, t], a / (tech_avail[k, 1] * tech_capfac[k]))
         end
     end
-    annual_producers(r, c) = [k for k in techs_of_region[r] if tech_kind[k] == :annual && tech_output[k] == c]
+    annual_producers(r, c) =
+        [k for k in techs_of_region[r] if tech_kind[k] == :annual && tech_output[k] == c]
 
     for r in 1:R, t in 1:T
         for d in demands
@@ -914,7 +1632,11 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
     for r in 1:R, t in 1:T
         gens = [k for k in techs_of_region[r] if tech_kind[k] == :gen && tech_output2[k] == 0]
         vre = [k for k in gens if ES_TEMPLATES[tech_template[k]].potential && tech_input[k] == 0]
-        disp = [k for k in gens if !(k in vre) && ES_TEMPLATES[tech_template[k]].share[1] + ES_TEMPLATES[tech_template[k]].share[2] > 0]
+        disp = [
+            k for k in gens if !(k in vre) &&
+                ES_TEMPLATES[tech_template[k]].share[1] + ES_TEMPLATES[tech_template[k]].share[2] >
+                0
+        ]
         load = elec_use[r, t, :]
         annual_load = sum(load)
         supply = zeros(S)
@@ -928,14 +1650,21 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
         w = Float64[]
         for k in vre
             tp = ES_TEMPLATES[tech_template[k]]
-            share = tp.name == :E_HYD ? 0.0 : (tp.share[1] + (tp.share[2] - tp.share[1]) * tau(t)) * share_noise[r][tp.name]
+            share = if tp.name == :E_HYD
+                0.0
+            else
+                (tp.share[1] + (tp.share[2] - tp.share[1]) * tau(t)) * share_noise[r][tp.name]
+            end
             push!(w, share * ES_CLASS_SHARE[tech_class[k]])
         end
         wsum = sum(w; init=0.0)
         for (i, k) in enumerate(vre)
             tp = ES_TEMPLATES[tech_template[k]]
-            energy = tp.name == :E_HYD ? hydro_share[r] * annual_load :
-                     (wsum > 0 ? target_share * annual_load * w[i] / wsum : 0.0)
+            energy = if tp.name == :E_HYD
+                hydro_share[r] * annual_load
+            else
+                (wsum > 0 ? target_share * annual_load * w[i] / wsum : 0.0)
+            end
             per_gw = sum(tech_avail[k, s] * ES_PJ_PER_GW_YEAR * dur[s] for s in 1:S)
             capk = energy / per_gw
             req[k, t] = max(req[k, t], capk)
@@ -949,7 +1678,9 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
         ws = Float64[]
         for k in disp
             tp = ES_TEMPLATES[tech_template[k]]
-            push!(ws, (tp.share[1] + (tp.share[2] - tp.share[1]) * tau(t)) * share_noise[r][tp.name])
+            push!(
+                ws, (tp.share[1] + (tp.share[2] - tp.share[1]) * tau(t)) * share_noise[r][tp.name]
+            )
         end
         wtot = sum(ws; init=0.0)
         for (i, k) in enumerate(disp)
@@ -979,8 +1710,12 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
         req[k, :] .*= cap_margin[k]
     end
     for r in 1:R, t in 1:T
-        firm = sum(tech_credit[k] * req[k, t] for k in techs_of_region[r] if tech_kind[k] == :gen; init=0.0)
-        need = (1 + reserve_margin) * elec_use[r, t, peak_slice[r]] / (ES_PJ_PER_GW_YEAR * dur[peak_slice[r]])
+        firm = sum(
+            tech_credit[k] * req[k, t] for k in techs_of_region[r] if tech_kind[k] == :gen; init=0.0
+        )
+        need =
+            (1 + reserve_margin) * elec_use[r, t, peak_slice[r]] /
+            (ES_PJ_PER_GW_YEAR * dur[peak_slice[r]])
         if firm < 1.03 * need
             gt = [k for k in techs_of_region[r] if tech_name[k] == :E_GASGT]
             isempty(gt) && (gt = [k for k in techs_of_region[r] if tech_name[k] == :E_GASCC])
@@ -998,7 +1733,11 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
         tech_kind[k] == :supply && continue
         tp = ES_TEMPLATES[tech_template[k]]
         L = tech_life[k]
-        res1 = tp.incumbent ? rand(rng, Uniform(0.6, 1.1)) * req[k, 1] : rand(rng, Uniform(0.0, 0.15)) * req[k, 1]
+        res1 = if tp.incumbent
+            rand(rng, Uniform(0.6, 1.1)) * req[k, 1]
+        else
+            rand(rng, Uniform(0.0, 0.15)) * req[k, 1]
+        end
         res_life = rand(rng, 2:max(2, L))
         for t in 1:T
             residual[k, t] = res1 * max(0.0, 1 - (t - 1) / res_life)
@@ -1017,8 +1756,13 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
         first_build[k] = (built[1] + base) * rand(rng, Uniform(1.2, 2.0))
         if tp.potential
             maxcap = maximum(cap_w[es_cap(layout, k, t, T)] for t in 1:T)
-            potential[k] = max(maxcap, 1e-3) * (tp.kind == :gen && tp.input == :none ?
-                rand(rng, Uniform(1.3, 2.5)) : rand(rng, Uniform(1.1, 1.6)))
+            potential[k] = max(maxcap, 1e-3) * (
+                if tp.kind == :gen && tp.input == :none
+                    rand(rng, Uniform(1.3, 2.5))
+                else
+                    rand(rng, Uniform(1.1, 1.6))
+                end
+            )
         end
     end
 
@@ -1026,7 +1770,10 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
     supply_bound = fill(Inf, ntech, T)
     supply_reserve = fill(Inf, ntech)
     for r in 1:R, f in dims.fuels
-        ks = sort([k for k in techs_of_region[r] if tech_kind[k] == :supply && tech_output[k] == cidx[f]]; by=k -> supply_cost_rank[k])
+        ks = sort(
+            [k for k in techs_of_region[r] if tech_kind[k] == :supply && tech_output[k] == cidx[f]];
+            by=k -> supply_cost_rank[k],
+        )
         dom = [k for k in ks if supply_cost_rank[k] <= dims.steps[f]]
         imp = [k for k in ks if supply_cost_rank[k] > dims.steps[f]]
         base_use = max(maximum(use[r, cidx[f], :]), 1e-3)
@@ -1049,7 +1796,9 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
         for (i, k) in enumerate(dom)
             supply_bound[k, :] .= sizes[i]
             cum = Δ * sum(act[es_act(layout, k, t)] for t in 1:T)
-            supply_reserve[k] = max(cum * rand(rng, Uniform(1.1, 1.6)), sizes[i] * Δ * T * rand(rng, Uniform(0.4, 1.0)))
+            supply_reserve[k] = max(
+                cum * rand(rng, Uniform(1.1, 1.6)), sizes[i] * Δ * T * rand(rng, Uniform(0.4, 1.0))
+            )
         end
         for k in imp
             m_imp = maximum(act[es_act(layout, k, t)] for t in 1:T)
@@ -1083,7 +1832,11 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
         procs = Tuple{Vector{Tuple{Int, Float64}}, Vector{Tuple{Int, Float64}}, Float64, Bool}[]
         for k in 1:ntech
             r = tech_region[k]
-            ins = tech_input[k] == 0 ? Tuple{Int, Float64}[] : [(gid(r, tech_input[k]), tech_input_coef[k])]
+            ins = if tech_input[k] == 0
+                Tuple{Int, Float64}[]
+            else
+                [(gid(r, tech_input[k]), tech_input_coef[k])]
+            end
             outs = [(gid(r, tech_output[k]), 1.0)]
             tech_output2[k] > 0 && push!(outs, (gid(r, tech_output2[k]), tech_output2_coef[k]))
             push!(procs, (ins, outs, tech_emission[k], unbounded(k)))
@@ -1191,7 +1944,11 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
                 emission_cap[t] = max(1e-6, lo + (u + rand(rng, Uniform(-0.03, 0.03))) * (hi - lo))
             end
         else
-            mode = rand(rng) < 0.4 ? :emission_cap : (rand(rng) < 0.5 ? :carbon_budget : :supply_shortfall)
+            mode = if rand(rng) < 0.4
+                :emission_cap
+            else
+                (rand(rng) < 0.5 ? :carbon_budget : :supply_shortfall)
+            end
             margin = rand(rng, Uniform(1.15, 1.4))
             # An emission argument needs a clearly positive certified minimum.
             if mode == :carbon_budget && sum(lb) <= 0.05 * sum(Ew)
@@ -1207,8 +1964,18 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
                 emission_cap[tstar] = lb[tstar] / margin
                 dem, avail, ca, tr, gr = period_pieces(πe, θe, tstar, 1.0)
                 certificate = EnergySystemCertificate(
-                    mode, [tstar], [1.0], permutedims(reshape(πe[1:(NC * R)], NC, R)), πe[(NC * R + 1):end],
-                    1.0, ca, tr, gr, dem, avail, emission_cap[tstar],
+                    mode,
+                    [tstar],
+                    [1.0],
+                    permutedims(reshape(πe[1:(NC * R)], NC, R)),
+                    πe[(NC * R + 1):end],
+                    1.0,
+                    ca,
+                    tr,
+                    gr,
+                    dem,
+                    avail,
+                    emission_cap[tstar],
                 )
             elseif mode == :carbon_budget
                 dem = avail = 0.0
@@ -1217,13 +1984,26 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
                 gr = Tuple{Int, Float64}[]
                 for t in 1:T
                     d1, a1, c1, t1, g1 = period_pieces(πe, θe, t, Float64(Δ))
-                    dem += d1; avail += a1
-                    append!(ca, c1); append!(tr, t1); append!(gr, g1)
+                    dem += d1
+                    avail += a1
+                    append!(ca, c1)
+                    append!(tr, t1)
+                    append!(gr, g1)
                 end
                 emission_budget = (dem - avail) / margin
                 certificate = EnergySystemCertificate(
-                    mode, collect(1:T), fill(Float64(Δ), T), permutedims(reshape(πe[1:(NC * R)], NC, R)),
-                    πe[(NC * R + 1):end], 1.0, ca, tr, gr, dem, avail, emission_budget,
+                    mode,
+                    collect(1:T),
+                    fill(Float64(Δ), T),
+                    permutedims(reshape(πe[1:(NC * R)], NC, R)),
+                    πe[(NC * R + 1):end],
+                    1.0,
+                    ca,
+                    tr,
+                    gr,
+                    dem,
+                    avail,
+                    emission_budget,
                 )
             end
             if mode == :supply_shortfall
@@ -1257,26 +2037,77 @@ function EnergySystemProblem(target_variables::Int, feasibility_status::Feasibil
                 end
                 dem, avail, ca, tr, gr = period_pieces(πs, θs, tstar, 1.0)
                 certificate = EnergySystemCertificate(
-                    mode, [tstar], [1.0], permutedims(reshape(πs[1:(NC * R)], NC, R)), πs[(NC * R + 1):end],
-                    0.0, ca, tr, gr, dem, avail, 0.0,
+                    mode,
+                    [tstar],
+                    [1.0],
+                    permutedims(reshape(πs[1:(NC * R)], NC, R)),
+                    πs[(NC * R + 1):end],
+                    0.0,
+                    ca,
+                    tr,
+                    gr,
+                    dem,
+                    avail,
+                    0.0,
                 )
             end
         end
     end
 
-    witness = feasibility_status == feasible ?
-        EnergySystemWitness(act, cap_w, ncap_w, zeros(layout.n_flow)) : nothing
+    witness = if feasibility_status == feasible
+        EnergySystemWitness(act, cap_w, ncap_w, zeros(layout.n_flow))
+    else
+        nothing
+    end
     discount = rand(rng, Uniform(0.03, 0.08))
     discount_factor = [(1 + discount)^(-Δ * (t - 1)) for t in 1:T]
 
     return EnergySystemProblem(
-        R, T, Δ, S, dur, commodities, profiles,
-        tech_name, tech_class, tech_region, tech_kind, tech_input, tech_input_coef, tech_output,
-        tech_output2, tech_output2_coef, tech_emission, tech_profile, tech_capfac, tech_avail,
-        tech_life, tech_varcost, tech_invcost, tech_fixcost, tech_credit, tech_growth, seedv,
-        first_build, potential, residual, supply_bound, supply_reserve, D, peak_slice,
-        reserve_margin, lines, line_capacity, line_efficiency, line_cost, emission_cap,
-        emission_budget, discount_factor, witness, certificate, feasibility_status,
+        R,
+        T,
+        Δ,
+        S,
+        dur,
+        commodities,
+        profiles,
+        tech_name,
+        tech_class,
+        tech_region,
+        tech_kind,
+        tech_input,
+        tech_input_coef,
+        tech_output,
+        tech_output2,
+        tech_output2_coef,
+        tech_emission,
+        tech_profile,
+        tech_capfac,
+        tech_avail,
+        tech_life,
+        tech_varcost,
+        tech_invcost,
+        tech_fixcost,
+        tech_credit,
+        tech_growth,
+        seedv,
+        first_build,
+        potential,
+        residual,
+        supply_bound,
+        supply_reserve,
+        D,
+        peak_slice,
+        reserve_margin,
+        lines,
+        line_capacity,
+        line_efficiency,
+        line_cost,
+        emission_cap,
+        emission_budget,
+        discount_factor,
+        witness,
+        certificate,
+        feasibility_status,
     )
 end
 
@@ -1315,15 +2146,17 @@ function build_model(prob::EnergySystemProblem)
             continue
         end
         for t in 1:T
-            isfinite(prob.tech_potential[k]) && set_upper_bound(cap[es_cap(L, k, t, T)], prob.tech_potential[k])
+            isfinite(prob.tech_potential[k]) &&
+                set_upper_bound(cap[es_cap(L, k, t, T)], prob.tech_potential[k])
         end
-        isfinite(prob.tech_first_build[k]) && set_upper_bound(ncap[es_cap(L, k, 1, T)], prob.tech_first_build[k])
+        isfinite(prob.tech_first_build[k]) &&
+            set_upper_bound(ncap[es_cap(L, k, 1, T)], prob.tech_first_build[k])
     end
     flow_ub = zeros(L.n_flow)
     for l in 1:nL, dir in 1:2, t in 1:T, s in 1:S
         flow_ub[es_flow(l, dir, t, s, T, S)] = prob.line_capacity[l] * ES_PJ_PER_GW_YEAR * dur[s]
     end
-    @variable(model, 0 <= flow[i=1:L.n_flow] <= flow_ub[i])
+    @variable(model, 0 <= flow[i = 1:L.n_flow] <= flow_ub[i])
 
     bal = [AffExpr(0.0) for _ in 1:(R * NC * T)]
     bal_elc = [AffExpr(0.0) for _ in 1:(R * T * S)]
@@ -1350,7 +2183,9 @@ function build_model(prob::EnergySystemProblem)
                 end
                 if ci == -1
                     for s2 in 1:S
-                        add_to_expression!(bal_elc[elc_id(r, t, s2)], -a_in * prob.profiles[prof, s2], v)
+                        add_to_expression!(
+                            bal_elc[elc_id(r, t, s2)], -a_in * prob.profiles[prof, s2], v
+                        )
                         s2 == prob.peak_slice[r] && add_to_expression!(
                             peak[r, t],
                             -(1 + prob.reserve_margin) * a_in * prob.profiles[prof, s2] /
@@ -1386,9 +2221,13 @@ function build_model(prob::EnergySystemProblem)
         rhs[i] = prob.demand[r, c, t]
         sense_eq[i] = sym in (:COA, :GAS, :OIL, :URN, :BIO, :PET, :H2)
     end
-    @constraint(model, bal_c[i=1:(R * NC * T)], bal[i] in (sense_eq[i] ? MOI.EqualTo(rhs[i]) : MOI.GreaterThan(rhs[i])))
+    @constraint(
+        model,
+        bal_c[i = 1:(R * NC * T)],
+        bal[i] in (sense_eq[i] ? MOI.EqualTo(rhs[i]) : MOI.GreaterThan(rhs[i]))
+    )
     model[:bal] = bal_c
-    @constraint(model, bal_elc_c[i=1:(R * T * S)], bal_elc[i] >= 0)
+    @constraint(model, bal_elc_c[i = 1:(R * T * S)], bal_elc[i] >= 0)
     model[:bal_elc] = bal_elc_c
 
     # Capacity-activity, transfer, growth, peak.
@@ -1400,10 +2239,19 @@ function build_model(prob::EnergySystemProblem)
         for t in 1:T, s in 1:L.slots[k]
             push!(capact_cols, es_act(L, k, t, s))
             push!(capact_cap, es_cap(L, k, t, T))
-            push!(capact_coef, prob.tech_avail[k, s] * prob.tech_capfac[k] * (prob.tech_kind[k] == :gen ? dur[s] : 1.0))
+            push!(
+                capact_coef,
+                prob.tech_avail[k, s] *
+                prob.tech_capfac[k] *
+                (prob.tech_kind[k] == :gen ? dur[s] : 1.0),
+            )
         end
     end
-    @constraint(model, capact_c[i=1:length(capact_cols)], act[capact_cols[i]] - capact_coef[i] * cap[capact_cap[i]] <= 0)
+    @constraint(
+        model,
+        capact_c[i = 1:length(capact_cols)],
+        act[capact_cols[i]] - capact_coef[i] * cap[capact_cap[i]] <= 0
+    )
     model[:capact] = Containers.DenseAxisArray(collect(capact_c), capact_cols)
 
     transfer_ids = Int[]
@@ -1446,13 +2294,19 @@ function build_model(prob::EnergySystemProblem)
             add_to_expression!(peak[r, t], prob.tech_credit[k], cap[es_cap(L, k, t, T)])
         end
     end
-    @constraint(model, peak_c[r=1:R, t=1:T], peak[r, t] >= 0)
+    @constraint(model, peak_c[r = 1:R, t = 1:T], peak[r, t] >= 0)
     model[:peak] = peak_c
 
-    @constraint(model, emission[t=1:T], emis[t] <= prob.emission_cap[t])
+    @constraint(model, emission[t = 1:T], emis[t] <= prob.emission_cap[t])
     @constraint(model, budget, sum(Δ * emis[t] for t in 1:T) <= prob.emission_budget)
-    reserve_ids = [k for k in 1:ntech if prob.tech_kind[k] == :supply && isfinite(prob.supply_reserve[k])]
-    @constraint(model, reserve[k in reserve_ids], sum(Δ * act[es_act(L, k, t)] for t in 1:T) <= prob.supply_reserve[k])
+    reserve_ids = [
+        k for k in 1:ntech if prob.tech_kind[k] == :supply && isfinite(prob.supply_reserve[k])
+    ]
+    @constraint(
+        model,
+        reserve[k in reserve_ids],
+        sum(Δ * act[es_act(L, k, t)] for t in 1:T) <= prob.supply_reserve[k]
+    )
 
     # Costs: investment with salvage, fixed O&M on installed capacity.
     for k in 1:ntech
@@ -1461,7 +2315,9 @@ function build_model(prob::EnergySystemProblem)
         for t in 1:T
             c = es_cap(L, k, t, T)
             salvage = min(1.0, (T - t + 1) / life)
-            add_to_expression!(obj, prob.discount_factor[t] * salvage * prob.tech_invcost[k], ncap[c])
+            add_to_expression!(
+                obj, prob.discount_factor[t] * salvage * prob.tech_invcost[k], ncap[c]
+            )
             add_to_expression!(obj, prob.discount_factor[t] * Δ * prob.tech_fixcost[k], cap[c])
         end
     end

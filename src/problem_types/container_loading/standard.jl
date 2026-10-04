@@ -193,7 +193,8 @@ function ContainerLoadingProblem(
         req[1, :] .*= factor
         total = sum(req[1, :])
         infeasibility_certificate = ContainerOverloadCertificate(1, total, fleet[1])
-        total >= 1.04 * fleet[1] * (1 - 1e-12) || error("container_loading: certificate margin lost")
+        total >= 1.04 * fleet[1] * (1 - 1e-12) ||
+            error("container_loading: certificate margin lost")
     else
         for d in 1:2
             req[d, :] .*= (0.86 + 0.15 * rand(rng)) * fleet[d] / sum(req[d, :])
@@ -225,7 +226,8 @@ function build_model(prob::ContainerLoadingProblem)
     @constraint(
         model,
         capacity[d in 1:3, b in B],
-        sum(prob.item_requirements[d, i] * assign[i, b] for i in I) <= prob.capacities[d, b] * used[b]
+        sum(prob.item_requirements[d, i] * assign[i, b] for i in I) <=
+            prob.capacities[d, b] * used[b]
     )
     return model
 end

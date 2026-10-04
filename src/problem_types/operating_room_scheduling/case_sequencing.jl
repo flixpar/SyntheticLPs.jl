@@ -134,7 +134,10 @@ function _sequencing_columns(
     cols = NTuple{4, Int}[]
     for o in eachindex(case_slots)
         s = case_surgeon[o]
-        for d in case_days[o], r in case_rooms[o], t in window_start[s]:(window_end[s] - case_slots[o])
+        for d in case_days[o],
+            r in case_rooms[o],
+            t in window_start[s]:(window_end[s] - case_slots[o])
+
             push!(cols, (o, r, d, t))
         end
     end
@@ -234,7 +237,10 @@ function SurgicalCaseSequencingProblem(
                 push!(booked, length(case_slots))
                 # Eligibility: planted room plus 1-3 others of the cluster;
                 # planted day plus each other operating day with prob. 1/2.
-                others = [q for q in eachindex(room_specialty) if room_specialty[q] == spec_ids[k] && q != r]
+                others = [
+                    q for
+                    q in eachindex(room_specialty) if room_specialty[q] == spec_ids[k] && q != r
+                ]
                 extra = shuffle(rng, others)[1:min(length(others), rand(rng, 1:3))]
                 push!(case_rooms, sort(vcat(r, extra)))
                 case_day_list = [d]
@@ -242,17 +248,23 @@ function SurgicalCaseSequencingProblem(
                     e != d && rand(rng) < 0.5 && push!(case_day_list, e)
                 end
                 push!(case_days, sort(case_day_list))
-                n_vars += length(case_rooms[end]) * length(case_days[end]) * (window_end[s] - ws - p + 1)
+                n_vars +=
+                    length(case_rooms[end]) * length(case_days[end]) * (window_end[s] - ws - p + 1)
                 t += p + max(room_turnover, surgeon_turnover)
                 overtime_used && break
             end
-            room_free[r][d] = isempty(booked) ? room_free[r][d] : t - max(room_turnover, surgeon_turnover) + room_turnover
+            room_free[r][d] = if isempty(booked)
+                room_free[r][d]
+            else
+                t - max(room_turnover, surgeon_turnover) + room_turnover
+            end
             surgeon_day_cases[(s, d)] = booked
         end
         return nothing
     end
     exact_columns() = sum(
-        length(case_rooms[o]) * length(case_days[o]) *
+        length(case_rooms[o]) *
+        length(case_days[o]) *
         (window_end[case_surgeon[o]] - window_start[case_surgeon[o]] - case_slots[o] + 1) for
         o in eachindex(case_slots);
         init=0,
@@ -282,7 +294,9 @@ function SurgicalCaseSequencingProblem(
     n_rooms = length(room_specialty)
     n_surgeons = length(surgeon_specialty)
 
-    cluster_of = Dict(k => [r for r in 1:n_rooms if room_specialty[r] == k] for k in unique(room_specialty))
+    cluster_of = Dict(
+        k => [r for r in 1:n_rooms if room_specialty[r] == k] for k in unique(room_specialty)
+    )
 
     add_on(s, d; max_minutes=480.0) = begin
         k = surgeon_specialty[s]
@@ -323,11 +337,16 @@ function SurgicalCaseSequencingProblem(
     tardiness_weight = Vector{Float64}(undef, n_cases)
     for o in 1:n_cases
         u = rand(rng)
-        tardiness_weight[o] = u < 0.12 ? rand(rng, Uniform(4.0, 8.0)) :
-                              (u < 0.40 ? rand(rng, Uniform(2.0, 4.0)) : rand(rng, Uniform(0.5, 2.0)))
+        tardiness_weight[o] = if u < 0.12
+            rand(rng, Uniform(4.0, 8.0))
+        else
+            (u < 0.40 ? rand(rng, Uniform(2.0, 4.0)) : rand(rng, Uniform(0.5, 2.0)))
+        end
     end
 
-    columns = _sequencing_columns(case_slots, case_surgeon, case_days, case_rooms, window_start, window_end)
+    columns = _sequencing_columns(
+        case_slots, case_surgeon, case_days, case_rooms, window_start, window_end
+    )
     # Exact sizing: drop surplus columns at random (room/start combinations
     # unavailable for equipment reasons), never a case's planted column and
     # never a case's last column. Dropping columns only restricts the model,
@@ -357,13 +376,18 @@ function SurgicalCaseSequencingProblem(
     for (c, (o, r, d, t)) in enumerate(columns)
         finish = t + case_slots[o]
         tardy = max(0, finish - _SEQ_REGULAR) * _SEQ_SLOT
-        costs[c] = round(tardiness_weight[o] * tardy + 0.05 * finish * _SEQ_SLOT + room_bias[r] + 0.5 * (d - 1); digits=4)
+        costs[c] = round(
+            tardiness_weight[o] * tardy + 0.05 * finish * _SEQ_SLOT + room_bias[r] + 0.5 * (d - 1);
+            digits=4,
+        )
     end
 
     witness = nothing
     if feasibility_status == feasible
         index_of = Dict(col => c for (c, col) in enumerate(columns))
-        witness = [index_of[(o, planted_room[o], planted_day[o], planted_start[o])] for o in 1:n_cases]
+        witness = [
+            index_of[(o, planted_room[o], planted_day[o], planted_start[o])] for o in 1:n_cases
+        ]
     end
 
     return SurgicalCaseSequencingProblem(

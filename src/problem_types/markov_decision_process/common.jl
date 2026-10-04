@@ -490,7 +490,8 @@ function _mdp_lower_bound(
 end
 
 """Value `Σ_k s[k] x[k]` of a per-pair stream at a per-pair point."""
-_mdp_value(s::Vector{Float64}, x::Vector{Float64}) = sum(s[k] * x[k] for k in eachindex(x); init=0.0)
+_mdp_value(s::Vector{Float64}, x::Vector{Float64}) =
+    sum(s[k] * x[k] for k in eachindex(x); init=0.0)
 
 # --- budget planting ---------------------------------------------------------------
 
@@ -541,8 +542,7 @@ function _mdp_plant_budgets(
 
     budgets = zeros(nb)
     if nb == 0
-        status == infeasible &&
-            error("an infeasible MDP instance needs at least one budget row")
+        status == infeasible && error("an infeasible MDP instance needs at least one budget row")
         status == feasible || return budgets, nothing, nothing
         x = _mdp_occupation(m, m.reference_policy, criterion, γ, rhs, N)
         return budgets, MDPOccupationWitness(x, [copy(m.reference_policy)], [1.0]), nothing
@@ -552,14 +552,18 @@ function _mdp_plant_budgets(
     R = [_mdp_value(m.streams[j], xref) for j in streams]
     # Natural scale of each stream (reference value, floored by the stream's
     # largest per-pair value at occupancy 1e-3 * N).
-    scale = [max(abs(R[i]), maximum(m.streams[j]) * N * 1e-3, 1e-9) for (i, j) in enumerate(streams)]
+    scale = [
+        max(abs(R[i]), maximum(m.streams[j]) * N * 1e-3, 1e-9) for (i, j) in enumerate(streams)
+    ]
 
     if status == feasible
         x = xref
         pols, mixw = [copy(m.reference_policy)], [1.0]
         if nb > 1
             w = raw_weights[1][1:nb] ./ scale
-            _, _, _, pol = _mdp_lower_bound(m, _mdp_combined_stream(m, streams, w), criterion, γ, rhs, N)
+            _, _, _, pol = _mdp_lower_bound(
+                m, _mdp_combined_stream(m, streams, w), criterion, γ, rhs, N
+            )
             # The frontier policy can be multichain under the average
             # criterion; the reference alone is then the witness.
             xo = try
@@ -607,7 +611,9 @@ function _mdp_plant_budgets(
     for trial in 1:3
         w = raw_weights[trial][1:nb] ./ scale
         w ./= sum(w)
-        pot, gain, lb, _ = _mdp_lower_bound(m, _mdp_combined_stream(m, streams, w), criterion, γ, rhs, N)
+        pot, gain, lb, _ = _mdp_lower_bound(
+            m, _mdp_combined_stream(m, streams, w), criterion, γ, rhs, N
+        )
         rel = (lb - sum(w .* L)) / max(abs(lb), 1e-12)
         if best === nothing || rel > best[1]
             best = (rel, w, pot, gain, lb)

@@ -102,10 +102,14 @@ function L1SVMProblem(target_variables::Int, feasibility_status::FeasibilityStat
     n_documents = V - 1 - 2 * n_terms
 
     # --- Documents: Zipf vocabulary, log-normal lengths, tf-idf rows. ---
-    n_conflicts = clamp(round(Int, n_documents * rand(rng, Uniform(0.01, 0.03))), 1, n_documents ÷ 4)
+    n_conflicts = clamp(
+        round(Int, n_documents * rand(rng, Uniform(0.01, 0.03))), 1, n_documents ÷ 4
+    )
     n_base = n_documents - n_conflicts
     mean_len = rand(rng, Uniform(15.0, 45.0))
-    lengths = [clamp(round(Int, mean_len * exp(0.5 * randn(rng) - 0.125)), 3, n_terms) for _ in 1:n_base]
+    lengths = [
+        clamp(round(Int, mean_len * exp(0.5 * randn(rng) - 0.125)), 3, n_terms) for _ in 1:n_base
+    ]
     terms = _regression_sparse_incidence(
         rng, n_base, n_terms, lengths, rand(rng, Uniform(0.9, 1.15)), min(3, n_base)
     )
@@ -145,7 +149,9 @@ function L1SVMProblem(target_variables::Int, feasibility_status::FeasibilityStat
     order = sortperm(df; rev=true)
     lo = max(1, round(Int, 0.02 * n_terms))
     candidates = order[lo:end]
-    n_informative = clamp(round(Int, n_terms * rand(rng, Uniform(0.05, 0.12))), 1, length(candidates))
+    n_informative = clamp(
+        round(Int, n_terms * rand(rng, Uniform(0.05, 0.12))), 1, length(candidates)
+    )
     informative = candidates[_regression_distinct(rng, length(candidates), n_informative)]
     w[informative] .= randn(rng, n_informative)
     scores = transpose(Xt) * w
@@ -167,7 +173,10 @@ function L1SVMProblem(target_variables::Int, feasibility_status::FeasibilityStat
 
     n_pos = count(>(0), labels)
     n_neg = n_documents - n_pos
-    class_weights = [labels[i] > 0 ? n_documents / (2 * max(n_pos, 1)) : n_documents / (2 * max(n_neg, 1)) for i in 1:n_documents]
+    class_weights = [
+        labels[i] > 0 ? n_documents / (2 * max(n_pos, 1)) : n_documents / (2 * max(n_neg, 1)) for
+        i in 1:n_documents
+    ]
     mean_entry = sum(Vals) / length(Vals)
     penalty = rand(rng, Uniform(0.1, 0.6)) * 3 * mean_entry
 

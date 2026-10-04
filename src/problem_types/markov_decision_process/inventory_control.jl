@@ -131,7 +131,9 @@ function _inventory_mdp_pairs(ℓ::Int, I::Int, B::Int, Q::Int, P::Int, E::Int)
 end
 
 """Integer dimensions implied by a peak mean demand `μ` (lots) and the shape ratios."""
-function _inventory_mdp_dims(μ::Float64, ℓ::Int, tightness::Float64, q_ratio::Float64, b_ratio::Float64)
+function _inventory_mdp_dims(
+    μ::Float64, ℓ::Int, tightness::Float64, q_ratio::Float64, b_ratio::Float64
+)
     I = max(2, round(Int, tightness * (ℓ + 1) * μ))
     Q = max(1, round(Int, q_ratio * μ))
     B = max(1, round(Int, b_ratio * μ))
@@ -157,10 +159,12 @@ function _inventory_mdp_size(
     b_ratio::Float64,
 )
     best = (Inf, 0, 1, 1, 1.0)
-    for ℓ in 0:2, (cycles, pen) in (
-        (INVENTORY_MDP_WEEKLY_CYCLES, review == :weekly ? 0.0 : 0.04),
-        (INVENTORY_MDP_DAILY_CYCLES, review == :daily ? 0.0 : 0.04),
-    )
+    for ℓ in 0:2,
+        (cycles, pen) in (
+            (INVENTORY_MDP_WEEKLY_CYCLES, review == :weekly ? 0.0 : 0.04),
+            (INVENTORY_MDP_DAILY_CYCLES, review == :daily ? 0.0 : 0.04),
+        )
+
         for μ in 0.5:0.25:8.0
             I, B, Q = _inventory_mdp_dims(μ, ℓ, tightness, q_ratio, b_ratio)
             base = _inventory_mdp_pairs(ℓ, I, B, Q, 1, 1)
@@ -196,7 +200,10 @@ percent of the target). Targets above `MDP_MAX_PAIRS` raise an
 optional service row on (`true`) or off (`false`) instead of sampling it
 (`nothing`); `ConstrainedMDP` builds its base model with `service_row=false`.
 """
-function InventoryControlMDP(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int;
+function InventoryControlMDP(
+    target_variables::Int,
+    feasibility_status::FeasibilityStatus,
+    seed::Int;
     service_row::Union{Nothing, Bool}=nothing,
 )
     _mdp_check_target(target_variables, "inventory_control")
@@ -297,7 +304,10 @@ function InventoryControlMDP(target_variables::Int, feasibility_status::Feasibil
     jref = argmin(abs.(rho .- 1.0))
     S_level = [
         clamp(
-            round(Int, quantile(_mdp_negbin((ℓ + 1) * phase_mean[e], (ℓ + 1) * dispersion), service_level)),
+            round(
+                Int,
+                quantile(_mdp_negbin((ℓ + 1) * phase_mean[e], (ℓ + 1) * dispersion), service_level),
+            ),
             1,
             I,
         ) for e in 1:E
@@ -387,8 +397,8 @@ register_variant(
     :markov_decision_process,
     :inventory_control,
     InventoryControlMDP,
-    "Occupation-measure LP of a seasonal joint pricing-and-replenishment MDP (lead-time pipeline, backlogging, position cap, negative-binomial demand, fixed ordering cost) under discounted or average cost, with an optional shortage service-level row refuted by a value-function Farkas certificate",
-    default=true;
+    "Occupation-measure LP of a seasonal joint pricing-and-replenishment MDP (lead-time pipeline, backlogging, position cap, negative-binomial demand, fixed ordering cost) under discounted or average cost, with an optional shortage service-level row refuted by a value-function Farkas certificate";
+    default=true,
     tags=[:markov],
     max_target_variables=1_000_000,
 )

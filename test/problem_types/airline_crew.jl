@@ -164,7 +164,8 @@
         # Emitted crew rows can bind: more columns than crews.
         for (k, (b, d)) in enumerate(p.crew_rows)
             members = count(
-                i -> p.pairing_bases[i] == b && p.pairing_first_day[i] <= d <= p.pairing_last_day[i],
+                i ->
+                    p.pairing_bases[i] == b && p.pairing_first_day[i] <= d <= p.pairing_last_day[i],
                 eachindex(p.pairing_bases),
             )
             @test members > p.crew_capacity[k] >= 0
@@ -176,13 +177,16 @@
     function side_rows_hold(p, chosen)
         for (k, (b, d)) in enumerate(p.crew_rows)
             used = count(
-                i -> p.pairing_bases[i] == b && p.pairing_first_day[i] <= d <= p.pairing_last_day[i],
+                i ->
+                    p.pairing_bases[i] == b && p.pairing_first_day[i] <= d <= p.pairing_last_day[i],
                 chosen,
             )
             used <= p.crew_capacity[k] || return false
         end
         for b in p.bases
-            hours = sum((p.pairing_block_hours[i] for i in chosen if p.pairing_bases[i] == b); init=0.0)
+            hours = sum(
+                (p.pairing_block_hours[i] for i in chosen if p.pairing_bases[i] == b); init=0.0
+            )
             p.base_block_lower[b] - 1e-9 <= hours <= p.base_block_upper[b] + 1e-9 || return false
         end
         return true
@@ -223,7 +227,9 @@
         @test cert.crew_capacity == sum(p.crew_capacity[cert.rows])
         # ... and they cover every pairing flying that day.
         row_bases = Set(p.crew_rows[k][1] for k in cert.rows)
-        @test all(p.pairing_bases[i] in row_bases for i in eachindex(legs_on_day) if legs_on_day[i] > 0)
+        @test all(
+            p.pairing_bases[i] in row_bases for i in eachindex(legs_on_day) if legs_on_day[i] > 0
+        )
         # Farkas arithmetic with a 10% margin.
         @test cert.max_legs_on_day * cert.crew_capacity <= 0.9 * cert.flights_on_day
         # No single row is trivially contradictory: every flight is covered.

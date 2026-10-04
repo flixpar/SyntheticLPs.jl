@@ -67,10 +67,14 @@ function GeneralizedIndependentSetProblem(
     ridge_width = max(1.0, side / 3)
     vertex_benefits = [
         round(
-            10.0 * (
-                1.0 +
-                sum(h * exp(-((xs[v] - rx)^2 + (ys[v] - ry)^2) / (2ridge_width^2)) for (rx, ry, h) in ridges)
-            ) * (0.95 + 0.1 * rand(rng)),
+            10.0 *
+            (
+                1.0 + sum(
+                    h * exp(-((xs[v] - rx)^2 + (ys[v] - ry)^2) / (2ridge_width^2)) for
+                    (rx, ry, h) in ridges
+                )
+            ) *
+            (0.95 + 0.1 * rand(rng));
             digits=2,
         ) for v in 1:n
     ]
@@ -100,8 +104,10 @@ function GeneralizedIndependentSetProblem(
             soft_edges = candidates[keep]
             edge_penalties = [
                 round(
-                    0.6 * min(vertex_benefits[u], vertex_benefits[v]) * strengths[e] *
-                    (0.9 + 0.2 * rand(rng)),
+                    0.6 *
+                    min(vertex_benefits[u], vertex_benefits[v]) *
+                    strengths[e] *
+                    (0.9 + 0.2 * rand(rng));
                     digits=2,
                 ) for (e, (u, v)) in zip(keep, soft_edges)
             ]

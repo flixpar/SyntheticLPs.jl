@@ -159,8 +159,7 @@ end
 
 Maximum number of shipment arcs into one demand node (`n_plants` caps it).
 """
-_network_max_degree(profile::Symbol, n_plants::Int) =
-    min(n_plants, profile == :disruption ? 6 : 7)
+_network_max_degree(profile::Symbol, n_plants::Int) = min(n_plants, profile == :disruption ? 6 : 7)
 
 """
     _network_min_degree(arc_budget, demand_nodes, n_plants)
@@ -207,7 +206,8 @@ function _choose_network_planning_dimensions(target_variables::Int, profile::Sym
     ideal_products = clamp(round(Int, 1.0 + 0.9 * log10(target)), 2, 6)
     period_range = _network_period_range(profile)
     ideal_periods = clamp(
-        round(Int, first(period_range) + 0.6 * log10(target) - 1.2), first(period_range),
+        round(Int, first(period_range) + 0.6 * log10(target) - 1.2),
+        first(period_range),
         last(period_range),
     )
     best_score = (typemax(Int), Inf, Inf)

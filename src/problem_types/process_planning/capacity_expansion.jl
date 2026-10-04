@@ -367,7 +367,9 @@ function _pp_expansion_capital_potential(
             best[j] = min(best[j], embodied / technology.outputs[1].second)
         end
         for j in 1:J
-            chemicals[j].layer == layer && isfinite(best[j]) && !chemicals[j].purchasable &&
+            chemicals[j].layer == layer &&
+                isfinite(best[j]) &&
+                !chemicals[j].purchasable &&
                 (potential[j] = best[j])
         end
     end
@@ -394,8 +396,8 @@ function _pp_expansion_capital_requirement(
 )
     contracted = sum(potential[j] * demand_min[j, t] for j in axes(demand_min, 1); init=0.0)
     existing = sum(
-        max(_pp_expansion_net_potential(technology, potential), 0.0) *
-        technology.existing_capacity for technology in technologies;
+        max(_pp_expansion_net_potential(technology, potential), 0.0) * technology.existing_capacity
+        for technology in technologies;
         init=0.0,
     )
     return contracted - existing
@@ -421,8 +423,8 @@ end
 """Total investment of a plan: fixed charges on its expansions plus the linear cost."""
 _pp_expansion_capital_spend(technologies, expansion::Matrix{Float64}, expand::AbstractMatrix) = sum(
     technologies[i].fixed_investment * expand[i, t] +
-    technologies[i].variable_investment * expansion[i, t] for i in axes(expansion, 1),
-    t in axes(expansion, 2);
+    technologies[i].variable_investment * expansion[i, t] for
+    i in axes(expansion, 1), t in axes(expansion, 2);
     init=0.0,
 )
 
@@ -791,9 +793,7 @@ function ProcessCapacityExpansionProblem(
                 # A spot outlet exists even for chemicals the plan does not
                 # sell (a byproduct of an idle process, a surplus intermediate).
                 demand_max[j, t] = max(
-                    reference * rand(rng, Uniform(1.05, 1.7)),
-                    demand_min[j, t] * 1.05,
-                    spot_floor,
+                    reference * rand(rng, Uniform(1.05, 1.7)), demand_min[j, t] * 1.05, spot_floor
                 )
             end
         end

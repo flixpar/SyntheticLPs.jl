@@ -141,7 +141,9 @@ Construct a sparse capacitated transportation instance with exactly
 `target_variables` lanes (= variables; a target of 1 rounds up to 2). Values
 above `TRANSPORTATION_MAX_VARIABLES` raise an `ArgumentError`.
 """
-function TransportationProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function TransportationProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     _tp_check_target(target_variables, "standard")
     rng = MersenneTwister(seed)
     n_lanes = max(target_variables, 2)
@@ -166,8 +168,11 @@ function TransportationProblem(target_variables::Int, feasibility_status::Feasib
         costs[l] = round(production[i] + rate * d * rand(rng, LogNormal(0.0, 0.15)) + 1.0; digits=3)
         # The primary (nearest-source) lane is the customer's own contract
         # carrier and is never capped; other lanes are truck allotments.
-        lane_capacity[l] = (i != primary[j] && rand(rng) < capacitated_share) ?
-            round(max(d0[j] * (0.25 + 0.75 * rand(rng)), 0.01); digits=2) : Inf
+        lane_capacity[l] = if (i != primary[j] && rand(rng) < capacitated_share)
+            round(max(d0[j] * (0.25 + 0.75 * rand(rng)), 0.01); digits=2)
+        else
+            Inf
+        end
     end
 
     big = 4.0 * (sum(supplies) + 2.0 * D0)
@@ -185,8 +190,9 @@ function TransportationProblem(target_variables::Int, feasibility_status::Feasib
     end
     demands = max.(round.(load_factor * lambda_star .* d0; digits=2), 0.01)
     total_demand = sum(demands)
-    value, ext_flows, source_side, _, _ =
-        _network_flow_extended(nS + nD, arcs, caps, src_nodes, supplies, dst_nodes, demands)
+    value, ext_flows, source_side, _, _ = _network_flow_extended(
+        nS + nD, arcs, caps, src_nodes, supplies, dst_nodes, demands
+    )
 
     feasible_witness = nothing
     infeasibility_certificate = nothing

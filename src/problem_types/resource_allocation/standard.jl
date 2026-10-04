@@ -274,7 +274,8 @@ function ResourceAllocationProblem(
         perm = sortperm(chosen)
         chosen = chosen[perm]
         eff = [
-            pool_quality[p] * (pool_department[p] == d ? 1.0 : 0.65) *
+            pool_quality[p] *
+            (pool_department[p] == d ? 1.0 : 0.65) *
             rand(rng, LogNormal(0.0, prm.eff_sigma)) for p in chosen
         ]
         push!(activity_department, d)
@@ -354,11 +355,14 @@ function ResourceAllocationProblem(
         home_of(a) = pool_department[eligible_pools[a][1]]
         is_local(a) = all(pool_department[p] == home_of(a) for p in eligible_pools[a])
         group_pools(d) = d == 0 ? collect(1:n_pools) : dept_pools[d]
-        group_acts(d) = d == 0 ? collect(1:n_activities) :
-            [a for a in 1:n_activities if is_local(a) && home_of(a) == d]
-        hours_needed(acts) = sum(
-            (floors[a] / maximum(efficiency[a]) for a in acts if floors[a] > 0); init=0.0
-        )
+        group_acts(d) =
+            if d == 0
+                collect(1:n_activities)
+            else
+                [a for a in 1:n_activities if is_local(a) && home_of(a) == d]
+            end
+        hours_needed(acts) =
+            sum((floors[a] / maximum(efficiency[a]) for a in acts if floors[a] > 0); init=0.0)
         hours_available(pools) = sum(capacity[p, t] for p in pools, t in 1:T)
 
         # The department whose local commitments weigh most on its hours.

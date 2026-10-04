@@ -19,7 +19,7 @@ function nf_reaches_all(n, arcs, root; reversed=false)
     while !isempty(stack)
         u = pop!(stack)
         for v in adj[u]
-            seen[v] || (seen[v] = true; push!(stack, v))
+            seen[v] || (seen[v]=true; push!(stack, v))
         end
     end
     return all(seen)
@@ -52,8 +52,10 @@ nf_arc_length(p, k) = hypot(
         # Variables are exactly the arcs and equal the target (tiny targets
         # round up to the spanning tree in both directions); rows are one
         # balance row per node.
-        for ref in variants, target in (2, 3, 6, 10, 50, 200, 1000, 5000), status in
-                                                                            (feasible, infeasible, unknown)
+        for ref in variants,
+            target in (2, 3, 6, 10, 50, 200, 1000, 5000),
+            status in (feasible, infeasible, unknown)
+
             m, p = generate_problem(ref, target, status, 3)
             @test num_variables(m) == length(p.arcs)
             @test length(p.arcs) == max(target, 2 * (p.n_nodes - 1))
@@ -220,9 +222,7 @@ nf_arc_length(p, k) = hypot(
             # column of the 1/E-weighted row sum is nonpositive.
             @test all(E[s] == 1.0 for s in p.supply_nodes)
             @test all(0.0 < e <= 1.0 for e in E)
-            @test all(
-                E[v] >= E[u] * p.gains[k] * (1 - 1e-12) for (k, (u, v)) in enumerate(p.arcs)
-            )
+            @test all(E[v] >= E[u] * p.gains[k] * (1 - 1e-12) for (k, (u, v)) in enumerate(p.arcs))
             # Tightness: every non-supply node attains its potential via some arc.
             for v in 1:(p.n_nodes)
                 v in p.supply_nodes && continue
@@ -251,7 +251,9 @@ nf_arc_length(p, k) = hypot(
                 if a === nothing || a isa Union{Number, Symbol, Vector, FeasibilityStatus}
                     @test isequal(a, b)
                 else
-                    @test all(isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a)))
+                    @test all(
+                        isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a))
+                    )
                 end
             end
         end
@@ -277,13 +279,16 @@ nf_arc_length(p, k) = hypot(
             for seed in 0:9
                 m, p = generate_problem("network_flow/standard", 400, unknown, seed)
                 ts, _ = nf_solve(m)
-                @test ts ==
-                    (p.max_flow_value >= p.total_demand * (1 - 1e-9) ? MOI.OPTIMAL : MOI.INFEASIBLE)
+                @test ts == (
+                    p.max_flow_value >= p.total_demand * (1 - 1e-9) ? MOI.OPTIMAL : MOI.INFEASIBLE
+                )
             end
             # generalized_flow/unknown is genuinely two-sided.
             outcomes = Set{Any}()
             for seed in 0:11
-                ts, _ = nf_solve(generate_problem("network_flow/generalized_flow", 1000, unknown, seed)[1])
+                ts, _ = nf_solve(
+                    generate_problem("network_flow/generalized_flow", 1000, unknown, seed)[1]
+                )
                 push!(outcomes, ts)
             end
             @test MOI.OPTIMAL in outcomes && MOI.INFEASIBLE in outcomes
@@ -302,7 +307,8 @@ nf_arc_length(p, k) = hypot(
             nv = length(p.moves) + length(p.waits) + length(p.intakes)
             @test num_variables(m) == nv
             @test 0.65 * target <= nv <= 1.35 * target
-            @test num_constraints(m; count_variable_in_set_constraints=false) == length(p.node_copies)
+            @test num_constraints(m; count_variable_in_set_constraints=false) ==
+                length(p.node_copies)
         end
         big = SyntheticLPs.TimeExpandedEvacuationProblem(100_000, unknown, 0)
         @test abs(length(big.moves) + length(big.waits) + length(big.intakes) - 100_000) <= 10_000
@@ -312,8 +318,14 @@ nf_arc_length(p, k) = hypot(
             copies = Set(p.node_copies)
             @test all(1 <= t <= 4 for t in p.travel_time)
             @test all(t + p.travel_time[a] <= p.horizon for (a, t) in p.moves)
-            @test all((p.arcs[a][1], t) in copies && (p.arcs[a][2], t + p.travel_time[a]) in copies for (a, t) in p.moves)
-            @test all((v, t) in copies && (v, t + 1) in copies && p.hold_capacity[v] > 0 for (v, t) in p.waits)
+            @test all(
+                (p.arcs[a][1], t) in copies && (p.arcs[a][2], t + p.travel_time[a]) in copies for
+                (a, t) in p.moves
+            )
+            @test all(
+                (v, t) in copies && (v, t + 1) in copies && p.hold_capacity[v] > 0 for
+                (v, t) in p.waits
+            )
             @test all(p.intake_rate[v] > 0 && (v, t) in copies for (v, t) in p.intakes)
             zones = findall(>(0.0), p.supply)
             @test all((v, 0) in copies for v in zones)
@@ -342,11 +354,14 @@ nf_arc_length(p, k) = hypot(
             c = p.infeasibility_certificate
             X = Set(p.node_copies[c.region])
             @test c.exit_moves == [
-                i for (i, (a, t)) in enumerate(p.moves) if (p.arcs[a][1], t) in X && !((p.arcs[a][2], t + p.travel_time[a]) in X)
+                i for (i, (a, t)) in enumerate(p.moves) if
+                (p.arcs[a][1], t) in X && !((p.arcs[a][2], t + p.travel_time[a]) in X)
             ]
-            @test c.exit_waits == [i for (i, (v, t)) in enumerate(p.waits) if (v, t) in X && !((v, t + 1) in X)]
+            @test c.exit_waits ==
+                [i for (i, (v, t)) in enumerate(p.waits) if (v, t) in X && !((v, t + 1) in X)]
             @test c.exit_intakes == [i for (i, (v, t)) in enumerate(p.intakes) if (v, t) in X]
-            cap = sum(p.road_capacity[p.moves[i][1]] for i in c.exit_moves; init=0.0) +
+            cap =
+                sum(p.road_capacity[p.moves[i][1]] for i in c.exit_moves; init=0.0) +
                 sum(p.hold_capacity[p.waits[i][1]] for i in c.exit_waits; init=0.0) +
                 sum(p.intake_rate[p.intakes[i][1]] for i in c.exit_intakes; init=0.0)
             @test c.exit_capacity ≈ cap
@@ -365,7 +380,9 @@ nf_arc_length(p, k) = hypot(
                 if a === nothing || a isa Union{Number, Symbol, Vector, FeasibilityStatus}
                     @test isequal(a, b)
                 else
-                    @test all(isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a)))
+                    @test all(
+                        isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a))
+                    )
                 end
             end
         end
@@ -389,8 +406,9 @@ nf_arc_length(p, k) = hypot(
                 set_optimizer(m, HiGHS.Optimizer)
                 set_silent(m)
                 optimize!(m)
-                @test termination_status(m) ==
-                    (p.max_flow_value >= p.total_supply * (1 - 1e-9) ? MOI.OPTIMAL : MOI.INFEASIBLE)
+                @test termination_status(m) == (
+                    p.max_flow_value >= p.total_supply * (1 - 1e-9) ? MOI.OPTIMAL : MOI.INFEASIBLE
+                )
             end
         end
     end

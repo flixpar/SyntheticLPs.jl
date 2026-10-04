@@ -10,7 +10,6 @@ struct CompactHubWitness
     assignment::Vector{Int}
 end
 
-
 """
     CompactSingleAllocationHubProblem <: ProblemGenerator
 

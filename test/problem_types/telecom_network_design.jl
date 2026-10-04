@@ -171,7 +171,8 @@
             @test cert.forced_spend ≈
                 sum(p.installation_costs[b] * level[b] for b in cert.bridge_links; init=0.0)
             # Fractional knapsack over the cut, above the bridges' forced levels.
-            required = cert.crossing_demand -
+            required =
+                cert.crossing_demand -
                 sum(p.link_capacities[a] * get(level, a, 0.0) for a in crossing)
             spend = 0.0
             for a in sort(crossing; by=a -> p.installation_costs[a] / p.link_capacities[a])

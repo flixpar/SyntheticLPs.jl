@@ -195,7 +195,9 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
     rng = MersenneTwister(seed)
     target = max(target_variables, 2)
 
-    industry = sample(rng, collect(_PRODUCT_MIX_INDUSTRIES), Weights([0.25, 0.2, 0.12, 0.15, 0.13, 0.15]))
+    industry = sample(
+        rng, collect(_PRODUCT_MIX_INDUSTRIES), Weights([0.25, 0.2, 0.12, 0.15, 0.13, 0.15])
+    )
     # Industry regime: routing flexibility, routing length, processing-time
     # scale, material intensity, margin level.
     alt_routing_prob, route_len, time_mu, margin_mu = if industry == :electronics
@@ -225,7 +227,9 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
     n_prod_depts = n_departments - n_areas
     machine_department = shuffle(rng, [mod1(m, n_departments) for m in 1:n_machines])
     dept_machines = [findall(==(d), machine_department) for d in 1:n_departments]
-    dept_area = [d <= n_prod_depts ? mod1(d, max(n_areas, 1)) : d - n_prod_depts for d in 1:n_departments]
+    dept_area = [
+        d <= n_prod_depts ? mod1(d, max(n_areas, 1)) : d - n_prod_depts for d in 1:n_departments
+    ]
     shared_dept_of_area = [n_prod_depts + a for a in 1:n_areas]
     production_depts = collect(1:n_prod_depts)
     crew = rand(rng, LogNormal(log(1.2), 0.4), n_machines)
@@ -235,7 +239,11 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
     n_materials = max(2, round(Int, target / rand(rng, 12:25)))
     material_owner = map(1:n_materials) do _
         u = rand(rng)
-        u < 0.06 ? 0 : (u < 0.25 && n_areas > 0 ? -rand(rng, 1:n_areas) : rand(rng, production_depts))
+        if u < 0.06
+            0
+        else
+            (u < 0.25 && n_areas > 0 ? -rand(rng, 1:n_areas) : rand(rng, production_depts))
+        end
     end
     # Every production department stocks at least one material of its own.
     for (k, d) in enumerate(production_depts)
@@ -322,14 +330,18 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
     machine_rate = rand(rng, LogNormal(log(60.0), 0.3), n_machines)
     price = zeros(n_products)
     for r in 1:n_routings
-        routing_cost[r] = sum(machine_rate[m] * t for (m, t) in zip(routing_machines[r], routing_times[r]))
+        routing_cost[r] = sum(
+            machine_rate[m] * t for (m, t) in zip(routing_machines[r], routing_times[r])
+        )
     end
     prod_routings = [Int[] for _ in 1:n_products]
     for r in 1:n_routings
         push!(prod_routings[routing_product[r]], r)
     end
     for p in 1:n_products
-        mat = sum(a * material_cost[k] for (k, a) in zip(product_materials[p], material_qty[p]); init=0.0)
+        mat = sum(
+            a * material_cost[k] for (k, a) in zip(product_materials[p], material_qty[p]); init=0.0
+        )
         conv = maximum(routing_cost[r] + (routing_yield[r] - 1) * mat for r in prod_routings[p])
         price[p] = (mat + conv) * (1 + rand(rng, LogNormal(margin_mu, 0.4)))
     end
@@ -364,7 +376,9 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
     labor_capacity = max.(labor_load .* (1 .+ headroom(n_departments)), 1.0)
     material_capacity = max.(material_load .* (1 .+ headroom(n_materials)), 1.0)
     planned = [sum(production[r] for r in prod_routings[p]) for p in 1:n_products]
-    floor = [rand(rng) < 0.45 ? planned[p] * rand(rng, Uniform(0.3, 0.9)) : 0.0 for p in 1:n_products]
+    floor = [
+        rand(rng) < 0.45 ? planned[p] * rand(rng, Uniform(0.3, 0.9)) : 0.0 for p in 1:n_products
+    ]
 
     # --- Feasibility profile ----------------------------------------------------------
     witness = nothing
@@ -379,9 +393,11 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
         # multi-routing products live in ranged market rows, not in column
         # bounds, so presolve's bound propagation cannot add them up — the
         # contradiction needs the material row plus every committed market row.
-        min_use(p, k) = material_qty[p][findfirst(==(k), product_materials[p])] *
+        min_use(p, k) =
+            material_qty[p][findfirst(==(k), product_materials[p])] *
             minimum(routing_yield[r] for r in prod_routings[p])
-        max_use(p, k) = material_qty[p][findfirst(==(k), product_materials[p])] *
+        max_use(p, k) =
+            material_qty[p][findfirst(==(k), product_materials[p])] *
             maximum(routing_yield[r] for r in prod_routings[p])
         users = [Int[] for _ in 1:n_materials]
         for p in 1:n_products, k in product_materials[p]
@@ -393,7 +409,9 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
         # (variable bounds) force through it plus 1.3x the largest single
         # multi-routing commitment.
         function protection(k)
-            forced = sum((min_use(p, k) * floor[p] for p in users[k] if !multi(p) && floor[p] > 0); init=0.0)
+            forced = sum(
+                (min_use(p, k) * floor[p] for p in users[k] if !multi(p) && floor[p] > 0); init=0.0
+            )
             big = maximum((max_use(p, k) * floor[p] for p in users[k] if multi(p)); init=0.0)
             return 1.3 * forced + 1.3 * big
         end
@@ -405,9 +423,16 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
         isempty(candidates) && (candidates = [k for k in 1:n_materials if !isempty(users[k])])
         function potential(k)
             pot = sum((0.95 * planned[p] * min_use(p, k) for p in users[k] if multi(p)); init=0.0)
-            pot += sum((min_use(p, k) * floor[p] for p in users[k] if !multi(p) && floor[p] > 0); init=0.0)
-            prot = 1.3 * sum((min_use(p, k) * floor[p] for p in users[k] if !multi(p) && floor[p] > 0); init=0.0) +
-                1.3 * maximum((max_use(p, k) * 0.95 * planned[p] for p in users[k] if multi(p)); init=0.0)
+            pot += sum(
+                (min_use(p, k) * floor[p] for p in users[k] if !multi(p) && floor[p] > 0); init=0.0
+            )
+            prot =
+                1.3 * sum(
+                    (min_use(p, k) * floor[p] for p in users[k] if !multi(p) && floor[p] > 0);
+                    init=0.0,
+                ) +
+                1.3 *
+                maximum((max_use(p, k) * 0.95 * planned[p] for p in users[k] if multi(p)); init=0.0)
             return pot / max(prot, 1e-9)
         end
         kstar = argmax(potential, candidates)
@@ -440,8 +465,10 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
             required
         else
             sum(
-                floor[p] * material_qty[p][findfirst(==(kstar), product_materials[p])] *
-                sum(routing_yield[r] * production[r] for r in prod_routings[p]) / planned[p] for p in prods
+                floor[p] *
+                material_qty[p][findfirst(==(kstar), product_materials[p])] *
+                sum(routing_yield[r] * production[r] for r in prod_routings[p]) / planned[p] for
+                p in prods
             )
         end
         cap = max(basis / ratio, protection(kstar))
@@ -450,7 +477,11 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
         end
         material_capacity[kstar] = cap
         if feasibility_status == infeasible
-            scope = material_owner[kstar] == 0 ? :plant : (material_owner[kstar] < 0 ? :area : :department)
+            scope = if material_owner[kstar] == 0
+                :plant
+            else
+                (material_owner[kstar] < 0 ? :area : :department)
+            end
             certificate = ProductMixMaterialCertificate(kstar, scope, prods, uses, required, cap)
         end
     end
@@ -523,12 +554,15 @@ function build_model(prob::ProductMixProblem)
     for d in 1:prob.n_departments
         isempty(labor_terms[d]) && continue
         @constraint(
-            model, sum(h * x[r] for (r, h) in sort!(collect(labor_terms[d]))) <= prob.labor_capacity[d]
+            model,
+            sum(h * x[r] for (r, h) in sort!(collect(labor_terms[d]))) <= prob.labor_capacity[d]
         )
     end
     for k in 1:prob.n_materials
         isempty(material_terms[k]) && continue
-        @constraint(model, sum(a * x[r] for (r, a) in material_terms[k]) <= prob.material_capacity[k])
+        @constraint(
+            model, sum(a * x[r] for (r, a) in material_terms[k]) <= prob.material_capacity[k]
+        )
     end
 
     # Market rows: ranged for multi-routing products, bounds otherwise.
@@ -547,7 +581,11 @@ function build_model(prob::ProductMixProblem)
     margin = zeros(R)
     for r in 1:R
         p = prob.routing_product[r]
-        mat = sum(a * prob.material_cost[k] for (k, a) in zip(prob.product_materials[p], prob.material_qty[p]); init=0.0)
+        mat = sum(
+            a * prob.material_cost[k] for
+            (k, a) in zip(prob.product_materials[p], prob.material_qty[p]);
+            init=0.0,
+        )
         margin[r] = prob.price[p] - mat * prob.routing_yield[r] - prob.routing_cost[r]
     end
     @objective(model, Max, sum(margin[r] * x[r] for r in 1:R))

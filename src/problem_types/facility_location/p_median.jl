@@ -189,16 +189,7 @@ function PMedianFacilityLocationProblem(
     end
 
     return PMedianFacilityLocationProblem(
-        F,
-        C,
-        p,
-        capacities,
-        facility_locs,
-        customer_locs,
-        demands,
-        distances,
-        witness,
-        certificate,
+        F, C, p, capacities, facility_locs, customer_locs, demands, distances, witness, certificate
     )
 end
 

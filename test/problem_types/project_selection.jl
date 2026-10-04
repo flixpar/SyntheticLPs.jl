@@ -11,8 +11,13 @@ function ps_expected_rows(p)
         active[p.division[q], p.start_year[q] + k - 1] = true
     end
     high = any(>(p.high_risk_threshold), p.risk_scores) ? 1 : 0
-    return p.n_years + 2 * count(active) + length(p.prerequisites) +
-           length(p.exclusive_groups) + count(>(0), p.division_mandate) + 1 + high
+    return p.n_years +
+           2 * count(active) +
+           length(p.prerequisites) +
+           length(p.exclusive_groups) +
+           count(>(0), p.division_mandate) +
+           1 +
+           high
 end
 
 @testset "Project Selection" begin
@@ -138,8 +143,7 @@ end
                 set_optimizer(m, HiGHS.Optimizer)
                 set_silent(m)
                 optimize!(m)
-                @test termination_status(m) ==
-                    (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
+                @test termination_status(m) == (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
             end
             # `unknown` is a genuine mix across seeds.
             outcomes = Set{MOI.TerminationStatusCode}()

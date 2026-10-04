@@ -52,8 +52,12 @@ end
             @test num_constraints(m; count_variable_in_set_constraints=false) ==
                 p.n_nodes * K + 2A + A * K
         end
-        @test_throws ArgumentError SyntheticLPs.MultiCommodityFlow(SyntheticLPs.MCF_MAX_VARIABLES + 1, unknown, 0)
-        @test_throws ArgumentError SyntheticLPs.BinaryCapacityMultiCommodityFlowProblem(0, unknown, 0)
+        @test_throws ArgumentError SyntheticLPs.MultiCommodityFlow(
+            SyntheticLPs.MCF_MAX_VARIABLES + 1, unknown, 0
+        )
+        @test_throws ArgumentError SyntheticLPs.BinaryCapacityMultiCommodityFlowProblem(
+            0, unknown, 0
+        )
     end
 
     @testset "network and commodity invariants" begin
@@ -148,19 +152,24 @@ end
         end
         @test modes == Set([:length, :regional_cut])
         for target in (100, 1500), seed in 0:3
-            _, q = generate_problem("multi_commodity_flow/binary_capacity", target, infeasible, seed)
+            _, q = generate_problem(
+                "multi_commodity_flow/binary_capacity", target, infeasible, seed
+            )
             c = q.infeasibility_certificate
             maxcap = q.module_capacity[:, end]
             @test c.capacity_length ≈ sum(maxcap .* c.lengths)
-            req = mcf_requirement(q, c.lengths, q.origins, [[d] for d in q.destinations], [[d] for d in q.demands])
+            req = mcf_requirement(
+                q, c.lengths, q.origins, [[d] for d in q.destinations], [[d] for d in q.demands]
+            )
             @test c.required ≈ req rtol = 1e-9
             @test c.capacity_length < c.required
         end
     end
 
     @testset "reproducibility" begin
-        for ref in ("multi_commodity_flow/standard", "multi_commodity_flow/binary_capacity"), status in
-                                                                                             (feasible, infeasible, unknown)
+        for ref in ("multi_commodity_flow/standard", "multi_commodity_flow/binary_capacity"),
+            status in (feasible, infeasible, unknown)
+
             Random.seed!(3)
             _, p1 = generate_problem(ref, 600, status, 11)
             Random.seed!(4)
@@ -171,7 +180,9 @@ end
                 if a === nothing || a isa Union{Number, Symbol, AbstractArray, FeasibilityStatus}
                     @test isequal(a, b)
                 else
-                    @test all(isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a)))
+                    @test all(
+                        isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a))
+                    )
                 end
             end
         end
@@ -185,8 +196,8 @@ end
                 optimize!(m)
                 return termination_status(m), MOI.get(m, MOI.SimplexIterations())
             end
-            for ref in ("multi_commodity_flow/standard", "multi_commodity_flow/binary_capacity"), target in
-                                                                                                  (150, 3000),
+            for ref in ("multi_commodity_flow/standard", "multi_commodity_flow/binary_capacity"),
+                target in (150, 3000),
                 seed in 0:2
 
                 ts, _ = mcf_solve(generate_problem(ref, target, feasible, seed)[1])

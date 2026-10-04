@@ -169,7 +169,9 @@ function DueDatesCuttingStockProblem(
     end
     # Holding cost per piece-period: ~1.5% of the material value per period.
     unit_mm_cost = minimum(stock_costs[k] / stock_lengths[k] for k in 1:n_stock)
-    holding_costs = [0.015 * unit_mm_cost * piece_lengths[i] * (0.7 + 0.6 * rand(rng)) for i in 1:n_types]
+    holding_costs = [
+        0.015 * unit_mm_cost * piece_lengths[i] * (0.7 + 0.6 * rand(rng)) for i in 1:n_types
+    ]
 
     # Just-in-time single-item plan.
     pattern = zeros(Int, n_types)
@@ -208,12 +210,16 @@ function DueDatesCuttingStockProblem(
         end
         tstar = 1   # see the docstring: robust ray verification at scale
         due = sum(material[1:tstar])
-        supply = sum(Float64(stock_lengths[k]) * availability[k, t] for k in 1:n_stock, t in 1:tstar)
+        supply = sum(
+            Float64(stock_lengths[k]) * availability[k, t] for k in 1:n_stock, t in 1:tstar
+        )
         scale = due / ((1.08 + 0.12 * rand(rng)) * supply)
         for k in 1:n_stock, t in 1:tstar
             availability[k, t] = floor(Int, availability[k, t] * scale)
         end
-        supply = sum(Float64(stock_lengths[k]) * availability[k, t] for k in 1:n_stock, t in 1:tstar)
+        supply = sum(
+            Float64(stock_lengths[k]) * availability[k, t] for k in 1:n_stock, t in 1:tstar
+        )
         due >= 1.04 * supply || error("due_dates: cumulative certificate lost its margin")
         infeasibility_certificate = CumulativeShortageCertificate(tstar, due, supply)
     else

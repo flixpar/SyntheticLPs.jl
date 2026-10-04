@@ -18,10 +18,14 @@
         rows = count(>(0.0), p.requirement)
         for w in 1:p.n_workers
             rows += count(d -> length(get(wd, (w, d), Int[])) > 1, 1:D)
-            rows += count(wk -> any(haskey(wd, (w, d)) for d in ((wk - 1) * 7 + 1):min(wk * 7, D)), 1:cld(D, 7))
+            rows += count(
+                wk -> any(haskey(wd, (w, d)) for d in ((wk - 1) * 7 + 1):min(wk * 7, D)),
+                1:cld(D, 7),
+            )
             rows += count(s -> count(d -> haskey(wd, (w, d)), s:(s + c)) > c, 1:(D - c))
             rows += count(
-                d -> any(p.closing[cols[j][3]] for j in get(wd, (w, d), Int[])) &&
+                d ->
+                    any(p.closing[cols[j][3]] for j in get(wd, (w, d), Int[])) &&
                     any(p.opening[cols[j][3]] for j in get(wd, (w, d + 1), Int[])),
                 1:(D - 1),
             )
@@ -45,7 +49,10 @@
         _, p = generate_problem(:scheduling, target, status, seed)
         @test p.n_days % 7 == 0
         @test all(p.home[w] in p.departments[w] for w in 1:p.n_workers)
-        @test all((p.efficiency[w, m] > 0) == (m in p.departments[w]) for w in 1:p.n_workers, m in 1:p.n_departments)
+        @test all(
+            (p.efficiency[w, m] > 0) == (m in p.departments[w]) for
+            w in 1:p.n_workers, m in 1:p.n_departments
+        )
         @test all(!isempty(ks) && issubset(ks, 1:p.n_templates) for ks in p.templates)
         @test all(0 .<= p.min_hours .<= p.max_hours)
         @test all(>(0.0), p.wage)
@@ -104,12 +111,16 @@
             @test cap ≈ min(count(d -> p.available[w, d], days), p.max_hours[w] / shortest)
         end
         @test cert.required ≈ sum(p.requirement[d, k, dep] for d in days, k in 1:p.n_templates)
-        @test cert.available ≈ sum(p.efficiency[w, dep] * c for (w, c) in zip(cert.workers, cert.caps))
+        @test cert.available ≈
+            sum(p.efficiency[w, dep] * c for (w, c) in zip(cert.workers, cert.caps))
         @test cert.required >= 1.08 * cert.available
         # No single coverage row is unattainable on its own.
         for d in days, k in 1:p.n_templates
             reach = sum(
-                (p.efficiency[w, dep] for w in cert.workers if p.available[w, d] && k in p.templates[w]);
+                (
+                    p.efficiency[w, dep] for
+                    w in cert.workers if p.available[w, d] && k in p.templates[w]
+                );
                 init=0.0,
             )
             @test p.requirement[d, k, dep] <= reach + 1e-9

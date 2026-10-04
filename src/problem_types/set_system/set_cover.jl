@@ -106,7 +106,9 @@ function SetCoverProblem(target_variables::Int, feasibility_status::FeasibilityS
         columns[j] = sort!(covered)
         # Land price rises with crowding (points covered per unit area).
         crowding = length(covered) / (coverage * r^2)
-        costs[j] = round(type_cost[kind] * (0.8 + 0.3 * min(crowding, 3.0)) * exp(0.15 * randn(rng)); digits=2)
+        costs[j] = round(
+            type_cost[kind] * (0.8 + 0.3 * min(crowding, 3.0)) * exp(0.15 * randn(rng)); digits=2
+        )
     end
 
     incidence = _set_elements_to_columns(columns, n_elements)

@@ -127,9 +127,11 @@ periods `1..horizon` (see [`MultiEchelonPrefixCertificate`](@ref)).
 function _multi_echelon_prefix_requirement(demand, dc_initial, store_initial, hours, horizon::Int)
     P = size(demand, 1)
     return sum(
-        hours[p] *
-        max(0.0, sum(view(demand, p, :, 1:horizon)) - sum(view(dc_initial, p, :)) - sum(view(store_initial, p, :)))
-        for p in 1:P
+        hours[p] * max(
+            0.0,
+            sum(view(demand, p, :, 1:horizon)) - sum(view(dc_initial, p, :)) -
+            sum(view(store_initial, p, :)),
+        ) for p in 1:P
     )
 end
 
@@ -205,8 +207,14 @@ function MultiEchelonInventoryProblem(
     demand = zeros(P, S, T)
     for p in 1:P, s in 1:S
         demand[p, s, :] = _inventory_demand(
-            rng, T, product_scale[p] * store_size[s]; amp=amp, phase=phase + 0.3 * randn(rng),
-            trend=0.005 * randn(rng), cv=0.2 + 0.2 * rand(rng), intermittent=rand(rng) < 0.05,
+            rng,
+            T,
+            product_scale[p] * store_size[s];
+            amp=amp,
+            phase=phase + 0.3 * randn(rng),
+            trend=0.005 * randn(rng),
+            cv=0.2 + 0.2 * rand(rng),
+            intermittent=rand(rng) < 0.05,
         )
     end
     plant_hours = rand(rng, LogNormal(log(0.02), 0.4), P)
@@ -269,12 +277,18 @@ function MultiEchelonInventoryProblem(
         end
     end
     dc_storage = [
-        max(maximum(sum(cube[p] * dc_stock[p, r, t] for p in 1:P) for t in 1:T) * rand(rng, Uniform(1.2, 1.8)), 1.0)
-        for r in 1:R
+        max(
+            maximum(sum(cube[p] * dc_stock[p, r, t] for p in 1:P) for t in 1:T) *
+            rand(rng, Uniform(1.2, 1.8)),
+            1.0,
+        ) for r in 1:R
     ]
     store_shelf = [
-        max(maximum(sum(cube[p] * store_stock[p, s, t] for p in 1:P) for t in 1:T) * rand(rng, Uniform(1.2, 1.8)), 0.1)
-        for s in 1:S
+        max(
+            maximum(sum(cube[p] * store_stock[p, s, t] for p in 1:P) for t in 1:T) *
+            rand(rng, Uniform(1.2, 1.8)),
+            0.1,
+        ) for s in 1:S
     ]
 
     witness = nothing
@@ -285,7 +299,9 @@ function MultiEchelonInventoryProblem(
         ratio = _inventory_scale_ratio(rng, feasibility_status)
         best_h, best_r = 2, -1.0
         for h in 2:T
-            req = _multi_echelon_prefix_requirement(demand, dc_initial, store_initial, plant_hours, h)
+            req = _multi_echelon_prefix_requirement(
+                demand, dc_initial, store_initial, plant_hours, h
+            )
             r = req / sum(plant_capacity[1:(h - 1)])
             if r > best_r
                 best_h, best_r = h, r
@@ -293,8 +309,12 @@ function MultiEchelonInventoryProblem(
         end
         plant_capacity .*= best_r / ratio
         if feasibility_status == infeasible
-            req = _multi_echelon_prefix_requirement(demand, dc_initial, store_initial, plant_hours, best_h)
-            certificate = MultiEchelonPrefixCertificate(best_h, req, sum(plant_capacity[1:(best_h - 1)]))
+            req = _multi_echelon_prefix_requirement(
+                demand, dc_initial, store_initial, plant_hours, best_h
+            )
+            certificate = MultiEchelonPrefixCertificate(
+                best_h, req, sum(plant_capacity[1:(best_h - 1)])
+            )
         end
     end
 
@@ -377,13 +397,15 @@ function build_model(prob::MultiEchelonInventoryProblem)
     # Plant capacity.
     for t in 1:(T - 1)
         @constraint(
-            model, sum(prob.plant_hours[p] * f[p, r, t] for p in 1:P, r in 1:R) <= prob.plant_capacity[t]
+            model,
+            sum(prob.plant_hours[p] * f[p, r, t] for p in 1:P, r in 1:R) <= prob.plant_capacity[t]
         )
     end
     # DC throughput and storage.
     for r in 1:R, t in 1:T
         terms = [(p, l) for p in 1:P for l in dc_lanes[r] if t <= T - prob.lane_transit[l]]
-        isempty(terms) || @constraint(model, sum(g[p, l, t] for (p, l) in terms) <= prob.dc_throughput[r, t])
+        isempty(terms) ||
+            @constraint(model, sum(g[p, l, t] for (p, l) in terms) <= prob.dc_throughput[r, t])
         @constraint(model, sum(prob.cube[p] * J[p, r, t] for p in 1:P) <= prob.dc_storage[r])
     end
     # Store shelf space (a variable bound when there is a single product).
@@ -396,10 +418,16 @@ function build_model(prob::MultiEchelonInventoryProblem)
     @objective(
         model,
         Min,
-        sum((prob.production_cost[p] + prob.plant_dc_cost[r]) * f[p, r, t] for p in 1:P, r in 1:R, t in 1:(T - 1)) +
-        sum(prob.lane_cost[l] * g[p, l, t] for p in 1:P, l in 1:nl for t in 1:(T - prob.lane_transit[l])) +
-        sum(prob.dc_holding[p] * J[p, r, t] for p in 1:P, r in 1:R, t in 1:T) +
-        sum(prob.store_holding[p] * K[p, s, t] for p in 1:P, s in 1:S, t in 1:T)
+        sum(
+                (prob.production_cost[p] + prob.plant_dc_cost[r]) * f[p, r, t] for
+                p in 1:P, r in 1:R, t in 1:(T - 1)
+            ) +
+            sum(
+                prob.lane_cost[l] * g[p, l, t] for p in 1:P, l in 1:nl for
+                t in 1:(T - prob.lane_transit[l])
+            ) +
+            sum(prob.dc_holding[p] * J[p, r, t] for p in 1:P, r in 1:R, t in 1:T) +
+            sum(prob.store_holding[p] * K[p, s, t] for p in 1:P, s in 1:S, t in 1:T)
     )
     return model
 end

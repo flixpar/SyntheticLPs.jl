@@ -18,7 +18,9 @@ Customer and source counts for a lane budget: about `lanes_per_dest` lanes per
 customer and `dest_per_source` customers per source, adjusted so the complete
 bipartite graph can hold the budget.
 """
-function _tp_dimensions(rng::AbstractRNG, target_lanes::Int, lanes_per_dest::Float64, dest_per_source::Float64)
+function _tp_dimensions(
+    rng::AbstractRNG, target_lanes::Int, lanes_per_dest::Float64, dest_per_source::Float64
+)
     n_dests = max(1, round(Int, target_lanes / lanes_per_dest))
     n_sources = max(2, round(Int, n_dests / dest_per_source))
     while n_sources * n_dests < target_lanes
@@ -69,13 +71,15 @@ function _tp_lanes(
     weights::Vector{Float64}=ones(length(dst_pos)),
 )
     nS, nD = length(src_pos), length(dst_pos)
-    nS * nD >= n_lanes >= nD || throw(ArgumentError("lane budget $n_lanes infeasible for $nS x $nD"))
+    nS * nD >= n_lanes >= nD ||
+        throw(ArgumentError("lane budget $n_lanes infeasible for $nS x $nD"))
     kmin = n_lanes >= 2nD ? 2 : 1
     # Bigger customers contract more carriers (lane count ~ weight^0.3).
     rel = (weights ./ (sum(weights) / nD)) .^ 0.3
     rel ./= sum(rel) / nD
     k = [
-        clamp(round(Int, mean_lanes * rel[j] * rand(rng, LogNormal(0.0, 0.3))), kmin, nS) for j in 1:nD
+        clamp(round(Int, mean_lanes * rel[j] * rand(rng, LogNormal(0.0, 0.3))), kmin, nS) for
+        j in 1:nD
     ]
     diff = n_lanes - sum(k)
     while diff != 0
@@ -116,7 +120,9 @@ The lane network in the node numbering of the `network_flow` max-flow helpers:
 sources `1:n_sources`, customer `j` at `n_sources + j`, uncapacitated lanes
 (`Inf`) at capacity `big`.
 """
-function _tp_maxflow_network(n_sources::Int, lanes::Vector{Tuple{Int, Int}}, lane_caps::Vector{Float64}, big::Float64)
+function _tp_maxflow_network(
+    n_sources::Int, lanes::Vector{Tuple{Int, Int}}, lane_caps::Vector{Float64}, big::Float64
+)
     arcs = [(i, n_sources + j) for (i, j) in lanes]
     caps = [isfinite(u) ? u : big for u in lane_caps]
     return arcs, caps

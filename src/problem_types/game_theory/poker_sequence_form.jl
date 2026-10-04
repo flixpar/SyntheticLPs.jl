@@ -583,8 +583,11 @@ function _poker_treeplex(pub::_PokerPublicTree, p::Int, N::Int)
             I = inf_offset[h] + key
             first[I] = seq_offset[h] + (key - 1) * k + 1
             nact[I] = k
-            parent[I] =
-                ln == 0 ? 1 : _poker_sequence(pub, seq_offset, ln, la, _poker_key(pub, ln, h, key, N))
+            parent[I] = if ln == 0
+                1
+            else
+                _poker_sequence(pub, seq_offset, ln, la, _poker_key(pub, ln, h, key, N))
+            end
         end
     end
     return SequenceFormTreeplex(nseq, parent, first, nact), seq_offset
@@ -636,7 +639,13 @@ function _poker_payoff_matrix(pub, T1, off1, T2, off2, N, s, n_rounds)
             for r1 in 1:N, r2 in 1:N
                 w = W2[r1, r2]
                 w > 0 || continue
-                u = folder == 1 ? -c1 : folder == 2 ? c2 : c1 * sign(r1 - r2)
+                u = if folder == 1
+                    -c1
+                elseif folder == 2
+                    c2
+                else
+                    c1 * sign(r1 - r2)
+                end
                 u == 0 && continue
                 push!(Is, _poker_sequence(pub, off1, n1, a1, r1))
                 push!(Js, _poker_sequence(pub, off2, n2, a2, r2))
@@ -674,7 +683,9 @@ Build a poker sequence-form LP whose variable count is within about 3% of
 20-variable Kuhn game round up to it and targets above
 `GAME_THEORY_MAX_VARIABLES` raise an `ArgumentError`.
 """
-function PokerSequenceFormProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function PokerSequenceFormProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     _game_theory_check_target("poker_sequence_form", target_variables)
     rng = MersenneTwister(seed)
 

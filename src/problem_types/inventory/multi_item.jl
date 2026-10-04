@@ -109,7 +109,8 @@ end
 """
 function _multi_item_prefix_requirement(demand, initial_inventory, usage, horizon::Int)
     return sum(
-        usage[i] * max(0.0, sum(view(demand, i, 1:horizon)) - initial_inventory[i]) for i in 1:size(demand, 1)
+        usage[i] * max(0.0, sum(view(demand, i, 1:horizon)) - initial_inventory[i]) for
+        i in 1:size(demand, 1)
     )
 end
 
@@ -135,13 +136,22 @@ function MultiItemInventoryProblem(
     demand = zeros(N, T)
     for i in 1:N
         demand[i, :] = _inventory_demand(
-            rng, T, rand(rng, LogNormal(log(100.0), 0.8)); amp=amp, phase=phase + 0.3 * randn(rng),
-            trend=0.01 * randn(rng), cv=0.15 + 0.25 * rand(rng), intermittent=rand(rng) < 0.1,
+            rng,
+            T,
+            rand(rng, LogNormal(log(100.0), 0.8));
+            amp=amp,
+            phase=phase + 0.3 * randn(rng),
+            trend=0.01 * randn(rng),
+            cv=0.15 + 0.25 * rand(rng),
+            intermittent=rand(rng) < 0.1,
         )
     end
     # Initial stock covers the first period plus a little: no single capacity
     # row can ever be contradicted on its own.
-    initial_inventory = [round(demand[i, 1] + sum(demand[i, :]) / T * rand(rng, Uniform(0.05, 0.4)); digits=1) for i in 1:N]
+    initial_inventory = [
+        round(demand[i, 1] + sum(demand[i, :]) / T * rand(rng, Uniform(0.05, 0.4)); digits=1) for
+        i in 1:N
+    ]
     usage = rand(rng, LogNormal(log(1.0), 0.4), N)
     base_cost = rand(rng, LogNormal(log(20.0), 0.6), N)
     production_cost = [base_cost[i] * (1 + 0.05 * randn(rng)) for i in 1:N, _ in 1:T]
@@ -149,7 +159,10 @@ function MultiItemInventoryProblem(
     holding_cost = base_cost .* rand(rng, Uniform(0.004, 0.02), N)
 
     # Time-varying capacity shape (maintenance and holiday dips).
-    shape = [rand(rng) < 0.12 ? rand(rng, Uniform(0.5, 0.8)) : rand(rng, Uniform(0.95, 1.05)) for _ in 1:T]
+    shape = [
+        rand(rng) < 0.12 ? rand(rng, Uniform(0.5, 0.8)) : rand(rng, Uniform(0.95, 1.05)) for
+        _ in 1:T
+    ]
     ratio0, _ = _multi_item_prefix(demand, initial_inventory, usage, shape)
     target_ratio = if feasibility_status == feasible
         0.7 + 0.22 * rand(rng)
@@ -241,7 +254,10 @@ function build_model(prob::MultiItemInventoryProblem)
     @objective(
         model,
         Min,
-        sum(prob.production_cost[i, t] * x[i, t] + prob.holding_cost[i] * I[i, t] for i in 1:N, t in 1:T)
+        sum(
+            prob.production_cost[i, t] * x[i, t] + prob.holding_cost[i] * I[i, t] for
+            i in 1:N, t in 1:T
+        )
     )
     return model
 end

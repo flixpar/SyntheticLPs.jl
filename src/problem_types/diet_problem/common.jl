@@ -108,9 +108,7 @@ const _DIET_COST_MEDIAN = (
 )
 const _DIET_MAX_SERVINGS = (4.0, 3.5, 3.0, 3.0, 2.0, 1.5, 2.0, 2.0, 1.5, 3.0, 1.5, 2.0, 1.5)
 # Servings per day of each category in a 2000-kcal guideline eating pattern.
-const _DIET_PATTERN_SERVINGS = (
-    4.5, 3.0, 2.0, 2.5, 1.0, 0.4, 0.5, 0.6, 0.4, 1.5, 0.4, 0.8, 0.4
-)
+const _DIET_PATTERN_SERVINGS = (4.5, 3.0, 2.0, 2.5, 1.0, 0.4, 0.5, 0.6, 0.4, 1.5, 0.4, 0.8, 0.4)
 
 """
 USDA dietary food groups a category counts toward (`food_groups` variant):
@@ -126,28 +124,94 @@ minimum requirements (RDA/AI) for protein, fiber and the ten micronutrients
 (calcium .. folate, in `DIET_NUTRIENTS` order) and the sodium limit (CDRR, mg).
 """
 const DIET_DEMOGRAPHICS = (
-    (name=:child_4_8, eer=1500.0, protein=19.0, fiber=25.0, sodium=1900.0,
-        micro=(1000.0, 10.0, 2300.0, 130.0, 5.0, 400.0, 25.0, 15.0, 1.2, 200.0)),
-    (name=:boy_9_13, eer=2000.0, protein=34.0, fiber=31.0, sodium=2200.0,
-        micro=(1300.0, 8.0, 2500.0, 240.0, 8.0, 600.0, 45.0, 15.0, 1.8, 300.0)),
-    (name=:girl_9_13, eer=1800.0, protein=34.0, fiber=26.0, sodium=2200.0,
-        micro=(1300.0, 8.0, 2300.0, 240.0, 8.0, 600.0, 45.0, 15.0, 1.8, 300.0)),
-    (name=:male_14_18, eer=2600.0, protein=52.0, fiber=38.0, sodium=2300.0,
-        micro=(1300.0, 11.0, 3000.0, 410.0, 11.0, 900.0, 75.0, 15.0, 2.4, 400.0)),
-    (name=:female_14_18, eer=2000.0, protein=46.0, fiber=26.0, sodium=2300.0,
-        micro=(1300.0, 15.0, 2300.0, 360.0, 9.0, 700.0, 65.0, 15.0, 2.4, 400.0)),
-    (name=:man_19_50, eer=2600.0, protein=56.0, fiber=38.0, sodium=2300.0,
-        micro=(1000.0, 8.0, 3400.0, 400.0, 11.0, 900.0, 90.0, 15.0, 2.4, 400.0)),
-    (name=:woman_19_50, eer=2000.0, protein=46.0, fiber=25.0, sodium=2300.0,
-        micro=(1000.0, 18.0, 2600.0, 310.0, 8.0, 700.0, 75.0, 15.0, 2.4, 400.0)),
-    (name=:man_51_plus, eer=2300.0, protein=56.0, fiber=30.0, sodium=2300.0,
-        micro=(1000.0, 8.0, 3400.0, 420.0, 11.0, 900.0, 90.0, 20.0, 2.4, 400.0)),
-    (name=:woman_51_plus, eer=1800.0, protein=46.0, fiber=21.0, sodium=2300.0,
-        micro=(1200.0, 8.0, 2600.0, 320.0, 8.0, 700.0, 75.0, 20.0, 2.4, 400.0)),
-    (name=:pregnant, eer=2300.0, protein=71.0, fiber=28.0, sodium=2300.0,
-        micro=(1000.0, 27.0, 2900.0, 350.0, 11.0, 770.0, 85.0, 15.0, 2.6, 600.0)),
-    (name=:lactating, eer=2400.0, protein=71.0, fiber=29.0, sodium=2300.0,
-        micro=(1000.0, 9.0, 2800.0, 310.0, 12.0, 1300.0, 120.0, 15.0, 2.8, 500.0)),
+    (
+        name=:child_4_8,
+        eer=1500.0,
+        protein=19.0,
+        fiber=25.0,
+        sodium=1900.0,
+        micro=(1000.0, 10.0, 2300.0, 130.0, 5.0, 400.0, 25.0, 15.0, 1.2, 200.0),
+    ),
+    (
+        name=:boy_9_13,
+        eer=2000.0,
+        protein=34.0,
+        fiber=31.0,
+        sodium=2200.0,
+        micro=(1300.0, 8.0, 2500.0, 240.0, 8.0, 600.0, 45.0, 15.0, 1.8, 300.0),
+    ),
+    (
+        name=:girl_9_13,
+        eer=1800.0,
+        protein=34.0,
+        fiber=26.0,
+        sodium=2200.0,
+        micro=(1300.0, 8.0, 2300.0, 240.0, 8.0, 600.0, 45.0, 15.0, 1.8, 300.0),
+    ),
+    (
+        name=:male_14_18,
+        eer=2600.0,
+        protein=52.0,
+        fiber=38.0,
+        sodium=2300.0,
+        micro=(1300.0, 11.0, 3000.0, 410.0, 11.0, 900.0, 75.0, 15.0, 2.4, 400.0),
+    ),
+    (
+        name=:female_14_18,
+        eer=2000.0,
+        protein=46.0,
+        fiber=26.0,
+        sodium=2300.0,
+        micro=(1300.0, 15.0, 2300.0, 360.0, 9.0, 700.0, 65.0, 15.0, 2.4, 400.0),
+    ),
+    (
+        name=:man_19_50,
+        eer=2600.0,
+        protein=56.0,
+        fiber=38.0,
+        sodium=2300.0,
+        micro=(1000.0, 8.0, 3400.0, 400.0, 11.0, 900.0, 90.0, 15.0, 2.4, 400.0),
+    ),
+    (
+        name=:woman_19_50,
+        eer=2000.0,
+        protein=46.0,
+        fiber=25.0,
+        sodium=2300.0,
+        micro=(1000.0, 18.0, 2600.0, 310.0, 8.0, 700.0, 75.0, 15.0, 2.4, 400.0),
+    ),
+    (
+        name=:man_51_plus,
+        eer=2300.0,
+        protein=56.0,
+        fiber=30.0,
+        sodium=2300.0,
+        micro=(1000.0, 8.0, 3400.0, 420.0, 11.0, 900.0, 90.0, 20.0, 2.4, 400.0),
+    ),
+    (
+        name=:woman_51_plus,
+        eer=1800.0,
+        protein=46.0,
+        fiber=21.0,
+        sodium=2300.0,
+        micro=(1200.0, 8.0, 2600.0, 320.0, 8.0, 700.0, 75.0, 20.0, 2.4, 400.0),
+    ),
+    (
+        name=:pregnant,
+        eer=2300.0,
+        protein=71.0,
+        fiber=28.0,
+        sodium=2300.0,
+        micro=(1000.0, 27.0, 2900.0, 350.0, 11.0, 770.0, 85.0, 15.0, 2.6, 600.0),
+    ),
+    (
+        name=:lactating,
+        eer=2400.0,
+        protein=71.0,
+        fiber=29.0,
+        sodium=2300.0,
+        micro=(1000.0, 9.0, 2800.0, 310.0, 12.0, 1300.0, 120.0, 15.0, 2.8, 500.0),
+    ),
 )
 
 """
@@ -287,10 +351,7 @@ respects the energy ceiling and the portion limits delivers at most this much of
 `nutrient`, so a requirement above it is infeasible from LP rows alone.
 """
 function _diet_max_under_energy_cap(
-    content::AbstractMatrix{<:Real},
-    upper::AbstractVector{<:Real},
-    nutrient::Int,
-    energy_cap::Real,
+    content::AbstractMatrix{<:Real}, upper::AbstractVector{<:Real}, nutrient::Int, energy_cap::Real
 )
     n = length(upper)
     order = sort(1:n; by=f -> -content[nutrient, f] / content[DIET_ENERGY, f])

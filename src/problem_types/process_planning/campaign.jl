@@ -832,7 +832,6 @@ function _cp_generate_site(
     )
 end
 
-
 """Per-period variable count of one complex running `chains` with `n_tiers` purchase tiers."""
 function _cp_site_per_period(chains::Vector{Symbol}, n_tiers::Int)
     material_names, material_kind, task_names, task_unit, _, _, _, unit_names, campaign_unit = _cp_assemble_complex(
@@ -960,7 +959,6 @@ function _cp_choose_dimensions(rng::AbstractRNG, target_variables::Int)
     return best
 end
 
-
 """
     _cp_pool_potential(material_kind, task_inputs, task_outputs, members) -> Vector{Float64}
 
@@ -993,7 +991,8 @@ end
 
 """Per-period supply the pool `g` can deliver: its pool row or its members' tier caps."""
 _cp_pool_period_supply(prob, g::Int, τ::Int) = min(
-    prob.supply_cap[g, τ], sum(prob.tier_cap[m, j] for m in prob.supply_groups[g] for j in 1:prob.n_tiers)
+    prob.supply_cap[g, τ],
+    sum(prob.tier_cap[m, j] for m in prob.supply_groups[g] for j in 1:prob.n_tiers),
 )
 
 """Whether pool `g` is written as an affine row (more than one purchase variable)."""
@@ -1116,9 +1115,13 @@ function CampaignPlanningProblem(
     supply_groups = group_of(:raw)
     market_groups = filter(g -> length(g) >= 2, group_of(:final))
     G = length(supply_groups)
-    pool_plan = [sum(purchase_plan[m, j, τ] for m in supply_groups[g] for j in 1:n_tiers) for
-                 g in 1:G, τ in 1:T]
-    supply_cap = [max(pool_plan[g, τ] * rand(rng, Uniform(1.05, 1.30)), 1e-3) for g in 1:G, τ in 1:T]
+    pool_plan = [
+        sum(purchase_plan[m, j, τ] for m in supply_groups[g] for j in 1:n_tiers) for
+        g in 1:G, τ in 1:T
+    ]
+    supply_cap = [
+        max(pool_plan[g, τ] * rand(rng, Uniform(1.05, 1.30)), 1e-3) for g in 1:G, τ in 1:T
+    ]
     market_cap = [
         sum(sales_plan[m, τ] for m in market_groups[g]) * rand(rng, Uniform(1.04, 1.25)) for
         g in eachindex(market_groups), τ in 1:T
@@ -1179,7 +1182,9 @@ function CampaignPlanningProblem(
     parts = [_cp_pool_bound_parts(reference, g) for g in 1:G]
     need = [_cp_pool_need(reference, parts[g][1], τ) for g in 1:G, τ in 1:T]
     breadth = [_cp_pool_breadth(reference, parts[g][1]) for g in 1:G]
-    critical = [parts[g][2] > 0 ? max(parts[g][2] - parts[g][3], 0.0) / parts[g][2] : 0.0 for g in 1:G]
+    critical = [
+        parts[g][2] > 0 ? max(parts[g][2] - parts[g][3], 0.0) / parts[g][2] : 0.0 for g in 1:G
+    ]
 
     # Pools broad enough to be curtailed: the broadest contracted slates.
     widest = maximum(breadth; init=0.0)
@@ -1204,7 +1209,8 @@ function CampaignPlanningProblem(
                 # purchases (the critical profile ignores co-products and
                 # campaign timing, so it is a floor, not the true threshold).
                 supply_cap[g, τ] =
-                    floor_level * (1 + share) + max(share, 0.0) * max(pool_plan[g, τ] - floor_level, 0.0)
+                    floor_level * (1 + share) +
+                    max(share, 0.0) * max(pool_plan[g, τ] - floor_level, 0.0)
                 supply_cap[g, τ] = max(supply_cap[g, τ], 0.05 * pool_plan[g, τ], 1e-3)
             end
         end
@@ -1221,7 +1227,8 @@ function CampaignPlanningProblem(
     # demand): a single-product capacity bottleneck.
     margin_factor = 1 + rand(rng, Uniform(0.06, 0.15))
     eligible = [
-        g for g in 1:G if parts[g][2] > 0 && parts[g][2] / margin_factor - parts[g][3] >= 0.25 * parts[g][2]
+        g for g in 1:G if
+        parts[g][2] > 0 && parts[g][2] / margin_factor - parts[g][3] >= 0.25 * parts[g][2]
     ]
     if !isempty(eligible)
         widest_eligible = maximum(breadth[g] for g in eligible)
@@ -1304,7 +1311,8 @@ function _cp_capacity_bottleneck!(
         demand = sum(view(sales_floor, m, 1:horizon))
         bound > eps() && demand > eps() && push!(candidates, (m, demand / bound))
     end
-    isempty(candidates) && push!(candidates, (first(m for m in finals if haskey(producer_of, m)), 1.0))
+    isempty(candidates) &&
+        push!(candidates, (first(m for m in finals if haskey(producer_of, m)), 1.0))
     sort!(candidates; by=x -> -x[2])
     cut_material = candidates[rand(rng, 1:min(3, length(candidates)))][1]
     producer = producer_of[cut_material]
@@ -1395,8 +1403,8 @@ function campaign_plan_satisfies(prob::CampaignPlanningProblem; atol::Float64=1e
         load = sum(plan.rate[t, τ] for t in unit_tasks[u]; init=0.0)
         load <= prob.unit_capacity[u, τ] + atol * max(1.0, load) || return false
         if prob.campaign_unit[u]
-            sum(plan.active[campaign_index[t], τ] for t in unit_tasks[u]; init=0.0) <=
-            1.0 + atol || return false
+            sum(plan.active[campaign_index[t], τ] for t in unit_tasks[u]; init=0.0) <= 1.0 + atol ||
+                return false
         end
     end
 
@@ -1456,7 +1464,8 @@ end
 function campaign_certificate_holds(prob::CampaignPlanningProblem; atol::Float64=1e-6)
     cert = prob.infeasibility_certificate
     cert === nothing && return false
-    cert isa CampaignFeedstockCertificate && return _cp_feedstock_certificate_holds(prob, cert, atol)
+    cert isa CampaignFeedstockCertificate &&
+        return _cp_feedstock_certificate_holds(prob, cert, atol)
     M = length(prob.material_names)
     NT = length(prob.task_names)
     1 <= cert.material <= M || return false

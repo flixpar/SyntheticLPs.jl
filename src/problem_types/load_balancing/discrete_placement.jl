@@ -155,7 +155,10 @@ function DiscretePlacementLoadBalancingProblem(
         # factor (with machine noise): replicas on faster machines may or may
         # not absorb the gap.
         phi = 0.65 + 0.45 * rand(rng)
-        [max(1.0, planted_load[machine] * phi * (0.85 + 0.3 * rand(rng))) for machine in 1:n_machines]
+        [
+            max(1.0, planted_load[machine] * phi * (0.85 + 0.3 * rand(rng))) for
+            machine in 1:n_machines
+        ]
     end
 
     feasible_witness = nothing

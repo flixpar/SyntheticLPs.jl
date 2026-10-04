@@ -8,9 +8,13 @@ const _MENU_STORAGE_CLASS = (1, 2, 2, 2, 3, 3, 2, 1, 1, 1, 1, 1, 2)
 const MENU_STORAGE_CLASSES = (:dry, :refrigerated, :frozen)
 # Storage volume per serving (litres) and daily spoilage rate by category.
 const _MENU_VOLUME = (0.15, 0.30, 0.30, 0.25, 0.20, 0.20, 0.08, 0.10, 0.06, 0.03, 0.10, 0.30, 0.35)
-const _MENU_DECAY = (0.002, 0.06, 0.05, 0.03, 0.004, 0.004, 0.01, 0.001, 0.002, 0.001, 0.003, 0.004, 0.15)
+const _MENU_DECAY = (
+    0.002, 0.06, 0.05, 0.03, 0.004, 0.004, 0.01, 0.001, 0.002, 0.001, 0.003, 0.004, 0.15
+)
 # Seasonal price amplitude by category (fresh produce swings most).
-const _MENU_SEASONALITY = (0.03, 0.25, 0.30, 0.05, 0.08, 0.10, 0.06, 0.03, 0.04, 0.03, 0.03, 0.05, 0.05)
+const _MENU_SEASONALITY = (
+    0.03, 0.25, 0.30, 0.05, 0.08, 0.10, 0.06, 0.03, 0.04, 0.03, 0.03, 0.05, 0.05
+)
 # Daily food-group servings band per 2000-kcal appetite (grains, vegetables,
 # fruits, dairy, protein foods), after the US dietary-guideline patterns.
 const _MENU_GROUP_BAND = ((3.0, 7.0), (2.0, 5.0), (1.5, 3.5), (2.0, 3.5), (1.5, 4.0))
@@ -183,13 +187,15 @@ function menu_plan_satisfies(
     plan === nothing && return false
     F, D, W = prob.n_foods, prob.n_days, prob.n_weeks
     s, b, sp, I = plan.servings, plan.purchases, plan.spot, plan.inventory
-    size(s) == (F, D) && size(b) == (F, W) && size(sp) == (F, D) && size(I) == (F, D) || return false
+    size(s) == (F, D) && size(b) == (F, W) && size(sp) == (F, D) && size(I) == (F, D) ||
+        return false
     all(>=(-atol), sp) || return false
     all(d -> (d - 1) % 7 != 0 || all(iszero, view(sp, :, d)), 1:D) || return false
     tol(v) = atol * max(1.0, abs(v))
     all(>=(-atol), s) && all(>=(-atol), b) || return false
     all(>=(-atol), I) || return false
-    all(d -> all(f -> I[f, d] <= prob.shelf_limit[f] + tol(prob.shelf_limit[f]), 1:F), 1:D) || return false
+    all(d -> all(f -> I[f, d] <= prob.shelf_limit[f] + tol(prob.shelf_limit[f]), 1:F), 1:D) ||
+        return false
     for d in 1:D, f in 1:F
         s[f, d] <= prob.upper[f] + tol(prob.upper[f]) || return false
     end
@@ -204,8 +210,9 @@ function menu_plan_satisfies(
         for g in eachindex(members)
             isempty(members[g]) && continue
             total = sum(s[f, d] for f in members[g])
-            prob.group_band[1, g, d] - tol(total) <= total <= prob.group_band[2, g, d] + tol(total) ||
-                return false
+            prob.group_band[1, g, d] - tol(total) <=
+            total <=
+            prob.group_band[2, g, d] + tol(total) || return false
         end
     end
     for w in 1:W
@@ -229,9 +236,7 @@ function menu_plan_satisfies(
         end
     end
     for d in 1:D, c in eachindex(MENU_STORAGE_CLASSES)
-        used = sum(
-            prob.volume[f] * I[f, d] for f in 1:F if prob.storage_class[f] == c; init=0.0
-        )
+        used = sum(prob.volume[f] * I[f, d] for f in 1:F if prob.storage_class[f] == c; init=0.0)
         used <= prob.storage_capacity[c, d] + tol(prob.storage_capacity[c, d]) || return false
     end
     return true
@@ -252,9 +257,12 @@ function menu_certificate_holds(prob::FoodGroupsDietProblem; rtol::Float64=1e-9)
     cert = prob.infeasibility_certificate
     cert === nothing && return false
     if cert.kind == menu_variety_shortage
-        1 <= cert.group <= length(DIET_FOOD_GROUPS) && 1 <= cert.week <= prob.n_weeks || return false
+        1 <= cert.group <= length(DIET_FOOD_GROUPS) && 1 <= cert.week <= prob.n_weeks ||
+            return false
         achievable = _menu_group_week_capacity(prob, cert.group, cert.week)
-        required = sum(prob.group_band[1, cert.group, d] for d in menu_week_days(prob.n_days, cert.week))
+        required = sum(
+            prob.group_band[1, cert.group, d] for d in menu_week_days(prob.n_days, cert.week)
+        )
     else
         1 <= cert.day <= prob.n_days || return false
         achievable = _diet_max_under_energy_cap(
@@ -298,7 +306,10 @@ function FoodGroupsDietProblem(
     start_week = rand(rng, 0:51)
     price = [
         table.cost[f] *
-        (1 + _MENU_SEASONALITY[category[f]] * sin(2pi * (start_week + w) / 52 + phase[category[f]])) *
+        (
+            1 +
+            _MENU_SEASONALITY[category[f]] * sin(2pi * (start_week + w) / 52 + phase[category[f]])
+        ) *
         rand(rng, LogNormal(0.0, 0.05)) for f in 1:F, w in 1:W
     ]
     # Same-day retail top-ups cost 30-80% more than the weekly delivery.
@@ -372,9 +383,7 @@ function FoodGroupsDietProblem(
             for f in 1:F
                 weekly = sum(s[f, d] for d in days)
                 variety_cap[f] = max(variety_cap[f], weekly * rand(rng, Uniform(1.02, 1.15)))
-                need = sum(
-                    s[f, d] / (1 - decay[f])^(d - first(days)) for d in days
-                )
+                need = sum(s[f, d] / (1 - decay[f])^(d - first(days)) for d in days)
                 b[f, w] = need * (1 + 1e-7)
             end
         end
@@ -391,7 +400,9 @@ function FoodGroupsDietProblem(
             e = intake[DIET_ENERGY]
             energy_band[1, d] = min(DIET_ENERGY_BAND[1] * eer, 0.97 * e)
             energy_band[2, d] = max(DIET_ENERGY_BAND[2] * eer, 1.03 * e)
-            protein_min[d] = min(demo.protein, intake[DIET_PROTEIN] * rand(rng, Uniform(0.92, 0.99)))
+            protein_min[d] = min(
+                demo.protein, intake[DIET_PROTEIN] * rand(rng, Uniform(0.92, 0.99))
+            )
             sodium_limit[d] = max(demo.sodium, intake[DIET_SODIUM] * rand(rng, Uniform(1.01, 1.06)))
             satfat_share[d] = max(DIET_SATFAT_SHARE, 9.0 * intake[DIET_SATFAT] / e + 0.01)
             for g in eachindex(members)
@@ -439,10 +450,32 @@ function FoodGroupsDietProblem(
                 variety_cap[f] = theta * capacity[j]
             end
             tmp = FoodGroupsDietProblem(
-                F, D, W, headcount, category, content, upper, price, spot_markup, holding_cost, decay,
-                volume, storage_class, storage_capacity, shelf_limit, variety_cap, group_band, energy_band,
-                protein_min, sodium_limit, satfat_share, weekly_nutrients, weekly_min, nothing,
-                nothing, feasibility_status,
+                F,
+                D,
+                W,
+                headcount,
+                category,
+                content,
+                upper,
+                price,
+                spot_markup,
+                holding_cost,
+                decay,
+                volume,
+                storage_class,
+                storage_capacity,
+                shelf_limit,
+                variety_cap,
+                group_band,
+                energy_band,
+                protein_min,
+                sodium_limit,
+                satfat_share,
+                weekly_nutrients,
+                weekly_min,
+                nothing,
+                nothing,
+                feasibility_status,
             )
             achievable = _menu_group_week_capacity(tmp, g, w)
             certificate = MenuInfeasibilityCertificate(
@@ -460,9 +493,31 @@ function FoodGroupsDietProblem(
     end
 
     prob = FoodGroupsDietProblem(
-        F, D, W, headcount, category, content, upper, price, spot_markup, holding_cost, decay, volume,
-        storage_class, storage_capacity, shelf_limit, variety_cap, group_band, energy_band, protein_min,
-        sodium_limit, satfat_share, weekly_nutrients, weekly_min, witness, certificate,
+        F,
+        D,
+        W,
+        headcount,
+        category,
+        content,
+        upper,
+        price,
+        spot_markup,
+        holding_cost,
+        decay,
+        volume,
+        storage_class,
+        storage_capacity,
+        shelf_limit,
+        variety_cap,
+        group_band,
+        energy_band,
+        protein_min,
+        sodium_limit,
+        satfat_share,
+        weekly_nutrients,
+        weekly_min,
+        witness,
+        certificate,
         feasibility_status,
     )
     feasibility_status == feasible && @assert menu_plan_satisfies(prob)
@@ -479,17 +534,21 @@ function build_model(prob::FoodGroupsDietProblem)
     model = Model()
     F, D, W = prob.n_foods, prob.n_days, prob.n_weeks
     C = prob.content
-    @variable(model, 0 <= s[f=1:F, d=1:D] <= prob.upper[f])
+    @variable(model, 0 <= s[f = 1:F, d = 1:D] <= prob.upper[f])
     @variable(model, b[1:F, 1:W] >= 0)
     topup_days = [d for d in 1:D if (d - 1) % 7 != 0]
     @variable(model, spot[1:F, topup_days] >= 0)
-    @variable(model, 0 <= I[f=1:F, d=1:D] <= prob.shelf_limit[f])
+    @variable(model, 0 <= I[f = 1:F, d = 1:D] <= prob.shelf_limit[f])
     @objective(
         model,
         Min,
         prob.headcount * (
             sum(prob.price[f, w] * b[f, w] for f in 1:F, w in 1:W) +
-            sum(prob.spot_markup[f] * prob.price[f, (d - 1) ÷ 7 + 1] * spot[f, d] for f in 1:F, d in topup_days; init=0.0) +
+            sum(
+                prob.spot_markup[f] * prob.price[f, (d - 1) ÷ 7 + 1] * spot[f, d] for
+                f in 1:F, d in topup_days;
+                init=0.0,
+            ) +
             sum(prob.holding_cost[f] * I[f, d] for f in 1:F, d in 1:D)
         )
     )
@@ -499,26 +558,43 @@ function build_model(prob::FoodGroupsDietProblem)
     for d in 1:D
         @constraint(
             model,
-            prob.energy_band[1, d] <= sum(C[DIET_ENERGY, f] * s[f, d] for f in 1:F) <= prob.energy_band[2, d]
+            prob.energy_band[1, d] <=
+                sum(C[DIET_ENERGY, f] * s[f, d] for f in 1:F) <=
+                prob.energy_band[2, d]
         )
-        @constraint(model, sum(C[DIET_PROTEIN, f] * s[f, d] for f in carriers[DIET_PROTEIN]) >= prob.protein_min[d])
-        @constraint(model, sum(C[DIET_SODIUM, f] * s[f, d] for f in carriers[DIET_SODIUM]) <= prob.sodium_limit[d])
         @constraint(
             model,
-            sum((9.0 * C[DIET_SATFAT, f] - prob.satfat_share[d] * C[DIET_ENERGY, f]) * s[f, d] for f in 1:F) <= 0
+            sum(C[DIET_PROTEIN, f] * s[f, d] for f in carriers[DIET_PROTEIN]) >=
+                prob.protein_min[d]
+        )
+        @constraint(
+            model,
+            sum(C[DIET_SODIUM, f] * s[f, d] for f in carriers[DIET_SODIUM]) <= prob.sodium_limit[d]
+        )
+        @constraint(
+            model,
+            sum(
+                (9.0 * C[DIET_SATFAT, f] - prob.satfat_share[d] * C[DIET_ENERGY, f]) * s[f, d] for
+                f in 1:F
+            ) <= 0
         )
         for g in eachindex(members)
             isempty(members[g]) && continue
             @constraint(
                 model,
-                prob.group_band[1, g, d] <= sum(s[f, d] for f in members[g]) <= prob.group_band[2, g, d]
+                prob.group_band[1, g, d] <=
+                    sum(s[f, d] for f in members[g]) <=
+                    prob.group_band[2, g, d]
             )
         end
     end
     for w in 1:W
         days = menu_week_days(D, w)
         for (r, k) in enumerate(prob.weekly_nutrients)
-            @constraint(model, sum(C[k, f] * s[f, d] for f in carriers[k], d in days) >= prob.weekly_min[r, w])
+            @constraint(
+                model,
+                sum(C[k, f] * s[f, d] for f in carriers[k], d in days) >= prob.weekly_min[r, w]
+            )
         end
         for f in 1:F
             @constraint(model, sum(s[f, d] for d in days) <= prob.variety_cap[f])
@@ -535,7 +611,9 @@ function build_model(prob::FoodGroupsDietProblem)
     for d in 1:D, c in eachindex(MENU_STORAGE_CLASSES)
         foods = [f for f in 1:F if prob.storage_class[f] == c]
         isempty(foods) && continue
-        @constraint(model, sum(prob.volume[f] * I[f, d] for f in foods) <= prob.storage_capacity[c, d])
+        @constraint(
+            model, sum(prob.volume[f] * I[f, d] for f in foods) <= prob.storage_capacity[c, d]
+        )
     end
     return model
 end

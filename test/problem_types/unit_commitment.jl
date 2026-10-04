@@ -150,14 +150,21 @@ const UNIT_COMMITMENT_REF = "unit_commitment/standard"
             # The requirement row alone is satisfiable: it stays within what
             # reserve offers could cover.
             offer = SyntheticLPs._uc_reserve_offer(
-                problem.units, problem.max_output, problem.min_output, problem.reserve_capability,
-                problem.availability_factors, t,
+                problem.units,
+                problem.max_output,
+                problem.min_output,
+                problem.reserve_capability,
+                problem.availability_factors,
+                t,
             )
             @test problem.reserve_requirements[t] <= offer + 1e-9
             # Every other period keeps demand + reserve within 97 % of capacity.
             for t2 in problem.time_periods
                 t2 == t && continue
-                cap2 = sum(problem.max_output[u] * problem.availability_factors[u][t2] for u in problem.units)
+                cap2 = sum(
+                    problem.max_output[u] * problem.availability_factors[u][t2] for
+                    u in problem.units
+                )
                 @test problem.demand[t2] + problem.reserve_requirements[t2] <= 0.97 * cap2 + 1e-6
             end
         end
@@ -172,8 +179,12 @@ const UNIT_COMMITMENT_REF = "unit_commitment/standard"
             # Requirements never exceed what reserve offers could cover.
             for t in problem.time_periods
                 offer = SyntheticLPs._uc_reserve_offer(
-                    problem.units, problem.max_output, problem.min_output, problem.reserve_capability,
-                    problem.availability_factors, t,
+                    problem.units,
+                    problem.max_output,
+                    problem.min_output,
+                    problem.reserve_capability,
+                    problem.availability_factors,
+                    t,
                 )
                 @test problem.reserve_requirements[t] <= 0.9 * offer + 1e-9
             end

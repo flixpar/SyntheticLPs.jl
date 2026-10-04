@@ -343,7 +343,10 @@ function ProductionPlanningProblem(
         trend = rand(rng, Uniform(-0.005, 0.012))
         lumpy = rand(rng) < 0.15
         for t in 1:T
-            mean_t = base * (1 + season_amp * sin(2π * t / 26 + phase + 0.3 * randn(rng))) * (1 + trend * t)
+            mean_t =
+                base *
+                (1 + season_amp * sin(2π * t / 26 + phase + 0.3 * randn(rng))) *
+                (1 + trend * t)
             d = rand(rng, Gamma(16.0, max(mean_t, 0.1) / 16.0))
             demand[e, t] = lumpy && rand(rng) < 0.5 ? 0.0 : round(d; digits=1)
         end
@@ -369,12 +372,15 @@ function ProductionPlanningProblem(
     end
     for i in n_items:-1:1
         purchased[i] && continue
-        value[i] = sum(a * value[c] for (c, a) in children[i]; init=0.0) + labor_rate * run_time[i] * 1.6
+        value[i] =
+            sum(a * value[c] for (c, a) in children[i]; init=0.0) + labor_rate * run_time[i] * 1.6
     end
     unit_cost = [purchased[i] ? value[i] : labor_rate * run_time[i] for i in 1:n_items]
     carrying = rand(rng, Uniform(0.18, 0.35)) / 52          # weekly carrying rate
     holding_cost = carrying .* value .* rand(rng, Uniform(0.9, 1.1), n_items)
-    backlog_cost = [level[i] == 1 ? value[i] * rand(rng, Uniform(0.04, 0.12)) : 0.0 for i in 1:n_items]
+    backlog_cost = [
+        level[i] == 1 ? value[i] * rand(rng, Uniform(0.04, 0.12)) : 0.0 for i in 1:n_items
+    ]
     overtime_cost = labor_rate * 1.5 .* rand(rng, Uniform(0.95, 1.1), n_wc)
 
     # --- Planted lot-for-lot MRP explosion ------------------------------------------
@@ -393,7 +399,8 @@ function ProductionPlanningProblem(
         end
         avg = sum(gross) / T
         safety = round(avg * rand(rng, Uniform(0.1, 0.4)); digits=1)
-        initial_inventory[i] = sum(gross[1:L]; init=0.0) + safety + avg * rand(rng, Uniform(0.0, 0.5))
+        initial_inventory[i] =
+            sum(gross[1:L]; init=0.0) + safety + avg * rand(rng, Uniform(0.0, 0.5))
         stock = initial_inventory[i]
         for t in 1:T
             arrival = 0.0
@@ -418,7 +425,8 @@ function ProductionPlanningProblem(
     for w in 1:n_wc
         # A quarter of the work centers are bottlenecks run near their average
         # load; the rest carry the usual 12-45% headroom.
-        tightness = rand(rng) < 0.25 ? rand(rng, Uniform(0.88, 1.02)) : rand(rng, Uniform(1.12, 1.45))
+        tightness =
+            rand(rng) < 0.25 ? rand(rng, Uniform(0.88, 1.02)) : rand(rng, Uniform(1.12, 1.45))
         level_hours = max(sum(load[w, :]) / T, 1.0) * tightness
         for t in 1:T
             avail = rand(rng) < 0.06 ? rand(rng, Uniform(0.6, 0.8)) : 1.0
@@ -575,9 +583,9 @@ function build_model(prob::ProductionPlanningProblem)
         model,
         Min,
         sum(prob.unit_cost[i] * x[i, t] for i in 1:N for t in 1:(T - prob.lead_time[i])) +
-        sum(prob.holding_cost[i] * I[i, t] for i in 1:N, t in 1:T) +
-        sum(prob.backlog_cost[e] * B[e, t] for e in 1:prob.n_end_items, t in 1:(T - 1)) +
-        sum(prob.overtime_cost[w] * O[w, t] for w in 1:prob.n_work_centers, t in 1:T)
+            sum(prob.holding_cost[i] * I[i, t] for i in 1:N, t in 1:T) +
+            sum(prob.backlog_cost[e] * B[e, t] for e in 1:prob.n_end_items, t in 1:(T - 1)) +
+            sum(prob.overtime_cost[w] * O[w, t] for w in 1:prob.n_work_centers, t in 1:T)
     )
     return model
 end

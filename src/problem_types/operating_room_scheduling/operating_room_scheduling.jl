@@ -138,7 +138,9 @@ function _orsched_surgeon_pool(
         append!(surgeon_specialty, fill(k, n_surgeons))
     end
     budget = zeros(Float64, length(surgeon_specialty), n_days)
-    block_days_of = [[d for d in 1:n_days if any(view(mss, :, d) .== k)] for k in eachindex(cases_per_spec)]
+    block_days_of = [
+        [d for d in 1:n_days if any(view(mss, :, d) .== k)] for k in eachindex(cases_per_spec)
+    ]
     for s in eachindex(surgeon_specialty)
         block_days = block_days_of[surgeon_specialty[s]]
         keep = rand(rng, Uniform(0.55, 0.90))
@@ -273,7 +275,9 @@ function _orsched_add_referrals!(
     has_option::Vector{Bool};
     max_share::Float64=1.0,
 )
-    pool = [i for i in eachindex(assignment) if assignment[i] == 0 && has_option[i] && !mandatory[i]]
+    pool = [
+        i for i in eachindex(assignment) if assignment[i] == 0 && has_option[i] && !mandatory[i]
+    ]
     isempty(pool) && return mandatory
     n_referrals = round(Int, rand(rng, Uniform(0.0, max_share)) * length(pool))
     for i in shuffle(rng, pool)[1:n_referrals]
@@ -434,7 +438,10 @@ function _orsched_plant_surgeon_overload!(
             sets = vcat(
                 min_days == 1 ? [[d] for d in working] : Vector{Int}[],
                 [[d1, d2] for d1 in working for d2 in working if d1 < d2],
-                [[d1, d2, d3] for d1 in working for d2 in working for d3 in working if d1 < d2 < d3],
+                [
+                    [d1, d2, d3] for d1 in working for d2 in working for
+                    d3 in working if d1 < d2 < d3
+                ],
             )
             for D in sets
                 group = [i for i in good if issubset(case_days[i], D)]
@@ -467,7 +474,9 @@ function _orsched_plant_surgeon_overload!(
                 penalty[i] = rand(rng, Uniform(300.0, 600.0))
             end
         end
-        return SurgeonOverloadCertificate(s, D, sort(group), sum(duration[group]), length(D) * longest)
+        return SurgeonOverloadCertificate(
+            s, D, sort(group), sum(duration[group]), length(D) * longest
+        )
     end
     # Tiny instances: overload one surgeon's whole list by spreading 90% of
     # its minutes over its days (single rows may then be contradictory, which

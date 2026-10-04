@@ -102,7 +102,10 @@ function _build_r_allocation(n_nodes::Int, feasibility_status::FeasibilityStatus
         # sizing loop can land close to the target.
         reach = 0.40 * min_sep * rand(rng, Uniform(0.55, 1.0))
         candidates = sort!(
-            reduce(vcat, [shuffle(rng, g)[1:rand(rng, min(r + 2, length(g)):length(g))] for g in groups])
+            reduce(
+                vcat,
+                [shuffle(rng, g)[1:rand(rng, min(r + 2, length(g)):length(g))] for g in groups],
+            ),
         )
         certificate = BackupRegionCertificate(groups, p, r)
         hubs = Int[]

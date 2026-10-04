@@ -399,7 +399,8 @@
 
         # Presolve keeps most of the small (~1k) instances of the variants
         # whose windows used to collapse under it (0.37-0.56 of the rows).
-        for v in (:p_hub_median, :multiple_allocation, :hub_network), status in (feasible, unknown),
+        for v in (:p_hub_median, :multiple_allocation, :hub_network),
+            status in (feasible, unknown),
             s in 0:1
 
             m, _ = generate_problem(ProblemVariant(:hub_location, v), 1000, status, s)
@@ -416,9 +417,7 @@
         # The default infeasible modes need simplex work: HiGHS presolve alone
         # does not refute them (it used to for these four variants, through
         # an impossible single row or bound-propagated hub closures).
-        for v in (:capacitated, :compact_single_allocation, :r_allocation, :hub_covering),
-            s in 0:1
-
+        for v in (:capacitated, :compact_single_allocation, :r_allocation, :hub_covering), s in 0:1
             m, _ = generate_problem(ProblemVariant(:hub_location, v), 2000, infeasible, s)
             set_optimizer(m, HiGHS.Optimizer)
             set_silent(m)

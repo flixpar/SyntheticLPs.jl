@@ -220,9 +220,7 @@ function diet_certificate_holds(prob::DietProblem; rtol::Float64=1e-9)
         cert.cohort == 0 || return false
         caps = _diet_population_caps(prob.supply, prob.headcount, prob.upper)
         achievable = sum(prob.content[cert.nutrient, f] * caps[f] for f in 1:prob.n_foods)
-        required = sum(
-            prob.headcount[g] * prob.min_requirement[r, g] for g in 1:prob.n_cohorts
-        )
+        required = sum(prob.headcount[g] * prob.min_requirement[r, g] for g in 1:prob.n_cohorts)
     else
         1 <= cert.cohort <= prob.n_cohorts || return false
         g = cert.cohort
@@ -255,11 +253,13 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
     demo_dist = Categorical(demo_weights ./ sum(demo_weights))
     demographic_index = [rand(rng, demo_dist) for _ in 1:n_cohorts]
     demographic = [DIET_DEMOGRAPHICS[d].name for d in demographic_index]
-    headcount = [Float64(max(10, round(Int, rand(rng, LogNormal(log(120.0), 0.8))))) for
-                 _ in 1:n_cohorts]
+    headcount = [
+        Float64(max(10, round(Int, rand(rng, LogNormal(log(120.0), 0.8))))) for _ in 1:n_cohorts
+    ]
     activity = rand(rng, Uniform(0.92, 1.10), n_cohorts)
-    appetite = [DIET_DEMOGRAPHICS[demographic_index[g]].eer * activity[g] / 2000.0 for
-                g in 1:n_cohorts]
+    appetite = [
+        DIET_DEMOGRAPHICS[demographic_index[g]].eer * activity[g] / 2000.0 for g in 1:n_cohorts
+    ]
     upper = [table.max_servings[f] * appetite[g] for f in 1:n_foods, g in 1:n_cohorts]
 
     # Tracked minimum nutrients: protein, fiber and 6-10 micronutrients.
@@ -320,21 +320,29 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
             servings[:, g] .= plan
             intake = _diet_intake(content, plan)
             for (r, k) in enumerate(min_nutrients)
-                min_requirement[r, g] = min(reference[r, g], intake[k] * rand(rng, Uniform(0.90, 0.98)))
+                min_requirement[r, g] = min(
+                    reference[r, g], intake[k] * rand(rng, Uniform(0.90, 0.98))
+                )
             end
             energy = intake[DIET_ENERGY]
             energy_band[1, g] = min(DIET_ENERGY_BAND[1] * eer[g], 0.97 * energy)
             energy_band[2, g] = max(DIET_ENERGY_BAND[2] * eer[g], 1.03 * energy)
             sodium_limit[g] = max(cdrr[g], intake[DIET_SODIUM] * rand(rng, Uniform(1.02, 1.08)))
             satfat_share[g] = max(
-                DIET_SATFAT_SHARE, 9.0 * intake[DIET_SATFAT] / energy + rand(rng, Uniform(0.005, 0.02))
+                DIET_SATFAT_SHARE,
+                9.0 * intake[DIET_SATFAT] / energy + rand(rng, Uniform(0.005, 0.02)),
             )
             sugar_share[g] = max(
-                DIET_SUGAR_SHARE, 4.0 * intake[DIET_SUGAR] / energy + rand(rng, Uniform(0.005, 0.02))
+                DIET_SUGAR_SHARE,
+                4.0 * intake[DIET_SUGAR] / energy + rand(rng, Uniform(0.005, 0.02)),
             )
             fat_share = 9.0 * intake[DIET_FAT] / energy
-            fat_share_band[1, g] = min(DIET_FAT_SHARE_BAND[1], fat_share - rand(rng, Uniform(0.005, 0.02)))
-            fat_share_band[2, g] = max(DIET_FAT_SHARE_BAND[2], fat_share + rand(rng, Uniform(0.005, 0.02)))
+            fat_share_band[1, g] = min(
+                DIET_FAT_SHARE_BAND[1], fat_share - rand(rng, Uniform(0.005, 0.02))
+            )
+            fat_share_band[2, g] = max(
+                DIET_FAT_SHARE_BAND[2], fat_share + rand(rng, Uniform(0.005, 0.02))
+            )
         end
         usage = servings * headcount
         for f in 1:n_foods
@@ -365,14 +373,18 @@ function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatu
             end
             caps = _diet_population_caps(supply, headcount, upper)
             achievable = sum(content[k, f] * caps[f] for f in 1:n_foods)
-            certificate = DietInfeasibilityCertificate(diet_supply_shortage, k, 0, achievable, required)
+            certificate = DietInfeasibilityCertificate(
+                diet_supply_shortage, k, 0, achievable, required
+            )
         else
             # One cohort's requirement for a nutrient is raised above the most a
             # diet within its energy ceiling can provide.
             g = rand(rng, 1:n_cohorts)
             r = rand(rng, 1:n_min)
             k = min_nutrients[r]
-            achievable = _diet_max_under_energy_cap(content, view(upper, :, g), k, energy_band[2, g])
+            achievable = _diet_max_under_energy_cap(
+                content, view(upper, :, g), k, energy_band[2, g]
+            )
             min_requirement[r, g] = achievable * rand(rng, Uniform(1.06, 1.15))
             certificate = DietInfeasibilityCertificate(
                 diet_energy_squeeze, k, g, achievable, min_requirement[r, g]
@@ -418,23 +430,31 @@ function build_model(prob::DietProblem)
     model = Model()
     F, G = prob.n_foods, prob.n_cohorts
     C = prob.content
-    @variable(model, 0 <= x[f=1:F, g=1:G] <= prob.upper[f, g])
+    @variable(model, 0 <= x[f = 1:F, g = 1:G] <= prob.upper[f, g])
     @objective(model, Min, sum(prob.headcount[g] * prob.cost[f] * x[f, g] for f in 1:F, g in 1:G))
 
     carriers = [findall(>(0.0), view(C, k, :)) for k in eachindex(DIET_NUTRIENTS)]
-    satfat_coef(g) = [9.0 * C[DIET_SATFAT, f] - prob.satfat_share[g] * C[DIET_ENERGY, f] for f in 1:F]
+    satfat_coef(g) =
+        [9.0 * C[DIET_SATFAT, f] - prob.satfat_share[g] * C[DIET_ENERGY, f] for f in 1:F]
     sugar_coef(g) = [4.0 * C[DIET_SUGAR, f] - prob.sugar_share[g] * C[DIET_ENERGY, f] for f in 1:F]
     fat_coef(g, s) = [9.0 * C[DIET_FAT, f] - s * C[DIET_ENERGY, f] for f in 1:F]
 
     for g in 1:G
         @constraint(
             model,
-            prob.energy_band[1, g] <= sum(C[DIET_ENERGY, f] * x[f, g] for f in 1:F) <= prob.energy_band[2, g]
+            prob.energy_band[1, g] <=
+                sum(C[DIET_ENERGY, f] * x[f, g] for f in 1:F) <=
+                prob.energy_band[2, g]
         )
         for (r, k) in enumerate(prob.min_nutrients)
-            @constraint(model, sum(C[k, f] * x[f, g] for f in carriers[k]) >= prob.min_requirement[r, g])
+            @constraint(
+                model, sum(C[k, f] * x[f, g] for f in carriers[k]) >= prob.min_requirement[r, g]
+            )
         end
-        @constraint(model, sum(C[DIET_SODIUM, f] * x[f, g] for f in carriers[DIET_SODIUM]) <= prob.sodium_limit[g])
+        @constraint(
+            model,
+            sum(C[DIET_SODIUM, f] * x[f, g] for f in carriers[DIET_SODIUM]) <= prob.sodium_limit[g]
+        )
         a = satfat_coef(g)
         @constraint(model, sum(a[f] * x[f, g] for f in 1:F) <= 0)
         if prob.has_sugar_limit

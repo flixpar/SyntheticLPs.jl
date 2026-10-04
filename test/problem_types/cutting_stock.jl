@@ -99,7 +99,8 @@ end
             @test all(any(>(0), p.demands[i, :]) for i in 1:n_items)
         end
         _, big = generate_problem("cutting_stock/due_dates", 100_000, unknown, 0)
-        @test abs(big.n_periods * (length(big.patterns) + length(big.piece_lengths)) - 100_000) < big.n_periods
+        @test abs(big.n_periods * (length(big.patterns) + length(big.piece_lengths)) - 100_000) <
+            big.n_periods
         @test big.n_periods * length(big.piece_lengths) >= 0.05 * 100_000
 
         for target in (60, 800, 4000), seed in 0:2
@@ -183,8 +184,11 @@ end
             L = p.stock_length
             # Item arcs have the item's length; loss arcs join consecutive nodes.
             @test all(
-                p.arc_item[a] > 0 ? p.arc_head[a] - p.arc_tail[a] == p.piece_lengths[p.arc_item[a]] :
-                p.arc_tail[a] > 0 for a in 1:A
+                if p.arc_item[a] > 0
+                    p.arc_head[a] - p.arc_tail[a] == p.piece_lengths[p.arc_item[a]]
+                else
+                    p.arc_tail[a] > 0
+                end for a in 1:A
             )
             @test all(0 <= p.arc_tail[a] < p.arc_head[a] <= L for a in 1:A)
             nodes = setdiff(union(Set(p.arc_tail), Set(p.arc_head)), Set([0, L]))
@@ -222,7 +226,9 @@ end
     end
 
     # Reproducibility, independent of the global RNG.
-    for v in ("standard", "due_dates", "setup_cost", "arc_flow"), status in (feasible, infeasible, unknown)
+    for v in ("standard", "due_dates", "setup_cost", "arc_flow"),
+        status in (feasible, infeasible, unknown)
+
         Random.seed!(3)
         _, p1 = generate_problem("cutting_stock/$v", 900, status, 21)
         Random.seed!(77)

@@ -153,9 +153,7 @@ function FacilityLocationProblem(
     centers = [(span * rand(rng), span * rand(rng)) for _ in 1:n_clusters]
     customer_locs = _fl_clustered_points(rng, C, centers, span / 10, span; rural_fraction=0.0)
 
-    demands = [
-        exp(rand(rng, Normal(log((min_demand + max_demand) / 2), 0.5))) for _ in 1:C
-    ]
+    demands = [exp(rand(rng, Normal(log((min_demand + max_demand) / 2), 0.5))) for _ in 1:C]
     total_demand = sum(demands)
     avg_capacity = total_demand / F * capacity_factor
 

@@ -141,10 +141,14 @@ function BoundedKnapsackProblem(
         remaining -= e
     end
     N = length(stock)
-    unit_weight = [base_weight[item_of[j]] * kappa[knapsack_of[j]] * exp(0.08 * randn(rng)) for j in 1:n]
+    unit_weight = [
+        base_weight[item_of[j]] * kappa[knapsack_of[j]] * exp(0.08 * randn(rng)) for j in 1:n
+    ]
     unit_profit = [
-        max(0.1 * price[item_of[j]], price[item_of[j]] - lane_cost[knapsack_of[j]] * base_weight[item_of[j]] * 3.0)
-        for j in 1:n
+        max(
+            0.1 * price[item_of[j]],
+            price[item_of[j]] - lane_cost[knapsack_of[j]] * base_weight[item_of[j]] * 3.0,
+        ) for j in 1:n
     ]
     cols_of = [Int[] for _ in 1:N]
     for j in 1:n
@@ -180,7 +184,8 @@ function BoundedKnapsackProblem(
         end
         allowance = 2.0 * 8.0
         capacity = [
-            max(load[k], min(load[k] * (1.04 + 0.21 * rand(rng)) + allowance, 0.85 * max_load[k])) for k in 1:K
+            max(load[k], min(load[k] * (1.04 + 0.21 * rand(rng)) + allowance, 0.85 * max_load[k]))
+            for k in 1:K
         ]
         for i in 1:N
             rand(rng) < 0.35 && (commitment[i] = floor(Int, shipped[i] * (0.5 + 0.5 * rand(rng))))

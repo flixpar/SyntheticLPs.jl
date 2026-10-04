@@ -149,7 +149,10 @@ function _mine_head_grade_infeasibility!(
     best = nothing
     for qtl in (length(bm) > 20_000 ? (0.6,) : (0.4, 0.6, 0.8))
         tau = bm.grade[sorted[searchsortedfirst(cumw, qtl * cumw[end])]]
-        weights = [eligible[b] ? bm.tonnage[b] * max(bm.grade[b] - tau, 0.0) : 0.0 for b in eachindex(eligible)]
+        weights = [
+            eligible[b] ? bm.tonnage[b] * max(bm.grade[b] - tau, 0.0) : 0.0 for
+            b in eachindex(eligible)
+        ]
         closure = _mine_closure_bound(bm, weights, budget)
         spec = tau + (1 + margin) * closure[1] / feed
         if best === nothing || spec < best[1]
@@ -172,7 +175,8 @@ Construct a PCPSP instance with about `target_variables` variables (at most
 `MINE_PLANNING_MAX_VARIABLES`).
 """
 function MinePCPSPProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-    target_variables >= 1 || throw(ArgumentError("target_variables must be >= 1 (got $target_variables)."))
+    target_variables >= 1 ||
+        throw(ArgumentError("target_variables must be >= 1 (got $target_variables)."))
     target_variables <= MINE_PLANNING_MAX_VARIABLES || throw(
         ArgumentError(
             "mine_planning/pcpsp supports at most $MINE_PLANNING_MAX_VARIABLES variables; " *
@@ -202,7 +206,9 @@ function MinePCPSPProblem(target_variables::Int, feasibility_status::Feasibility
         w[pair_block[j]] * (g[pair_block[j]] / 100 * recovery(j) * econ.price - cost(j)) for
         j in eachindex(pair_block)
     ]
-    pair_metal = [10.0 * w[pair_block[j]] * g[pair_block[j]] * recovery(j) for j in eachindex(pair_block)]
+    pair_metal = [
+        10.0 * w[pair_block[j]] * g[pair_block[j]] * recovery(j) for j in eachindex(pair_block)
+    ]
 
     # Preferred plant of each block in a whole-block plan: the most valuable
     # profitable one (0 = dump).
@@ -231,16 +237,24 @@ function MinePCPSPProblem(target_variables::Int, feasibility_status::Feasibility
     _mine_ramp_up!(rng, mining_capacity, mill_capacity)
     leach_capacity = fill(L, T)
     avg_mill_grade = isempty(mill_ore) ? maximum(g) : sum(w[b] * g[b] for b in mill_ore) / mill_t
-    avg_leach_grade = isempty(leach_ore) ? maximum(g) : sum(w[b] * g[b] for b in leach_ore) / leach_t
+    avg_leach_grade =
+        isempty(leach_ore) ? maximum(g) : sum(w[b] * g[b] for b in leach_ore) / leach_t
     mill_metal_capacity =
-        rand(rng, Uniform(0.95, 1.3)) * 10.0 * econ.mill_recovery_sulfide * avg_mill_grade .* mill_capacity
-    leach_metal_capacity = rand(rng, Uniform(0.95, 1.3)) * 10.0 * econ.leach_recovery * avg_leach_grade .* leach_capacity
+        rand(rng, Uniform(0.95, 1.3)) * 10.0 * econ.mill_recovery_sulfide * avg_mill_grade .*
+        mill_capacity
+    leach_metal_capacity =
+        rand(rng, Uniform(0.95, 1.3)) * 10.0 * econ.leach_recovery * avg_leach_grade .*
+        leach_capacity
     mill_metal_capacity .= max.(mill_metal_capacity, 3.0 * maximum(pair_metal; init=1.0))
     leach_metal_capacity .= max.(leach_metal_capacity, 3.0 * maximum(pair_metal; init=1.0))
 
     # Natural specs and mill-feed contract.
     head_grade_min = rand(rng, Uniform(0.7, 1.1)) * avg_mill_grade
-    avg_as = isempty(mill_ore) ? maximum(bm.contaminant) : sum(w[b] * bm.contaminant[b] for b in mill_ore) / mill_t
+    avg_as = if isempty(mill_ore)
+        maximum(bm.contaminant)
+    else
+        sum(w[b] * bm.contaminant[b] for b in mill_ore) / mill_t
+    end
     arsenic_max = rand(rng, Uniform(1.0, 1.8)) * avg_as
     min_mill_feed = _mine_feed_contract(rng, mill_capacity, sum(w[b] for b in 1:B if mill_ok[b]))
 
@@ -264,14 +278,14 @@ function MinePCPSPProblem(target_variables::Int, feasibility_status::Feasibility
                 dest = 0
                 if j > 0 && pair_dest[j] == 1
                     if feed[t] + w[b] <= mill_capacity[t] / (1 + eps_cap) &&
-                       mill_metal + pair_metal[j] <= mill_metal_capacity[t] / (1 + eps_cap)
+                        mill_metal + pair_metal[j] <= mill_metal_capacity[t] / (1 + eps_cap)
                         dest = 1
                     else
                         break   # mill full: stop mining for the period
                     end
                 elseif j > 0 && pair_dest[j] == 2
                     if leach_tons + w[b] <= leach_capacity[t] / (1 + eps_cap) &&
-                       leach_metal + pair_metal[j] <= leach_metal_capacity[t] / (1 + eps_cap)
+                        leach_metal + pair_metal[j] <= leach_metal_capacity[t] / (1 + eps_cap)
                         dest = 2
                     end
                 end
@@ -292,8 +306,12 @@ function MinePCPSPProblem(target_variables::Int, feasibility_status::Feasibility
         end
         fed = [t for t in 1:T if feed[t] > 0]
         if !isempty(fed)
-            head_grade_min = min(head_grade_min, (1 - eps_spec) * minimum(feed_grade[t] / feed[t] for t in fed))
-            arsenic_max = max(arsenic_max, (1 + eps_spec) * maximum(feed_as[t] / feed[t] for t in fed))
+            head_grade_min = min(
+                head_grade_min, (1 - eps_spec) * minimum(feed_grade[t] / feed[t] for t in fed)
+            )
+            arsenic_max = max(
+                arsenic_max, (1 + eps_spec) * maximum(feed_as[t] / feed[t] for t in fed)
+            )
         end
         min_mill_feed = [min(min_mill_feed[t], (1 - eps_spec) * feed[t]) for t in 1:T]
         witness = MinePlanWitness(mining_period, destination, zeros(0, T), zeros(0, T))
@@ -302,7 +320,14 @@ function MinePCPSPProblem(target_variables::Int, feasibility_status::Feasibility
         result = nothing
         if rand(rng) < 0.5
             result = _mine_head_grade_infeasibility!(
-                rng, bm, mill_ok, mining_capacity, mill_capacity, min_mill_feed, head_grade_min, margin
+                rng,
+                bm,
+                mill_ok,
+                mining_capacity,
+                mill_capacity,
+                min_mill_feed,
+                head_grade_min,
+                margin,
             )
         end
         if result === nothing
@@ -381,7 +406,9 @@ function build_model(prob::MinePCPSPProblem)
                 b = prob.pair_block[j]
                 add_to_expression!(feed, w[b], y[j, t])
                 add_to_expression!(grade_row, w[b] * (g[b] - prob.head_grade_min), y[j, t])
-                add_to_expression!(arsenic, w[b] * (bm.contaminant[b] - prob.arsenic_max) / 1000, y[j, t])
+                add_to_expression!(
+                    arsenic, w[b] * (bm.contaminant[b] - prob.arsenic_max) / 1000, y[j, t]
+                )
                 add_to_expression!(metal, prob.pair_metal[j], y[j, t])
             end
             _mine_add_feed_row!(model, feed, prob.min_mill_feed[t], prob.mill_capacity[t])

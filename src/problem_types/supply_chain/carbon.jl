@@ -100,8 +100,12 @@ function _carbon_emission_lower_bound(net::SupplyChainNetwork, lane_emission, ar
     for c in 1:net.n_customers, k in net.customer_products[c], t in 1:net.n_periods
         demand_bound += net.demand[c, k, t] * customer_unit_min[c]
     end
-    stock_credit = sum(dc_inbound_min[d] * net.initial_stock[d, k] for d in 1:net.n_dcs, k in 1:net.n_products)
-    return dc_inbound_min, customer_unit_min, demand_bound, stock_credit, demand_bound - stock_credit
+    stock_credit = sum(
+        dc_inbound_min[d] * net.initial_stock[d, k] for d in 1:net.n_dcs, k in 1:net.n_products
+    )
+    return dc_inbound_min,
+    customer_unit_min, demand_bound, stock_credit,
+    demand_bound - stock_credit
 end
 
 function CarbonSupplyChainProblem(

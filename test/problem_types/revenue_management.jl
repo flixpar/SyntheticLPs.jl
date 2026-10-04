@@ -64,7 +64,10 @@ end
             @test num_variables(model) == n_products + n_markets
             @test abs(num_variables(model) - max(2, target)) <= 1
             @test num_constraints(model; count_variable_in_set_constraints=false) ==
-                n_products + n_markets + length(problem.flights) + length(problem.contracted_flights)
+                n_products +
+                  n_markets +
+                  length(problem.flights) +
+                  length(problem.contracted_flights)
             @test all(>(0), problem.fare)
             @test all(>(0), problem.attraction)
             @test all(>(0), problem.no_purchase_attraction)
@@ -111,7 +114,9 @@ end
             elseif a isa AbstractArray
                 return size(a) == size(b) && all(rm_stored_equal(x, y) for (x, y) in zip(a, b))
             end
-            return all(rm_stored_equal(getfield(a, n), getfield(b, n)) for n in fieldnames(typeof(a)))
+            return all(
+                rm_stored_equal(getfield(a, n), getfield(b, n)) for n in fieldnames(typeof(a))
+            )
         end
         @test rm_stored_equal(first, second)
         Random.seed!(68_731)
@@ -144,7 +149,8 @@ end
                 sold[m] += w.sales[j]
                 @test w.sales[j] >= 0
                 @test w.sales[j] <=
-                    problem.attraction[j] / problem.no_purchase_attraction[m] * w.no_purchase[m] + 1e-9
+                    problem.attraction[j] / problem.no_purchase_attraction[m] * w.no_purchase[m] +
+                      1e-9
             end
             @test all(isapprox.(sold .+ w.no_purchase, problem.market_size; atol=1e-8))
             load = zeros(length(problem.flights))
@@ -164,12 +170,14 @@ end
             by_market = Dict{Int, Float64}()
             for (j, product) in enumerate(problem.products)
                 c.flight in product.flights || continue
-                by_market[product.market] = get(by_market, product.market, 0.0) + problem.attraction[j]
+                by_market[product.market] =
+                    get(by_market, product.market, 0.0) + problem.attraction[j]
             end
             @test c.markets == sort!(collect(keys(by_market)))
             for (k, m) in enumerate(c.markets)
                 V = by_market[m]
-                @test c.market_bounds[k] ≈ problem.market_size[m] * V / (V + problem.no_purchase_attraction[m])
+                @test c.market_bounds[k] ≈
+                    problem.market_size[m] * V / (V + problem.no_purchase_attraction[m])
             end
             @test c.sellable_bound ≈ sum(c.market_bounds)
             @test c.margin ≈ c.min_load - c.sellable_bound
@@ -182,7 +190,9 @@ end
             _, problem = generate_problem(REVENUE_STANDARD, 800, unknown, seed)
             @test problem.feasible_witness === nothing
             @test problem.infeasibility_certificate === nothing
-            @test all(problem.min_load[f] <= problem.capacity[f] for f in problem.contracted_flights)
+            @test all(
+                problem.min_load[f] <= problem.capacity[f] for f in problem.contracted_flights
+            )
         end
     end
 

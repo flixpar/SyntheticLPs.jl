@@ -163,7 +163,11 @@ function SetupCostCuttingStockProblem(
     end
     shift = 480.0 * (1 + round(Int, sum(plan_minutes) / (480.0 * n_machines)))
     machine_minutes = [
-        plan_minutes[m] > 0 ? plan_minutes[m] * (1.02 + 0.13 * rand(rng)) : shift * (0.5 + 0.5 * rand(rng)) for m in 1:n_machines
+        if plan_minutes[m] > 0
+            plan_minutes[m] * (1.02 + 0.13 * rand(rng))
+        else
+            shift * (0.5 + 0.5 * rand(rng))
+        end for m in 1:n_machines
     ]
 
     # Tightest valid links.
@@ -183,7 +187,11 @@ function SetupCostCuttingStockProblem(
     else
         base = [per_stock[k] * (1.05 + 0.30 * rand(rng)) + 1.0 for k in 1:n_stock]
         supply = sum(stock_lengths[k] * base[k] for k in 1:n_stock)
-        ratio = feasibility_status == infeasible ? 1.0 / (1.08 + 0.12 * rand(rng)) : 0.97 + 0.13 * rand(rng)
+        ratio = if feasibility_status == infeasible
+            1.0 / (1.08 + 0.12 * rand(rng))
+        else
+            0.97 + 0.13 * rand(rng)
+        end
         availability = [floor(Int, base[k] * ratio * material / supply) for k in 1:n_stock]
         if feasibility_status == infeasible
             supply = sum(Float64(stock_lengths[k]) * availability[k] for k in 1:n_stock)

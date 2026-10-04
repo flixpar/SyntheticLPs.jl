@@ -116,12 +116,17 @@
             standalone = sum(
                 min(
                     p.rate_cap[a],
-                    sum(p.efficiency[a][k] * p.capacity[q, t] for (k, q) in enumerate(p.eligible_pools[a])),
+                    sum(
+                        p.efficiency[a][k] * p.capacity[q, t] for
+                        (k, q) in enumerate(p.eligible_pools[a])
+                    ),
                 ) for t in p.release[a]:p.deadline[a]
             )
             @test p.floors[a] < standalone
         end
-        required = sum(p.floors[a] / cert.max_efficiency[k] for (k, a) in enumerate(cert.activities))
+        required = sum(
+            p.floors[a] / cert.max_efficiency[k] for (k, a) in enumerate(cert.activities)
+        )
         available = sum(p.capacity[q, t] for q in cert.pools, t in 1:p.n_periods)
         @test cert.required_hours ≈ required rtol = 1e-10
         @test cert.available_hours ≈ available rtol = 1e-10

@@ -400,7 +400,9 @@ function RevenueManagementProblem(
         if min_load[f] > 0.97 * capacity[f]
             capacity[f] = _rm_cabin(min_load[f] / rand(rng, Uniform(0.80, 0.95)))
         end
-        certificate = RMChoiceCertificate(f, min_load[f], feeding, bounds, bound, min_load[f] - bound)
+        certificate = RMChoiceCertificate(
+            f, min_load[f], feeding, bounds, bound, min_load[f] - bound
+        )
     end
 
     return RevenueManagementProblem(

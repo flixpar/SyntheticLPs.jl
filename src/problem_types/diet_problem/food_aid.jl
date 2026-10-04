@@ -13,26 +13,106 @@ const AID_NUTRIENTS = (:energy, :protein, :fat, :calcium, :iron, :zinc, :vitamin
 # Food-aid commodity catalog: family, nutrients per 100 g (AID_NUTRIENTS order)
 # and an international reference price in USD per tonne.
 const _AID_COMMODITIES = (
-    (name=:maize_grain, family=:cereal, per100=(350.0, 10.0, 4.5, 7.0, 2.7, 2.2, 0.0, 0.0), price=280.0),
-    (name=:maize_meal_fortified, family=:cereal, per100=(360.0, 9.0, 3.5, 7.0, 4.5, 3.0, 150.0, 0.0), price=420.0),
-    (name=:wheat_flour_fortified, family=:cereal, per100=(350.0, 11.5, 1.5, 29.0, 5.0, 2.8, 150.0, 0.0), price=380.0),
-    (name=:wheat_grain, family=:cereal, per100=(330.0, 12.3, 1.5, 36.0, 4.0, 3.0, 0.0, 0.0), price=290.0),
+    (
+        name=:maize_grain,
+        family=:cereal,
+        per100=(350.0, 10.0, 4.5, 7.0, 2.7, 2.2, 0.0, 0.0),
+        price=280.0,
+    ),
+    (
+        name=:maize_meal_fortified,
+        family=:cereal,
+        per100=(360.0, 9.0, 3.5, 7.0, 4.5, 3.0, 150.0, 0.0),
+        price=420.0,
+    ),
+    (
+        name=:wheat_flour_fortified,
+        family=:cereal,
+        per100=(350.0, 11.5, 1.5, 29.0, 5.0, 2.8, 150.0, 0.0),
+        price=380.0,
+    ),
+    (
+        name=:wheat_grain,
+        family=:cereal,
+        per100=(330.0, 12.3, 1.5, 36.0, 4.0, 3.0, 0.0, 0.0),
+        price=290.0,
+    ),
     (name=:rice, family=:cereal, per100=(360.0, 7.0, 0.5, 7.0, 0.7, 1.2, 0.0, 0.0), price=480.0),
-    (name=:sorghum, family=:cereal, per100=(335.0, 11.0, 3.0, 26.0, 4.5, 2.0, 0.0, 0.0), price=260.0),
-    (name=:bulgur, family=:cereal, per100=(350.0, 11.0, 1.5, 23.0, 3.5, 1.9, 0.0, 0.0), price=450.0),
-    (name=:lentils, family=:pulse, per100=(340.0, 20.0, 1.2, 51.0, 9.0, 3.1, 4.0, 0.0), price=700.0),
-    (name=:split_peas, family=:pulse, per100=(335.0, 22.0, 1.4, 52.0, 4.4, 3.0, 7.0, 0.0), price=520.0),
+    (
+        name=:sorghum,
+        family=:cereal,
+        per100=(335.0, 11.0, 3.0, 26.0, 4.5, 2.0, 0.0, 0.0),
+        price=260.0,
+    ),
+    (
+        name=:bulgur,
+        family=:cereal,
+        per100=(350.0, 11.0, 1.5, 23.0, 3.5, 1.9, 0.0, 0.0),
+        price=450.0,
+    ),
+    (
+        name=:lentils,
+        family=:pulse,
+        per100=(340.0, 20.0, 1.2, 51.0, 9.0, 3.1, 4.0, 0.0),
+        price=700.0,
+    ),
+    (
+        name=:split_peas,
+        family=:pulse,
+        per100=(335.0, 22.0, 1.4, 52.0, 4.4, 3.0, 7.0, 0.0),
+        price=520.0,
+    ),
     (name=:beans, family=:pulse, per100=(335.0, 20.0, 1.2, 143.0, 8.2, 2.8, 0.0, 0.0), price=750.0),
-    (name=:chickpeas, family=:pulse, per100=(335.0, 19.0, 6.0, 105.0, 6.2, 3.4, 3.0, 0.0), price=800.0),
-    (name=:vegetable_oil, family=:oil, per100=(885.0, 0.0, 100.0, 0.0, 0.0, 0.0, 900.0, 0.0), price=1300.0),
-    (name=:supercereal, family=:supercereal, per100=(380.0, 14.0, 6.0, 831.0, 12.5, 5.0, 1400.0, 100.0), price=650.0),
-    (name=:supercereal_plus, family=:supercereal_plus, per100=(410.0, 16.4, 9.2, 1100.0, 7.0, 5.0, 1600.0, 90.0), price=1100.0),
-    (name=:lns_medium_quantity, family=:lns, per100=(530.0, 13.0, 35.0, 280.0, 9.0, 9.0, 400.0, 30.0), price=2600.0),
+    (
+        name=:chickpeas,
+        family=:pulse,
+        per100=(335.0, 19.0, 6.0, 105.0, 6.2, 3.4, 3.0, 0.0),
+        price=800.0,
+    ),
+    (
+        name=:vegetable_oil,
+        family=:oil,
+        per100=(885.0, 0.0, 100.0, 0.0, 0.0, 0.0, 900.0, 0.0),
+        price=1300.0,
+    ),
+    (
+        name=:supercereal,
+        family=:supercereal,
+        per100=(380.0, 14.0, 6.0, 831.0, 12.5, 5.0, 1400.0, 100.0),
+        price=650.0,
+    ),
+    (
+        name=:supercereal_plus,
+        family=:supercereal_plus,
+        per100=(410.0, 16.4, 9.2, 1100.0, 7.0, 5.0, 1600.0, 90.0),
+        price=1100.0,
+    ),
+    (
+        name=:lns_medium_quantity,
+        family=:lns,
+        per100=(530.0, 13.0, 35.0, 280.0, 9.0, 9.0, 400.0, 30.0),
+        price=2600.0,
+    ),
     (name=:sugar, family=:sugar, per100=(400.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0), price=500.0),
-    (name=:dried_skim_milk, family=:dairy, per100=(360.0, 36.0, 1.0, 1300.0, 0.5, 4.0, 1500.0, 0.0), price=3200.0),
-    (name=:canned_fish, family=:fish, per100=(200.0, 20.0, 12.0, 300.0, 2.5, 1.2, 30.0, 0.0), price=3500.0),
+    (
+        name=:dried_skim_milk,
+        family=:dairy,
+        per100=(360.0, 36.0, 1.0, 1300.0, 0.5, 4.0, 1500.0, 0.0),
+        price=3200.0,
+    ),
+    (
+        name=:canned_fish,
+        family=:fish,
+        per100=(200.0, 20.0, 12.0, 300.0, 2.5, 1.2, 30.0, 0.0),
+        price=3500.0,
+    ),
     (name=:dates, family=:fruit, per100=(280.0, 2.5, 0.4, 39.0, 1.0, 0.3, 0.0, 0.4), price=1100.0),
-    (name=:high_energy_biscuits, family=:biscuit, per100=(450.0, 12.0, 15.0, 500.0, 10.0, 7.0, 450.0, 50.0), price=2200.0),
+    (
+        name=:high_energy_biscuits,
+        family=:biscuit,
+        per100=(450.0, 12.0, 15.0, 500.0, 10.0, 7.0, 450.0, 50.0),
+        price=2200.0,
+    ),
 )
 const _AID_CORE_FAMILIES = (:cereal, :pulse, :oil, :supercereal, :supercereal_plus, :sugar)
 
@@ -41,30 +121,67 @@ const _AID_CORE_FAMILIES = (:cereal, :pulse, :oil, :supercereal, :supercereal_pl
 # grams per person per day, the reference basket (family => grams), the
 # minimum share of energy from fat, and the share of sites of this type.
 const _AID_PROGRAMMES = (
-    (name=:general_distribution,
+    (
+        name=:general_distribution,
         target=(2100.0, 52.5, 40.0, 989.0, 22.0, 12.4, 550.0, 41.6),
-        max_g=Dict(:cereal => 500.0, :pulse => 90.0, :oil => 40.0, :supercereal => 80.0,
-            :sugar => 30.0, :fish => 60.0, :fruit => 50.0, :dairy => 30.0),
-        basket=(:cereal => 420.0, :pulse => 60.0, :oil => 27.0, :supercereal => 50.0, :sugar => 18.0),
-        fat_share=0.17, weight=0.50),
-    (name=:school_meals,
+        max_g=Dict(
+            :cereal => 500.0,
+            :pulse => 90.0,
+            :oil => 40.0,
+            :supercereal => 80.0,
+            :sugar => 30.0,
+            :fish => 60.0,
+            :fruit => 50.0,
+            :dairy => 30.0,
+        ),
+        basket=(
+            :cereal => 420.0, :pulse => 60.0, :oil => 27.0, :supercereal => 50.0, :sugar => 18.0
+        ),
+        fat_share=0.17,
+        weight=0.50,
+    ),
+    (
+        name=:school_meals,
         target=(700.0, 21.0, 15.0, 300.0, 6.0, 3.5, 250.0, 15.0),
-        max_g=Dict(:cereal => 180.0, :pulse => 50.0, :oil => 15.0, :supercereal => 80.0,
-            :sugar => 15.0, :biscuit => 100.0, :dairy => 30.0, :fruit => 30.0),
+        max_g=Dict(
+            :cereal => 180.0,
+            :pulse => 50.0,
+            :oil => 15.0,
+            :supercereal => 80.0,
+            :sugar => 15.0,
+            :biscuit => 100.0,
+            :dairy => 30.0,
+            :fruit => 30.0,
+        ),
         basket=(:cereal => 140.0, :pulse => 35.0, :oil => 10.0, :supercereal => 40.0),
-        fat_share=0.15, weight=0.25),
-    (name=:child_supplementary,
+        fat_share=0.15,
+        weight=0.25,
+    ),
+    (
+        name=:child_supplementary,
         target=(500.0, 12.5, 15.0, 400.0, 9.0, 4.5, 400.0, 30.0),
-        max_g=Dict(:supercereal_plus => 250.0, :lns => 100.0, :oil => 25.0, :sugar => 20.0,
-            :dairy => 40.0),
+        max_g=Dict(
+            :supercereal_plus => 250.0, :lns => 100.0, :oil => 25.0, :sugar => 20.0, :dairy => 40.0
+        ),
         basket=(:supercereal_plus => 200.0, :oil => 10.0),
-        fat_share=0.20, weight=0.15),
-    (name=:pregnant_lactating,
+        fat_share=0.20,
+        weight=0.15,
+    ),
+    (
+        name=:pregnant_lactating,
         target=(1000.0, 33.0, 25.0, 650.0, 18.0, 7.0, 500.0, 45.0),
-        max_g=Dict(:supercereal => 300.0, :oil => 30.0, :sugar => 25.0, :pulse => 60.0,
-            :cereal => 200.0, :lns => 60.0),
+        max_g=Dict(
+            :supercereal => 300.0,
+            :oil => 30.0,
+            :sugar => 25.0,
+            :pulse => 60.0,
+            :cereal => 200.0,
+            :lns => 60.0,
+        ),
         basket=(:supercereal => 250.0, :oil => 25.0, :sugar => 15.0),
-        fat_share=0.17, weight=0.10),
+        fat_share=0.17,
+        weight=0.10,
+    ),
 )
 
 const AID_DAYS_PER_CYCLE = 30.0
@@ -194,7 +311,9 @@ end
 
 # Nutrient per gram of commodity c (row k) for the instance's commodity list.
 function _aid_content(commodities::Vector{Int})
-    return [_AID_COMMODITIES[c].per100[k] / 100.0 for k in eachindex(AID_NUTRIENTS), c in commodities]
+    return [
+        _AID_COMMODITIES[c].per100[k] / 100.0 for k in eachindex(AID_NUTRIENTS), c in commodities
+    ]
 end
 
 """
@@ -331,7 +450,8 @@ function aid_plan_satisfies(
     for ((c, s), out) in source_out
         out <= prob.source_capacity[(c, s)] + tol(out) || return false
     end
-    all(h -> hub_total[h] <= prob.hub_capacity[h] + tol(hub_total[h]), 1:prob.n_hubs) || return false
+    all(h -> hub_total[h] <= prob.hub_capacity[h] + tol(hub_total[h]), 1:prob.n_hubs) ||
+        return false
     return true
 end
 
@@ -348,8 +468,13 @@ function FoodAidDietProblem(target_variables::Int, feasibility_status::Feasibili
     n_hubs = clamp(round(Int, sqrt(target) / 6 * rand(rng, Uniform(0.8, 1.25))), 1, 80)
     n_sources = clamp(round(Int, 1.0 + log(target) / 1.6), 1, 8)
     n_commodities = clamp(round(Int, 4 + target^0.28), 6, length(_AID_COMMODITIES))
-    core = [first(shuffle(rng, [i for i in eachindex(_AID_COMMODITIES) if _AID_COMMODITIES[i].family == fam])) for
-            fam in _AID_CORE_FAMILIES]
+    core = [
+        first(
+            shuffle(
+                rng, [i for i in eachindex(_AID_COMMODITIES) if _AID_COMMODITIES[i].family == fam]
+            ),
+        ) for fam in _AID_CORE_FAMILIES
+    ]
     others = shuffle(rng, setdiff(collect(eachindex(_AID_COMMODITIES)), core))
     commodities = sort(vcat(core, others[1:max(0, n_commodities - length(core))]))
     content = _aid_content(commodities)
@@ -360,9 +485,13 @@ function FoodAidDietProblem(target_variables::Int, feasibility_status::Feasibili
     # Source 1 is the international port; regional and local markets follow.
     source_kind = [s == 1 ? :international : (isodd(s) ? :local : :regional) for s in 1:n_sources]
     source_xy = [
-        source_kind[s] == :international ? [0.0, rand(rng, Uniform(200.0, 800.0))] :
-        source_kind[s] == :regional ? [rand(rng, Uniform(800.0, 1100.0)), rand(rng, Uniform(0.0, 1000.0))] :
-        rand(rng, Uniform(100.0, 900.0), 2) for s in 1:n_sources
+        if source_kind[s] == :international
+            [0.0, rand(rng, Uniform(200.0, 800.0))]
+        elseif source_kind[s] == :regional
+            [rand(rng, Uniform(800.0, 1100.0)), rand(rng, Uniform(0.0, 1000.0))]
+        else
+            rand(rng, Uniform(100.0, 900.0), 2)
+        end for s in 1:n_sources
     ]
     offered = Dict{Int, Vector{Int}}()
     price = Dict{Tuple{Int, Int}, Float64}()
@@ -371,9 +500,13 @@ function FoodAidDietProblem(target_variables::Int, feasibility_status::Feasibili
         offered[c] = srcs
         base = _AID_COMMODITIES[commodities[c]].price
         for s in srcs
-            factor = source_kind[s] == :international ? 1.0 :
-                     source_kind[s] == :regional ? rand(rng, Uniform(0.85, 1.15)) :
-                     rand(rng, Uniform(0.75, 1.35))
+            factor = if source_kind[s] == :international
+                1.0
+            elseif source_kind[s] == :regional
+                rand(rng, Uniform(0.85, 1.15))
+            else
+                rand(rng, Uniform(0.75, 1.35))
+            end
             price[(c, s)] = base * factor * rand(rng, LogNormal(0.0, 0.05))
         end
     end
@@ -412,7 +545,9 @@ function FoodAidDietProblem(target_variables::Int, feasibility_status::Feasibili
         push!(beneficiaries, Float64(max(200, round(Int, rand(rng, LogNormal(log(3000.0), 0.9))))))
         for c in allowed
             push!(ration_pairs, (c, j))
-            push!(ration_upper, _AID_PROGRAMMES[p].max_g[family[c]] * rand(rng, Uniform(0.85, 1.15)))
+            push!(
+                ration_upper, _AID_PROGRAMMES[p].max_g[family[c]] * rand(rng, Uniform(0.85, 1.15))
+            )
             length(hubs) == 1 && continue
             for h in hubs
                 push!(delivery_arcs, (c, h, j))
@@ -436,8 +571,10 @@ function FoodAidDietProblem(target_variables::Int, feasibility_status::Feasibili
     end
     tonnes_per_gram(j) = AID_DAYS_PER_CYCLE * 1e-6 * beneficiaries[j]
 
-    target_matrix = [Float64(_AID_PROGRAMMES[site_programme[j]].target[n]) for
-                     n in eachindex(AID_NUTRIENTS), j in 1:n_sites]
+    target_matrix = [
+        Float64(_AID_PROGRAMMES[site_programme[j]].target[n]) for
+        n in eachindex(AID_NUTRIENTS), j in 1:n_sites
+    ]
     requirement = copy(target_matrix)
     energy_upper = [1.15 * target_matrix[1, j] for j in 1:n_sites]
     fat_share = [_AID_PROGRAMMES[site_programme[j]].fat_share for j in 1:n_sites]
@@ -468,11 +605,14 @@ function FoodAidDietProblem(target_variables::Int, feasibility_status::Feasibili
             # usual compromise when fortified commodities are scarce); the
             # basket is only last cycle's plan, not a promise.
             for n in eachindex(AID_NUTRIENTS)
-                requirement[n, j] *= n <= 3 ? rand(rng, Uniform(0.97, 1.03)) : rand(rng, Uniform(0.6, 0.95))
+                requirement[n, j] *=
+                    n <= 3 ? rand(rng, Uniform(0.97, 1.03)) : rand(rng, Uniform(0.6, 0.95))
             end
         else
             for n in eachindex(AID_NUTRIENTS)
-                requirement[n, j] = min(target_matrix[n, j], intake[n] * rand(rng, Uniform(0.92, 0.99)))
+                requirement[n, j] = min(
+                    target_matrix[n, j], intake[n] * rand(rng, Uniform(0.92, 0.99))
+                )
             end
             energy_upper[j] = max(energy_upper[j], 1.03 * intake[1])
             fat_share[j] = min(fat_share[j], 9.0 * intake[3] / intake[1] - 0.01)
@@ -520,8 +660,8 @@ function FoodAidDietProblem(target_variables::Int, feasibility_status::Feasibili
     else
         for key in sort!(collect(keys(source_capacity)))
             used = source_capacity[key]
-            source_capacity[key] = used > 0.0 ? used * rand(rng, Uniform(1.02, 1.30)) :
-                                   rand(rng, Uniform(1.0, 50.0))
+            source_capacity[key] =
+                used > 0.0 ? used * rand(rng, Uniform(1.02, 1.30)) : rand(rng, Uniform(1.0, 50.0))
         end
         for h in 1:n_hubs
             hub_capacity[h] = max(hub_total[h], 1.0) * rand(rng, Uniform(1.05, 1.30))
@@ -530,10 +670,29 @@ function FoodAidDietProblem(target_variables::Int, feasibility_status::Feasibili
     end
 
     prob = FoodAidDietProblem(
-        commodities, content, n_sources, n_hubs, n_sites, site_programme, beneficiaries,
-        site_hubs, ration_pairs, ration_upper, delivery_arcs, delivery_cost, single_cost, procurement_arcs,
-        procurement_cost, source_capacity, hub_capacity, requirement, energy_upper, fat_share,
-        witness, nothing, feasibility_status,
+        commodities,
+        content,
+        n_sources,
+        n_hubs,
+        n_sites,
+        site_programme,
+        beneficiaries,
+        site_hubs,
+        ration_pairs,
+        ration_upper,
+        delivery_arcs,
+        delivery_cost,
+        single_cost,
+        procurement_arcs,
+        procurement_cost,
+        source_capacity,
+        hub_capacity,
+        requirement,
+        energy_upper,
+        fat_share,
+        witness,
+        nothing,
+        feasibility_status,
     )
 
     if feasibility_status == infeasible
@@ -544,10 +703,14 @@ function FoodAidDietProblem(target_variables::Int, feasibility_status::Feasibili
             sites = single[h]
             required = sum(_aid_hub_min_tonnes(prob, j, site_pairs) for j in sites)
             hub_capacity[h] = required * rand(rng, Uniform(0.78, 0.93))
-            cert = AidInfeasibilityCertificate(aid_hub_throughput, h, sites, 0, hub_capacity[h], required)
+            cert = AidInfeasibilityCertificate(
+                aid_hub_throughput, h, sites, 0, hub_capacity[h], required
+            )
         else
             # A micronutrient every site needs (fortified commodities run short).
-            candidates = [n for n in 4:length(AID_NUTRIENTS) if all(>(0.0), view(requirement, n, :))]
+            candidates = [
+                n for n in 4:length(AID_NUTRIENTS) if all(>(0.0), view(requirement, n, :))
+            ]
             isempty(candidates) && (candidates = [2])
             n = rand(rng, candidates)
             required = _aid_pipeline_requirement(prob, n)
@@ -561,10 +724,29 @@ function FoodAidDietProblem(target_variables::Int, feasibility_status::Feasibili
             )
         end
         prob = FoodAidDietProblem(
-            commodities, content, n_sources, n_hubs, n_sites, site_programme, beneficiaries,
-            site_hubs, ration_pairs, ration_upper, delivery_arcs, delivery_cost, single_cost,
-            procurement_arcs, procurement_cost, source_capacity, hub_capacity, requirement,
-            energy_upper, fat_share, nothing, cert, feasibility_status,
+            commodities,
+            content,
+            n_sources,
+            n_hubs,
+            n_sites,
+            site_programme,
+            beneficiaries,
+            site_hubs,
+            ration_pairs,
+            ration_upper,
+            delivery_arcs,
+            delivery_cost,
+            single_cost,
+            procurement_arcs,
+            procurement_cost,
+            source_capacity,
+            hub_capacity,
+            requirement,
+            energy_upper,
+            fat_share,
+            nothing,
+            cert,
+            feasibility_status,
         )
         @assert aid_certificate_holds(prob)
     elseif feasibility_status == feasible
@@ -581,18 +763,23 @@ Build the food-aid ration and sourcing LP (deterministic; see `FoodAidDietProble
 function build_model(prob::FoodAidDietProblem)
     model = Model()
     R, Y, Q = length(prob.ration_pairs), length(prob.delivery_arcs), length(prob.procurement_arcs)
-    @variable(model, 0 <= r[k=1:R] <= prob.ration_upper[k])
+    @variable(model, 0 <= r[k = 1:R] <= prob.ration_upper[k])
     @variable(model, y[1:Y] >= 0)
     @variable(model, q[1:Q] >= 0)
     @objective(
         model,
         Min,
-        sum(prob.procurement_cost[k] * q[k] for k in 1:Q) + sum(prob.delivery_cost[k] * y[k] for k in 1:Y; init=0.0) +
-        sum(
-            prob.site_delivery_cost[j] * AID_DAYS_PER_CYCLE * 1e-6 * prob.beneficiaries[j] * r[k] for
-            (k, (_, j)) in enumerate(prob.ration_pairs) if length(prob.site_hubs[j]) == 1;
-            init=0.0,
-        )
+        sum(prob.procurement_cost[k] * q[k] for k in 1:Q) +
+            sum(prob.delivery_cost[k] * y[k] for k in 1:Y; init=0.0) +
+            sum(
+                prob.site_delivery_cost[j] *
+                AID_DAYS_PER_CYCLE *
+                1e-6 *
+                prob.beneficiaries[j] *
+                r[k] for
+                (k, (_, j)) in enumerate(prob.ration_pairs) if length(prob.site_hubs[j]) == 1;
+                init=0.0,
+            )
     )
     C = prob.content
     site_pairs = _aid_site_pairs(prob)
@@ -600,16 +787,27 @@ function build_model(prob::FoodAidDietProblem)
         ks = site_pairs[j]
         @constraint(
             model,
-            prob.requirement[1, j] <= sum(C[1, prob.ration_pairs[k][1]] * r[k] for k in ks) <= prob.energy_upper[j]
+            prob.requirement[1, j] <=
+                sum(C[1, prob.ration_pairs[k][1]] * r[k] for k in ks) <=
+                prob.energy_upper[j]
         )
         for n in 2:length(AID_NUTRIENTS)
             prob.requirement[n, j] > 0.0 || continue
             carriers = [k for k in ks if C[n, prob.ration_pairs[k][1]] > 0.0]
-            @constraint(model, sum(C[n, prob.ration_pairs[k][1]] * r[k] for k in carriers) >= prob.requirement[n, j])
+            @constraint(
+                model,
+                sum(C[n, prob.ration_pairs[k][1]] * r[k] for k in carriers) >=
+                    prob.requirement[n, j]
+            )
         end
         @constraint(
             model,
-            sum((9.0 * C[3, prob.ration_pairs[k][1]] - prob.fat_share[j] * C[1, prob.ration_pairs[k][1]]) * r[k] for k in ks) >= 0
+            sum(
+                (
+                    9.0 * C[3, prob.ration_pairs[k][1]] -
+                    prob.fat_share[j] * C[1, prob.ration_pairs[k][1]]
+                ) * r[k] for k in ks
+            ) >= 0
         )
     end
     arcs_of_pair = Dict{Tuple{Int, Int}, Vector{Int}}()
@@ -626,7 +824,8 @@ function build_model(prob::FoodAidDietProblem)
         end
         @constraint(
             model,
-            sum(y[a] for a in arcs_of_pair[(c, j)]) - AID_DAYS_PER_CYCLE * 1e-6 * prob.beneficiaries[j] * r[k] == 0
+            sum(y[a] for a in arcs_of_pair[(c, j)]) -
+            AID_DAYS_PER_CYCLE * 1e-6 * prob.beneficiaries[j] * r[k] == 0
         )
     end
     into_hub = Dict{Tuple{Int, Int}, Vector{Int}}()
@@ -640,8 +839,12 @@ function build_model(prob::FoodAidDietProblem)
     for key in sort!(collect(union(keys(out_of_hub), keys(direct))))
         @constraint(
             model,
-            sum(q[a] for a in into_hub[key]) - sum(y[a] for a in get(out_of_hub, key, Int[]); init=0.0) -
-            sum(AID_DAYS_PER_CYCLE * 1e-6 * prob.beneficiaries[prob.ration_pairs[k][2]] * r[k] for k in get(direct, key, Int[]); init=0.0) >= 0
+            sum(q[a] for a in into_hub[key]) -
+            sum(y[a] for a in get(out_of_hub, key, Int[]); init=0.0) - sum(
+                AID_DAYS_PER_CYCLE * 1e-6 * prob.beneficiaries[prob.ration_pairs[k][2]] * r[k] for
+                k in get(direct, key, Int[]);
+                init=0.0,
+            ) >= 0
         )
     end
     for key in sort!(collect(keys(from_source)))

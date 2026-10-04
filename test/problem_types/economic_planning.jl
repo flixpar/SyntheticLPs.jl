@@ -63,7 +63,13 @@ using SparseArrays
     function dl_witness(m, p)
         w = p.feasible_witness
         d = Dict{VariableRef, Float64}()
-        for (sym, arr) in ((:x, w.output), (:N, w.new_capacity), (:K, w.capacity), (:imp, w.imports), (:ex, w.exports))
+        for (sym, arr) in (
+            (:x, w.output),
+            (:N, w.new_capacity),
+            (:K, w.capacity),
+            (:imp, w.imports),
+            (:ex, w.exports),
+        )
             for idx in eachindex(m[sym])
                 d[m[sym][idx]] = arr[idx]
             end
@@ -95,7 +101,10 @@ using SparseArrays
     end
 
     @testset "dynamic_leontief sizing" begin
-        for target in (50, 100, 400, 1500, 6000), status in (feasible, infeasible, unknown), seed in 0:2
+        for target in (50, 100, 400, 1500, 6000),
+            status in (feasible, infeasible, unknown),
+            seed in 0:2
+
             m, p = generate_problem(DL, target, status, seed)
             T, n, ntr = p.n_periods, p.n_sectors, length(p.tradable)
             nk = size(p.labor_coef, 1)
@@ -144,7 +153,10 @@ using SparseArrays
                 @test maximum(abs.(eigvals(Matrix(p.A)))) < 1          # spectral radius
                 @test all(inv(IA) .>= -1e-12)                         # nonnegative Leontief inverse
             end
-            @test issorted([findfirst(==(b), (:primary, :manufacturing, :construction, :services)) for b in p.sector_block])
+            @test issorted([
+                findfirst(==(b), (:primary, :manufacturing, :construction, :services)) for
+                b in p.sector_block
+            ])
             @test p.tradable == collect(1:length(p.tradable))
             @test all(b in (:primary, :manufacturing) for b in p.sector_block[p.tradable])
             @test all(0 .< p.survival .< 1)
@@ -176,7 +188,10 @@ using SparseArrays
             inv_goods = (1 .- p.gestation_share) .* w.new_capacity[:, t]
             t < p.n_periods && (inv_goods .+= p.gestation_share .* w.new_capacity[:, t + 1])
             lhs .-= p.B * inv_goods
-            @test maximum(abs.(lhs .- p.government_demand[:, t]) ./ (abs.(p.government_demand[:, t]) .+ x .+ 1e-9)) < 1e-8
+            @test maximum(
+                abs.(lhs .- p.government_demand[:, t]) ./
+                (abs.(p.government_demand[:, t]) .+ x .+ 1e-9),
+            ) < 1e-8
             @test all(w.consumption .>= p.consumption_floor)
             @test dot(p.consumption_weight, w.consumption) >= p.consumption_target
             @test all(w.output[:, 1] .<= p.initial_capacity)
@@ -212,7 +227,8 @@ using SparseArrays
                 @test all(u .<= cover .+ 1e-10 .* ((1 .+ ρ̃) .* piv .+ upstream .+ cover))
                 # Scaled so the consumption column cancels against the target row.
                 @test dot(piv, p.consumption_bundle) ≈ p.consumption_weight[t] rtol = 1e-9
-                resource = dot(c.labor_multipliers[:, t], p.labor_supply[:, t]) +
+                resource =
+                    dot(c.labor_multipliers[:, t], p.labor_supply[:, t]) +
                     (t == 1 ? dot(c.capacity_multipliers, p.initial_capacity) : 0.0)
                 @test (resource - dot(piv, p.government_demand[:, t])) / p.consumption_weight[t] ≈
                     c.consumption_bounds[t] rtol = 1e-8
@@ -253,7 +269,7 @@ using SparseArrays
     # ---------------------------------------------------------------------
     # energy_system
     # ---------------------------------------------------------------------
-    es_count(p) = (L = SL._es_layout(p); L.n_act + 2 * L.n_capt + L.n_flow)
+    es_count(p) = (L=SL._es_layout(p); L.n_act + 2 * L.n_capt + L.n_flow)
     function es_witness(m, p)
         w = p.feasible_witness
         d = Dict{VariableRef, Float64}()
@@ -296,7 +312,10 @@ using SparseArrays
     end
 
     @testset "energy_system sizing" begin
-        for target in (50, 100, 300, 1000, 3000, 10000), status in (feasible, infeasible, unknown), seed in 0:2
+        for target in (50, 100, 300, 1000, 3000, 10000),
+            status in (feasible, infeasible, unknown),
+            seed in 0:2
+
             m, p = generate_problem(ES, target, status, seed)
             L = SL._es_layout(p)
             R, T, S = p.n_regions, p.n_periods, p.n_slices
@@ -307,7 +326,15 @@ using SparseArrays
             n_capact = sum(T * L.slots[k] for k in eachindex(p.tech_name) if L.cap_index[k] > 0)
             n_cap_tech = count(>(0), L.cap_index)
             @test num_constraints(m; count_variable_in_set_constraints=false) ==
-                R * NC * T + R * T * S + n_capact + L.n_capt + n_cap_tech * (T - 1) + R * T + T + 1 + n_reserve
+                R * NC * T +
+                  R * T * S +
+                  n_capact +
+                  L.n_capt +
+                  n_cap_tech * (T - 1) +
+                  R * T +
+                  T +
+                  1 +
+                  n_reserve
             @test abs(num_variables(m) - target) <= max(0.005 * target, target < 300 ? 2 : 0)
         end
         cap = SL.ENERGY_SYSTEM_MAX_VARIABLES
@@ -337,9 +364,11 @@ using SparseArrays
                 @test all(p.tech_residual[k, :] .<= p.tech_potential[k] + 1e-9)
                 p.tech_kind[k] == :gen && @test p.tech_capfac[k] == SL.ES_PJ_PER_GW_YEAR
                 # Combustion plants and devices emit by fuel carbon content.
-                if p.tech_input[k] > 0 && p.commodities[p.tech_input[k]] in keys(SL.ES_EMISSION_FACTOR)
+                if p.tech_input[k] > 0 &&
+                    p.commodities[p.tech_input[k]] in keys(SL.ES_EMISSION_FACTOR)
                     @test p.tech_emission[k] ≈
-                        SL.ES_EMISSION_FACTOR[p.commodities[p.tech_input[k]]] * p.tech_input_coef[k]
+                        SL.ES_EMISSION_FACTOR[p.commodities[p.tech_input[k]]] *
+                          p.tech_input_coef[k]
                 end
             end
             # Interconnectors form a connected network over the regions.
@@ -398,7 +427,9 @@ using SparseArrays
             yb, bmax = ep_farkas(es_mult(m, p))
             @test isfinite(bmax)
             @test yb > bmax
-            @test isapprox(yb - bmax, lb - c.emission_weight * c.emission_limit; rtol=1e-6, atol=1e-8 * abs(yb))
+            @test isapprox(
+                yb - bmax, lb - c.emission_weight * c.emission_limit; rtol=1e-6, atol=1e-8 * abs(yb)
+            )
         end
         @test modes == Set([:emission_cap, :carbon_budget, :supply_shortfall])
     end
@@ -412,7 +443,9 @@ using SparseArrays
             for f in fieldnames(typeof(p1))
                 v1, v2 = getfield(p1, f), getfield(p2, f)
                 if v1 isa SL.EnergySystemWitness || v1 isa SL.EnergySystemCertificate
-                    @test all(isequal(getfield(v1, g), getfield(v2, g)) for g in fieldnames(typeof(v1)))
+                    @test all(
+                        isequal(getfield(v1, g), getfield(v2, g)) for g in fieldnames(typeof(v1))
+                    )
                 else
                     @test isequal(v1, v2)
                 end
@@ -422,7 +455,10 @@ using SparseArrays
 
     @testset "economic_planning HiGHS contracts" begin
         if HAS_HIGHS
-            for ref in (DL, ES), target in (60, 400, 1500), status in (feasible, infeasible), seed in 0:2
+            for ref in (DL, ES),
+                target in (60, 400, 1500), status in (feasible, infeasible),
+                seed in 0:2
+
                 m, _ = generate_problem(ref, target, status, seed)
                 set_optimizer(m, HiGHS.Optimizer)
                 set_silent(m)

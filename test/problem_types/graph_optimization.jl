@@ -95,13 +95,17 @@ end
             @test _go_cover_ok(sort!(collect(pairs)), ml.cliques)
             @test sort!(reduce(vcat, ml.feature_candidates)) == collect(1:800)
             @test all(length(c) in (4, 5) for c in ml.feature_candidates)
-            @test all(SyntheticLPs._map_overlap(ml.boxes[i], ml.boxes[j]) for (i, j) in ml.conflicts)
+            @test all(
+                SyntheticLPs._map_overlap(ml.boxes[i], ml.boxes[j]) for (i, j) in ml.conflicts
+            )
 
             _, vc = generate_problem(_go_ref(:vertex_coloring), 800, status, seed)
             ves = Set(vc.edges)
             @test all(K -> _go_is_clique(ves, K), vc.cliques)
             @test _go_cover_ok(vc.edges, vc.cliques)
-            @test all(d -> issorted(d) && allunique(d) && all(1 .<= d .<= vc.n_channels), vc.domains)
+            @test all(
+                d -> issorted(d) && allunique(d) && all(1 .<= d .<= vc.n_channels), vc.domains
+            )
             @test all(length(vc.costs[v]) == length(vc.domains[v]) for v in 1:vc.n_vertices)
         end
     end
@@ -218,8 +222,7 @@ end
             2 * length(p.edges) + p.n_vertices
         # Quasi-clique: edge variables exist only for real edges.
         m, q = generate_problem(_go_ref(:quasi_clique), 2000, unknown, 3)
-        @test num_constraints(m; count_variable_in_set_constraints=false) ==
-            2 * length(q.edges) + 2
+        @test num_constraints(m; count_variable_in_set_constraints=false) == 2 * length(q.edges) + 2
         # The default relaxation leaves no integer variables.
         @test !any(is_binary, all_variables(m))
     end

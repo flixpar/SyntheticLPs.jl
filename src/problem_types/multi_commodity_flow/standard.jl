@@ -218,8 +218,9 @@ function _mcf_squeeze!(
                 capacities[a] = max(floor(capacities[a] * f; digits=2), 0.01)
             end
         end
-        _mcf_local_repair!(capacities, frozen, n, arcs, origins, destinations, demands; slack=slack) ||
-            break
+        _mcf_local_repair!(
+            capacities, frozen, n, arcs, origins, destinations, demands; slack=slack
+        ) || break
     end
     return sum(capacities .* lengths)
 end
@@ -256,15 +257,27 @@ function _mcf_enforce_metric!(
         inside = falses(n)
         inside[region] .= true
         lengths = [(inside[u] && !inside[v]) ? 1.0 : 0.0 for (u, v) in arcs]
-        required = _mcf_metric_requirement(n, arcs, out_adj, lengths, origins, destinations, demands)
+        required = _mcf_metric_requirement(
+            n, arcs, out_adj, lengths, origins, destinations, demands
+        )
         if required > 0
             trial = copy(capacities)
             cap_len = _mcf_squeeze!(
-                trial, lengths .> 0, lengths, ratio * required, n, arcs, origins, destinations, demands
+                trial,
+                lengths .> 0,
+                lengths,
+                ratio * required,
+                n,
+                arcs,
+                origins,
+                destinations,
+                demands,
             )
             if cap_len < required
                 capacities .= trial
-                return MultiCommodityFlowMetricCertificate(:regional_cut, lengths, region, cap_len, required)
+                return MultiCommodityFlowMetricCertificate(
+                    :regional_cut, lengths, region, cap_len, required
+                )
             end
         end
     end
@@ -331,7 +344,9 @@ Shared geographic network and gravity commodities: network sized from the arc
 budget, origins drawn by activity weight, destinations and demands from
 `_mcf_gravity_destinations`.
 """
-function _mcf_instance(rng::AbstractRNG, target_arcs::Int, n_commodities::Int; dest_share=(0.1, 0.35))
+function _mcf_instance(
+    rng::AbstractRNG, target_arcs::Int, n_commodities::Int; dest_share=(0.1, 0.35)
+)
     n, n_arcs = _network_flow_dimensions(rng, target_arcs)
     while n < n_commodities + 1
         n += 1
@@ -348,7 +363,11 @@ function _mcf_instance(rng::AbstractRNG, target_arcs::Int, n_commodities::Int; d
     destinations = Vector{Vector{Int}}(undef, n_commodities)
     raw = Vector{Vector{Float64}}(undef, n_commodities)
     for k in 1:n_commodities
-        n_dest = clamp(round(Int, (n - 1) * (dest_share[1] + (dest_share[2] - dest_share[1]) * rand(rng))), 1, n - 1)
+        n_dest = clamp(
+            round(Int, (n - 1) * (dest_share[1] + (dest_share[2] - dest_share[1]) * rand(rng))),
+            1,
+            n - 1,
+        )
         destinations[k], raw[k] = _mcf_gravity_destinations(
             rng, n, origins[k], positions, weights, n_dest, length_scale
         )
@@ -415,7 +434,9 @@ function MultiCommodityFlow(target_variables::Int, feasibility_status::Feasibili
 
     value_factor = [rand(rng, LogNormal(0.0, 0.35)) for _ in 1:K]
     arc_noise = [rand(rng, LogNormal(0.0, 0.2)) * (trunk[a] ? 0.85 : 1.0) for a in 1:A]
-    costs = [round((dist[a] * arc_noise[a] + 0.1) * value_factor[k]; digits=3) for a in 1:A, k in 1:K]
+    costs = [
+        round((dist[a] * arc_noise[a] + 0.1) * value_factor[k]; digits=3) for a in 1:A, k in 1:K
+    ]
 
     flows, load = _mcf_planted_loads(rng, n, arcs, out_adj, dist, origins, destinations, demands)
     used = filter(>(0.0), load)
@@ -433,7 +454,9 @@ function MultiCommodityFlow(target_variables::Int, feasibility_status::Feasibili
     ]
 
     if feasibility_status == unknown
-        _mcf_unknown_growth!(rng, capacities, n, arcs, origins, destinations, demands; max_growth=1.15)
+        _mcf_unknown_growth!(
+            rng, capacities, n, arcs, origins, destinations, demands; max_growth=1.15
+        )
     end
 
     feasible_witness = nothing

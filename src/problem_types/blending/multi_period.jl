@@ -120,10 +120,14 @@ function _mp_materials(rng::AbstractRNG, grades::Vector{Int}, n_classes::Int)
         end
     end
     # Scrap classes the portfolio can use, most common first, at class chemistry.
-    usable = [c for c in eachindex(_BLEND_SCRAP_CLASSES) if
-              any(_blend_family(g) in _BLEND_SCRAP_CLASSES[c].families for g in grades)]
+    usable = [
+        c for c in eachindex(_BLEND_SCRAP_CLASSES) if
+        any(_blend_family(g) in _BLEND_SCRAP_CLASSES[c].families for g in grades)
+    ]
     w = _BLEND_CLASS_WEIGHTS[usable]
-    chosen = usable[sample(rng, eachindex(usable), Weights(w), min(n_classes, length(usable)); replace=false)]
+    chosen = usable[sample(
+        rng, eachindex(usable), Weights(w), min(n_classes, length(usable)); replace=false
+    )]
     k2 = [kind[i] for i in keep]
     s2 = [source[i] for i in keep]
     c2 = [_blend_assay.(comps[i]) for i in keep]
@@ -131,8 +135,11 @@ function _mp_materials(rng::AbstractRNG, grades::Vector{Int}, n_classes::Int)
     y2 = [yield[i] for i in keep]
     for c in sort(chosen)
         spec = _BLEND_SCRAP_CLASSES[c]
-        push!(k2, :scrap); push!(s2, c); push!(c2, _blend_assay.(collect(spec.comp)))
-        push!(p2, spec.cost); push!(y2, spec.yield)
+        push!(k2, :scrap)
+        push!(s2, c)
+        push!(c2, _blend_assay.(collect(spec.comp)))
+        push!(p2, spec.cost)
+        push!(y2, spec.yield)
     end
     return BlendMaterials(k2, s2, reduce(hcat, c2), p2, y2, zeros(Int, length(k2)))
 end
@@ -159,7 +166,8 @@ function mp_plan_satisfies(
     mats = prob.materials
     nI, K, T, G = length(mats.kind), prob.n_plants, prob.n_periods, length(_BLEND_GRADES)
     tol(v) = atol * max(1.0, abs(v))
-    all(>=(-atol), plan.blend) && all(>=(-atol), plan.charge) && all(>=(-atol), plan.buy) || return false
+    all(>=(-atol), plan.blend) && all(>=(-atol), plan.charge) && all(>=(-atol), plan.buy) ||
+        return false
     all(>=(-atol), plan.stock) && all(>=(-atol), plan.finished) || return false
     mass = zeros(G, K, T)
     out = zeros(G, K, T)
@@ -184,12 +192,13 @@ function mp_plan_satisfies(
             expected = previous + out[g, k, t] - prob.demand[g, k, t]
             abs(plan.finished[g, k, t] - expected) <= tol(prob.demand[g, k, t]) || return false
         end
-        sum(plan.charge[g, k, t] for g in prob.portfolio[k]) <= prob.melt_capacity[k] + tol(prob.melt_capacity[k]) ||
-            return false
+        sum(plan.charge[g, k, t] for g in prob.portfolio[k]) <=
+        prob.melt_capacity[k] + tol(prob.melt_capacity[k]) || return false
         for i in 1:nI
             previous = t == 1 ? 0.0 : plan.stock[i, k, t - 1]
             expected = previous + plan.buy[i, k, t] - used[i, k, t]
-            abs(plan.stock[i, k, t] - expected) <= tol(max(plan.buy[i, k, t], used[i, k, t])) || return false
+            abs(plan.stock[i, k, t] - expected) <= tol(max(plan.buy[i, k, t], used[i, k, t])) ||
+                return false
         end
         yard = sum(plan.stock[i, k, t] for i in 1:nI if mats.kind[i] == :scrap; init=0.0)
         yard <= prob.yard_capacity[k] + tol(yard) || return false
@@ -208,7 +217,8 @@ end
 
 function _mp_required_charge(prob::MultiPeriodBlendingProblem, k::Int)
     return sum(
-        prob.demand[g, k, t] / _mp_max_yield(prob.materials, g) for g in prob.portfolio[k], t in 1:prob.n_periods
+        prob.demand[g, k, t] / _mp_max_yield(prob.materials, g) for
+        g in prob.portfolio[k], t in 1:prob.n_periods
     )
 end
 
@@ -223,7 +233,8 @@ function mp_certificate_holds(prob::MultiPeriodBlendingProblem)
     1 <= cert.plant <= prob.n_plants || return false
     required = _mp_required_charge(prob, cert.plant)
     achievable = prob.n_periods * prob.melt_capacity[cert.plant]
-    isapprox(required, cert.required; rtol=1e-9) && isapprox(achievable, cert.achievable; rtol=1e-9) || return false
+    isapprox(required, cert.required; rtol=1e-9) &&
+    isapprox(achievable, cert.achievable; rtol=1e-9) || return false
     return achievable < required * (1 - 1e-9)
 end
 
@@ -232,7 +243,9 @@ end
 
 Construct a multi-plant, multi-period alloy production instance (see the type).
 """
-function MultiPeriodBlendingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function MultiPeriodBlendingProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
     target = max(target_variables, 1)
     nominal_T = clamp(round(Int, target^0.3 * rand(rng, Uniform(0.8, 1.2))), 2, 52)
@@ -288,7 +301,10 @@ function MultiPeriodBlendingProblem(target_variables::Int, feasibility_status::F
     season = rand(rng, Uniform(0.0, 2pi), K)
     demand = zeros(Float64, G, K, T)
     for k in 1:K, g in portfolio[k], t in 1:T
-        demand[g, k, t] = base[g, k] * (1 + 0.15 * sin(2pi * t / 13 + season[k])) * rand(rng, LogNormal(0.0, 0.15))
+        demand[g, k, t] =
+            base[g, k] *
+            (1 + 0.15 * sin(2pi * t / 13 + season[k])) *
+            rand(rng, LogNormal(0.0, 0.15))
     end
 
     lo = [Float64(_BLEND_GRADES[g].lo[e]) for e in eachindex(BLEND_ELEMENTS), g in 1:G]
@@ -324,7 +340,8 @@ function MultiPeriodBlendingProblem(target_variables::Int, feasibility_status::F
         for k in 1:K, t in 1:T, g in portfolio[k]
             cand = compat[g]
             fractions, composition = _blend_recipe(rng, g, cand, mats.kind, mats.source, mats.comp)
-            mass = demand[g, k, t] / sum(fractions[j] * mats.yield[cand[j]] for j in eachindex(cand))
+            mass =
+                demand[g, k, t] / sum(fractions[j] * mats.yield[cand[j]] for j in eachindex(cand))
             for (j, i) in enumerate(cand)
                 q = mass * fractions[j]
                 blend[index[(i, g, k, t)]] = q
@@ -345,14 +362,20 @@ function MultiPeriodBlendingProblem(target_variables::Int, feasibility_status::F
         buy = copy(used)
         stock = zeros(Float64, nI, K, T)
         for k in 1:K
-            melt_capacity[k] = maximum(sum(charge[g, k, t] for g in portfolio[k]) for t in 1:T) * rand(rng, Uniform(1.03, 1.20))
-            yard_capacity[k] = maximum(sum(used[i, k, t] for i in 1:nI if mats.kind[i] == :scrap; init=0.0) for t in 1:T) *
-                               rand(rng, Uniform(0.5, 1.5)) + 1.0
+            melt_capacity[k] =
+                maximum(sum(charge[g, k, t] for g in portfolio[k]) for t in 1:T) *
+                rand(rng, Uniform(1.03, 1.20))
+            yard_capacity[k] =
+                maximum(
+                    sum(used[i, k, t] for i in 1:nI if mats.kind[i] == :scrap; init=0.0) for
+                    t in 1:T
+                ) * rand(rng, Uniform(0.5, 1.5)) + 1.0
         end
         for i in 1:nI, t in 1:T
             mats.kind[i] == :hardener && continue
             bought = sum(buy[i, k, t] for k in 1:K)
-            market[i, t] = bought > 0 ? bought * rand(rng, Uniform(1.02, 1.30)) : rand(rng, Uniform(5.0, 50.0))
+            market[i, t] =
+                bought > 0 ? bought * rand(rng, Uniform(1.02, 1.30)) : rand(rng, Uniform(5.0, 50.0))
         end
         witness = MultiPeriodBlendingPlan(blend, charge, buy, stock, finished)
     end
@@ -361,8 +384,24 @@ function MultiPeriodBlendingProblem(target_variables::Int, feasibility_status::F
     if feasibility_status == infeasible
         k = rand(rng, 1:K)
         tmp = MultiPeriodBlendingProblem(
-            K, T, mats, portfolio, blend_vars, price, market, holding_cost, finished_holding, melt_cost,
-            demand, lo, hi, melt_capacity, yard_capacity, nothing, nothing, feasibility_status,
+            K,
+            T,
+            mats,
+            portfolio,
+            blend_vars,
+            price,
+            market,
+            holding_cost,
+            finished_holding,
+            melt_cost,
+            demand,
+            lo,
+            hi,
+            melt_capacity,
+            yard_capacity,
+            nothing,
+            nothing,
+            feasibility_status,
         )
         required = _mp_required_charge(tmp, k)
         melt_capacity[k] = required / (T * rand(rng, Uniform(1.08, 1.25)))
@@ -371,8 +410,24 @@ function MultiPeriodBlendingProblem(target_variables::Int, feasibility_status::F
     end
 
     prob = MultiPeriodBlendingProblem(
-        K, T, mats, portfolio, blend_vars, price, market, holding_cost, finished_holding, melt_cost, demand,
-        lo, hi, melt_capacity, yard_capacity, witness, certificate, feasibility_status,
+        K,
+        T,
+        mats,
+        portfolio,
+        blend_vars,
+        price,
+        market,
+        holding_cost,
+        finished_holding,
+        melt_cost,
+        demand,
+        lo,
+        hi,
+        melt_capacity,
+        yard_capacity,
+        witness,
+        certificate,
+        feasibility_status,
     )
     feasibility_status == feasible && @assert mp_plan_satisfies(prob)
     feasibility_status == infeasible && @assert mp_certificate_holds(prob)
@@ -398,8 +453,13 @@ function build_model(prob::MultiPeriodBlendingProblem)
     @objective(
         model,
         Min,
-        sum(prob.price[i, t] * buy[i, k, t] + prob.holding_cost[i] * stock[i, k, t] for i in 1:nI, k in 1:K, t in 1:T) +
-        sum(prob.finished_holding[key[1]] * fg[key] + prob.melt_cost * charge[key] for key in keys_gkt)
+        sum(
+            prob.price[i, t] * buy[i, k, t] + prob.holding_cost[i] * stock[i, k, t] for
+            i in 1:nI, k in 1:K, t in 1:T
+        ) + sum(
+            prob.finished_holding[key[1]] * fg[key] + prob.melt_cost * charge[key] for
+            key in keys_gkt
+        )
     )
     groups = Dict{Tuple{Int, Int, Int}, Vector{Int}}()
     uses = Dict{Tuple{Int, Int, Int}, Vector{Int}}()
@@ -412,14 +472,24 @@ function build_model(prob::MultiPeriodBlendingProblem)
         vs = groups[key]
         materials = [prob.blend_vars[v][1] for v in vs]
         @constraint(model, sum(x[v] for v in vs) - charge[key] == 0)
-        mins, maxs = _blend_active_rows(mats.comp, materials, view(prob.lo, :, g), view(prob.hi, :, g))
+        mins, maxs = _blend_active_rows(
+            mats.comp, materials, view(prob.lo, :, g), view(prob.hi, :, g)
+        )
         for e in mins
             carriers = [v for v in vs if mats.comp[e, prob.blend_vars[v][1]] > 0]
-            @constraint(model, sum(mats.comp[e, prob.blend_vars[v][1]] * x[v] for v in carriers) - prob.lo[e, g] * charge[key] >= 0)
+            @constraint(
+                model,
+                sum(mats.comp[e, prob.blend_vars[v][1]] * x[v] for v in carriers) -
+                prob.lo[e, g] * charge[key] >= 0
+            )
         end
         for e in maxs
             carriers = [v for v in vs if mats.comp[e, prob.blend_vars[v][1]] > 0]
-            @constraint(model, sum(mats.comp[e, prob.blend_vars[v][1]] * x[v] for v in carriers) - prob.hi[e, g] * charge[key] <= 0)
+            @constraint(
+                model,
+                sum(mats.comp[e, prob.blend_vars[v][1]] * x[v] for v in carriers) -
+                prob.hi[e, g] * charge[key] <= 0
+            )
         end
         produced = @expression(model, sum(mats.yield[prob.blend_vars[v][1]] * x[v] for v in vs))
         if t == 1
@@ -434,9 +504,12 @@ function build_model(prob::MultiPeriodBlendingProblem)
             previous = t == 1 ? 0.0 : stock[i, k, t - 1]
             @constraint(model, stock[i, k, t] - previous - buy[i, k, t] + consumed == 0)
         end
-        @constraint(model, sum(charge[(g, k, t)] for g in prob.portfolio[k]) <= prob.melt_capacity[k])
+        @constraint(
+            model, sum(charge[(g, k, t)] for g in prob.portfolio[k]) <= prob.melt_capacity[k]
+        )
         scrap = [i for i in 1:nI if mats.kind[i] == :scrap]
-        isempty(scrap) || @constraint(model, sum(stock[i, k, t] for i in scrap) <= prob.yard_capacity[k])
+        isempty(scrap) ||
+            @constraint(model, sum(stock[i, k, t] for i in scrap) <= prob.yard_capacity[k])
     end
     for i in 1:nI, t in 1:T
         isfinite(prob.market[i, t]) || continue

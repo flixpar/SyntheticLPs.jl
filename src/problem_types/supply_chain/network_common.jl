@@ -220,8 +220,11 @@ function _scn_instance(rng::AbstractRNG, target_variables::Int, variant::Symbol)
         [collect(1:K) for _ in 1:P]
     end
     customer_products = [
-        share >= 1.0 ? collect(1:K) : sort(randperm(rng, K)[1:clamp(rand(rng, Binomial(K, share)), 1, K)]) for
-        _ in 1:C
+        if share >= 1.0
+            collect(1:K)
+        else
+            sort(randperm(rng, K)[1:clamp(rand(rng, Binomial(K, share)), 1, K)])
+        end for _ in 1:C
     ]
 
     # --- Demand: customer scale x product mix x seasonality x noise ---
@@ -232,11 +235,14 @@ function _scn_instance(rng::AbstractRNG, target_variables::Int, variant::Symbol)
     demand = zeros(Float64, C, K, T)
     for c in 1:C, k in customer_products[c], t in 1:T
         season = 1 + amplitude[k] * sin(2π * (t - 1) / T + phase[k])
-        demand[c, k, t] = customer_scale[c] * product_scale[k] * season * rand(rng, LogNormal(0.0, 0.12))
+        demand[c, k, t] =
+            customer_scale[c] * product_scale[k] * season * rand(rng, LogNormal(0.0, 0.12))
     end
 
     # --- Last-mile arcs: two nearest DCs per customer, then nearest extras ---
-    dc_order = [sortperm([_scn_distance(dc_location[d], customer_location[c]) for d in 1:D]) for c in 1:C]
+    dc_order = [
+        sortperm([_scn_distance(dc_location[d], customer_location[c]) for d in 1:D]) for c in 1:C
+    ]
     arcs = Tuple{Int, Int}[]
     extras = Tuple{Float64, Int, Int}[]
     for c in 1:C
@@ -245,7 +251,15 @@ function _scn_instance(rng::AbstractRNG, target_variables::Int, variant::Symbol)
         end
         for r in 3:min(5, D)
             d = dc_order[c][r]
-            push!(extras, (_scn_distance(dc_location[d], customer_location[c]) * rand(rng, Uniform(0.8, 1.25)), d, c))
+            push!(
+                extras,
+                (
+                    _scn_distance(dc_location[d], customer_location[c]) *
+                    rand(rng, Uniform(0.8, 1.25)),
+                    d,
+                    c,
+                ),
+            )
         end
     end
 
@@ -266,8 +280,10 @@ function _scn_instance(rng::AbstractRNG, target_variables::Int, variant::Symbol)
         for p in unique(chosen)
             dist = _scn_distance(plant_location[p], dc_location[d])
             for (mi, m) in enumerate(modes)
-                available = m == :truck || (m == :rail && dist > 25 && rand(rng) < 0.6) ||
-                            (m == :intermodal && dist > 18 && rand(rng) < 0.5)
+                available =
+                    m == :truck ||
+                    (m == :rail && dist > 25 && rand(rng) < 0.6) ||
+                    (m == :intermodal && dist > 18 && rand(rng) < 0.5)
                 available || continue
                 push!(lanes, (p, d, mi))
                 push!(lane_distance, dist)
@@ -295,7 +311,9 @@ function _scn_instance(rng::AbstractRNG, target_variables::Int, variant::Symbol)
         _SCN_MODES[modes[mi]].rate * lane_distance[i] * rand(rng, Uniform(0.9, 1.1)) for
         (i, (_, _, mi)) in enumerate(lanes)
     ]
-    arc_cost = [1.5 + 0.18 * arc_distance[i] * rand(rng, Uniform(0.9, 1.1)) for i in eachindex(arcs)]
+    arc_cost = [
+        1.5 + 0.18 * arc_distance[i] * rand(rng, Uniform(0.9, 1.1)) for i in eachindex(arcs)
+    ]
     holding_cost = rand(rng, Uniform(0.3, 1.0), D, K)
     resource_use = [rand(rng, Uniform(0.7, 1.4)) for _ in 1:P, _ in 1:K]
 
@@ -358,7 +376,8 @@ function _scn_instance(rng::AbstractRNG, target_variables::Int, variant::Symbol)
         weight_total[d, k] += lane_weight[l]
     end
     ship = [
-        lane_weight[l] / weight_total[lanes[l][2], k] * inflow[lanes[l][2], k, t] for (l, k, t) in ship_keys
+        lane_weight[l] / weight_total[lanes[l][2], k] * inflow[lanes[l][2], k, t] for
+        (l, k, t) in ship_keys
     ]
 
     # --- Capacities sized above the plan ---
@@ -374,7 +393,9 @@ function _scn_instance(rng::AbstractRNG, target_variables::Int, variant::Symbol)
         mode_use[mi, t] += ship[i]
     end
     mean_plant = sum(plant_use) / (P * T)
-    plant_capacity = [plant_use[p, t] * rand(rng, Uniform(1.08, 1.3)) + 0.02 * mean_plant for p in 1:P, t in 1:T]
+    plant_capacity = [
+        plant_use[p, t] * rand(rng, Uniform(1.08, 1.3)) + 0.02 * mean_plant for p in 1:P, t in 1:T
+    ]
     line_capacity = fill(Inf, P, K)
     lane_capacity = fill(Inf, length(lanes))
     mode_capacity = fill(Inf, length(modes), T)
@@ -384,7 +405,8 @@ function _scn_instance(rng::AbstractRNG, target_variables::Int, variant::Symbol)
         end
         mean_lane = sum(lane_use) / max(length(lane_use), 1)
         for l in eachindex(lanes)
-            lane_capacity[l] = maximum(lane_use[l, :]) * rand(rng, Uniform(1.1, 1.4)) + 0.05 * mean_lane
+            lane_capacity[l] =
+                maximum(lane_use[l, :]) * rand(rng, Uniform(1.1, 1.4)) + 0.05 * mean_lane
         end
     else
         mean_mode = sum(mode_use) / length(mode_use)
@@ -400,12 +422,18 @@ function _scn_instance(rng::AbstractRNG, target_variables::Int, variant::Symbol)
     typical_out = sort(open_out)[cld(length(open_out), 2)]
     typical_stock = sort(open_stock)[cld(length(open_stock), 2)]
     dc_throughput = [
-        is_open[d] ? dc_out[d] * rand(rng, Uniform(1.1, 1.35)) : typical_out * rand(rng, Uniform(0.6, 1.4)) for
-        d in 1:D
+        if is_open[d]
+            dc_out[d] * rand(rng, Uniform(1.1, 1.35))
+        else
+            typical_out * rand(rng, Uniform(0.6, 1.4))
+        end for d in 1:D
     ]
     dc_storage = [
-        is_open[d] ? dc_stock[d] * rand(rng, Uniform(1.15, 1.5)) + 1.0 :
-        typical_stock * rand(rng, Uniform(0.6, 1.4)) + 1.0 for d in 1:D
+        if is_open[d]
+            dc_stock[d] * rand(rng, Uniform(1.15, 1.5)) + 1.0
+        else
+            typical_stock * rand(rng, Uniform(0.6, 1.4)) + 1.0
+        end for d in 1:D
     ]
     dc_fixed_cost = [dc_throughput[d] * T * rand(rng, Uniform(0.8, 2.0)) for d in 1:D]
 
@@ -491,7 +519,9 @@ function _scn_build_model(net::SupplyChainNetwork)
 
     objective = AffExpr(0.0)
     for (i, (l, k, _)) in enumerate(ship_keys)
-        add_to_expression!(objective, net.lane_cost[l] + net.production_cost[net.lanes[l][1], k], ship[i])
+        add_to_expression!(
+            objective, net.lane_cost[l] + net.production_cost[net.lanes[l][1], k], ship[i]
+        )
     end
     for (i, (a, _, _)) in enumerate(deliver_keys)
         add_to_expression!(objective, net.arc_cost[a], deliver[i])
@@ -533,25 +563,37 @@ function _scn_build_model(net::SupplyChainNetwork)
         add_to_expression!(arc_flow[a, t], 1.0, deliver[i])
     end
 
-    @constraint(model, plant_capacity[p = 1:P, t = 1:T], plant_load[p, t] <= net.plant_capacity[p, t])
+    @constraint(
+        model, plant_capacity[p = 1:P, t = 1:T], plant_load[p, t] <= net.plant_capacity[p, t]
+    )
     line_keys = sort!(collect(keys(line_load)))
-    @constraint(model, line_capacity[key in line_keys], line_load[key] <= net.line_capacity[key[1], key[2]])
+    @constraint(
+        model, line_capacity[key in line_keys], line_load[key] <= net.line_capacity[key[1], key[2]]
+    )
     finite_lanes = [l for l in eachindex(net.lanes) if isfinite(net.lane_capacity[l])]
-    @constraint(model, lane_capacity[l in finite_lanes, t = 1:T], lane_load[l, t] <= net.lane_capacity[l])
+    @constraint(
+        model, lane_capacity[l in finite_lanes, t = 1:T], lane_load[l, t] <= net.lane_capacity[l]
+    )
     finite_modes = [mi for mi in eachindex(net.modes) if all(isfinite, net.mode_capacity[mi, :])]
     @constraint(
-        model, mode_capacity[mi in finite_modes, t = 1:T], mode_load[mi, t] <= net.mode_capacity[mi, t]
+        model,
+        mode_capacity[mi in finite_modes, t = 1:T],
+        mode_load[mi, t] <= net.mode_capacity[mi, t]
     )
     @constraint(
         model,
         dc_balance[d = 1:D, k = 1:K, t = 1:T],
-        (t == 1 ? net.initial_stock[d, k] : stock[d, k, t - 1]) + inbound[d, k, t] - outbound[d, k, t] ==
-        stock[d, k, t]
+        (t == 1 ? net.initial_stock[d, k] : stock[d, k, t - 1]) + inbound[d, k, t] -
+        outbound[d, k, t] == stock[d, k, t]
     )
     gate(d) = net.design ? open[d] : 1.0
-    @constraint(model, dc_throughput[d = 1:D, t = 1:T], dc_out[d, t] <= net.dc_throughput[d] * gate(d))
     @constraint(
-        model, dc_storage[d = 1:D, t = 1:T], sum(stock[d, k, t] for k in 1:K) <= net.dc_storage[d] * gate(d)
+        model, dc_throughput[d = 1:D, t = 1:T], dc_out[d, t] <= net.dc_throughput[d] * gate(d)
+    )
+    @constraint(
+        model,
+        dc_storage[d = 1:D, t = 1:T],
+        sum(stock[d, k, t] for k in 1:K) <= net.dc_storage[d] * gate(d)
     )
     demand_nodes = [(c, k, t) for c in 1:C for k in net.customer_products[c] for t in 1:T]
     @constraint(model, demand[n in demand_nodes], received[n...] >= net.demand[n...])
@@ -560,7 +602,7 @@ function _scn_build_model(net::SupplyChainNetwork)
             model,
             arc_linking[a in eachindex(net.arcs), t = 1:T],
             arc_flow[a, t] <=
-            sum(net.demand[net.arcs[a][2], k, t] for k in net.customer_products[net.arcs[a][2]]) *
+                sum(net.demand[net.arcs[a][2], k, t] for k in net.customer_products[net.arcs[a][2]]) *
             open[net.arcs[a][1]]
         )
     end

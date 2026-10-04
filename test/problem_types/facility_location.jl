@@ -48,11 +48,16 @@ _fl_witness_violations(model, point) = primal_feasibility_report(model, point; a
             @test allunique(ws)
             d = [hypot((p.customer_locations[c] .- p.warehouse_locations[w])...) for w in ws]
             @test issorted(d)
-            all_d = sort([hypot((p.customer_locations[c] .- loc)...) for loc in p.warehouse_locations])
+            all_d = sort([
+                hypot((p.customer_locations[c] .- loc)...) for loc in p.warehouse_locations
+            ])
             @test d ≈ all_d[1:length(d)]
         end
         @test 3 <= length(p.out_customer) / p.n_customers <= 6
-        @test all(p.size_capacity[:, k] <= p.size_capacity[:, k + 1] for k in 1:(size(p.size_capacity, 2) - 1))
+        @test all(
+            p.size_capacity[:, k] <= p.size_capacity[:, k + 1] for
+            k in 1:(size(p.size_capacity, 2) - 1)
+        )
         @test all(p.customer_demands .> 0)
     end
 

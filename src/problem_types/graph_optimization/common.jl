@@ -381,8 +381,10 @@ function _graph_community_edges(
     m <= n * (n - 1) ÷ 2 || throw(ArgumentError("too many edges requested"))
     edges = Set{Tuple{Int, Int}}()
     if !isempty(planted)
-        pairs = [(planted[a], planted[b]) for a in 1:(length(planted) - 1) for
-                 b in (a + 1):length(planted)]
+        pairs = [
+            (planted[a], planted[b]) for a in 1:(length(planted) - 1) for
+            b in (a + 1):length(planted)
+        ]
         shuffle!(rng, pairs)
         for pair in pairs[1:planted_edges]
             push!(edges, minmax(pair...))

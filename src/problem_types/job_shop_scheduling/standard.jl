@@ -276,7 +276,9 @@ function JobShopSchedulingProblem(
         # Bottleneck: the most loaded work center visited by >= 2 jobs (one
         # exists: there are at least n_wc jobs of >= 2 distinct operations).
         visitors_of(w) = [j for j in 1:n_jobs if any(op_wc[o] == w for o in job_ops[j])]
-        util = [sum(proc[o] for o in 1:n_ops if op_wc[o] == w; init=0) / capacity[w] for w in 1:n_wc]
+        util = [
+            sum(proc[o] for o in 1:n_ops if op_wc[o] == w; init=0) / capacity[w] for w in 1:n_wc
+        ]
         wstar = argmax(w -> length(visitors_of(w)) >= 2 ? util[w] : -1.0, 1:n_wc)
         visitors = visitors_of(wstar)
         # Batch size: 3-8 orders per machine, fewer on tiny instances so the
@@ -329,12 +331,12 @@ function JobShopSchedulingProblem(
             for o in batch_ops, t in plant_start[o]:(plant_start[o] + proc[o] - 1)
                 bg[t] -= 1
             end
-            need(l) = (load + sum(bg[t] for t in a:(a + l - 1) if t <= length(bg); init=0)) /
+            need(l) =
+                (load + sum(bg[t] for t in a:(a + l - 1) if t <= length(bg); init=0)) /
                 (capacity[wstar] * l)
             # Cap: the batch's windows may use at most half the column budget.
-            batch_cols(l) = sum(
-                length(job_ops[j]) * (l - proc[o] + 1) for (j, o) in zip(expedited, batch_ops)
-            )
+            batch_cols(l) =
+                sum(length(job_ops[j]) * (l - proc[o] + 1) for (j, o) in zip(expedited, batch_ops))
             len = maximum(proc[o] for o in batch_ops)
             while need(len) > ratio && batch_cols(len + 1) <= target ÷ 2
                 len += 1

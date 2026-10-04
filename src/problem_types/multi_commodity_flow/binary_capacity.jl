@@ -106,7 +106,9 @@ function BinaryCapacityMultiCommodityFlowProblem(
     K = clamp(round(Int, 0.5 * target_variables^0.3), 3, 40)
     # OD commodities: one destination each; origins may repeat across pairs,
     # so draw them with replacement after the network exists.
-    inst = _mcf_instance(rng, max(round(Int, target_variables / (K + M)), 2), 1; dest_share=(0.0, 0.0))
+    inst = _mcf_instance(
+        rng, max(round(Int, target_variables / (K + M)), 2), 1; dest_share=(0.0, 0.0)
+    )
     n, arcs, trunk, positions, dist = inst.n, inst.arcs, inst.trunk, inst.positions, inst.dist
     A = length(arcs)
     out_adj, _ = _geo_adjacency(n, arcs)
@@ -123,7 +125,9 @@ function BinaryCapacityMultiCommodityFlowProblem(
 
     value_factor = [rand(rng, LogNormal(0.0, 0.35)) for _ in 1:K]
     arc_noise = [rand(rng, LogNormal(0.0, 0.2)) for _ in 1:A]
-    routing_cost = [round((dist[a] * arc_noise[a] + 0.1) * value_factor[k]; digits=3) for a in 1:A, k in 1:K]
+    routing_cost = [
+        round((dist[a] * arc_noise[a] + 0.1) * value_factor[k]; digits=3) for a in 1:A, k in 1:K
+    ]
 
     dests = [[destinations[k]] for k in 1:K]
     dems = [[demands[k]] for k in 1:K]
@@ -218,7 +222,10 @@ function build_model(prob::BinaryCapacityMultiCommodityFlowProblem)
             sum(prob.module_cost[a, m] * y[a, m] for a in 1:A, m in 1:M)
     )
     for a in 1:A
-        @constraint(model, sum(x[a, k] for k in 1:K) <= sum(prob.module_capacity[a, m] * y[a, m] for m in 1:M))
+        @constraint(
+            model,
+            sum(x[a, k] for k in 1:K) <= sum(prob.module_capacity[a, m] * y[a, m] for m in 1:M)
+        )
         @constraint(model, sum(y[a, m] for m in 1:M) <= 1)
         cap = prob.module_capacity[a, M]
         for k in 1:K
@@ -227,7 +234,9 @@ function build_model(prob::BinaryCapacityMultiCommodityFlowProblem)
     end
     out_adj, in_adj = _geo_adjacency(n, prob.arcs)
     for k in 1:K, v in 1:n
-        rhs = (v == prob.origins[k] ? prob.demands[k] : 0.0) - (v == prob.destinations[k] ? prob.demands[k] : 0.0)
+        rhs =
+            (v == prob.origins[k] ? prob.demands[k] : 0.0) -
+            (v == prob.destinations[k] ? prob.demands[k] : 0.0)
         @constraint(
             model,
             sum(x[a, k] for a in out_adj[v]; init=AffExpr(0.0)) -

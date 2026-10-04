@@ -306,9 +306,7 @@ function TSPAsymmetricProblem(
     ]
     elevation = [
         round(
-            sum(
-                H * exp(-((x - cx)^2 + (y - cy)^2) / (2 * w^2)) for (cx, cy, H, w) in hills
-            );
+            sum(H * exp(-((x - cx)^2 + (y - cy)^2) / (2 * w^2)) for (cx, cy, H, w) in hills);
             digits=1,
         ) for (x, y) in locations
     ]

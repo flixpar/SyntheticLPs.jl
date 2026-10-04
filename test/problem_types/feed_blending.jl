@@ -14,7 +14,10 @@
     end
 
     @testset "sizing, data, witness, certificates" begin
-        for target in (10, 50, 300, 2_000, 12_000), status in (feasible, infeasible, unknown), seed in 0:2
+        for target in (10, 50, 300, 2_000, 12_000),
+            status in (feasible, infeasible, unknown),
+            seed in 0:2
+
             model, p = generate_problem(ref, target, status, seed)
             @test num_variables(model) == length(p.pairs)
             @test abs(length(p.pairs) - target) <= max(0.05 * target, 8) || length(p.pairs) <= 30
@@ -24,7 +27,10 @@
             @test all(!(group(f) == :ruminant && class(l) == :animal) for (l, f) in p.pairs)
             @test all(class(l) != :npn || group(f) == :ruminant for (l, f) in p.pairs)
             @test all(p.lot_mill[l] == p.formula_mill[f] for (l, f) in p.pairs)
-            @test all(0 <= p.lower[k] <= p.upper[k] <= p.batch[f] + 1e-9 for (k, (_, f)) in enumerate(p.pairs))
+            @test all(
+                0 <= p.lower[k] <= p.upper[k] <= p.batch[f] + 1e-9 for
+                (k, (_, f)) in enumerate(p.pairs)
+            )
             @test all(p.ratio_band[1, :] .< p.ratio_band[2, :])
             # Contracts left in the model couple at least two lots.
             for s in eachindex(p.contract)
@@ -73,7 +79,8 @@
                 set_optimizer(model, HiGHS.Optimizer)
                 set_silent(model)
                 optimize!(model)
-                @test termination_status(model) == (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
+                @test termination_status(model) ==
+                    (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
             end
             outcomes = Set{MOI.TerminationStatusCode}()
             for seed in 0:19

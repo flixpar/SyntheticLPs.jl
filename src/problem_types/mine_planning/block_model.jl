@@ -83,7 +83,8 @@ _mine_mill_cutoff(econ::MineEconomics, oxide::Bool) =
 """
 Breakeven heap-leach grade (% Cu) for oxide rock.
 """
-_mine_leach_cutoff(econ::MineEconomics) = 100.0 * econ.leach_cost / (econ.price * econ.leach_recovery)
+_mine_leach_cutoff(econ::MineEconomics) =
+    100.0 * econ.leach_cost / (econ.price * econ.leach_recovery)
 
 """
     MineBlockModel
@@ -296,8 +297,9 @@ function _mine_block_model(rng::AbstractRNG, n_blocks::Int, econ::MineEconomics)
     fx, fy = rand(rng, Uniform(0.5, 1.5)), rand(rng, Uniform(0.5, 1.5))
     phx, phy = rand(rng, Uniform(0.0, 2pi)), rand(rng, Uniform(0.0, 2pi))
     oxide = [
-        bz[b] <= ox_base + ox_amp * sin(2pi * fx * bi[b] / nx + phx) * sin(2pi * fy * bj[b] / ny + phy)
-        for b in 1:K
+        bz[b] <=
+        ox_base + ox_amp * sin(2pi * fx * bi[b] / nx + phx) * sin(2pi * fy * bj[b] / ny + phy) for
+        b in 1:K
     ]
 
     # Guarantee at least one block worth milling (tiny pits may sit entirely in
@@ -314,8 +316,10 @@ function _mine_block_model(rng::AbstractRNG, n_blocks::Int, econ::MineEconomics)
     contaminant = Vector{Float64}(undef, K)
     for b in 1:K
         dx, dy = bi[b] - cx[as_body], bj[b] - cy[as_body]
-        d2 = (dx / (1.3 * ax[as_body]))^2 + (dy / (1.3 * ay[as_body]))^2 +
-             ((bz[b] - cz[as_body]) / az[as_body])^2
+        d2 =
+            (dx / (1.3 * ax[as_body]))^2 +
+            (dy / (1.3 * ay[as_body]))^2 +
+            ((bz[b] - cz[as_body]) / az[as_body])^2
         contaminant[b] = as_background * rand(rng, LogNormal(0.0, 0.4)) + as_peak * exp(-0.5 * d2)
     end
 
@@ -328,7 +332,8 @@ function _mine_block_model(rng::AbstractRNG, n_blocks::Int, econ::MineEconomics)
         b in 1:K
     ]
     mining_cost = [
-        tonnage[b] * (econ.mining_cost_surface + econ.mining_cost_per_bench * (bz[b] - 1)) *
+        tonnage[b] *
+        (econ.mining_cost_surface + econ.mining_cost_per_bench * (bz[b] - 1)) *
         (oxide[b] ? 0.9 : 1.0) for b in 1:K
     ]
 
@@ -606,7 +611,9 @@ end
 
 The Lagrangian closure bound for one `lambda` (see [`MineClosureCertificate`](@ref)).
 """
-function _mine_closure_bound_at(bm::MineBlockModel, weights::Vector{Float64}, budget::Float64, lambda::Float64)
+function _mine_closure_bound_at(
+    bm::MineBlockModel, weights::Vector{Float64}, budget::Float64, lambda::Float64
+)
     n = length(bm)
     cvec = weights .- lambda .* bm.tonnage
     _, src, snk, arcf = _mine_closure_maxflow(n, bm.arc_succ, bm.arc_pred, cvec)
@@ -693,7 +700,9 @@ function _mine_certificate(
 )
     bound, lam, src, snk, arcf = closure
     requirement > bound || error("mine_planning: certificate requirement does not exceed its bound")
-    return MineClosureCertificate(mode, k, budget, threshold, multiplier, weights, lam, src, snk, arcf, bound, requirement)
+    return MineClosureCertificate(
+        mode, k, budget, threshold, multiplier, weights, lam, src, snk, arcf, bound, requirement
+    )
 end
 
 """
@@ -758,7 +767,9 @@ Start-up profile shared by every profile and variant: the fleet ramps up over
 the first two periods (period 1 at 35-100% of steady-state capacity, period 2
 at 70-100%) and the mill is commissioned during period 1 (60-100%).
 """
-function _mine_ramp_up!(rng::AbstractRNG, mining_capacity::Vector{Float64}, feed_capacity::Vector{Float64})
+function _mine_ramp_up!(
+    rng::AbstractRNG, mining_capacity::Vector{Float64}, feed_capacity::Vector{Float64}
+)
     T = length(mining_capacity)
     mining_capacity[1] *= rand(rng, Uniform(0.35, 1.0))
     T >= 2 && (mining_capacity[2] *= rand(rng, Uniform(0.7, 1.0)))
@@ -837,7 +848,9 @@ function _mine_feed_infeasibility!(
         feed_capacity .*= enlarge
         min_feed[1:k] .= enlarge .* level
         closure = _mine_rebudget(closure, W0, scale * W0)
-        return _mine_certificate(:ramp_up, k, scale * W0, weights, 0.0, 1.0, closure, enlarge * requirement)
+        return _mine_certificate(
+            :ramp_up, k, scale * W0, weights, 0.0, 1.0, closure, enlarge * requirement
+        )
     end
     budget = sum(mining_capacity)
     closure = _mine_closure_bound(bm, weights, budget)

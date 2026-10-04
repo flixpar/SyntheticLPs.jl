@@ -35,12 +35,12 @@ end
             m, p = generate_problem("transportation/emission_constrained", target, status, 1)
             @test num_variables(m) == length(p.options) == max(target, 2)
             n_rail = length(unique(p.lanes[l][1] for (l, mo) in p.options if mo == 2))
-            @test tp_row_count(m) ==
-                p.n_sources + p.n_customers + n_rail + length(p.region_cap) + 1
+            @test tp_row_count(m) == p.n_sources + p.n_customers + n_rail + length(p.region_cap) + 1
 
             m, p = generate_problem("transportation/transshipment", target, status, 1)
             @test num_variables(m) ==
-                length(p.inbound) + length(p.outbound) + length(p.direct) == max(target, 6)
+                length(p.inbound) + length(p.outbound) + length(p.direct) ==
+                max(target, 6)
             @test tp_row_count(m) == p.n_plants + 2 * p.n_dcs + p.n_customers
         end
         # Rows scale with the instance (sparse lanes, many nodes).
@@ -88,8 +88,10 @@ end
             @test tp_cor(c, d) > 0.3
         end
         _, p = generate_problem("transportation/fixed_charge", 2000, unknown, 3)
-        @test p.link_bound ≈
-            [min(p.supplies[i], p.demands[j], p.lane_capacity[l]) for (l, (i, j)) in enumerate(p.lanes)]
+        @test p.link_bound ≈ [
+            min(p.supplies[i], p.demands[j], p.lane_capacity[l]) for
+            (l, (i, j)) in enumerate(p.lanes)
+        ]
         @test all(>=(1), p.max_lanes)
         _, p = generate_problem("transportation/emission_constrained", 2000, unknown, 3)
         @test issorted(p.options) && allunique(p.options)
@@ -119,7 +121,11 @@ end
             end
             @test all(out .<= p.supplies .+ 1e-6)
             @test all(inn .>= p.demands .- 1e-6)
-            @test isempty(primal_feasibility_report(m, Dict(m[:x][l] => f[l] for l in eachindex(f)); atol=1e-6))
+            @test isempty(
+                primal_feasibility_report(
+                    m, Dict(m[:x][l] => f[l] for l in eachindex(f)); atol=1e-6
+                ),
+            )
         end
         multi = 0
         for target in (50, 600, 4000), seed in 0:3
@@ -127,7 +133,8 @@ end
             c = p.infeasibility_certificate
             S = Set(c.sources)
             J = Set(c.customers)
-            @test c.inbound_lanes == [l for (l, (i, j)) in enumerate(p.lanes) if !(i in S) && j in J]
+            @test c.inbound_lanes ==
+                [l for (l, (i, j)) in enumerate(p.lanes) if !(i in S) && j in J]
             @test all(isfinite, p.lane_capacity[c.inbound_lanes])
             @test c.inbound_capacity ≈ sum(p.lane_capacity[c.inbound_lanes]; init=0.0)
             @test c.region_demand ≈ sum(p.demands[c.customers])
@@ -156,7 +163,8 @@ end
             _, p = generate_problem("transportation/fixed_charge", target, infeasible, seed)
             c = p.infeasibility_certificate
             S, J = Set(c.sources), Set(c.customers)
-            @test c.inbound_lanes == [l for (l, (i, j)) in enumerate(p.lanes) if !(i in S) && j in J]
+            @test c.inbound_lanes ==
+                [l for (l, (i, j)) in enumerate(p.lanes) if !(i in S) && j in J]
             @test c.region_demand > c.region_supply + c.inbound_capacity
         end
     end
@@ -165,7 +173,11 @@ end
         for target in (60, 800, 5000), seed in 0:2
             m, p = generate_problem("transportation/emission_constrained", target, feasible, seed)
             f = p.feasible_witness.flows
-            @test isempty(primal_feasibility_report(m, Dict(m[:x][k] => f[k] for k in eachindex(f)); atol=1e-6))
+            @test isempty(
+                primal_feasibility_report(
+                    m, Dict(m[:x][k] => f[k] for k in eachindex(f)); atol=1e-6
+                ),
+            )
             @test sum(p.emission .* f) <= p.global_cap + 1e-6
         end
         for target in (60, 800, 5000), seed in 0:2
@@ -202,12 +214,15 @@ end
             _, p = generate_problem("transportation/transshipment", target, infeasible, seed)
             c = p.infeasibility_certificate
             Pl, Hi, Ho, Cu = Set(c.plants), Set(c.dcs_in), Set(c.dcs_out), Set(c.customers)
-            @test c.inbound_lanes == [l for (l, (q, h)) in enumerate(p.inbound) if !(q in Pl) && h in Hi]
-            @test c.direct_lanes == [l for (l, (q, k)) in enumerate(p.direct) if !(q in Pl) && k in Cu]
+            @test c.inbound_lanes ==
+                [l for (l, (q, h)) in enumerate(p.inbound) if !(q in Pl) && h in Hi]
+            @test c.direct_lanes ==
+                [l for (l, (q, k)) in enumerate(p.direct) if !(q in Pl) && k in Cu]
             @test c.throughput_dcs == [h for h in 1:(p.n_dcs) if !(h in Hi) && h in Ho]
             # Uncapped outbound lanes never enter the region.
             @test !any(!(h in Ho) && k in Cu for (h, k) in p.outbound)
-            entry = sum(p.inbound_capacity[c.inbound_lanes]; init=0.0) +
+            entry =
+                sum(p.inbound_capacity[c.inbound_lanes]; init=0.0) +
                 sum(p.direct_capacity[c.direct_lanes]; init=0.0) +
                 sum(p.throughput[c.throughput_dcs]; init=0.0)
             @test c.entry_capacity ≈ entry
@@ -217,8 +232,9 @@ end
     end
 
     @testset "reproducibility" begin
-        for v in (:standard, :transshipment, :emission_constrained, :fixed_charge), status in
-                                                                                     (feasible, infeasible, unknown)
+        for v in (:standard, :transshipment, :emission_constrained, :fixed_charge),
+            status in (feasible, infeasible, unknown)
+
             Random.seed!(1)
             _, p1 = generate_problem(ProblemVariant(:transportation, v), 500, status, 9)
             Random.seed!(2)
@@ -229,7 +245,9 @@ end
                 if a === nothing || a isa Union{Number, Symbol, Vector, FeasibilityStatus}
                     @test isequal(a, b)
                 else
-                    @test all(isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a)))
+                    @test all(
+                        isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a))
+                    )
                 end
             end
         end
@@ -243,8 +261,8 @@ end
                 optimize!(m)
                 return termination_status(m), MOI.get(m, MOI.SimplexIterations())
             end
-            for v in (:standard, :transshipment, :emission_constrained, :fixed_charge), target in
-                                                                                       (80, 1500),
+            for v in (:standard, :transshipment, :emission_constrained, :fixed_charge),
+                target in (80, 1500),
                 seed in 0:2
 
                 ref = ProblemVariant(:transportation, v)
@@ -258,8 +276,9 @@ end
             for seed in 0:7
                 m, p = generate_problem("transportation/standard", 600, unknown, seed)
                 ts, _ = tp_solve(m)
-                @test ts ==
-                    (p.max_flow_value >= p.total_demand * (1 - 1e-9) ? MOI.OPTIMAL : MOI.INFEASIBLE)
+                @test ts == (
+                    p.max_flow_value >= p.total_demand * (1 - 1e-9) ? MOI.OPTIMAL : MOI.INFEASIBLE
+                )
             end
             # Every variant's `unknown` profile is genuinely two-sided.
             for v in (:standard, :transshipment, :emission_constrained, :fixed_charge)
@@ -271,7 +290,9 @@ end
                 @test outcomes == Set([MOI.OPTIMAL, MOI.INFEASIBLE])
             end
             # The unrelaxed fixed-charge MIP is feasible too (planted integer plan).
-            m, _ = generate_problem("transportation/fixed_charge", 200, feasible, 4; relax_integer=false)
+            m, _ = generate_problem(
+                "transportation/fixed_charge", 200, feasible, 4; relax_integer=false
+            )
             set_optimizer(m, HiGHS.Optimizer)
             set_silent(m)
             set_time_limit_sec(m, 20.0)

@@ -623,8 +623,9 @@ function UnitCommitmentProblem(
             t in 1:n_periods
         ]
         offers = [
-            _uc_reserve_offer(units, max_output, min_output, reserve_capability, availability_factors, t) for
-            t in 1:n_periods
+            _uc_reserve_offer(
+                units, max_output, min_output, reserve_capability, availability_factors, t
+            ) for t in 1:n_periods
         ]
         # The contradiction is split between load and reserve: demand alone stays
         # at most 95 % of available capacity and the requirement at most 90 % of
@@ -632,10 +633,10 @@ function UnitCommitmentProblem(
         # shortfall needs the balance, headroom and requirement rows together.
         # Plant it in the stressed period that can host it with the most room.
         excess_ratio = rand(rng, Uniform(0.03, 0.08))
-        hostable = [
-            0.9 * offers[t] / max(capacity_per_period[t], 1.0) - 0.05 for t in 1:n_periods
+        hostable = [0.9 * offers[t] / max(capacity_per_period[t], 1.0) - 0.05 for t in 1:n_periods]
+        candidates = [
+            t for t in 1:n_periods if hostable[t] >= excess_ratio && capacity_per_period[t] > 0
         ]
-        candidates = [t for t in 1:n_periods if hostable[t] >= excess_ratio && capacity_per_period[t] > 0]
         critical_period = if isempty(candidates)
             argmax(hostable)
         else
@@ -656,7 +657,9 @@ function UnitCommitmentProblem(
         end
         available = capacity_per_period[critical_period]
         required = max(1.0, available * (1.0 + excess_ratio))
-        reserve_requirements[critical_period] = min(0.9 * offers[critical_period], available * (excess_ratio + 0.05))
+        reserve_requirements[critical_period] = min(
+            0.9 * offers[critical_period], available * (excess_ratio + 0.05)
+        )
         demand[critical_period] = required - reserve_requirements[critical_period]
         excess = required - available
         infeasibility_certificate = UnitCommitmentCapacityCertificate(
@@ -668,7 +671,9 @@ function UnitCommitmentProblem(
         # No period's requirement may exceed what reserve offers could ever
         # cover (that would be a single infeasible row, not a natural shortage).
         for t in 1:n_periods
-            offer = _uc_reserve_offer(units, max_output, min_output, reserve_capability, availability_factors, t)
+            offer = _uc_reserve_offer(
+                units, max_output, min_output, reserve_capability, availability_factors, t
+            )
             if resolved_status == unknown || t != something(infeasibility_certificate).period
                 reserve_requirements[t] = min(reserve_requirements[t], 0.9 * offer)
             end
@@ -715,7 +720,9 @@ Largest reserve the fleet could hold in period `t`: each unit able to run
 (available capacity at least its stable minimum) offers its ramp capability,
 capped by the room above its minimum output.
 """
-function _uc_reserve_offer(units, max_output, min_output, reserve_capability, availability_factors, t)
+function _uc_reserve_offer(
+    units, max_output, min_output, reserve_capability, availability_factors, t
+)
     total = 0.0
     for u in units
         available = max_output[u] * availability_factors[u][t]

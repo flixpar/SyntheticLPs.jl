@@ -22,8 +22,14 @@
     n_bins(p) = p isa MP.MineStockpileProblem ? p.n_bins : 0
     blocks_with_pairs(p) = p isa MP.MineCPITProblem ? 0 : length(unique(p.pair_block))
     mill_eligible(p) =
-        p isa MP.MineCPITProblem ? copy(p.is_ore) :
-        [b in Set(p.pair_block[j] for j in eachindex(p.pair_block) if p.pair_dest[j] == 1) for b in 1:length(p.blocks)]
+        if p isa MP.MineCPITProblem
+            copy(p.is_ore)
+        else
+            [
+                b in Set(p.pair_block[j] for j in eachindex(p.pair_block) if p.pair_dest[j] == 1)
+                for b in 1:length(p.blocks)
+            ]
+        end
     feed_capacity(p) = p isa MP.MineCPITProblem ? p.processing_capacity : p.mill_capacity
     min_feed(p) = p isa MP.MineCPITProblem ? p.min_processing : p.min_mill_feed
 
@@ -69,7 +75,10 @@
     end
 
     # --- registry-level sizing --------------------------------------------------
-    for v in variants, target in (50, 200, 1000, 5000), status in (feasible, infeasible, unknown), seed in 0:1
+    for v in variants,
+        target in (50, 200, 1000, 5000), status in (feasible, infeasible, unknown),
+        seed in 0:1
+
         m, p = generate_problem(mp_ref(v), target, status, seed)
         bm, T = p.blocks, p.n_periods
         B = length(bm)
@@ -123,7 +132,10 @@
         @test all(bm.arc_pred .< bm.arc_succ)
         @test all(bm.z[bm.arc_succ] .== bm.z[bm.arc_pred] .+ 1)
         offsets = Set(MP._mine_pattern_offsets(bm.pattern))
-        @test all((bm.i[a] - bm.i[b], bm.j[a] - bm.j[b]) in offsets for (b, a) in zip(bm.arc_succ, bm.arc_pred))
+        @test all(
+            (bm.i[a] - bm.i[b], bm.j[a] - bm.j[b]) in offsets for
+            (b, a) in zip(bm.arc_succ, bm.arc_pred)
+        )
         # Closure: every block below the surface has an arc to every in-grid
         # pattern position one bench up, i.e. the pit contains all of them.
         n_arcs = zeros(Int, B)
@@ -131,8 +143,11 @@
             n_arcs[b] += 1
         end
         for b in 1:B
-            expected = bm.z[b] == 1 ? 0 :
+            expected = if bm.z[b] == 1
+                0
+            else
                 count(1 <= bm.i[b] + di <= bm.nx && 1 <= bm.j[b] + dj <= bm.ny for (di, dj) in offsets)
+            end
             @test n_arcs[b] == expected
         end
         # Grounded data: positive tonnage and grades, depth-increasing mining
@@ -142,12 +157,13 @@
         @test all(>(0), bm.contaminant)
         unit = bm.mining_cost ./ bm.tonnage
         expected_unit = [
-            (econ.mining_cost_surface + econ.mining_cost_per_bench * (bm.z[b] - 1)) * (bm.oxide[b] ? 0.9 : 1.0)
-            for b in 1:B
+            (econ.mining_cost_surface + econ.mining_cost_per_bench * (bm.z[b] - 1)) *
+            (bm.oxide[b] ? 0.9 : 1.0) for b in 1:B
         ]
         @test unit ≈ expected_unit rtol = 1e-12
         if any(bm.oxide) && !all(bm.oxide)
-            @test sum(bm.tonnage[bm.oxide]) / count(bm.oxide) < sum(bm.tonnage[.!bm.oxide]) / count(.!bm.oxide)
+            @test sum(bm.tonnage[bm.oxide]) / count(bm.oxide) <
+                sum(bm.tonnage[.!bm.oxide]) / count(.!bm.oxide)
         end
         # Mill-profitable ore is a minority, as in real deposits.
         ore = [bm.grade[b] > MP._mine_mill_cutoff(econ, bm.oxide[b]) for b in 1:B]
@@ -200,7 +216,8 @@
         # over the threshold in head-grade mode.
         if cert.mode == :head_grade
             @test v != :cpit
-            @test cert.weights ≈ [elig[b] ? w[b] * max(bm.grade[b] - cert.grade_threshold, 0.0) : 0.0 for b in 1:B]
+            @test cert.weights ≈
+                [elig[b] ? w[b] * max(bm.grade[b] - cert.grade_threshold, 0.0) : 0.0 for b in 1:B]
             @test cert.feed_multiplier ≈ p.head_grade_min - cert.grade_threshold rtol = 1e-12
             @test cert.feed_multiplier > 0
             @test p.head_grade_min <= 0.8 * maximum(bm.grade[elig]) + 1e-12
@@ -226,7 +243,9 @@
             net[a] += cert.arc_flow[kk]
         end
         @test maximum(abs, net) <= 1e-6 * scale
-        bound = cert.lambda * cert.mining_budget + sum(c[b] - cert.source_flow[b] for b in 1:B if c[b] > 0; init=0.0)
+        bound =
+            cert.lambda * cert.mining_budget +
+            sum(c[b] - cert.source_flow[b] for b in 1:B if c[b] > 0; init=0.0)
         @test bound ≈ cert.bound rtol = 1e-9 atol = 1e-9
         # The contradiction, with the planted >= 10% margin.
         @test cert.requirement >= 1.1 * cert.bound - 1e-9

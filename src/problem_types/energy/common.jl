@@ -172,16 +172,82 @@ _e_logunif(rng::AbstractRNG, r) = exp(_e_unif(rng, (log(r[1]), log(r[2]))))
 
 # Normalized 24-hour load shapes (peak = 1).
 const ENERGY_RESIDENTIAL_SHAPE = [
-    0.55, 0.50, 0.48, 0.47, 0.49, 0.56, 0.68, 0.78, 0.80, 0.78, 0.76, 0.75,
-    0.75, 0.74, 0.75, 0.78, 0.85, 0.95, 1.00, 0.98, 0.93, 0.83, 0.71, 0.61,
+    0.55,
+    0.50,
+    0.48,
+    0.47,
+    0.49,
+    0.56,
+    0.68,
+    0.78,
+    0.80,
+    0.78,
+    0.76,
+    0.75,
+    0.75,
+    0.74,
+    0.75,
+    0.78,
+    0.85,
+    0.95,
+    1.00,
+    0.98,
+    0.93,
+    0.83,
+    0.71,
+    0.61,
 ]
 const ENERGY_COMMERCIAL_SHAPE = [
-    0.45, 0.43, 0.42, 0.42, 0.43, 0.50, 0.62, 0.80, 0.92, 0.97, 1.00, 1.00,
-    0.99, 1.00, 0.99, 0.96, 0.90, 0.80, 0.70, 0.62, 0.56, 0.52, 0.49, 0.47,
+    0.45,
+    0.43,
+    0.42,
+    0.42,
+    0.43,
+    0.50,
+    0.62,
+    0.80,
+    0.92,
+    0.97,
+    1.00,
+    1.00,
+    0.99,
+    1.00,
+    0.99,
+    0.96,
+    0.90,
+    0.80,
+    0.70,
+    0.62,
+    0.56,
+    0.52,
+    0.49,
+    0.47,
 ]
 const ENERGY_INDUSTRIAL_SHAPE = [
-    0.78, 0.77, 0.76, 0.76, 0.77, 0.82, 0.90, 0.96, 0.99, 1.00, 1.00, 0.99,
-    0.98, 0.99, 1.00, 0.99, 0.97, 0.94, 0.90, 0.87, 0.85, 0.83, 0.81, 0.79,
+    0.78,
+    0.77,
+    0.76,
+    0.76,
+    0.77,
+    0.82,
+    0.90,
+    0.96,
+    0.99,
+    1.00,
+    1.00,
+    0.99,
+    0.98,
+    0.99,
+    1.00,
+    0.99,
+    0.97,
+    0.94,
+    0.90,
+    0.87,
+    0.85,
+    0.83,
+    0.81,
+    0.79,
 ]
 
 """
@@ -193,7 +259,8 @@ hourly noise.
 """
 function _energy_load_profile(rng::AbstractRNG, T::Int)
     mix = rand(rng, Dirichlet([2.0, 1.5, 1.0]))
-    base = mix[1] .* ENERGY_RESIDENTIAL_SHAPE .+ mix[2] .* ENERGY_COMMERCIAL_SHAPE .+
+    base =
+        mix[1] .* ENERGY_RESIDENTIAL_SHAPE .+ mix[2] .* ENERGY_COMMERCIAL_SHAPE .+
         mix[3] .* ENERGY_INDUSTRIAL_SHAPE
     base ./= maximum(base)
     first_day = rand(rng, 0:6)
@@ -321,7 +388,9 @@ function _energy_zone_layout(rng::AbstractRNG, Z::Int)
         length(from) >= target_ties && break
         degree[v] == 1 || continue
         rand(rng) < 0.8 || continue
-        cand = sort([u for u in 1:Z if u != v && !((min(u, v), max(u, v)) in edges)]; by=u -> d(u, v))
+        cand = sort(
+            [u for u in 1:Z if u != v && !((min(u, v), max(u, v)) in edges)]; by=u -> d(u, v)
+        )
         isempty(cand) && continue
         u = cand[1]
         push!(edges, (min(u, v), max(u, v)))
@@ -600,7 +669,10 @@ function _ed_sample_core(
         rand(rng) < get(commit_prob, techs[g], 0.0) || (min_stable[g] = 0.0)
     end
     for z in 1:Z
-        floor_z(t) = sum((min_stable[g] * capacity[g] * availability[g, t] for g in 1:G if zones[g] == z); init=0.0)
+        floor_z(t) = sum(
+            (min_stable[g] * capacity[g] * availability[g, t] for g in 1:G if zones[g] == z);
+            init=0.0,
+        )
         limit = 0.75 * minimum(natural_demand[z, t] for t in 1:T)
         candidates = shuffle(rng, [g for g in 1:G if zones[g] == z && min_stable[g] > 0])
         sort!(candidates; by=g -> techs[g] == :nuclear)   # keep nuclear committed longest
@@ -635,9 +707,9 @@ function _ed_sample_core(
     end
     short = natural_demand .- local_cap
     function cover!(set, deficit)
-        deficit > 0 || return
+        deficit > 0 || return nothing
         out = [l for l in 1:L if (tie_from[l] in set) != (tie_to[l] in set)]
-        isempty(out) && return
+        isempty(out) && return nothing
         capability = sum((1 - tie_loss[l]) * tie_capacity[l] for l in out)
         capability < 1.25 * deficit && (tie_capacity[out] .*= 1.25 * deficit / capability)
     end
@@ -650,8 +722,21 @@ function _ed_sample_core(
     end
 
     return (;
-        zx, zy, tie_from, tie_to, tie_capacity, tie_loss, tie_cost, capacity, min_stable, cost,
-        emission, ramp_up, ramp_down, availability, natural_demand,
+        zx,
+        zy,
+        tie_from,
+        tie_to,
+        tie_capacity,
+        tie_loss,
+        tie_cost,
+        capacity,
+        min_stable,
+        cost,
+        emission,
+        ramp_up,
+        ramp_down,
+        availability,
+        natural_demand,
     )
 end
 
@@ -729,8 +814,8 @@ function _ed_tracking_dispatch(
                     for (i, g) in enumerate(ctl)
                 ]
                 hi = [
-                    isfinite(nt.ramp_up[g]) ? min(ub[i], x[g, t - 1] + nt.ramp_up[g]) : ub[i]
-                    for (i, g) in enumerate(ctl)
+                    isfinite(nt.ramp_up[g]) ? min(ub[i], x[g, t - 1] + nt.ramp_up[g]) : ub[i] for
+                    (i, g) in enumerate(ctl)
                 ]
                 # Availability drops (hydro) can push the floor above the cap of
                 # the window; keep the window non-empty by honouring the ramp.
@@ -740,7 +825,8 @@ function _ed_tracking_dispatch(
                     end
                 end
             end
-            residual = demand[z, t] - rsum - net_import[z, t] - (extra === nothing ? 0.0 : extra[z, t])
+            residual =
+                demand[z, t] - rsum - net_import[z, t] - (extra === nothing ? 0.0 : extra[z, t])
             vals = _ed_track_zone(lb, ub, lo, hi, residual)
             for (i, g) in enumerate(ctl)
                 x[g, t] = vals[i]
@@ -811,8 +897,9 @@ function _ed_plant(rng::AbstractRNG, nt, techs, zones, Z, T; extra=nothing)
     demand = zeros(Z, T)
     for attempt in 1:8
         sub = MersenneTwister(rand(rng, UInt64))
-        x, x0, net_import =
-            _ed_tracking_dispatch(sub, nt, techs, zones, T, nt.natural_demand, fwd, bwd; extra=extra)
+        x, x0, net_import = _ed_tracking_dispatch(
+            sub, nt, techs, zones, T, nt.natural_demand, fwd, bwd; extra=extra
+        )
         demand .= 0.0
         for g in eachindex(techs), t in 1:T
             demand[zones[g], t] += x[g, t]
@@ -861,7 +948,9 @@ by the zero-exchange tracking dispatch of the first period.
 """
 function _ed_natural(rng::AbstractRNG, nt, techs, zones, Z, T)
     L = length(nt.tie_from)
-    x, _, _ = _ed_tracking_dispatch(rng, nt, techs, zones, min(T, 1), nt.natural_demand[:, 1:1], zeros(L, 1), zeros(L, 1))
+    x, _, _ = _ed_tracking_dispatch(
+        rng, nt, techs, zones, min(T, 1), nt.natural_demand[:, 1:1], zeros(L, 1), zeros(L, 1)
+    )
     return copy(nt.natural_demand), x[:, 1]
 end
 
@@ -898,7 +987,9 @@ function _ed_plant_system_shortage!(rng::AbstractRNG, c::EnergyDispatchCore; mar
     t = argmax([_ed_system_demand(c, t) / _ed_system_upper(c, t) for t in 1:c.n_periods])
     need = (1 + margin) * _ed_pocket_supply(c, S, t)
     _ed_spread_demand!(c, S, t, need) || error("energy: could not plant a system shortage")
-    return EnergyAggregateCertificate(:import_pocket, S, [t], _ed_pocket_supply(c, S, t), _ed_system_demand(c, t))
+    return EnergyAggregateCertificate(
+        :import_pocket, S, [t], _ed_pocket_supply(c, S, t), _ed_system_demand(c, t)
+    )
 end
 
 # -----------------------------------------------------------------------------
@@ -921,9 +1012,9 @@ function _ed_core_variables!(model::Model, c::EnergyDispatchCore)
     L = _ed_n_ties(c)
     LB = [_ed_lower(c, g, t) for g in 1:G, t in 1:T]
     UB = [_ed_upper(c, g, t) for g in 1:G, t in 1:T]
-    @variable(model, LB[g, t] <= x[g=1:G, t=1:T] <= UB[g, t])
-    @variable(model, 0 <= flow_fwd[l=1:L, t=1:T] <= c.tie_capacity[l])
-    @variable(model, 0 <= flow_bwd[l=1:L, t=1:T] <= c.tie_capacity[l])
+    @variable(model, LB[g, t] <= x[g = 1:G, t = 1:T] <= UB[g, t])
+    @variable(model, 0 <= flow_fwd[l = 1:L, t = 1:T] <= c.tie_capacity[l])
+    @variable(model, 0 <= flow_bwd[l = 1:L, t = 1:T] <= c.tie_capacity[l])
 
     balance = [AffExpr(0.0) for _ in 1:c.n_zones, _ in 1:T]
     objective = AffExpr(0.0)
@@ -956,7 +1047,7 @@ units without spinning reserve).
 """
 function _ed_core_rows!(model::Model, c::EnergyDispatchCore, x, balance; spin=nothing)
     T = c.n_periods
-    @constraint(model, zonal_balance[z=1:c.n_zones, t=1:T], balance[z, t] == c.demand[z, t])
+    @constraint(model, zonal_balance[z = 1:c.n_zones, t = 1:T], balance[z, t] == c.demand[z, t])
     for g in 1:_ed_n_units(c)
         _ed_ramped(c, g) || continue
         s = spin === nothing ? nothing : spin[g]
@@ -987,7 +1078,9 @@ Largest absolute violation of the dispatch core's rows and bounds by witness `w`
 (0 means feasible). `extra_supply[z, t]` adds storage net discharge to the zonal
 balance; `spin[g, t]` tightens the up-ramp rows as in the reserves variant.
 """
-function _ed_witness_violation(c::EnergyDispatchCore, w::EnergyDispatchWitness; extra_supply=nothing, spin=nothing)
+function _ed_witness_violation(
+    c::EnergyDispatchCore, w::EnergyDispatchWitness; extra_supply=nothing, spin=nothing
+)
     G = _ed_n_units(c)
     T = c.n_periods
     viol = 0.0
@@ -1017,7 +1110,9 @@ function _ed_witness_violation(c::EnergyDispatchCore, w::EnergyDispatchWitness; 
         _ed_ramped(c, g) || continue
         for t in 2:T
             up = w.output[g, t] - w.output[g, t - 1] + (spin === nothing ? 0.0 : spin[g, t])
-            viol = max(viol, up - c.ramp_up[g], w.output[g, t - 1] - w.output[g, t] - c.ramp_down[g])
+            viol = max(
+                viol, up - c.ramp_up[g], w.output[g, t - 1] - w.output[g, t] - c.ramp_down[g]
+            )
         end
     end
     return viol
@@ -1108,7 +1203,9 @@ import its own share through one internal tie, so the only contradiction is the
 whole set's (presolve's bound propagation finds small pockets, not large ones).
 Always succeeds for a connected set.
 """
-function _ed_spread_demand!(c::EnergyDispatchCore, zones::Vector{Int}, t::Int, total::Float64; extra=nothing)
+function _ed_spread_demand!(
+    c::EnergyDispatchCore, zones::Vector{Int}, t::Int, total::Float64; extra=nothing
+)
     inS = falses(c.n_zones)
     inS[zones] .= true
     w = zeros(c.n_zones)
@@ -1197,7 +1294,9 @@ function _ed_plant_pocket!(rng::AbstractRNG, c::EnergyDispatchCore; margin::Floa
     c.n_zones >= 3 || return nothing
     for _ in 1:10
         seed = rand(rng, 1:c.n_zones)
-        size = clamp(round(Int, c.n_zones * _e_unif(rng, (0.15, 0.35))), min(4, c.n_zones - 1), c.n_zones - 1)
+        size = clamp(
+            round(Int, c.n_zones * _e_unif(rng, (0.15, 0.35))), min(4, c.n_zones - 1), c.n_zones - 1
+        )
         S = _ed_bfs_zones(c, seed, size)
         length(S) >= 2 || continue
         isempty(_ed_cut_ties(c, S)) && continue
@@ -1450,7 +1549,9 @@ function _energy_grid(rng::AbstractRNG, B::Int, L::Int)
         i += 1
     end
     len = [max(1.0, hypot(x[from[l]] - x[to[l]], y[from[l]] - y[to[l]])) for l in eachindex(from)]
-    ehv = BitVector([(min(from[l], to[l]), max(from[l], to[l])) in ehv_keys for l in eachindex(from)])
+    ehv = BitVector([
+        (min(from[l], to[l]), max(from[l], to[l])) in ehv_keys for l in eachindex(from)
+    ])
     return x, y, from, to, len, ehv
 end
 
@@ -1471,9 +1572,18 @@ function _energy_line_parameters(rng::AbstractRNG, len::Vector{Float64}, ehv::Ab
     rating = zeros(L)
     class = fill(:lv, L)
     for l in 1:L
-        class[l] = ehv[l] ? :ehv : (len[l] >= cutoff ? (rand(rng) < 0.7 ? :hv : :lv) : (rand(rng) < 0.1 ? :hv : :lv))
-        per_km, lo, hi = class[l] == :ehv ? (9000.0, 2000.0, 3200.0) :
-            class[l] == :hv ? (3000.0, 800.0, 1500.0) : (1000.0, 150.0, 450.0)
+        class[l] = if ehv[l]
+            :ehv
+        else
+            (len[l] >= cutoff ? (rand(rng) < 0.7 ? :hv : :lv) : (rand(rng) < 0.1 ? :hv : :lv))
+        end
+        per_km, lo, hi = if class[l] == :ehv
+            (9000.0, 2000.0, 3200.0)
+        elseif class[l] == :hv
+            (3000.0, 800.0, 1500.0)
+        else
+            (1000.0, 150.0, 450.0)
+        end
         sus[l] = clamp(per_km / len[l] * _e_unif(rng, (0.8, 1.2)), 5.0, 1000.0)
         rating[l] = _e_unif(rng, (lo, hi))
     end
@@ -1606,7 +1716,11 @@ function _energy_grid_fleet(rng::AbstractRNG, B::Int, G::Int; hour::Int)
     G >= 2 && (tech[2] = :coal)
     gen_bus = rand(rng, 1:B, G)
     wind_level = _e_unif(rng, (0.15, 0.7))
-    solar_level = 6 <= hour <= 19 ? max(0.0, sin(π * (hour - 5.5) / 14.0))^1.3 * _e_unif(rng, (0.5, 0.85)) : 0.0
+    solar_level = if 6 <= hour <= 19
+        max(0.0, sin(π * (hour - 5.5) / 14.0))^1.3 * _e_unif(rng, (0.5, 0.85))
+    else
+        0.0
+    end
     hydro_level = _e_unif(rng, (0.45, 0.85))
     pmin = zeros(G)
     pmax = zeros(G)

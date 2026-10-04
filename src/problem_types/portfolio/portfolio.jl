@@ -114,7 +114,8 @@ Portfolio return in every scenario, `F·(Bᵀx) + Eᵀx`, for weights `x` over a
 assets.
 """
 function _portfolio_scenario_returns(market::PortfolioMarket, x::AbstractVector{Float64})
-    return market.factor_returns * _portfolio_exposures(market, x) .+ transpose(market.idiosyncratic) * x
+    return market.factor_returns * _portfolio_exposures(market, x) .+
+           transpose(market.idiosyncratic) * x
 end
 
 """
@@ -295,7 +296,11 @@ function _portfolio_market(
     F = Matrix{Float64}(undef, S, K)
     for s in 1:S
         crash = rand(rng) < crash_probability
-        F[s, 1] = crash ? rand(rng, Normal(-0.12, 0.04)) : 0.007 + 0.035 * rand(rng, TDist(5)) / sqrt(5 / 3)
+        F[s, 1] = if crash
+            rand(rng, Normal(-0.12, 0.04))
+        else
+            0.007 + 0.035 * rand(rng, TDist(5)) / sqrt(5 / 3)
+        end
         stress = crash ? 1.8 : 1.0
         for k in 1:n_styles
             F[s, 1 + k] = stress * rand(rng, Normal(0.0, 0.015))
@@ -327,7 +332,9 @@ function _portfolio_market(
     E = sparse(I, Jc, V, n, S)
 
     # Forecasts: factor premia plus a small cross-sectional alpha signal.
-    premia = vcat(0.006, rand(rng, Normal(0.0, 0.002), n_styles), rand(rng, Normal(0.0, 0.002), n_sectors))
+    premia = vcat(
+        0.006, rand(rng, Normal(0.0, 0.002), n_styles), rand(rng, Normal(0.0, 0.002), n_sectors)
+    )
     mu = style_loadings * premia[1:(1 + n_styles)]
     for i in 1:n
         mu[i] += premia[1 + n_styles + sector[i]] + rand(rng, Normal(0.0, 0.002))

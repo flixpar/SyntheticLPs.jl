@@ -247,7 +247,8 @@ function StochasticProgramProblem(
         push!(lane_cost_of[j], ship_cost[l])
     end
     shortfall_cost = [
-        sum(lane_cost_of[j]) / length(lane_cost_of[j]) + mean_build / rand(rng, Uniform(0.12, 0.35)) for j in 1:J
+        sum(lane_cost_of[j]) / length(lane_cost_of[j]) +
+        mean_build / rand(rng, Uniform(0.12, 0.35)) for j in 1:J
     ]
 
     # --- Scenarios: correlated lognormal demand ---
@@ -261,7 +262,9 @@ function StochasticProgramProblem(
         regional = rand(rng, LogNormal(0.0, 0.12), n_regions)
         for j in 1:J
             demand[j, s] =
-                base_demand[j] * market * regional[customer_region[j]] *
+                base_demand[j] *
+                market *
+                regional[customer_region[j]] *
                 rand(rng, LogNormal(0.0, 0.10))
         end
     end
@@ -372,9 +375,7 @@ function build_model(prob::StochasticProgramProblem)
         )
     )
 
-    @constraint(
-        model, capital, sum(prob.capital_use[i] * x[i] for i in 1:I) <= prob.capital_budget
-    )
+    @constraint(model, capital, sum(prob.capital_use[i] * x[i] for i in 1:I) <= prob.capital_budget)
 
     out_lanes = [Int[] for _ in 1:I]
     in_lanes = [Int[] for _ in 1:J]

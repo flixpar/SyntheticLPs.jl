@@ -75,7 +75,8 @@ end
 function CombinatorialAuctionProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
-    target_variables >= 2 || throw(ArgumentError("combinatorial auction needs at least 2 variables"))
+    target_variables >= 2 ||
+        throw(ArgumentError("combinatorial auction needs at least 2 variables"))
     rng = MersenneTwister(seed)
     n_bids = target_variables
     n_items = max(3, round(Int, (0.15 + 0.1 * rand(rng)) * n_bids))
@@ -126,7 +127,9 @@ function CombinatorialAuctionProblem(
                 sort!(unique!(bundle))
             end
             q = [rand(rng, 1:min(supply[i], 3)) for i in bundle]
-            base = sum(q[t] * common_value[bundle[t]] * (1 + 0.2 * randn(rng)) for t in eachindex(bundle))
+            base = sum(
+                q[t] * common_value[bundle[t]] * (1 + 0.2 * randn(rng)) for t in eachindex(bundle)
+            )
             complementarity = 1 + 0.15 * (length(bundle) - 1)
             value = max(1.0, base * deviation * complementarity)
             push!(bundles, bundle)
@@ -181,15 +184,7 @@ function CombinatorialAuctionProblem(
     end
 
     return CombinatorialAuctionProblem(
-        n_items,
-        supply,
-        bundles,
-        quantities,
-        bidder_of,
-        bid_values,
-        reserve,
-        witness,
-        certificate,
+        n_items, supply, bundles, quantities, bidder_of, bid_values, reserve, witness, certificate
     )
 end
 

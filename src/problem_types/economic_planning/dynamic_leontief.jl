@@ -221,8 +221,7 @@ function _leontief_dimensions(rng::AbstractRNG, target::Int)
                 (2 <= n_tr <= n - 1) || continue
                 f = n_tr / n
                 (0.3 <= f <= 0.75) || continue
-                score =
-                    10 * abs(T * P - target) / target + abs(log(T / T_pref)) + abs(f - f_pref)
+                score = 10 * abs(T * P - target) / target + abs(log(T / T_pref)) + abs(f - f_pref)
                 if score < best_score
                     best_score = score
                     best = (T, n, n_tr)
@@ -231,7 +230,8 @@ function _leontief_dimensions(rng::AbstractRNG, target::Int)
         end
     end
     # Only the 45-variable minimum instance has no candidate near the target.
-    isfinite(best_score) || target <= 60 ||
+    isfinite(best_score) ||
+        target <= 60 ||
         error("dynamic_leontief: no (T, n, n_tr) combination found for target $target")
     return best
 end
@@ -490,14 +490,15 @@ function DynamicLeontiefProblem(
     end
     isempty(construction) && (struct_share .= 0.0)
     gestation = [
-        (blocks[j] == 1 || struct_share[j] > 0.6) ? rand(rng, Uniform(0.3, 0.6)) :
-        rand(rng, Uniform(0.0, 0.2)) for j in 1:n
+        if (blocks[j] == 1 || struct_share[j] > 0.6)
+            rand(rng, Uniform(0.3, 0.6))
+        else
+            rand(rng, Uniform(0.0, 0.2))
+        end for j in 1:n
     ]
     delta = [
         clamp(
-            struct_share[j] * 0.03 + (1 - struct_share[j]) * 0.12 + 0.01 * randn(rng),
-            0.02,
-            0.15,
+            struct_share[j] * 0.03 + (1 - struct_share[j]) * 0.12 + 0.01 * randn(rng), 0.02, 0.15
         ) for j in 1:n
     ]
     survival = (1 .- delta) .^ Δ
@@ -626,7 +627,9 @@ function DynamicLeontiefProblem(
     ew = hcat([e_bar .* grow(t) for t in 1:T]...)
     # Last period: no investment for post-horizon capacity, so solve it directly.
     inv_T = B_v * ((1 .- gestation) .* Nw[:, T])
-    xw[:, T] .= _leontief_solve(A_v, q_imp, d_v .* Cw[T] .+ Gmat[:, T] .+ e_full .* grow(T) .+ inv_T)
+    xw[:, T] .= _leontief_solve(
+        A_v, q_imp, d_v .* Cw[T] .+ Gmat[:, T] .+ e_full .* grow(T) .+ inv_T
+    )
     xw[:, T] .= max.(xw[:, T], 0.0)
     mw = zeros(n_tr, T)
     for t in 1:T
@@ -724,7 +727,9 @@ function DynamicLeontiefProblem(
     # ---- Convert to hybrid (physical / value) units ----------------------------
     price = ones(n)
     for j in 1:n
-        physical = (blocks[j] == 1 && rand(rng) < 0.75) || (blocks[j] == 2 && !(j in equipment) && rand(rng) < 0.15)
+        physical =
+            (blocks[j] == 1 && rand(rng) < 0.75) ||
+            (blocks[j] == 2 && !(j in equipment) && rand(rng) < 0.15)
         physical && (price[j] = exp(rand(rng, Uniform(log(0.005), log(0.8)))))
     end
     # Coefficients a[i,j] (units of i per unit of j) scale by price_j / price_i.
@@ -741,13 +746,7 @@ function DynamicLeontiefProblem(
     witness = nothing
     if feasibility_status == feasible
         witness = LeontiefWitness(
-            xw ./ price,
-            copy(Cw),
-            Nw ./ price,
-            Kw ./ price,
-            mw ./ ptr,
-            ew ./ ptr,
-            copy(Fw),
+            xw ./ price, copy(Cw), Nw ./ price, Kw ./ price, mw ./ ptr, ew ./ ptr, copy(Fw)
         )
     end
     certificate = nothing
@@ -810,12 +809,12 @@ function build_model(prob::DynamicLeontiefProblem)
     nk = size(prob.labor_coef, 1)
 
     @variable(model, x[1:n, 1:T] >= 0)
-    @variable(model, C[t=1:T] >= prob.consumption_floor[t])
+    @variable(model, C[t = 1:T] >= prob.consumption_floor[t])
     @variable(model, N[1:n, 1:T] >= 0)
-    @variable(model, K[s=1:n, t=1:T] >= (t == T ? prob.terminal_capacity[s] : 0.0))
+    @variable(model, K[s = 1:n, t = 1:T] >= (t == T ? prob.terminal_capacity[s] : 0.0))
     @variable(model, imp[1:ntr, 1:T] >= 0)
-    @variable(model, 0 <= ex[i=1:ntr, t=1:T] <= prob.export_ceiling[i, t])
-    @variable(model, F[t=1:T] <= prob.debt_ceiling[t])
+    @variable(model, 0 <= ex[i = 1:ntr, t = 1:T] <= prob.export_ceiling[i, t])
+    @variable(model, F[t = 1:T] <= prob.debt_ceiling[t])
 
     # Commodity balances, assembled column-wise from the sparse A and B.
     bal = [AffExpr(0.0) for _ in 1:n, _ in 1:T]
@@ -842,35 +841,39 @@ function build_model(prob::DynamicLeontiefProblem)
             add_to_expression!(bal[s, t], -1.0, ex[i, t])
         end
     end
-    @constraint(model, balance[s=1:n, t=1:T], bal[s, t] == prob.government_demand[s, t])
+    @constraint(model, balance[s = 1:n, t = 1:T], bal[s, t] == prob.government_demand[s, t])
 
     @constraint(
         model,
-        capacity[s=1:n, t=1:T],
+        capacity[s = 1:n, t = 1:T],
         x[s, t] <= (t == 1 ? prob.initial_capacity[s] : 1.0 * K[s, t - 1])
     )
     @constraint(
         model,
-        accumulation[s=1:n, t=1:T],
+        accumulation[s = 1:n, t = 1:T],
         K[s, t] - Δ * N[s, t] ==
-        prob.survival[s] * (t == 1 ? prob.initial_capacity[s] : 1.0 * K[s, t - 1])
+            prob.survival[s] * (t == 1 ? prob.initial_capacity[s] : 1.0 * K[s, t - 1])
     )
     @constraint(
-        model, import_limit[i=1:ntr, t=1:T], imp[i, t] - prob.import_ceiling[i] * x[tr[i], t] <= 0
+        model,
+        import_limit[i = 1:ntr, t = 1:T],
+        imp[i, t] - prob.import_ceiling[i] * x[tr[i], t] <= 0
     )
     labor_cols = [findall(!iszero, prob.labor_coef[k, :]) for k in 1:nk]
     @constraint(
         model,
-        labor[k=1:nk, t=1:T],
+        labor[k = 1:nk, t = 1:T],
         sum(prob.labor_coef[k, s] * x[s, t] for s in labor_cols[k]) <= prob.labor_supply[k, t]
     )
     @constraint(
         model,
-        debt[t=1:T],
-        F[t] - Δ * sum(prob.import_price[i] * imp[i, t] - prob.export_price[i] * ex[i, t] for i in 1:ntr) ==
-        prob.interest_factor * (t == 1 ? prob.initial_debt : 1.0 * F[t - 1])
+        debt[t = 1:T],
+        F[t] -
+        Δ *
+        sum(prob.import_price[i] * imp[i, t] - prob.export_price[i] * ex[i, t] for i in 1:ntr) ==
+            prob.interest_factor * (t == 1 ? prob.initial_debt : 1.0 * F[t - 1])
     )
-    @constraint(model, no_decline[t=1:(T - 1)], C[t + 1] - C[t] >= 0)
+    @constraint(model, no_decline[t = 1:(T - 1)], C[t + 1] - C[t] >= 0)
     @constraint(
         model,
         consumption_target,
@@ -881,7 +884,8 @@ function build_model(prob::DynamicLeontiefProblem)
         model,
         Max,
         sum(prob.consumption_weight[t] * C[t] for t in 1:T) +
-        sum(prob.terminal_capital_value[s] * K[s, T] for s in 1:n) - prob.terminal_debt_weight * F[T]
+        sum(prob.terminal_capital_value[s] * K[s, T] for s in 1:n) -
+            prob.terminal_debt_weight * F[T]
     )
     return model
 end
@@ -890,8 +894,8 @@ register_variant(
     :economic_planning,
     :dynamic_leontief,
     DynamicLeontiefProblem,
-    "Dynamic multi-sector Leontief planning LP (PILOT/Dantzig staircase): sparse hybrid-unit input-output and capital matrices, capacity accumulation with gestation lags, labor, import ceilings and external debt, maximizing discounted consumption; planted balanced-growth witness and Leontief-inverse labor/capacity certificates",
-    default=true;
+    "Dynamic multi-sector Leontief planning LP (PILOT/Dantzig staircase): sparse hybrid-unit input-output and capital matrices, capacity accumulation with gestation lags, labor, import ceilings and external debt, maximizing discounted consumption; planted balanced-growth witness and Leontief-inverse labor/capacity certificates";
+    default=true,
     tags=[:economics, :staircase],
     max_target_variables=1_000_000,
 )

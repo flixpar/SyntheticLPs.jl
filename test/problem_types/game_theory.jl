@@ -52,7 +52,8 @@ end
 
 @testset "Game Theory" begin
     @test :game_theory in list_categories()
-    @test Set(list_variants(:game_theory)) == Set([:poker_sequence_form, :colonel_blotto, :patrol_security])
+    @test Set(list_variants(:game_theory)) ==
+        Set([:poker_sequence_form, :colonel_blotto, :patrol_security])
     info = problem_info(:game_theory)
     @test info[:default_variant] == :poker_sequence_form
     @test occursin("zero-sum", lowercase(info[:description]))
@@ -63,14 +64,21 @@ end
         # formula equals the treeplex dimensions, and the chosen game lands
         # within 3% of the target (targets below the 20-variable Kuhn game
         # round up to it).
-        for target in (1, 20, 50, 200, 1000, 5000), status in (feasible, infeasible, unknown), seed in 0:1
-            m, p = generate_problem(:game_theory, target, status, seed; variant=:poker_sequence_form)
+        for target in (1, 20, 50, 200, 1000, 5000),
+            status in (feasible, infeasible, unknown),
+            seed in 0:1
+
+            m, p = generate_problem(
+                :game_theory, target, status, seed; variant=:poker_sequence_form
+            )
             shapes = [(length(r.bet_sizes), r.raise_cap) for r in p.rounds]
             v, r, _ = GT._poker_size_formula(p.n_ranks, shapes, p.seat)
             X, Y = p.player_tree, p.opponent_tree
             @test num_variables(m) == v == X.num_sequences + length(Y.infoset_parent) + 1
             n_tremble = p.tremble > 0 ? X.num_sequences - 1 : 0
-            @test gt_rows(m) == r + n_tremble == length(X.infoset_parent) + 1 + Y.num_sequences + n_tremble
+            @test gt_rows(m) ==
+                r + n_tremble ==
+                length(X.infoset_parent) + 1 + Y.num_sequences + n_tremble
             # 3% from 200 variables up; small games are coarser (at most ~5%).
             @test abs(v - max(target, 20)) <= (target >= 200 ? 0.03 : 0.05) * max(target, 20)
             @test size(p.payoff) == (X.num_sequences, Y.num_sequences)
@@ -95,10 +103,14 @@ end
         for nb in 1:3, cap in 1:3
             c = GT._poker_round_counts(nb, cap)
             pub = GT._poker_public_tree([GT.PokerBettingRound(collect(1:nb), cap)])
-            dec = [count(h -> !pub.is_terminal[h] && pub.actor[h] == q, eachindex(pub.actor)) for q in 1:2]
+            dec = [
+                count(h -> !pub.is_terminal[h] && pub.actor[h] == q, eachindex(pub.actor)) for
+                q in 1:2
+            ]
             @test Tuple(dec) == c.decisions
             @test count(pub.is_terminal) == c.continuations + c.folds
-            @test count(h -> pub.is_terminal[h] && pub.folder[h] > 0, eachindex(pub.actor)) == c.folds
+            @test count(h -> pub.is_terminal[h] && pub.folder[h] > 0, eachindex(pub.actor)) ==
+                c.folds
         end
 
         # Treeplex invariants: sequences 2..n are partitioned into contiguous
@@ -126,7 +138,8 @@ end
         p1 = GT._poker_assemble(MersenneTwister(0), 4, 3, rounds, 1, 0.0, unknown)
         p2 = GT._poker_assemble(MersenneTwister(0), 4, 3, rounds, 2, 0.0, unknown)
         @test p2.payoff == -copy(transpose(p1.payoff))
-        @test p1.player_tree == p2.opponent_tree || (p1.player_tree.infoset_parent == p2.opponent_tree.infoset_parent)
+        @test p1.player_tree == p2.opponent_tree ||
+            (p1.player_tree.infoset_parent == p2.opponent_tree.infoset_parent)
         @test all(!iszero, nonzeros(p1.payoff))
         # Both seats bracket the same game value with opposite signs.
         @test p1.lower_bound <= -p2.lower_bound + 1e-9 * p1.value_scale
@@ -137,14 +150,18 @@ end
         # trembles exactly, opponent values satisfying every best-response
         # row, and a guarantee at least the requirement.
         for target in (100, 800, 4000), seed in 0:3
-            m, p = generate_problem(:game_theory, target, feasible, seed; variant=:poker_sequence_form)
+            m, p = generate_problem(
+                :game_theory, target, feasible, seed; variant=:poker_sequence_form
+            )
             w = p.feasible_witness
             @test w !== nothing && p.infeasibility_certificate === nothing
             X, Y, A = p.player_tree, p.opponent_tree, p.payoff
             x, q = w.realization_plan, w.infoset_values
             @test all(>=(-1e-12), x)
             @test gt_flow_residual(X, x) <= 1e-9
-            for I in eachindex(X.infoset_parent), s in X.infoset_first[I]:(X.infoset_first[I] + X.infoset_num_actions[I] - 1)
+            for I in eachindex(X.infoset_parent),
+                s in X.infoset_first[I]:(X.infoset_first[I] + X.infoset_num_actions[I] - 1)
+
                 @test x[s] - p.tremble * x[X.infoset_parent[I]] >= -1e-9
             end
             slack = transpose(A) * x .- gt_Ftq(Y, q)
@@ -169,7 +186,9 @@ end
         # with E'p - T'μ >= A y componentwise and μ >= 0, and a value bound
         # strictly below the requirement.
         for target in (100, 800, 4000), seed in 0:3
-            _, p = generate_problem(:game_theory, target, infeasible, seed; variant=:poker_sequence_form)
+            _, p = generate_problem(
+                :game_theory, target, infeasible, seed; variant=:poker_sequence_form
+            )
             c = p.infeasibility_certificate
             @test c !== nothing && p.feasible_witness === nothing
             X, Y, A = p.player_tree, p.opponent_tree, p.payoff
@@ -206,7 +225,8 @@ end
             @test a.payoff == b.payoff
             @test a.required_value == b.required_value
             @test a.player_tree.infoset_parent == b.player_tree.infoset_parent
-            @test (a.n_ranks, a.n_suits, a.seat, a.tremble) == (b.n_ranks, b.n_suits, b.seat, b.tremble)
+            @test (a.n_ranks, a.n_suits, a.seat, a.tremble) ==
+                (b.n_ranks, b.n_suits, b.seat, b.tremble)
         end
 
         @testset "HiGHS contracts" begin
@@ -241,7 +261,9 @@ end
                 @test objective_value(m) / leduc.value_scale ≈ -0.0856 atol = 5e-4
 
                 for target in (60, 400, 1500), status in (feasible, infeasible), seed in 0:2
-                    m, p = generate_problem(:game_theory, target, status, seed; variant=:poker_sequence_form)
+                    m, p = generate_problem(
+                        :game_theory, target, status, seed; variant=:poker_sequence_form
+                    )
                     set_optimizer(m, HiGHS.Optimizer)
                     set_silent(m)
                     optimize!(m)
@@ -257,7 +279,9 @@ end
                 # Unknown instances resolve both ways.
                 outcomes = Set{MOI.TerminationStatusCode}()
                 for seed in 0:11
-                    m, _ = generate_problem(:game_theory, 300, unknown, seed; variant=:poker_sequence_form)
+                    m, _ = generate_problem(
+                        :game_theory, 300, unknown, seed; variant=:poker_sequence_form
+                    )
                     set_optimizer(m, HiGHS.Optimizer)
                     set_silent(m)
                     optimize!(m)
@@ -269,7 +293,10 @@ end
     end
 
     @testset "colonel_blotto" begin
-        for target in (1, 50, 200, 1000, 5000), status in (feasible, infeasible, unknown), seed in 0:1
+        for target in (1, 50, 200, 1000, 5000),
+            status in (feasible, infeasible, unknown),
+            seed in 0:1
+
             m, p = generate_problem(:game_theory, target, status, seed; variant=:colonel_blotto)
             K, S, So = p.n_battlefields, p.budget, p.opponent_budget
             v, r = GT._blotto_size_formula(K, S, So)
@@ -284,8 +311,12 @@ end
             @test p.lower_bound <= p.upper_bound + 1e-9
         end
         p = GT.ColonelBlottoProblem(100_000, unknown, 5)
-        @test abs(GT._blotto_size_formula(p.n_battlefields, p.budget, p.opponent_budget)[1] - 100_000) <= 2_000
-        @test_throws ArgumentError generate_problem(:game_theory, 1_000_001, unknown, 0; variant=:colonel_blotto)
+        @test abs(
+            GT._blotto_size_formula(p.n_battlefields, p.budget, p.opponent_budget)[1] - 100_000
+        ) <= 2_000
+        @test_throws ArgumentError generate_problem(
+            :game_theory, 1_000_001, unknown, 0; variant=:colonel_blotto
+        )
 
         # DAG structure: edge count formula, every edge spends within budget,
         # the last layer spends the remainder, and edge indices are consistent.
@@ -294,7 +325,10 @@ end
             @test length(layer) == GT._blotto_num_edges(K, S)
             @test all(from .+ step .<= S)
             @test all(from[e] + step[e] == S for e in eachindex(layer) if layer[e] == K)
-            @test all(GT._blotto_edge_index(K, S, layer[e], from[e], step[e]) == e for e in eachindex(layer))
+            @test all(
+                GT._blotto_edge_index(K, S, layer[e], from[e], step[e]) == e for
+                e in eachindex(layer)
+            )
             @test all((head[e] == 0) == (layer[e] == K) for e in eachindex(layer))
         end
 
@@ -331,11 +365,14 @@ end
             ol, _, os, ot, oh = GT._blotto_edges(K, So)
             pot = w.potentials
             viol = maximum(
-                pot[ot[e]] - (oh[e] > 0 ? pot[oh[e]] : 0.0) - w.expected_payoffs[ol[e], os[e] + 1] for e in eachindex(ol)
+                pot[ot[e]] - (oh[e] > 0 ? pot[oh[e]] : 0.0) - w.expected_payoffs[ol[e], os[e] + 1]
+                for e in eachindex(ol)
             )
             @test viol <= 1e-9
             @test pot[1] ≈ w.guaranteed_value ≈ p.lower_bound
-            @test 0.02 * sum(p.weights) - 1e-9 <= p.lower_bound - p.required_value <= 0.1 * sum(p.weights) + 1e-9
+            @test 0.02 * sum(p.weights) - 1e-9 <=
+                p.lower_bound - p.required_value <=
+                0.1 * sum(p.weights) + 1e-9
             vals = Dict{VariableRef, Float64}()
             for e in eachindex(x)
                 vals[m[:x][e]] = x[e]
@@ -407,7 +444,9 @@ end
         @testset "HiGHS contracts" begin
             if HAS_HIGHS
                 for target in (60, 400, 1500), status in (feasible, infeasible), seed in 0:2
-                    m, p = generate_problem(:game_theory, target, status, seed; variant=:colonel_blotto)
+                    m, p = generate_problem(
+                        :game_theory, target, status, seed; variant=:colonel_blotto
+                    )
                     set_optimizer(m, HiGHS.Optimizer)
                     set_silent(m)
                     optimize!(m)
@@ -420,7 +459,9 @@ end
                 end
                 outcomes = Set{MOI.TerminationStatusCode}()
                 for seed in 0:11
-                    m, _ = generate_problem(:game_theory, 300, unknown, seed; variant=:colonel_blotto)
+                    m, _ = generate_problem(
+                        :game_theory, 300, unknown, seed; variant=:colonel_blotto
+                    )
                     set_optimizer(m, HiGHS.Optimizer)
                     set_silent(m)
                     optimize!(m)
@@ -432,7 +473,10 @@ end
     end
 
     @testset "patrol_security" begin
-        for target in (1, 50, 200, 1000, 5000), status in (feasible, infeasible, unknown), seed in 0:1
+        for target in (1, 50, 200, 1000, 5000),
+            status in (feasible, infeasible, unknown),
+            seed in 0:1
+
             m, p = generate_problem(:game_theory, target, status, seed; variant=:patrol_security)
             n, H, K = p.n_stations, p.horizon, length(p.type_prior)
             v = GT._patrol_size_formula(n, length(p.edges), H, K)
@@ -457,9 +501,14 @@ end
             @test length(unique(root.(1:n))) == 1
         end
         p = GT.PatrolSecurityProblem(100_000, unknown, 2)
-        @test abs(GT._patrol_size_formula(p.n_stations, length(p.edges), p.horizon, length(p.type_prior)) - 100_000) <=
-            5_000
-        @test_throws ArgumentError generate_problem(:game_theory, 1_000_001, unknown, 0; variant=:patrol_security)
+        @test abs(
+            GT._patrol_size_formula(
+                p.n_stations, length(p.edges), p.horizon, length(p.type_prior)
+            ) - 100_000,
+        ) <= 5_000
+        @test_throws ArgumentError generate_problem(
+            :game_theory, 1_000_001, unknown, 0; variant=:patrol_security
+        )
 
         # Witness: the average patrol plan, its capped coverage, and each
         # type's best-response value satisfy every row of the model.
@@ -489,7 +538,9 @@ end
         # mix, threshold and potentials, and check the potential inequalities
         # on every time-expanded arc.
         for target in (150, 900, 4000), seed in 0:2
-            _, p = generate_problem(:game_theory, target, infeasible, seed; variant=:patrol_security)
+            _, p = generate_problem(
+                :game_theory, target, infeasible, seed; variant=:patrol_security
+            )
             c = p.infeasibility_certificate
             @test c !== nothing && p.feasible_witness === nothing
             n, H, K = p.n_stations, p.horizon, length(p.type_prior)
@@ -544,7 +595,9 @@ end
         @testset "HiGHS contracts" begin
             if HAS_HIGHS
                 for target in (60, 400, 1500), status in (feasible, infeasible), seed in 0:2
-                    m, p = generate_problem(:game_theory, target, status, seed; variant=:patrol_security)
+                    m, p = generate_problem(
+                        :game_theory, target, status, seed; variant=:patrol_security
+                    )
                     set_optimizer(m, HiGHS.Optimizer)
                     set_silent(m)
                     optimize!(m)
@@ -557,7 +610,9 @@ end
                 end
                 outcomes = Set{MOI.TerminationStatusCode}()
                 for seed in 0:11
-                    m, _ = generate_problem(:game_theory, 300, unknown, seed; variant=:patrol_security)
+                    m, _ = generate_problem(
+                        :game_theory, 300, unknown, seed; variant=:patrol_security
+                    )
                     set_optimizer(m, HiGHS.Optimizer)
                     set_silent(m)
                     optimize!(m)

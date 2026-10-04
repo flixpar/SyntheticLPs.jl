@@ -120,8 +120,11 @@ fill rates (see [`VendorAllocationCertificate`](@ref)).
 function _replenishment_required(demand, pipeline, initial_inventory, fill_rate, skus)
     return sum(
         (
-            max(0.0, fill_rate[i] * sum(view(demand, i, :)) - initial_inventory[i] - sum(view(pipeline, i, :)))
-            for i in skus
+            max(
+                0.0,
+                fill_rate[i] * sum(view(demand, i, :)) - initial_inventory[i] -
+                sum(view(pipeline, i, :)),
+            ) for i in skus
         );
         init=0.0,
     )
@@ -153,8 +156,14 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
         L = vendor_lead[v]
         base = rand(rng, LogNormal(log(40.0), 1.0))
         d = _inventory_demand(
-            rng, T, base; amp=amp, phase=phase + 0.5 * randn(rng), trend=0.01 * randn(rng),
-            cv=0.15 + 0.35 * rand(rng), intermittent=rand(rng) < 0.12,
+            rng,
+            T,
+            base;
+            amp=amp,
+            phase=phase + 0.5 * randn(rng),
+            trend=0.01 * randn(rng),
+            cv=0.15 + 0.35 * rand(rng),
+            intermittent=rand(rng) < 0.12,
         )
         push!(vendor, v)
         push!(lead_time, L)
@@ -182,7 +191,11 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
     fill_rate = zeros(N)
     for (k, i) in enumerate(rank)
         q = k / N
-        fill_rate[i] = q <= 0.2 ? rand(rng, Uniform(0.95, 0.99)) : (q <= 0.5 ? rand(rng, Uniform(0.85, 0.95)) : 0.0)
+        fill_rate[i] = if q <= 0.2
+            rand(rng, Uniform(0.95, 0.99))
+        else
+            (q <= 0.5 ? rand(rng, Uniform(0.85, 0.95)) : 0.0)
+        end
     end
 
     # --- Planted order-up-to plan (no lost sales) --------------------------------
@@ -234,8 +247,8 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
         peak = maximum(sum(volume[i] * stock[i, t] for i in skus) for t in 1:T)
         zone_capacity[z] = peak * rand(rng, Uniform(1.1, 1.5))
         arrivals = [
-            sum(pallets[i] * (t > lead_time[i] ? orders[i, t - lead_time[i]] : 0.0) for i in skus) for
-            t in 1:T
+            sum(pallets[i] * (t > lead_time[i] ? orders[i, t - lead_time[i]] : 0.0) for i in skus)
+            for t in 1:T
         ]
         base = sum(arrivals) / T * rand(rng, Uniform(1.05, 1.3))
         for t in 1:T
@@ -250,7 +263,13 @@ function InventoryProblem(target_variables::Int, feasibility_status::Feasibility
     else
         # The vendor whose service-level SKUs weigh most on its allocation.
         req = zeros(V)
-        avail = [sum(vendor_capacity[v, t] for t in 1:T if any(vendor[i] == v && t <= T - lead_time[i] for i in 1:N); init=0.0) for v in 1:V]
+        avail = [
+            sum(
+                vendor_capacity[v, t] for
+                t in 1:T if any(vendor[i] == v && t <= T - lead_time[i] for i in 1:N);
+                init=0.0,
+            ) for v in 1:V
+        ]
         for v in 1:V
             skus = [i for i in 1:N if vendor[i] == v && fill_rate[i] > 0]
             req[v] = _replenishment_required(demand, pipeline, initial_inventory, fill_rate, skus)
@@ -325,7 +344,8 @@ function build_model(prob::InventoryProblem)
         prob.fill_rate[i] > 0 || continue
         @constraint(
             model,
-            sum(u[i, t] for t in 1:T if prob.demand[i, t] > 0) <= (1 - prob.fill_rate[i]) * sum(prob.demand[i, :])
+            sum(u[i, t] for t in 1:T if prob.demand[i, t] > 0) <=
+                (1 - prob.fill_rate[i]) * sum(prob.demand[i, :])
         )
     end
     vendor_skus = [findall(==(v), prob.vendor) for v in 1:prob.n_vendors]
@@ -338,7 +358,9 @@ function build_model(prob::InventoryProblem)
     for z in 1:prob.n_zones
         isempty(zone_skus[z]) && continue
         for t in 1:T
-            @constraint(model, sum(prob.volume[i] * I[i, t] for i in zone_skus[z]) <= prob.zone_capacity[z])
+            @constraint(
+                model, sum(prob.volume[i] * I[i, t] for i in zone_skus[z]) <= prob.zone_capacity[z]
+            )
             arriving = [i for i in zone_skus[z] if t > prob.lead_time[i]]
             isempty(arriving) && continue
             @constraint(
@@ -353,8 +375,8 @@ function build_model(prob::InventoryProblem)
         model,
         Min,
         sum(prob.unit_cost[i] * q[i, t] for i in 1:N for t in 1:(T - prob.lead_time[i])) +
-        sum(prob.holding_cost[i] * I[i, t] for i in 1:N, t in 1:T) +
-        sum(prob.lost_sale_cost[i] * u[i, t] for i in 1:N, t in 1:T if prob.demand[i, t] > 0)
+            sum(prob.holding_cost[i] * I[i, t] for i in 1:N, t in 1:T) +
+            sum(prob.lost_sale_cost[i] * u[i, t] for i in 1:N, t in 1:T if prob.demand[i, t] > 0)
     )
     return model
 end

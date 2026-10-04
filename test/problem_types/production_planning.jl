@@ -75,15 +75,19 @@
         @test all(w.production[i, t] == 0 for i in 1:N for t in (T - p.lead_time[i] + 1):T)
         for i in 1:N, t in 1:T
             consumption = sum(
-                a * w.production[pp, t] for (pp, c, a) in zip(p.bom_parent, p.bom_child, p.bom_qty) if c == i;
+                a * w.production[pp, t] for
+                (pp, c, a) in zip(p.bom_parent, p.bom_child, p.bom_qty) if c == i;
                 init=0.0,
             )
             arrival = t > p.lead_time[i] ? w.production[i, t - p.lead_time[i]] : 0.0
             prev = t == 1 ? p.initial_inventory[i] : w.inventory[i, t - 1]
-            @test prev + arrival - consumption - p.demand[i, t] ≈ w.inventory[i, t] atol = 1e-6 * (1 + prev)
+            @test prev + arrival - consumption - p.demand[i, t] ≈ w.inventory[i, t] atol =
+                1e-6 * (1 + prev)
         end
         for wc in 1:p.n_work_centers, t in 1:T
-            load = sum(p.run_time[i] * w.production[i, t] for i in 1:N if p.work_center[i] == wc; init=0.0)
+            load = sum(
+                p.run_time[i] * w.production[i, t] for i in 1:N if p.work_center[i] == wc; init=0.0
+            )
             @test 0 <= w.overtime[wc, t] <= p.max_overtime[wc, t]
             @test load - w.overtime[wc, t] <= p.regular_capacity[wc, t] + 1e-6
         end
@@ -121,7 +125,8 @@
         @test cert.items == [i for i in 1:p.n_items if p.work_center[i] == cert.work_center]
         @test cert.required_load ≈ sum(p.run_time[i] * lb[i] for i in cert.items)
         @test cert.available_capacity ≈
-            sum(p.regular_capacity[cert.work_center, :]) + sum(p.max_overtime[cert.work_center, :])
+            sum(p.regular_capacity[cert.work_center, :]) +
+              sum(p.max_overtime[cert.work_center, :])
         @test cert.required_load >= 1.08 * cert.available_capacity * (1 - 1e-9)
     end
 
@@ -145,7 +150,8 @@
             @test p1.feasible_witness.production == p2.feasible_witness.production
         end
         if p1.infeasibility_certificate !== nothing
-            @test p1.infeasibility_certificate.lower_bounds == p2.infeasibility_certificate.lower_bounds
+            @test p1.infeasibility_certificate.lower_bounds ==
+                p2.infeasibility_certificate.lower_bounds
         end
     end
 

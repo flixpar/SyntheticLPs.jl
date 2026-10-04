@@ -189,8 +189,14 @@ function LotSizingInventoryProblem(
     while cols < target
         base = rand(rng, LogNormal(log(80.0), 0.9))
         d = _inventory_demand(
-            rng, T, base; amp=amp, phase=phase + 0.4 * randn(rng), trend=0.01 * randn(rng),
-            cv=0.2 + 0.3 * rand(rng), intermittent=rand(rng) < 0.15,
+            rng,
+            T,
+            base;
+            amp=amp,
+            phase=phase + 0.4 * randn(rng),
+            trend=0.01 * randn(rng),
+            cv=0.2 + 0.3 * rand(rng),
+            intermittent=rand(rng) < 0.15,
         )
         # Initial stock covers part of the opening demand.
         i0 = round(sum(d[1:min(2, T)]) * rand(rng, Uniform(0.0, 0.8)); digits=1)
@@ -221,7 +227,8 @@ function LotSizingInventoryProblem(
     unit_cost = rand(rng, LogNormal(log(10.0), 0.6), N)
     holding_cost = unit_cost .* rand(rng, Uniform(0.005, 0.03), N)
     setup_cost = [
-        holding_cost[i] * max(sum(demand[i, :]) / T, 1.0) * rand(rng, Uniform(1.0, 6.0)) for i in 1:N
+        holding_cost[i] * max(sum(demand[i, :]) / T, 1.0) * rand(rng, Uniform(1.0, 6.0)) for
+        i in 1:N
     ]
 
     # --- Planted periodic-order-quantity plan --------------------------------
@@ -247,8 +254,10 @@ function LotSizingInventoryProblem(
         source[i] = src
     end
     flat = sum(load) / T * rand(rng, Uniform(1.05, 1.3))
-    capacity = [max(flat * (rand(rng) < 0.1 ? rand(rng, Uniform(0.75, 0.9)) : 1.0), load[s] * 1.03, 1e-3)
-                for s in 1:T]
+    capacity = [
+        max(flat * (rand(rng) < 0.1 ? rand(rng, Uniform(0.75, 0.9)) : 1.0), load[s] * 1.03, 1e-3)
+        for s in 1:T
+    ]
 
     witness = nothing
     certificate = nothing
@@ -370,7 +379,8 @@ function build_model(prob::LotSizingInventoryProblem)
         Min,
         sum(
             (prob.unit_cost[w_item[k]] + prob.holding_cost[w_item[k]] * (w_dem[k] - w_prod[k])) *
-            prob.demand[w_item[k], w_dem[k]] * w[k] for k in 1:nw
+            prob.demand[w_item[k], w_dem[k]] *
+            w[k] for k in 1:nw
         ) + sum(prob.setup_cost[y_item[k]] * y[k] for k in 1:ny)
     )
     return model

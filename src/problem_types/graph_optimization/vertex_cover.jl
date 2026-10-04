@@ -164,9 +164,7 @@ function VertexCoverProblem(target_variables::Int, feasibility_status::Feasibili
     end
 
     # Probe cost: installation plus a per-port card cost, with site variation.
-    costs = round.(
-        [(60.0 + 12.0 * capacity[v]) * exp(0.3 * randn(rng)) for v in 1:n]; digits=2
-    )
+    costs = round.([(60.0 + 12.0 * capacity[v]) * exp(0.3 * randn(rng)) for v in 1:n]; digits=2)
     return VertexCoverProblem(n, edges, costs, capacity, witness, certificate)
 end
 

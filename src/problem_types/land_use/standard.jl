@@ -254,30 +254,44 @@ end
 Check an integer zoning plan (zone per parcel) against every row of the model.
 """
 function land_use_plan_satisfies(
-    prob::LandUseProblem, plan::Union{Nothing, AbstractVector{<:Integer}}=prob.feasible_witness; atol::Float64=1e-8
+    prob::LandUseProblem,
+    plan::Union{Nothing, AbstractVector{<:Integer}}=prob.feasible_witness;
+    atol::Float64=1e-8,
 )
     plan === nothing && return false
     length(plan) == prob.n_parcels || return false
     index = land_use_pair_index(prob)
-    all(i -> 1 <= plan[i] <= prob.n_zoning_types && index[i, plan[i]] > 0, 1:prob.n_parcels) || return false
+    all(i -> 1 <= plan[i] <= prob.n_zoning_types && index[i, plan[i]] > 0, 1:prob.n_parcels) ||
+        return false
     usage = zeros(Float64, prob.n_districts, prob.n_resources)
     for i in 1:prob.n_parcels, r in 1:prob.n_resources
-        usage[prob.parcel_district[i], r] += prob.parcel_sizes[i] * prob.resource_consumption[plan[i], r]
+        usage[prob.parcel_district[i], r] +=
+            prob.parcel_sizes[i] * prob.resource_consumption[plan[i], r]
     end
-    all(usage .<= prob.resource_capacities .+ atol .* max.(1.0, prob.resource_capacities)) || return false
-    housing = _land_use_district_value(prob.parcel_sizes, prob.parcel_district, plan, _LAND_USE_HOUSING_DENSITY, prob.n_districts)
-    jobs = _land_use_district_value(prob.parcel_sizes, prob.parcel_district, plan, _LAND_USE_JOB_DENSITY, prob.n_districts)
-    all(housing .+ atol .>= prob.housing_target) && all(jobs .+ atol .>= prob.jobs_target) || return false
+    all(usage .<= prob.resource_capacities .+ atol .* max.(1.0, prob.resource_capacities)) ||
+        return false
+    housing = _land_use_district_value(
+        prob.parcel_sizes, prob.parcel_district, plan, _LAND_USE_HOUSING_DENSITY, prob.n_districts
+    )
+    jobs = _land_use_district_value(
+        prob.parcel_sizes, prob.parcel_district, plan, _LAND_USE_JOB_DENSITY, prob.n_districts
+    )
+    all(housing .+ atol .>= prob.housing_target) && all(jobs .+ atol .>= prob.jobs_target) ||
+        return false
     green = _land_use_green(prob.n_zoning_types)
     neighbors = _land_use_neighbors(prob.n_parcels, prob.adjacency_edges)
     for i in 1:prob.n_parcels
         prob.green_ratio[i] > 0 && plan[i] == _LAND_USE_RESIDENTIAL || continue
-        area = sum(prob.parcel_sizes[j] for j in vcat(i, neighbors[i]) if plan[j] in green; init=0.0)
+        area = sum(
+            prob.parcel_sizes[j] for j in vcat(i, neighbors[i]) if plan[j] in green; init=0.0
+        )
         area + atol >= prob.green_ratio[i] * prob.parcel_sizes[i] || return false
     end
     for (i, j) in prob.adjacency_edges
-        (plan[i], plan[j]) in ((_LAND_USE_RESIDENTIAL, _LAND_USE_INDUSTRIAL), (_LAND_USE_INDUSTRIAL, _LAND_USE_RESIDENTIAL)) &&
-            return false
+        (plan[i], plan[j]) in (
+            (_LAND_USE_RESIDENTIAL, _LAND_USE_INDUSTRIAL),
+            (_LAND_USE_INDUSTRIAL, _LAND_USE_RESIDENTIAL),
+        ) && return false
     end
     return true
 end
@@ -289,7 +303,8 @@ function _land_use_district_lower_bound(prob, district::Int, resource::Int)
         push!(allowed[i], z)
     end
     minimum_use = [
-        prob.parcel_sizes[i] * minimum(prob.resource_consumption[z, resource] for z in allowed[i]) for i in parcels
+        prob.parcel_sizes[i] * minimum(prob.resource_consumption[z, resource] for z in allowed[i])
+        for i in parcels
     ]
     return parcels, minimum_use
 end
@@ -302,7 +317,8 @@ Recompute the district resource lower bound and check it exceeds the capacity.
 function land_use_certificate_holds(prob::LandUseProblem)
     cert = prob.infeasibility_certificate
     cert === nothing && return false
-    1 <= cert.district <= prob.n_districts && 1 <= cert.resource_index <= prob.n_resources || return false
+    1 <= cert.district <= prob.n_districts && 1 <= cert.resource_index <= prob.n_resources ||
+        return false
     parcels, minimum_use = _land_use_district_lower_bound(prob, cert.district, cert.resource_index)
     parcels == cert.parcels && minimum_use ≈ cert.per_parcel_minimum || return false
     cert.lower_bound ≈ sum(minimum_use) || return false
@@ -366,13 +382,20 @@ function LandUseProblem(target_variables::Int, feasibility_status::FeasibilitySt
             profile = _LAND_USE_ZONING_CATALOG[z]
             urban = z in (1, 2, 3, 6, 8, 9, 10, 11) ? accessibility : 1.0 - accessibility
             development_costs[i, z] =
-                development_cost_scale * profile.cost * (0.70 + 0.65 * urban) * rand(rng, LogNormal(0.0, 0.18))
-            revenues[i, z] = revenue_scale * profile.revenue * (0.55 + 1.05 * urban) * rand(rng, LogNormal(0.0, 0.22))
+                development_cost_scale *
+                profile.cost *
+                (0.70 + 0.65 * urban) *
+                rand(rng, LogNormal(0.0, 0.18))
+            revenues[i, z] =
+                revenue_scale *
+                profile.revenue *
+                (0.55 + 1.05 * urban) *
+                rand(rng, LogNormal(0.0, 0.22))
         end
     end
     resource_consumption = [
-        _LAND_USE_ZONING_CATALOG[z].resources[r] * rand(rng, LogNormal(0.0, 0.16)) for z in 1:n_zoning_types,
-        r in 1:n_resources
+        _LAND_USE_ZONING_CATALOG[z].resources[r] * rand(rng, LogNormal(0.0, 0.16)) for
+        z in 1:n_zoning_types, r in 1:n_resources
     ]
     green = _land_use_green(n_zoning_types)
 
@@ -383,8 +406,12 @@ function LandUseProblem(target_variables::Int, feasibility_status::FeasibilitySt
     plan = zeros(Int, n_parcels)
     for i in shuffle(rng, collect(1:n_parcels))
         for z in sortperm(view(net, i, :); rev=true)
-            z == _LAND_USE_RESIDENTIAL && any(plan[j] == _LAND_USE_INDUSTRIAL for j in neighbors[i]) && continue
-            z == _LAND_USE_INDUSTRIAL && any(plan[j] == _LAND_USE_RESIDENTIAL for j in neighbors[i]) && continue
+            z == _LAND_USE_RESIDENTIAL &&
+                any(plan[j] == _LAND_USE_INDUSTRIAL for j in neighbors[i]) &&
+                continue
+            z == _LAND_USE_INDUSTRIAL &&
+                any(plan[j] == _LAND_USE_RESIDENTIAL for j in neighbors[i]) &&
+                continue
             plan[i] = z
             break
         end
@@ -392,7 +419,10 @@ function LandUseProblem(target_variables::Int, feasibility_status::FeasibilitySt
     end
     # Make sure the plan houses people and employs them somewhere.
     if !any(==(_LAND_USE_RESIDENTIAL), plan)
-        i = rand(rng, [i for i in 1:n_parcels if all(plan[j] != _LAND_USE_INDUSTRIAL for j in neighbors[i])])
+        i = rand(
+            rng,
+            [i for i in 1:n_parcels if all(plan[j] != _LAND_USE_INDUSTRIAL for j in neighbors[i])],
+        )
         plan[i] = _LAND_USE_RESIDENTIAL
     end
     if !isempty(green)
@@ -410,7 +440,9 @@ function LandUseProblem(target_variables::Int, feasibility_status::FeasibilitySt
         excluded = Int[]
         if rand(rng) < environmental_probability
             candidates = [z for z in 1:n_zoning_types if z != plan[i]]
-            excluded = sample(rng, candidates, rand(rng, 1:min(3, length(candidates))); replace=false)
+            excluded = sample(
+                rng, candidates, rand(rng, 1:min(3, length(candidates))); replace=false
+            )
         end
         for z in 1:n_zoning_types
             z in excluded || push!(pairs, (i, z))
@@ -421,8 +453,12 @@ function LandUseProblem(target_variables::Int, feasibility_status::FeasibilitySt
     for i in 1:n_parcels, r in 1:n_resources
         usage[parcel_district[i], r] += parcel_sizes[i] * resource_consumption[plan[i], r]
     end
-    housing = _land_use_district_value(parcel_sizes, parcel_district, plan, _LAND_USE_HOUSING_DENSITY, n_districts)
-    jobs = _land_use_district_value(parcel_sizes, parcel_district, plan, _LAND_USE_JOB_DENSITY, n_districts)
+    housing = _land_use_district_value(
+        parcel_sizes, parcel_district, plan, _LAND_USE_HOUSING_DENSITY, n_districts
+    )
+    jobs = _land_use_district_value(
+        parcel_sizes, parcel_district, plan, _LAND_USE_JOB_DENSITY, n_districts
+    )
     district_area = zeros(Float64, n_districts)
     for i in 1:n_parcels
         district_area[parcel_district[i]] += parcel_sizes[i]
@@ -438,10 +474,16 @@ function LandUseProblem(target_variables::Int, feasibility_status::FeasibilitySt
     if feasibility_status == unknown
         tightness = rand(rng, Uniform(0.75, 1.25))
         average = vec(sum(resource_consumption; dims=1)) ./ n_zoning_types
-        capacities = [district_area[d] * average[r] * tightness * rand(rng, Uniform(0.85, 1.15)) for
-                      d in 1:n_districts, r in 1:n_resources]
-        housing_target = [district_area[d] * rand(rng, Uniform(0.15, 0.35)) * 20.0 for d in 1:n_districts]
-        jobs_target = [district_area[d] * rand(rng, Uniform(0.10, 0.25)) * 30.0 for d in 1:n_districts]
+        capacities = [
+            district_area[d] * average[r] * tightness * rand(rng, Uniform(0.85, 1.15)) for
+            d in 1:n_districts, r in 1:n_resources
+        ]
+        housing_target = [
+            district_area[d] * rand(rng, Uniform(0.15, 0.35)) * 20.0 for d in 1:n_districts
+        ]
+        jobs_target = [
+            district_area[d] * rand(rng, Uniform(0.10, 0.25)) * 30.0 for d in 1:n_districts
+        ]
         isempty(green) || (green_ratio[allowed_residential] .= rho)
     else
         capacities = usage .* rand(rng, Uniform(1.03, 1.20), n_districts, n_resources)
@@ -451,7 +493,9 @@ function LandUseProblem(target_variables::Int, feasibility_status::FeasibilitySt
             for i in 1:n_parcels
                 allowed_residential[i] || continue
                 if plan[i] == _LAND_USE_RESIDENTIAL
-                    area = sum(parcel_sizes[j] for j in vcat(i, neighbors[i]) if plan[j] in green; init=0.0)
+                    area = sum(
+                        parcel_sizes[j] for j in vcat(i, neighbors[i]) if plan[j] in green; init=0.0
+                    )
                     green_ratio[i] = min(rho, 0.95 * area / parcel_sizes[i])
                 else
                     green_ratio[i] = rho
@@ -462,9 +506,27 @@ function LandUseProblem(target_variables::Int, feasibility_status::FeasibilitySt
     end
 
     prob = LandUseProblem(
-        n_parcels, n_zoning_types, n_resources, n_districts, parcel_sizes, parcel_district, coordinates, edges,
-        pairs, development_costs, revenues, resource_consumption, capacities, housing_target, jobs_target,
-        green_ratio, zoning_names, resource_names, witness, nothing, feasibility_status,
+        n_parcels,
+        n_zoning_types,
+        n_resources,
+        n_districts,
+        parcel_sizes,
+        parcel_district,
+        coordinates,
+        edges,
+        pairs,
+        development_costs,
+        revenues,
+        resource_consumption,
+        capacities,
+        housing_target,
+        jobs_target,
+        green_ratio,
+        zoning_names,
+        resource_names,
+        witness,
+        nothing,
+        feasibility_status,
     )
     if feasibility_status == infeasible
         d = rand(rng, 1:n_districts)
@@ -472,11 +534,31 @@ function LandUseProblem(target_variables::Int, feasibility_status::FeasibilitySt
         parcels, minimum_use = _land_use_district_lower_bound(prob, d, r)
         lower_bound = sum(minimum_use)
         capacities[d, r] = lower_bound * rand(rng, Uniform(0.75, 0.93))
-        certificate = LandUseInfeasibilityCertificate(d, r, parcels, minimum_use, lower_bound, capacities[d, r])
+        certificate = LandUseInfeasibilityCertificate(
+            d, r, parcels, minimum_use, lower_bound, capacities[d, r]
+        )
         prob = LandUseProblem(
-            n_parcels, n_zoning_types, n_resources, n_districts, parcel_sizes, parcel_district, coordinates, edges,
-            pairs, development_costs, revenues, resource_consumption, capacities, housing_target, jobs_target,
-            green_ratio, zoning_names, resource_names, nothing, certificate, feasibility_status,
+            n_parcels,
+            n_zoning_types,
+            n_resources,
+            n_districts,
+            parcel_sizes,
+            parcel_district,
+            coordinates,
+            edges,
+            pairs,
+            development_costs,
+            revenues,
+            resource_consumption,
+            capacities,
+            housing_target,
+            jobs_target,
+            green_ratio,
+            zoning_names,
+            resource_names,
+            nothing,
+            certificate,
+            feasibility_status,
         )
         @assert land_use_certificate_holds(prob)
     elseif feasibility_status == feasible
@@ -509,31 +591,39 @@ function build_model(prob::LandUseProblem)
         push!(of_parcel[i], k)
         push!(of_district[prob.parcel_district[i]], k)
     end
-    @constraint(model, parcel_assignment[i in 1:prob.n_parcels], sum(x[k] for k in of_parcel[i]) == 1)
+    @constraint(
+        model, parcel_assignment[i in 1:prob.n_parcels], sum(x[k] for k in of_parcel[i]) == 1
+    )
     size(i) = prob.parcel_sizes[i]
     for d in 1:prob.n_districts
         ks = of_district[d]
         for r in 1:prob.n_resources
             @constraint(
                 model,
-                sum(size(prob.pairs[k][1]) * prob.resource_consumption[prob.pairs[k][2], r] * x[k] for k in ks) <=
-                prob.resource_capacities[d, r]
+                sum(
+                    size(prob.pairs[k][1]) * prob.resource_consumption[prob.pairs[k][2], r] * x[k]
+                    for k in ks
+                ) <= prob.resource_capacities[d, r]
             )
         end
         housing = [k for k in ks if haskey(_LAND_USE_HOUSING_DENSITY, prob.pairs[k][2])]
         if prob.housing_target[d] > 0 && !isempty(housing)
             @constraint(
                 model,
-                sum(size(prob.pairs[k][1]) * _LAND_USE_HOUSING_DENSITY[prob.pairs[k][2]] * x[k] for k in housing) >=
-                prob.housing_target[d]
+                sum(
+                    size(prob.pairs[k][1]) * _LAND_USE_HOUSING_DENSITY[prob.pairs[k][2]] * x[k] for
+                    k in housing
+                ) >= prob.housing_target[d]
             )
         end
         jobs = [k for k in ks if haskey(_LAND_USE_JOB_DENSITY, prob.pairs[k][2])]
         if prob.jobs_target[d] > 0 && !isempty(jobs)
             @constraint(
                 model,
-                sum(size(prob.pairs[k][1]) * _LAND_USE_JOB_DENSITY[prob.pairs[k][2]] * x[k] for k in jobs) >=
-                prob.jobs_target[d]
+                sum(
+                    size(prob.pairs[k][1]) * _LAND_USE_JOB_DENSITY[prob.pairs[k][2]] * x[k] for
+                    k in jobs
+                ) >= prob.jobs_target[d]
             )
         end
     end

@@ -67,8 +67,7 @@ function RobustElectiveSurgeryAssignmentProblem(
     best_gap = Inf
     for _ in 1:16
         base = ElectiveSurgeryAssignmentProblem(base_target, feasibility_status, seed)
-        total =
-            2length(base.admissible) + count(!, base.mandatory) + 2length(base.open_blocks)
+        total = 2length(base.admissible) + count(!, base.mandatory) + 2length(base.open_blocks)
         gap = abs(total - target) / target
         if gap < best_gap
             best_gap = gap
@@ -201,7 +200,8 @@ function build_model(prob::RobustElectiveSurgeryAssignmentProblem)
     for (s, d) in sort!(collect(keys(by_surgeon_day)))
         idxs = by_surgeon_day[(s, d)]
         # Rows that cannot bind (all admissible cases fit at once) are omitted.
-        sum(prob.nominal_duration[prob.admissible[a][1]] for a in idxs) <= prob.surgeon_budget[s, d] && continue
+        sum(prob.nominal_duration[prob.admissible[a][1]] for a in idxs) <=
+        prob.surgeon_budget[s, d] && continue
         @constraint(
             model,
             sum(prob.nominal_duration[prob.admissible[a][1]] * assign[a] for a in idxs) <=

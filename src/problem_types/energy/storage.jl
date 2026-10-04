@@ -127,7 +127,9 @@ end
 Build a storage-coupled dispatch instance with about `target_variables`
 columns. See the type docstring.
 """
-function StorageDispatchProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function StorageDispatchProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
     T, Z, layout, per_period = _ed_dimensions(rng, target_variables)
     L = length(layout[3])
@@ -186,8 +188,15 @@ function StorageDispatchProblem(target_variables::Int, feasibility_status::Feasi
         net = zeros(Z, T)
         for s in 1:S
             c_s, d_s, e_s = _storage_cycle(
-                T, sysload, charge_max[s], discharge_max[s], eta_ch[s], eta_dis[s], soc_initial[s],
-                soc_min[s], soc_max[s],
+                T,
+                sysload,
+                charge_max[s],
+                discharge_max[s],
+                eta_ch[s],
+                eta_dis[s],
+                soc_initial[s],
+                soc_min[s],
+                soc_max[s],
             )
             charge[s, :] .= c_s
             discharge[s, :] .= d_s
@@ -226,7 +235,9 @@ function StorageDispatchProblem(target_variables::Int, feasibility_status::Feasi
             ok || error("energy/storage: could not plant the energy-limited peak")
             bound = sum(_ed_system_upper(core, t) for t in W) + energy
             req = sum(_ed_system_demand(core, t) for t in W)
-            certificate = EnergyAggregateCertificate(:energy_limited_peak, collect(1:Z), W, bound, req)
+            certificate = EnergyAggregateCertificate(
+                :energy_limited_peak, collect(1:Z), W, bound, req
+            )
         end
     end
 
@@ -262,11 +273,13 @@ function build_model(prob::StorageDispatchProblem)
     S = length(prob.storage_zone)
     x, _, _, balance, objective = _ed_core_variables!(model, c)
 
-    @variable(model, 0 <= charge[s=1:S, t=1:T] <= prob.charge_max[s])
-    @variable(model, 0 <= discharge[s=1:S, t=1:T] <= prob.discharge_max[s])
+    @variable(model, 0 <= charge[s = 1:S, t = 1:T] <= prob.charge_max[s])
+    @variable(model, 0 <= discharge[s = 1:S, t = 1:T] <= prob.discharge_max[s])
     # Terminal level ≥ initial level, folded into the last period's bound.
-    soc_lb = [t == T ? max(prob.soc_min[s], prob.soc_initial[s]) : prob.soc_min[s] for s in 1:S, t in 1:T]
-    @variable(model, soc_lb[s, t] <= soc[s=1:S, t=1:T] <= prob.soc_max[s])
+    soc_lb = [
+        t == T ? max(prob.soc_min[s], prob.soc_initial[s]) : prob.soc_min[s] for s in 1:S, t in 1:T
+    ]
+    @variable(model, soc_lb[s, t] <= soc[s = 1:S, t = 1:T] <= prob.soc_max[s])
 
     for s in 1:S, t in 1:T
         z = prob.storage_zone[s]
@@ -280,7 +293,8 @@ function build_model(prob::StorageDispatchProblem)
         prev = t == 1 ? prob.soc_initial[s] : soc[s, t - 1]
         @constraint(
             model,
-            soc[s, t] - prob.eta_charge[s] * charge[s, t] + discharge[s, t] / prob.eta_discharge[s] == prev
+            soc[s, t] - prob.eta_charge[s] * charge[s, t] +
+            discharge[s, t] / prob.eta_discharge[s] == prev
         )
     end
 

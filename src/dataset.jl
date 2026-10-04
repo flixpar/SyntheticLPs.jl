@@ -908,11 +908,12 @@ function _failure_counts(instances, failures)
     return counts
 end
 
-_manifest_filename(shard_index::Int, num_shards::Int) = if num_shards == 1
-    "manifest.json"
-else
-    "manifest_shard_$(lpad(shard_index, 4, '0'))_of_$(lpad(num_shards, 4, '0')).json"
-end
+_manifest_filename(shard_index::Int, num_shards::Int) =
+    if num_shards == 1
+        "manifest.json"
+    else
+        "manifest_shard_$(lpad(shard_index, 4, '0'))_of_$(lpad(num_shards, 4, '0')).json"
+    end
 
 _write_json(path, data) = open(io -> JSON.print(io, data, 2), path, "w")
 
@@ -1173,7 +1174,7 @@ function generate_dataset(;
     transform_flags = (; relax_integer=relax_integer, bounds_to_constraints=bounds_to_constraints)
     model_transforms = _as_transforms(transforms)
     if model_transforms.elastic_probability > 0 &&
-       any(((st, w),) -> st == infeasible && w > 0, zip(plan.statuses, plan.status_weights))
+        any(((st, w),) -> st == infeasible && w > 0, zip(plan.statuses, plan.status_weights))
         throw(
             ArgumentError(
                 "elastic_probability > 0 cannot be combined with `infeasible` " *

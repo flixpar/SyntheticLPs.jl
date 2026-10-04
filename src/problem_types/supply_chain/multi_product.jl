@@ -76,8 +76,8 @@ function _multi_product_supply_bound(net::SupplyChainNetwork, k::Int, tau::Int)
     plants = [p for p in 1:net.n_plants if k in net.plant_products[p]]
     stock = sum(net.initial_stock[:, k])
     production = sum(
-        min(net.line_capacity[p, k], net.plant_capacity[p, t] / net.resource_use[p, k]) for p in plants,
-        t in 1:tau
+        min(net.line_capacity[p, k], net.plant_capacity[p, t] / net.resource_use[p, k]) for
+        p in plants, t in 1:tau
     )
     return plants, stock, stock + production
 end
@@ -107,15 +107,19 @@ function MultiProductSupplyChainProblem(
         # Per-plant effective rate (never above the plant's resource limit), then
         # one common scale so the cumulative bound lands on the goal.
         rate = [
-            min(net.line_capacity[p, k], minimum(net.plant_capacity[p, t] for t in 1:tau) / net.resource_use[p, k]) for
-            p in plants
+            min(
+                net.line_capacity[p, k],
+                minimum(net.plant_capacity[p, t] for t in 1:tau) / net.resource_use[p, k],
+            ) for p in plants
         ]
         scale = (goal - stock) / (tau * sum(rate))
         for (i, p) in enumerate(plants)
             net.line_capacity[p, k] = scale * rate[i]
         end
         _, _, bound = _multi_product_supply_bound(net, k, tau)
-        certificate = SupplyChainProductCertificate(k, tau, plants, demand, stock, bound, demand - bound)
+        certificate = SupplyChainProductCertificate(
+            k, tau, plants, demand, stock, bound, demand - bound
+        )
         @assert certificate.margin > 0.05 * demand
     elseif feasibility_status == unknown
         capacity_factor = rand(rng, Uniform(0.60, 1.05))

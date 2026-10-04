@@ -259,11 +259,20 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
                 end
                 run_hi - run_lo + 1 > max_consecutive && continue
                 # Quick-return rule against neighbours already worked.
-                prev = d > 1 && worked[d - 1] ? assignment[w][findfirst(a -> a[1] == d - 1, assignment[w])][2] : 0
-                nxt = d < D && worked[d + 1] ? assignment[w][findfirst(a -> a[1] == d + 1, assignment[w])][2] : 0
+                prev = if d > 1 && worked[d - 1]
+                    assignment[w][findfirst(a -> a[1] == d - 1, assignment[w])][2]
+                else
+                    0
+                end
+                nxt = if d < D && worked[d + 1]
+                    assignment[w][findfirst(a -> a[1] == d + 1, assignment[w])][2]
+                else
+                    0
+                end
                 options = [
                     k for k in templates[w] if hours + template_length[k] <= goal + 1e-9 &&
-                    !(prev > 0 && closing[prev] && opening[k]) && !(nxt > 0 && closing[k] && opening[nxt])
+                        !(prev > 0 && closing[prev] && opening[k]) &&
+                        !(nxt > 0 && closing[k] && opening[nxt])
                 ]
                 isempty(options) && continue
                 k = rand(rng, options)
@@ -293,9 +302,27 @@ function SchedulingProblem(target_variables::Int, feasibility_status::Feasibilit
         witness = ScheduleRosterWitness(assignment)
     else
         tmp = SchedulingProblem(
-            W, D, M, K, template_length, template_start, closing, opening, home, departments,
-            efficiency, templates, available, min_hours, max_hours, wage, max_consecutive,
-            requirement, nothing, nothing, feasibility_status,
+            W,
+            D,
+            M,
+            K,
+            template_length,
+            template_start,
+            closing,
+            opening,
+            home,
+            departments,
+            efficiency,
+            templates,
+            available,
+            min_hours,
+            max_hours,
+            wage,
+            max_consecutive,
+            requirement,
+            nothing,
+            nothing,
+            feasibility_status,
         )
         # Department-week aggregate: requirement vs. eligible productive capacity.
         best = (0, 0, -1.0, 0.0, 0.0)
@@ -420,7 +447,9 @@ function build_model(prob::SchedulingProblem)
         # Contract hours per week (ranged).
         for wk in 1:weeks
             cs = reduce(
-                vcat, [get(worker_day, (w, d), Int[]) for d in ((wk - 1) * 7 + 1):min(wk * 7, D)]; init=Int[]
+                vcat,
+                [get(worker_day, (w, d), Int[]) for d in ((wk - 1) * 7 + 1):min(wk * 7, D)];
+                init=Int[],
             )
             isempty(cs) && continue
             expr = @expression(model, sum(prob.template_length[cols[c][3]] * x[c] for c in cs))
@@ -452,7 +481,8 @@ function build_model(prob::SchedulingProblem)
     obj = AffExpr(0.0)
     for (c, (w, d, k, m)) in enumerate(cols)
         premium = (prob.template_start[k] >= 22 ? 0.25 : 0.0) + (mod1(d, 7) >= 6 ? 0.2 : 0.0)
-        coef = prob.wage[w] * prob.template_length[k] * (1 + premium) - (m == prob.home[w] ? 5.0 : 0.0)
+        coef =
+            prob.wage[w] * prob.template_length[k] * (1 + premium) - (m == prob.home[w] ? 5.0 : 0.0)
         add_to_expression!(obj, coef, x[c])
     end
     @objective(model, Min, obj)

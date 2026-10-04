@@ -212,7 +212,9 @@ function SecurityConstrainedDCOPFProblem(
             for k2 in contingencies
                 k2 != k && push!(states, (emergency, k2))
             end
-            pk = _dc_plant_pocket!(rng, B, from, to, fl.gen_bus, fl.pmax, demand, S, states; margin=m)
+            pk = _dc_plant_pocket!(
+                rng, B, from, to, fl.gen_bus, fl.pmax, demand, S, states; margin=m
+            )
             pk === nothing && continue
             # Keep emergency ratings above normal on the strengthened lines.
             emergency .= max.(emergency, kappa .* rating)
@@ -224,10 +226,13 @@ function SecurityConstrainedDCOPFProblem(
                 rating[k] += 1.05 * pk.need - base_cap
                 emergency[k] = kappa[k] * rating[k]
             end
-            certificate = DCPocketCertificate(pk.S, pk.cut, c, k, local_cap, pk.imports, sum(demand[pk.S]))
+            certificate = DCPocketCertificate(
+                pk.S, pk.cut, c, k, local_cap, pk.imports, sum(demand[pk.S])
+            )
             break
         end
-        certificate === nothing && error("energy/security_constrained_dc_opf: could not plant an N-1 pocket")
+        certificate === nothing &&
+            error("energy/security_constrained_dc_opf: could not plant an N-1 pocket")
     end
 
     return SecurityConstrainedDCOPFProblem(
@@ -282,7 +287,9 @@ function _scopf_bus_adequacy!(B, from, to, rating, emergency, kappa, fl, demand,
         worst_lines = sum(rating[l] for l in incident[b])
         if !isempty(lost)
             k = lost[argmax([emergency[l] for l in lost])]
-            worst_lines = min(worst_lines, sum((emergency[l] for l in incident[b] if l != k); init=0.0))
+            worst_lines = min(
+                worst_lines, sum((emergency[l] for l in incident[b] if l != k); init=0.0)
+            )
         end
         if worst_lines < need
             if worst_lines <= 0
@@ -308,13 +315,20 @@ minimize generation cost.
 function build_model(prob::SecurityConstrainedDCOPFProblem)
     model = Model()
     G = prob.n_generators
-    @variable(model, prob.pmin[g] <= p[g=1:G] <= prob.pmax[g])
+    @variable(model, prob.pmin[g] <= p[g = 1:G] <= prob.pmax[g])
     args = (prob.n_buses, prob.line_from, prob.line_to, prob.susceptance)
     # model[:theta][1] holds the base-case angles, model[:theta][1 + c] those
     # after contingency c.
     θ = [
         _dc_network_block!(
-            model, args..., prob.line_limit, prob.gen_bus, prob.demand, prob.ref_bus, p, prob.angle_limit;
+            model,
+            args...,
+            prob.line_limit,
+            prob.gen_bus,
+            prob.demand,
+            prob.ref_bus,
+            p,
+            prob.angle_limit;
             tag="_base",
         ),
     ]
@@ -322,8 +336,16 @@ function build_model(prob::SecurityConstrainedDCOPFProblem)
         push!(
             θ,
             _dc_network_block!(
-                model, args..., prob.emergency_limit, prob.gen_bus, prob.demand, prob.ref_bus, p,
-                prob.angle_limit; outage=k, tag="_c$c",
+                model,
+                args...,
+                prob.emergency_limit,
+                prob.gen_bus,
+                prob.demand,
+                prob.ref_bus,
+                p,
+                prob.angle_limit;
+                outage=k,
+                tag="_c$c",
             ),
         )
     end

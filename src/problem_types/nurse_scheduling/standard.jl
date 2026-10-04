@@ -254,7 +254,11 @@ function sample_nurse_availability(
 end
 
 function sample_nurse_consecutive_limit(rng::AbstractRNG, nurse_type::Symbol, n_days::Int)
-    base = nurse_type == :core ? rand(rng, 3:5) : (nurse_type == :float_pool ? rand(rng, 2:4) : rand(rng, 2:3))
+    base = if nurse_type == :core
+        rand(rng, 3:5)
+    else
+        (nurse_type == :float_pool ? rand(rng, 2:4) : rand(rng, 2:3))
+    end
     return min(max(2, base), n_days)
 end
 
@@ -415,7 +419,9 @@ then trimmed (never below that minimum) to land exactly on the target.
     limits by 0-1 (never below one for a nurse who worked nights) - so the
     instance may or may not be feasible. No metadata is attached.
 """
-function NurseSchedulingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function NurseSchedulingProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
     target = max(target_variables, 1)
     n_days, n_shifts = select_nurse_dimensions(target)
@@ -542,7 +548,8 @@ function NurseSchedulingProblem(target_variables::Int, feasibility_status::Feasi
         for s in 1:n_shifts
             label = shift_labels[s]
             shift_factor = label == :day ? 1.1 : (label == :night ? 0.7 : 0.9)
-            base = home_count[w] * avg_ratio * season * weekend_factor * shift_factor / n_shifts * 1.6
+            base =
+                home_count[w] * avg_ratio * season * weekend_factor * shift_factor / n_shifts * 1.6
             base_demand[w, d, s] = max(1, round(Int, base * rand(rng, Uniform(0.85, 1.15))))
         end
     end
@@ -574,14 +581,20 @@ function NurseSchedulingProblem(target_variables::Int, feasibility_status::Feasi
     end
     demand = zeros(Int, n_wards, n_days, n_shifts)
     skill_requirements = zeros(Int, n_wards, n_days, n_shifts, n_skills)
-    ratios = scenario == :small ? (1.0, 0.2, 0.12, 0.08) : (scenario == :medium ? (1.0, 0.25, 0.18, 0.12) : (1.0, 0.3, 0.22, 0.15))
+    ratios = if scenario == :small
+        (1.0, 0.2, 0.12, 0.08)
+    else
+        (scenario == :medium ? (1.0, 0.25, 0.18, 0.12) : (1.0, 0.3, 0.22, 0.15))
+    end
     for w in 1:n_wards, d in 1:n_days, s in 1:n_shifts
         c = coverage[w, d, s]
         c == 0 && continue
         demand[w, d, s] = max(1, min(c, round(Int, c * rand(rng, Uniform(0.85, 0.98)))))
         skill_requirements[w, d, s, 1] = demand[w, d, s]
         for k in 2:n_skills
-            skill_requirements[w, d, s, k] = min(round(Int, demand[w, d, s] * ratios[k]), skilled[w, d, s, k])
+            skill_requirements[w, d, s, k] = min(
+                round(Int, demand[w, d, s] * ratios[k]), skilled[w, d, s, k]
+            )
         end
     end
 
@@ -616,7 +629,9 @@ function NurseSchedulingProblem(target_variables::Int, feasibility_status::Feasi
     certificate = nothing
     if feasibility_status == feasible
         observed = observed_nurse_consecutive_days(assigned, slots, n_nurses, n_days)
-        witness = NurseRosterWitness(assigned, assigned_total, night_counts, weekend_counts, observed)
+        witness = NurseRosterWitness(
+            assigned, assigned_total, night_counts, weekend_counts, observed
+        )
     elseif feasibility_status == infeasible
         night_demand = sum(demand[:, :, night_idx])
         goal = min(floor(Int, 0.95 * night_demand), night_demand - 1)
@@ -724,11 +739,17 @@ function nurse_model_rows(prob::NurseSchedulingProblem)
         for k in 2:size(prob.nurse_skills, 2)
             req = prob.skill_requirements[w, d, s, k]
             req > 0 || continue
-            push!(skill, ((w, d, s, k), [v for v in vars if prob.nurse_skills[slots[v][1], k] == 1], req))
+            push!(
+                skill,
+                ((w, d, s, k), [v for v in vars if prob.nurse_skills[slots[v][1], k] == 1], req),
+            )
         end
     end
 
-    one_per_day = [(n, d, by_nurse_day[n, d]) for n in 1:n_nurses, d in 1:n_days if length(by_nurse_day[n, d]) >= 2]
+    one_per_day = [
+        (n, d, by_nurse_day[n, d]) for
+        n in 1:n_nurses, d in 1:n_days if length(by_nurse_day[n, d]) >= 2
+    ]
     totals = Tuple{Int, Vector{Int}}[]
     weekends = Tuple{Int, Vector{Int}}[]
     nights = Tuple{Int, Vector{Int}}[]

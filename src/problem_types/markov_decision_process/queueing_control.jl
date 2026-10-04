@@ -109,7 +109,10 @@ an `ArgumentError`. The keyword `service_row` forces the
 optional service row on (`true`) or off (`false`) instead of sampling it
 (`nothing`); `ConstrainedMDP` builds its base model with `service_row=false`.
 """
-function QueueingControlMDP(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int;
+function QueueingControlMDP(
+    target_variables::Int,
+    feasibility_status::FeasibilityStatus,
+    seed::Int;
     service_row::Union{Nothing, Bool}=nothing,
 )
     _mdp_check_target(target_variables, "queueing_control")

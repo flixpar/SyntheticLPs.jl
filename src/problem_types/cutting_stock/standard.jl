@@ -137,7 +137,8 @@ function CuttingStockProblem(
         if feasibility_status == infeasible
             supply = sum(Float64(stock_lengths[k]) * availability[k] for k in 1:n_stock)
             infeasibility_certificate = MaterialShortageCertificate(material, supply)
-            material >= 1.04 * supply || error("cutting_stock: shortage certificate lost its margin")
+            material >= 1.04 * supply ||
+                error("cutting_stock: shortage certificate lost its margin")
         end
     end
 

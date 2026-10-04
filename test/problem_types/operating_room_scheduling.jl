@@ -109,7 +109,10 @@
         _, p = generate_problem(elective_ref, target, infeasible, seed)
         cert = something(p.infeasibility_certificate)
         check_overload(
-            p, cert, p.surgery_duration, i -> unique(t[3] for t in p.admissible if t[1] == i);
+            p,
+            cert,
+            p.surgery_duration,
+            i -> unique(t[3] for t in p.admissible if t[1] == i);
             strict=target >= 3000,
         )
     end
@@ -194,7 +197,9 @@
     for seed in 0:3, target in (200, 3000)
         _, p = generate_problem(weekly_ref, target, infeasible, seed)
         cert = something(p.infeasibility_certificate)
-        check_overload(p, cert, p.surgery_duration, i -> p.admissible_days[i]; strict=target >= 3000)
+        check_overload(
+            p, cert, p.surgery_duration, i -> p.admissible_days[i]; strict=target >= 3000
+        )
     end
 
     # Tactical MSS: periodized ICU/ward profiles keep bed-days per block.
@@ -228,7 +233,8 @@
         S, R, D, W = p.n_services, p.n_rooms, p.n_days, p.n_wards
         @test num_variables(model) == length(p.admissible_blocks) + R * D + 2S + W * D + D + W + 1
         @test abs(num_variables(model) - target) <= 0.15 * target
-        @test Set(p.admissible_blocks) == Set((g, r, d) for g in 1:S for r in p.service_rooms[g] for d in 1:D)
+        @test Set(p.admissible_blocks) ==
+            Set((g, r, d) for g in 1:S for r in p.service_rooms[g] for d in 1:D)
         @test all(!isempty(rs) for rs in p.service_rooms)
         plan = p.admissible_blocks[something(p.feasible_witness)]
         @test length(unique((r, d) for (_, r, d) in plan)) == length(plan)   # room exclusivity
@@ -266,7 +272,8 @@
     # sparse specialty-block windows, and aggregate load certificates.
     for seed in 0:3, target in (50, 200, 500, 5000)
         model, p = generate_problem(benchmark_ref, target, feasible, seed)
-        @test num_variables(model) == sum(length, p.admissible) + count(!, p.mandatory) + p.n_or_days
+        @test num_variables(model) ==
+            sum(length, p.admissible) + count(!, p.mandatory) + p.n_or_days
         @test p.target_load in collect(0.80:0.05:1.20)
         @test abs(p.achieved_load - p.target_load) <= 0.025 + 1e-9
         @test all(
@@ -278,7 +285,9 @@
         for i in 1:p.n_surgeries
             @test !isempty(p.admissible[i])
             @test all(p.or_day_specialty[q] == p.specialty_code[i] for q in p.admissible[i])
-            @test all(p.case_release[i] <= p.or_day_calendar[q] <= p.case_due[i] for q in p.admissible[i])
+            @test all(
+                p.case_release[i] <= p.or_day_calendar[q] <= p.case_due[i] for q in p.admissible[i]
+            )
         end
         load = zeros(p.n_or_days)
         for i in 1:p.n_surgeries
@@ -327,7 +336,10 @@
             @test all(count(in(chosen), cols) <= 1 for (_, cols) in surgeon_rows)
         elseif status == infeasible
             cert = something(p.infeasibility_certificate)
-            @test all(p.case_surgeon[o] == cert.surgeon && p.case_days[o] == [cert.day] for o in cert.cases)
+            @test all(
+                p.case_surgeon[o] == cert.surgeon && p.case_days[o] == [cert.day] for
+                o in cert.cases
+            )
             @test cert.busy_slots == sum(p.case_slots[o] + p.surgeon_turnover for o in cert.cases)
             s = cert.surgeon
             @test cert.available_slots ==
@@ -335,7 +347,8 @@
             @test cert.busy_slots >= 1.05 * cert.available_slots
             # Each case fits the window on its own.
             @test all(
-                p.case_slots[o] <= p.surgeon_window_end[s] - p.surgeon_window_start[s] for o in cert.cases
+                p.case_slots[o] <= p.surgeon_window_end[s] - p.surgeon_window_start[s] for
+                o in cert.cases
             )
         end
     end
@@ -356,7 +369,10 @@
 
     @testset "HiGHS contracts" begin
         if HAS_HIGHS
-            for ref in values(refs), seed in 1:2, status in (feasible, infeasible), target in (220, 3000)
+            for ref in values(refs),
+                seed in 1:2, status in (feasible, infeasible),
+                target in (220, 3000)
+
                 model, _ = generate_problem(ref, target, status, seed)
                 set_optimizer(model, HiGHS.Optimizer)
                 set_silent(model)

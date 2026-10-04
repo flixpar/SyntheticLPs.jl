@@ -90,9 +90,7 @@ struct HubSetCoveringProblem <: ProblemGenerator
     unit_cost::Float64
     budget::Float64
     feasible_witness::Union{Nothing, HubCoveringWitness}
-    infeasibility_certificate::Union{
-        Nothing, HubCoveringCertificate, HubCoveringBudgetCertificate
-    }
+    infeasibility_certificate::Union{Nothing, HubCoveringCertificate, HubCoveringBudgetCertificate}
     feasibility_status::FeasibilityStatus
 end
 
@@ -100,7 +98,8 @@ _hub_covering_variable_count(prob::HubSetCoveringProblem) =
     prob.n_nodes + sum(length, values(prob.covering_sets); init=0)
 
 # Hubs visited by the admissible paths of one OD pair.
-_hub_covering_hubs(paths::Vector{Tuple{Int, Int}}) = sort!(unique!(vcat(first.(paths), last.(paths))))
+_hub_covering_hubs(paths::Vector{Tuple{Int, Int}}) =
+    sort!(unique!(vcat(first.(paths), last.(paths))))
 
 """
     _hub_covering_prune(covering_sets, fixed_cost, n) -> Vector{Int}
@@ -111,7 +110,9 @@ both hubs open. Returns the sorted open set (all hubs if some pair is
 uncoverable).
 """
 function _hub_covering_prune(
-    covering_sets::Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}}, fixed_cost::Vector{Float64}, n::Int
+    covering_sets::Dict{Tuple{Int, Int}, Vector{Tuple{Int, Int}}},
+    fixed_cost::Vector{Float64},
+    n::Int,
 )
     ods = sort!(collect(keys(covering_sets)))
     open_paths = [length(covering_sets[od]) for od in ods]
@@ -198,8 +199,8 @@ function _build_hub_covering(
             for i in members, j in members
                 i == j && continue
                 escape = minimum(
-                    route_cost(i, j, k, m) for k in 1:n, m in 1:n if
-                    region_of[k] != g || region_of[m] != g
+                    route_cost(i, j, k, m) for
+                    k in 1:n, m in 1:n if region_of[k] != g || region_of[m] != g
                 )
                 escape > best_escape && ((best_pair, best_escape) = ((i, j), escape))
             end
@@ -260,7 +261,9 @@ function _build_hub_covering(
         budget = minimum_cost * rand(rng, Uniform(0.75, 0.95))
         certificate = HubCoveringBudgetCertificate(region_pairs, hub_sets, minimum_cost, budget)
     elseif feasibility_status == infeasible
-        uncovered = first(od for od in sort!(collect(keys(covering_sets))) if isempty(covering_sets[od]))
+        uncovered = first(
+            od for od in sort!(collect(keys(covering_sets))) if isempty(covering_sets[od])
+        )
         i, j = uncovered
         certificate = HubCoveringCertificate(i, j, min_route[i, j], threshold)
         budget = sum(fixed_cost)

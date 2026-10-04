@@ -174,7 +174,9 @@ compatible rooms per service (4-8 of its cluster) and the planted block plan.
 function _mss_layout(rng::AbstractRNG, n_services::Int, n_rooms::Int, n_days::Int)
     n_specs = clamp(round(Int, n_services / 3), 2, min(11, n_services))
     spec_ids = _orsched_case_mix(rng, n_specs)
-    weights = [_ORSCHED_SPECIALTIES[k].weight * _ORSCHED_SPECIALTIES[k].aggregate_mean for k in spec_ids]
+    weights = [
+        _ORSCHED_SPECIALTIES[k].weight * _ORSCHED_SPECIALTIES[k].aggregate_mean for k in spec_ids
+    ]
     # Every specialty gets at least one service, the rest by weight.
     service_ward = collect(1:n_specs)
     cum = cumsum(weights)
@@ -307,7 +309,9 @@ function OperatingRoomMasterScheduleProblem(
         # Ward shortage: the busiest specialty ward cannot absorb its
         # services' minimum quotas over the cycle.
         mass = [sum(ward_profile[w, :]) for w in 1:W]
-        required = [sum(mass[w] * min_blocks[g] for g in 1:S if service_ward[g] == w; init=0.0) for w in 1:W]
+        required = [
+            sum(mass[w] * min_blocks[g] for g in 1:S if service_ward[g] == w; init=0.0) for w in 1:W
+        ]
         w = argmax(required)
         services = [g for g in 1:S if service_ward[g] == w]
         goal = 0.9 * required[w]
@@ -324,8 +328,12 @@ function OperatingRoomMasterScheduleProblem(
             max_blocks[g] = max(min_blocks[g], target_blocks[g] + rand(rng, -1:2))
         end
         pressure = rand(rng, Uniform(0.70, 1.05))
-        ward_capacity .= round.(ward_capacity .* pressure .* rand(rng, Uniform(0.95, 1.05), W, D); digits=2)
-        icu_capacity .= round.(icu_capacity .* pressure .* rand(rng, Uniform(0.95, 1.05), D); digits=2)
+        ward_capacity .= round.(
+            ward_capacity .* pressure .* rand(rng, Uniform(0.95, 1.05), W, D); digits=2
+        )
+        icu_capacity .= round.(
+            icu_capacity .* pressure .* rand(rng, Uniform(0.95, 1.05), D); digits=2
+        )
     end
 
     preference = [rand(rng, Uniform(0.0, 50.0)) for _ in admissible]
@@ -397,7 +405,8 @@ function build_model(prob::OperatingRoomMasterScheduleProblem)
 
     for r in 1:R, d in 1:D
         @constraint(
-            model, sum(assign_block[a] for a in by_room_day[r, d]; init=AffExpr(0.0)) == open_room[r, d]
+            model,
+            sum(assign_block[a] for a in by_room_day[r, d]; init=AffExpr(0.0)) == open_room[r, d]
         )
     end
     for g in 1:S
@@ -437,7 +446,10 @@ function build_model(prob::OperatingRoomMasterScheduleProblem)
         Min,
         sum(prob.preference_cost[a] * assign_block[a] for a in 1:A) +
             sum(prob.room_open_cost[r, d] * open_room[r, d] for r in 1:R, d in 1:D) +
-            sum(prob.under_penalty[g] * under_blocks[g] + prob.over_penalty[g] * over_blocks[g] for g in 1:S) +
+            sum(
+                prob.under_penalty[g] * under_blocks[g] + prob.over_penalty[g] * over_blocks[g] for
+                g in 1:S
+            ) +
             prob.peak_ward_weight * sum(peak_ward) +
             prob.peak_icu_weight * peak_icu
     )

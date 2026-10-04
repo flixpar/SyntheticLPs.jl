@@ -165,7 +165,9 @@ inbound, 8% direct and the rest outbound. Rows:
 `n_plants + 2 * n_dcs + n_customers`. Values above
 `TRANSPORTATION_MAX_VARIABLES` raise an `ArgumentError`.
 """
-function TransshipmentProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function TransshipmentProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     _tp_check_target(target_variables, "transshipment")
     rng = MersenneTwister(seed)
     target = max(target_variables, 6)
@@ -202,7 +204,9 @@ function TransshipmentProblem(target_variables::Int, feasibility_status::Feasibi
     cust_w = weights[cust_idx]
 
     inbound, _ = _tp_lanes(rng, plant_pos, dc_pos, n_in; mean_lanes=n_in / H, long_haul=0.15)
-    outbound, primary_dc = _tp_lanes(rng, dc_pos, cust_pos, n_out; mean_lanes=n_out / C, weights=cust_w)
+    outbound, primary_dc = _tp_lanes(
+        rng, dc_pos, cust_pos, n_out; mean_lanes=n_out / C, weights=cust_w
+    )
     # Direct lanes: largest customers to their nearest plants.
     direct = Tuple{Int, Int}[]
     if n_dir > 0
@@ -226,22 +230,36 @@ function TransshipmentProblem(target_variables::Int, feasibility_status::Feasibi
     handling = [3.0 * rand(rng, LogNormal(0.0, 0.3)) for _ in 1:H]
     pd(a, b) = hypot(a[1] - b[1], a[2] - b[2])
     inbound_cost = [
-        round(production[p] + 0.5 * rate * pd(plant_pos[p], dc_pos[h]) * rand(rng, LogNormal(0.0, 0.15)) + 1.0; digits=3)
-        for (p, h) in inbound
+        round(
+            production[p] +
+            0.5 * rate * pd(plant_pos[p], dc_pos[h]) * rand(rng, LogNormal(0.0, 0.15)) +
+            1.0;
+            digits=3,
+        ) for (p, h) in inbound
     ]
     inbound_capacity = [
         rand(rng) < 0.4 ? round(throughput[h] * (0.3 + 0.5 * rand(rng)); digits=2) : Inf for
         (_, h) in inbound
     ]
     outbound_cost = [
-        round(1.4 * rate * pd(dc_pos[h], cust_pos[c]) * rand(rng, LogNormal(0.0, 0.15)) + handling[h] + 1.0; digits=3)
-        for (h, c) in outbound
+        round(
+            1.4 * rate * pd(dc_pos[h], cust_pos[c]) * rand(rng, LogNormal(0.0, 0.15)) +
+            handling[h] +
+            1.0;
+            digits=3,
+        ) for (h, c) in outbound
     ]
     direct_cost = [
-        round(production[p] + rate * pd(plant_pos[p], cust_pos[c]) * rand(rng, LogNormal(0.0, 0.15)) + 4.0; digits=3)
-        for (p, c) in direct
+        round(
+            production[p] +
+            rate * pd(plant_pos[p], cust_pos[c]) * rand(rng, LogNormal(0.0, 0.15)) +
+            4.0;
+            digits=3,
+        ) for (p, c) in direct
     ]
-    direct_capacity = [round(max(d0[c] * (0.2 + 0.4 * rand(rng)), 0.01); digits=2) for (_, c) in direct]
+    direct_capacity = [
+        round(max(d0[c] * (0.2 + 0.4 * rand(rng)), 0.01); digits=2) for (_, c) in direct
+    ]
 
     big = 4.0 * (sum(supplies) + 2.0 * D0)
     arcs, caps = _ts_maxflow_network(
@@ -260,8 +278,9 @@ function TransshipmentProblem(target_variables::Int, feasibility_status::Feasibi
     end
     demands = max.(round.(load_factor * lambda_star .* d0; digits=2), 0.01)
     total_demand = sum(demands)
-    value, ext_flows, source_side, _, _ =
-        _network_flow_extended(N, arcs, caps, plant_nodes, supplies, cust_nodes, demands)
+    value, ext_flows, source_side, _, _ = _network_flow_extended(
+        N, arcs, caps, plant_nodes, supplies, cust_nodes, demands
+    )
 
     feasible_witness = nothing
     infeasibility_certificate = nothing
@@ -290,7 +309,8 @@ function TransshipmentProblem(target_variables::Int, feasibility_status::Feasibi
             error("transportation/transshipment: uncapacitated lane in min cut (seed $seed)")
         all(isfinite(inbound_capacity[l]) for l in in_lanes) ||
             error("transportation/transshipment: uncapacitated lane in min cut (seed $seed)")
-        entry = sum(inbound_capacity[l] for l in in_lanes; init=0.0) +
+        entry =
+            sum(inbound_capacity[l] for l in in_lanes; init=0.0) +
             sum(direct_capacity[l] for l in dir_lanes; init=0.0) +
             sum(throughput[h] for h in thr; init=0.0)
         infeasibility_certificate = TransshipmentCutCertificate(

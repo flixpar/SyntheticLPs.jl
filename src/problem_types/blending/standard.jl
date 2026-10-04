@@ -129,8 +129,11 @@ function _blend_build_network(rng::AbstractRNG, target::Int; extra=(grade, candi
         for _ in 1:n_lots
             class = rand(rng, class_dist)
             comp, c = _blend_lot(rng, class)
-            push!(kind, :scrap); push!(source, class); push!(comps, comp)
-            push!(cost, c); push!(yield, _BLEND_SCRAP_CLASSES[class].yield * rand(rng, Uniform(0.97, 1.02)))
+            push!(kind, :scrap)
+            push!(source, class)
+            push!(comps, comp)
+            push!(cost, c)
+            push!(yield, _BLEND_SCRAP_CLASSES[class].yield * rand(rng, Uniform(0.97, 1.02)))
             push!(site, p)
         end
     end
@@ -144,7 +147,10 @@ function _blend_build_network(rng::AbstractRNG, target::Int; extra=(grade, candi
         o = length(order_grade) + 1
         p = (o - 1) % n_plants + 1
         g = _blend_sample_grade(rng)
-        candidates = [i for i in eachindex(kind) if (site[i] == 0 || site[i] == p) && blend_compatible(mats, i, g)]
+        candidates = [
+            i for
+            i in eachindex(kind) if (site[i] == 0 || site[i] == p) && blend_compatible(mats, i, g)
+        ]
         push!(order_grade, g)
         push!(order_plant, p)
         first_pair = length(pairs) + 1
@@ -162,7 +168,9 @@ end
 
 Planted charge per pair, the windows widened around it, and its outputs.
 """
-function _blend_planted_orders(rng::AbstractRNG, mats::BlendMaterials, order_grade, pairs, order_pairs)
+function _blend_planted_orders(
+    rng::AbstractRNG, mats::BlendMaterials, order_grade, pairs, order_pairs
+)
     n_orders = length(order_grade)
     x = zeros(Float64, length(pairs))
     lo = zeros(Float64, length(BLEND_ELEMENTS), n_orders)
@@ -171,7 +179,9 @@ function _blend_planted_orders(rng::AbstractRNG, mats::BlendMaterials, order_gra
     for o in 1:n_orders
         ks = order_pairs[o]
         candidates = [pairs[k][1] for k in ks]
-        fractions, composition = _blend_recipe(rng, order_grade[o], candidates, mats.kind, mats.source, mats.comp)
+        fractions, composition = _blend_recipe(
+            rng, order_grade[o], candidates, mats.kind, mats.source, mats.comp
+        )
         out = clamp(rand(rng, LogNormal(log(40.0), 0.7)), 5.0, 400.0)
         mass = out / sum(fractions[j] * mats.yield[candidates[j]] for j in eachindex(candidates))
         x[ks] .= mass .* fractions
@@ -202,7 +212,9 @@ end
 Check a charge plan (tonnes per pair) against every row of a `BlendingProblem`.
 """
 function blend_charge_satisfies(
-    prob::BlendingProblem, x::Union{Nothing, AbstractVector{<:Real}}=prob.feasible_witness; atol::Float64=1e-7
+    prob::BlendingProblem,
+    x::Union{Nothing, AbstractVector{<:Real}}=prob.feasible_witness;
+    atol::Float64=1e-7,
 )
     x === nothing && return false
     length(x) == length(prob.pairs) || return false
@@ -234,7 +246,13 @@ end
 Recompute `(achievable, required)` of a blending certificate from instance data.
 """
 function blend_certificate_value(
-    cert::BlendInfeasibilityCertificate, pairs, order_pairs, mats::BlendMaterials, availability, lo, demand_min
+    cert::BlendInfeasibilityCertificate,
+    pairs,
+    order_pairs,
+    mats::BlendMaterials,
+    availability,
+    lo,
+    demand_min,
 )
     if cert.kind == blend_family_shortage
         materials = _blend_order_materials(pairs, order_pairs, cert.orders)
@@ -248,7 +266,9 @@ function blend_certificate_value(
         materials = [pairs[k][1] for k in order_pairs[o]]
         materials == cert.materials || return (NaN, NaN)
         a = [mats.comp[e, i] - lo[e, o] for i in materials]
-        achievable = _blend_max_excess(a, mats.yield[materials], availability[materials], demand_min[o])
+        achievable = _blend_max_excess(
+            a, mats.yield[materials], availability[materials], demand_min[o]
+        )
         required = 0.0
     end
     return achievable, required
@@ -256,9 +276,13 @@ end
 
 function _blend_certificate_holds(cert, pairs, order_pairs, mats, availability, lo, demand_min)
     cert === nothing && return false
-    achievable, required = blend_certificate_value(cert, pairs, order_pairs, mats, availability, lo, demand_min)
+    achievable, required = blend_certificate_value(
+        cert, pairs, order_pairs, mats, availability, lo, demand_min
+    )
     isfinite(required) || return false
-    isapprox(achievable, cert.achievable; rtol=1e-8, atol=1e-9) || achievable == cert.achievable || return false
+    isapprox(achievable, cert.achievable; rtol=1e-8, atol=1e-9) ||
+        achievable == cert.achievable ||
+        return false
     isapprox(required, cert.required; rtol=1e-8, atol=1e-9) || return false
     return achievable < required - 1e-9 * max(1.0, abs(required))
 end
@@ -269,8 +293,13 @@ end
 Recompute the stored certificate from the data and check `achievable < required`.
 """
 blend_certificate_holds(prob::BlendingProblem) = _blend_certificate_holds(
-    prob.infeasibility_certificate, prob.pairs, prob.order_pairs, prob.materials, prob.availability,
-    prob.lo, prob.demand_min,
+    prob.infeasibility_certificate,
+    prob.pairs,
+    prob.order_pairs,
+    prob.materials,
+    prob.availability,
+    prob.lo,
+    prob.demand_min,
 )
 
 """
@@ -280,7 +309,9 @@ Mutate `availability` so the instance is infeasible and return the certificate:
 an element shortage for one order (when one exists whose non-carrier materials
 alone lose at least 5% of the element target), else a family metal shortage.
 """
-function _blend_make_infeasible!(rng, availability, mats, order_grade, pairs, order_pairs, lo, demand_min)
+function _blend_make_infeasible!(
+    rng, availability, mats, order_grade, pairs, order_pairs, lo, demand_min
+)
     n_orders = length(order_grade)
     if rand(rng) < 0.4
         for o in shuffle(rng, collect(1:n_orders))
@@ -293,7 +324,8 @@ function _blend_make_infeasible!(rng, availability, mats, order_grade, pairs, or
                 upper = availability[materials]
                 cut = copy(upper)
                 cut[carriers] .= 0.0
-                _blend_max_excess(a, mats.yield[materials], cut, demand_min[o]) < -2 * margin || continue
+                _blend_max_excess(a, mats.yield[materials], cut, demand_min[o]) < -2 * margin ||
+                    continue
                 # Bisection on the carriers' availability (monotone in theta).
                 lo_t, hi_t = 0.0, 1.0
                 for _ in 1:60
@@ -305,8 +337,12 @@ function _blend_make_infeasible!(rng, availability, mats, order_grade, pairs, or
                 for (j, i) in enumerate(materials)
                     j in carriers && (availability[i] = lo_t * upper[j])
                 end
-                value = _blend_max_excess(a, mats.yield[materials], availability[materials], demand_min[o])
-                return BlendInfeasibilityCertificate(blend_element_shortage, [o], materials, e, value, 0.0)
+                value = _blend_max_excess(
+                    a, mats.yield[materials], availability[materials], demand_min[o]
+                )
+                return BlendInfeasibilityCertificate(
+                    blend_element_shortage, [o], materials, e, value, 0.0
+                )
             end
         end
     end
@@ -321,10 +357,13 @@ function _blend_make_infeasible!(rng, availability, mats, order_grade, pairs, or
         materials = _blend_order_materials(pairs, order_pairs, orders)
         required = sum(demand_min[o] for o in orders)
         theta = required / margin / sum(mats.yield[i] * availability[i] for i in materials)
-        solo(o) = theta * sum(mats.yield[pairs[k][1]] * availability[pairs[k][1]] for k in order_pairs[o]) /
-                  demand_min[o]
+        solo(o) =
+            theta *
+            sum(mats.yield[pairs[k][1]] * availability[pairs[k][1]] for k in order_pairs[o]) /
+            demand_min[o]
         slack = minimum(solo(o) for o in orders)
-        (best === nothing || slack > best[1]) && (best = (slack, orders, materials, required, theta))
+        (best === nothing || slack > best[1]) &&
+            (best = (slack, orders, materials, required, theta))
         slack >= 1.1 && break
     end
     _, orders, materials, required, theta = best
@@ -332,7 +371,9 @@ function _blend_make_infeasible!(rng, availability, mats, order_grade, pairs, or
         availability[i] *= theta
     end
     achievable = sum(mats.yield[i] * availability[i] for i in materials)
-    return BlendInfeasibilityCertificate(blend_family_shortage, orders, materials, 0, achievable, required)
+    return BlendInfeasibilityCertificate(
+        blend_family_shortage, orders, materials, 0, achievable, required
+    )
 end
 
 """
@@ -367,12 +408,15 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
         for i in 1:n_materials
             if mats.kind[i] == :scrap
                 p = mats.site[i]
-                availability[i] = plant_demand[p] * tightness * rand(rng, Uniform(0.3, 0.8)) / lots_at[p]
+                availability[i] =
+                    plant_demand[p] * tightness * rand(rng, Uniform(0.3, 0.8)) / lots_at[p]
             elseif mats.kind[i] == :primary
                 availability[i] = total * tightness * rand(rng, Uniform(0.15, 0.35))
             else
                 e = _BLEND_HARDENERS[mats.source[i]].element
-                need = sum(demand_min[o] * _BLEND_GRADES[order_grade[o]].hi[e] for o in 1:n_orders) / mats.comp[e, i]
+                need =
+                    sum(demand_min[o] * _BLEND_GRADES[order_grade[o]].hi[e] for o in 1:n_orders) /
+                    mats.comp[e, i]
                 availability[i] = max(need, 1.0) * rand(rng, Uniform(0.6, 2.0))
             end
         end
@@ -382,22 +426,45 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
         demand_max = output .* rand(rng, Uniform(1.15, 1.80), n_orders)
         usage = _blend_usage(n_materials, pairs, x)
         for i in 1:n_materials
-            slack = mats.kind[i] == :scrap ? rand(rng, Uniform(1.02, 1.30)) :
-                    mats.kind[i] == :primary ? rand(rng, Uniform(1.05, 1.40)) : rand(rng, Uniform(1.1, 2.0))
-            availability[i] = usage[i] > 0 ? usage[i] * slack :
-                              clamp(rand(rng, LogNormal(log(30.0), 0.7)), 2.0, 300.0)
+            slack = if mats.kind[i] == :scrap
+                rand(rng, Uniform(1.02, 1.30))
+            elseif mats.kind[i] == :primary
+                rand(rng, Uniform(1.05, 1.40))
+            else
+                rand(rng, Uniform(1.1, 2.0))
+            end
+            availability[i] = if usage[i] > 0
+                usage[i] * slack
+            else
+                clamp(rand(rng, LogNormal(log(30.0), 0.7)), 2.0, 300.0)
+            end
         end
         witness = x
     end
 
     certificate = nothing
     if feasibility_status == infeasible
-        certificate = _blend_make_infeasible!(rng, availability, mats, order_grade, pairs, order_pairs, lo, demand_min)
+        certificate = _blend_make_infeasible!(
+            rng, availability, mats, order_grade, pairs, order_pairs, lo, demand_min
+        )
         witness = nothing
     end
     prob = BlendingProblem(
-        n_plants, mats, availability, order_grade, order_plant, pairs, order_pairs, lo, hi, demand_min,
-        demand_max, price, witness, certificate, feasibility_status,
+        n_plants,
+        mats,
+        availability,
+        order_grade,
+        order_plant,
+        pairs,
+        order_pairs,
+        lo,
+        hi,
+        demand_min,
+        demand_max,
+        price,
+        witness,
+        certificate,
+        feasibility_status,
     )
     feasibility_status == feasible && @assert blend_charge_satisfies(prob)
     feasibility_status == infeasible && @assert blend_certificate_holds(prob)
@@ -415,7 +482,9 @@ bind. Composition rows are written in element-mass form,
 than the differences `comp − lo`, which cancel to tiny numbers for materials
 close to the limit and make the simplex bases badly conditioned.
 """
-function _blend_add_order_rows!(model, x, charge, mats::BlendMaterials, pairs, ks, lo, hi, dmin, dmax)
+function _blend_add_order_rows!(
+    model, x, charge, mats::BlendMaterials, pairs, ks, lo, hi, dmin, dmax
+)
     materials = [pairs[k][1] for k in ks]
     @constraint(model, sum(x[k] for k in ks) - charge == 0)
     @constraint(model, sum(mats.yield[pairs[k][1]] * x[k] for k in ks) >= dmin)
@@ -423,7 +492,9 @@ function _blend_add_order_rows!(model, x, charge, mats::BlendMaterials, pairs, k
     mins, maxs = _blend_active_rows(mats.comp, materials, lo, hi)
     for e in mins
         carriers = [k for k in ks if mats.comp[e, pairs[k][1]] > 0]
-        @constraint(model, sum(mats.comp[e, pairs[k][1]] * x[k] for k in carriers) - lo[e] * charge >= 0)
+        @constraint(
+            model, sum(mats.comp[e, pairs[k][1]] * x[k] for k in carriers) - lo[e] * charge >= 0
+        )
     end
     return maxs
 end
@@ -431,7 +502,9 @@ end
 """Element-mass maximum row `Σ_i comp[e,i] x[i] − hi · charge ≤ 0` of one order."""
 function _blend_max_row_expr(x, charge, mats::BlendMaterials, pairs, ks, e, hi)
     carriers = [k for k in ks if mats.comp[e, pairs[k][1]] > 0]
-    return @expression(owner_model(charge), sum(mats.comp[e, pairs[k][1]] * x[k] for k in carriers) - hi * charge)
+    return @expression(
+        owner_model(charge), sum(mats.comp[e, pairs[k][1]] * x[k] for k in carriers) - hi * charge
+    )
 end
 
 """
@@ -448,15 +521,29 @@ function build_model(prob::BlendingProblem)
     @objective(
         model,
         Max,
-        sum((prob.price[o] * mats.yield[i] - mats.cost[i]) * x[k] for (k, (i, o)) in enumerate(prob.pairs))
+        sum(
+            (prob.price[o] * mats.yield[i] - mats.cost[i]) * x[k] for
+            (k, (i, o)) in enumerate(prob.pairs)
+        )
     )
     for (o, ks) in enumerate(prob.order_pairs)
         maxs = _blend_add_order_rows!(
-            model, x, charge[o], mats, prob.pairs, ks, view(prob.lo, :, o), view(prob.hi, :, o),
-            prob.demand_min[o], prob.demand_max[o],
+            model,
+            x,
+            charge[o],
+            mats,
+            prob.pairs,
+            ks,
+            view(prob.lo, :, o),
+            view(prob.hi, :, o),
+            prob.demand_min[o],
+            prob.demand_max[o],
         )
         for e in maxs
-            @constraint(model, _blend_max_row_expr(x, charge[o], mats, prob.pairs, ks, e, prob.hi[e, o]) <= 0)
+            @constraint(
+                model,
+                _blend_max_row_expr(x, charge[o], mats, prob.pairs, ks, e, prob.hi[e, o]) <= 0
+            )
         end
     end
     uses = [Int[] for _ in eachindex(prob.availability)]

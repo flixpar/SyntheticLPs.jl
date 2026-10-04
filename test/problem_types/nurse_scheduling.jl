@@ -19,8 +19,10 @@ function nurse_rows_hold(p, x; tol=1e-9)
     all(act(v) <= 1 + tol for (_, _, v) in rows.one_per_day) || return false
     all(p.min_shifts[n] - tol <= act(v) <= p.max_shifts[n] + tol for (n, v) in rows.totals) ||
         return false
-    all(p.weekend_bounds[n][1] - tol <= act(v) <= p.weekend_bounds[n][2] + tol for (n, v) in rows.weekends) ||
-        return false
+    all(
+        p.weekend_bounds[n][1] - tol <= act(v) <= p.weekend_bounds[n][2] + tol for
+        (n, v) in rows.weekends
+    ) || return false
     all(act(v) <= p.night_limits[n] + tol for (n, v) in rows.nights) || return false
     all(act(v) <= p.max_consecutive_days[n] + tol for (n, _, v) in rows.windows) || return false
     all(act(v) <= 1 + tol for (_, _, _, v) in rows.rests) || return false
@@ -95,8 +97,10 @@ end
         mr, _ = generate_problem(:nurse_scheduling, target, status, 7)
         @test count(is_binary, all_variables(mr)) == 0
         @test all(
-            has_lower_bound(v) && lower_bound(v) == 0.0 && has_upper_bound(v) && upper_bound(v) == 1.0
-            for v in all_variables(mr)
+            has_lower_bound(v) &&
+                lower_bound(v) == 0.0 &&
+                has_upper_bound(v) &&
+                upper_bound(v) == 1.0 for v in all_variables(mr)
         )
     end
 
@@ -177,7 +181,8 @@ end
                 expected = status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE
                 @test termination_status(m) == expected
                 # Infeasibility takes simplex work, not presolve alone.
-                status == infeasible && target >= 3000 &&
+                status == infeasible &&
+                    target >= 3000 &&
                     @test MOI.get(m, MOI.SimplexIterations()) > 0
             end
 

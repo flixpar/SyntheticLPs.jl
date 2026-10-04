@@ -52,7 +52,7 @@ end
             @test all(>=(0), μ)
             lp = Model(HiGHS.Optimizer)
             set_silent(lp)
-            @variable(lp, 0 <= x[i=1:n] <= caps[i])
+            @variable(lp, 0 <= x[i = 1:n] <= caps[i])
             @constraint(lp, sum(x) == 1)
             for g in 1:3
                 @constraint(lp, sum(x[i] for i in 1:n if groups[i] == g) >= floors[g])
@@ -69,8 +69,10 @@ end
     # of vertices in a tiny case.
     values = [0.3, -0.2, 0.1, 0.5]
     caps = [0.5, 0.4, 0.6, 0.3]
-    @test SyntheticLPs._portfolio_extreme_on_capped_simplex(values, caps, :min) ≈ 0.4 * -0.2 + 0.6 * 0.1
-    @test SyntheticLPs._portfolio_extreme_on_capped_simplex(values, caps, :max) ≈ 0.3 * 0.5 + 0.5 * 0.3 + 0.2 * 0.1
+    @test SyntheticLPs._portfolio_extreme_on_capped_simplex(values, caps, :min) ≈
+        0.4 * -0.2 + 0.6 * 0.1
+    @test SyntheticLPs._portfolio_extreme_on_capped_simplex(values, caps, :max) ≈
+        0.3 * 0.5 + 0.5 * 0.3 + 0.2 * 0.1
 end
 
 @testset "Portfolio Sizing and Scale" begin
@@ -89,7 +91,8 @@ end
         mk = prob.market
         K = SyntheticLPs._portfolio_n_factors(mk)
         @test num_variables(model) == length(prob.investable) + K + mk.n_scenarios == target
-        @test num_constraints(model; count_variable_in_set_constraints=false) == 2 * mk.n_scenarios + K + 2
+        @test num_constraints(model; count_variable_in_set_constraints=false) ==
+            2 * mk.n_scenarios + K + 2
     end
     for v in (:cvar, :tracking_error), target in (3, 20)
         model, _ = generate_problem(:portfolio, target, unknown, 1; variant=v)
@@ -106,7 +109,9 @@ end
 @testset "Portfolio CVaR Witness and Certificates" begin
     modes = Dict{Symbol, Int}()
     for seed in 1:30
-        _, prob = generate_problem(:portfolio, 600, seed <= 6 ? feasible : infeasible, seed; variant=:cvar)
+        _, prob = generate_problem(
+            :portfolio, 600, seed <= 6 ? feasible : infeasible, seed; variant=:cvar
+        )
         mk = prob.market
         n = mk.n_assets
         ns = 1 + mk.n_styles
@@ -123,7 +128,9 @@ end
             @test all(f[(ns + 1):end] .<= prob.sector_upper .+ 1e-12)
             regions = SyntheticLPs._portfolio_group_sums(x, prob.region, length(prob.region_upper))
             @test all(regions .<= prob.region_upper .+ 1e-12)
-            classes = SyntheticLPs._portfolio_group_sums(x, prob.asset_class, length(prob.class_lower))
+            classes = SyntheticLPs._portfolio_group_sums(
+                x, prob.asset_class, length(prob.class_lower)
+            )
             @test all(prob.class_lower .- 1e-12 .<= classes .<= prob.class_upper .+ 1e-12)
             @test sum(abs.(x .- mk.benchmark)) ≈ w.turnover
             @test w.turnover < prob.turnover_limit
@@ -155,7 +162,9 @@ end
                 @test all(>=(0), μ)
                 bound = λ + sum(μ .* prob.class_lower)
                 for i in 1:n
-                    bound += min(0.0, cert.asset_tail_loss[i] - λ - μ[prob.asset_class[i]]) * prob.max_position[i]
+                    bound +=
+                        min(0.0, cert.asset_tail_loss[i] - λ - μ[prob.asset_class[i]]) *
+                        prob.max_position[i]
                 end
                 @test bound ≈ cert.loss_bound
                 @test cert.cvar_limit == prob.cvar_limit <= 0.85 * cert.loss_bound
@@ -166,7 +175,8 @@ end
             else
                 @test cert isa SyntheticLPs.TurnoverSectorCertificate
                 bench_sector = SyntheticLPs._portfolio_exposures(mk, mk.benchmark)[(ns + 1):end]
-                @test sum(bench_sector[g] - prob.sector_upper[g] for g in cert.sectors) ≈ cert.deficit
+                @test sum(bench_sector[g] - prob.sector_upper[g] for g in cert.sectors) ≈
+                    cert.deficit
                 @test cert.turnover_limit == prob.turnover_limit <= 0.85 * 2 * cert.deficit
             end
         end
@@ -198,12 +208,16 @@ end
         @test cert isa SyntheticLPs.TrackingErrorCertificate
         energy = findall(==(bad.energy_sector), bad.market.sector)
         @test issubset(energy, bad.excluded)
-        @test maximum(bad.market.style_loadings[bad.investable, cert.factor]) ≈ cert.max_investable_loading
+        @test maximum(bad.market.style_loadings[bad.investable, cert.factor]) ≈
+            cert.max_investable_loading
         @test cert.band_lower == bad.exposure_lower[cert.factor]
         @test cert.band_lower > cert.max_investable_loading + 1e-3
         # The factor row alone is satisfiable under the caps (no single-row
         # presolve contradiction); only the budget row exposes it.
-        row_max = sum(max(bad.market.style_loadings[i, cert.factor], 0.0) * bad.max_position[i] for i in bad.investable)
+        row_max = sum(
+            max(bad.market.style_loadings[i, cert.factor], 0.0) * bad.max_position[i] for
+            i in bad.investable
+        )
         @test row_max > cert.band_lower
         @test !isempty(prob.excluded)
     end
@@ -235,9 +249,13 @@ end
             return termination_status(model)
         end
         for v in (:cvar, :tracking_error), seed in 1:4
-            model, _ = generate_problem(:portfolio, 500, feasible, seed; variant=v, optimizer=HiGHS.Optimizer)
+            model, _ = generate_problem(
+                :portfolio, 500, feasible, seed; variant=v, optimizer=HiGHS.Optimizer
+            )
             @test solve_status(model) == MOI.OPTIMAL
-            model, _ = generate_problem(:portfolio, 500, infeasible, seed; variant=v, optimizer=HiGHS.Optimizer)
+            model, _ = generate_problem(
+                :portfolio, 500, infeasible, seed; variant=v, optimizer=HiGHS.Optimizer
+            )
             @test solve_status(model) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
         end
         # `unknown` is the natural mandate with no repair: both outcomes occur.

@@ -192,12 +192,9 @@ function build_model(prob::NoisyInverseLPProblem)
         # infeasible profile (status UNKNOWN after the dual ray grows to 1e8).
         for k in 1:K
             budget =
-                K * prob.gap_tolerance +
-                dot(@view(prob.observed_decisions[k, :]), data.cost_upper)
+                K * prob.gap_tolerance + dot(@view(prob.observed_decisions[k, :]), data.cost_upper)
             for i in 1:m
-                set_upper_bound(
-                    shadow_price[k, i], budget / prob.capacities[k, i] * (1.0 + 1.0e-9)
-                )
+                set_upper_bound(shadow_price[k, i], budget / prob.capacities[k, i] * (1.0 + 1.0e-9))
             end
         end
     end

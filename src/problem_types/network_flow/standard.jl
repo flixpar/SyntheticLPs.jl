@@ -291,11 +291,15 @@ function NetworkFlowProblem(target_variables::Int, feasibility_status::Feasibili
     # Exact network limit with unlimited supply, then size supply above it so
     # the binding limits are the network's, then the exact limit with supplies.
     unlimited = fill(sum(capacities) + 1.0, n_supply)
-    lambda_net = _network_flow_max_scale(n, arcs, capacities, supply_nodes, unlimited, demand_nodes, d0)
+    lambda_net = _network_flow_max_scale(
+        n, arcs, capacities, supply_nodes, unlimited, demand_nodes, d0
+    )
     total_supply = (1.15 + 0.45 * rand(rng)) * lambda_net * sum(d0)
     supply_caps = round.(total_supply .* supply_weight ./ sum(supply_weight); digits=2)
     supply_caps = max.(supply_caps, 0.01)
-    lambda_star = _network_flow_max_scale(n, arcs, capacities, supply_nodes, supply_caps, demand_nodes, d0)
+    lambda_star = _network_flow_max_scale(
+        n, arcs, capacities, supply_nodes, supply_caps, demand_nodes, d0
+    )
 
     load_factor = if feasibility_status == feasible
         0.55 + 0.35 * rand(rng)
@@ -328,7 +332,9 @@ function NetworkFlowProblem(target_variables::Int, feasibility_status::Feasibili
         on_source_side = falses(n + 2)
         on_source_side[source_side] .= true
         region = [v for v in 1:n if !on_source_side[v]]
-        inbound_arcs = [k for (k, (u, v)) in enumerate(arcs) if on_source_side[u] && !on_source_side[v]]
+        inbound_arcs = [
+            k for (k, (u, v)) in enumerate(arcs) if on_source_side[u] && !on_source_side[v]
+        ]
         infeasibility_certificate = NetworkFlowCutCertificate(
             region,
             inbound_arcs,
@@ -379,7 +385,8 @@ function build_model(prob::NetworkFlowProblem)
     is_supply = falses(n)
     is_supply[prob.supply_nodes] .= true
     for v in 1:n
-        net_out = sum(flow[k] for k in out_adj[v]; init=AffExpr(0.0)) -
+        net_out =
+            sum(flow[k] for k in out_adj[v]; init=AffExpr(0.0)) -
             sum(flow[k] for k in in_adj[v]; init=AffExpr(0.0))
         if is_supply[v]
             @constraint(model, net_out <= prob.supplies[v])

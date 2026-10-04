@@ -154,7 +154,10 @@ function _lb_candidate_paths(
     found = [Vector{Vector{Int}}() for _ in dests]
     seen = [Set{Vector{Int}}() for _ in dests]
     for _ in 1:n_iter
-        lens = [latency[a] * exp(0.7 * uses[a]) * rand(rng, LogNormal(0.0, 0.1)) for a in eachindex(links)]
+        lens = [
+            latency[a] * exp(0.7 * uses[a]) * rand(rng, LogNormal(0.0, 0.1)) for
+            a in eachindex(links)
+        ]
         _, pred = _geo_dijkstra(n, links, out_adj, lens, [origin])
         tree_links = Set{Int}()
         for (i, d) in enumerate(dests)
@@ -179,7 +182,9 @@ function _lb_candidate_paths(
     return found
 end
 
-function LoadBalancingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function LoadBalancingProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     target_variables >= 1 ||
         throw(ArgumentError("target_variables must be >= 1 (got $target_variables)."))
     target_variables <= LOAD_BALANCING_MAX_VARIABLES || throw(
@@ -211,7 +216,10 @@ function LoadBalancingProblem(target_variables::Int, feasibility_status::Feasibi
     # background traffic (with two paths its demand row would just be a
     # doubleton that presolve substitutes away).
     all_pairs = [(o, d) for o in 1:n for d in 1:n if o != d]
-    gravity = [weights[o] * weights[d] / (1 + _geo_dist(positions, o, d) / length_scale) for (o, d) in all_pairs]
+    gravity = [
+        weights[o] * weights[d] / (1 + _geo_dist(positions, o, d) / length_scale) for
+        (o, d) in all_pairs
+    ]
     order = sample(rng, eachindex(all_pairs), Weights(gravity), length(all_pairs); replace=false)
     n_iter = rand(rng, 5:8)
     od_pairs = Tuple{Int, Int}[]
@@ -307,7 +315,8 @@ function LoadBalancingProblem(target_variables::Int, feasibility_status::Feasibi
     ]
     planted_util = maximum(load[a] / capacities[a] for a in 1:L)
     latency_weight = round(
-        (0.05 + 0.25 * rand(rng)) / ((sum(demands) + sum(background) / 5) * mean(latency) * 5); sigdigits=4
+        (0.05 + 0.25 * rand(rng)) / ((sum(demands) + sum(background) / 5) * mean(latency) * 5);
+        sigdigits=4,
     )
 
     # Local repair at the SLA, with 15% slack: every link carries its forced
@@ -377,7 +386,8 @@ function LoadBalancingProblem(target_variables::Int, feasibility_status::Feasibi
         end
         cap_len = max_utilization * sum(capacities .* lengths)
         required = required_of()
-        cap_len < required || error("load_balancing/standard: certificate failed to separate (seed $seed)")
+        cap_len < required ||
+            error("load_balancing/standard: certificate failed to separate (seed $seed)")
         infeasibility_certificate = LoadBalancingCertificate(lengths, cap_len, required)
     else
         growth = (max_utilization / planted_util) * (0.6 + 0.6 * rand(rng))
@@ -434,7 +444,8 @@ function build_model(prob::LoadBalancingProblem)
         (isempty(on_link[a]) && prob.background[a] == 0) && continue
         @constraint(
             model,
-            sum(x[p] for p in on_link[a]; init=AffExpr(0.0)) - prob.capacities[a] * U <= -prob.background[a]
+            sum(x[p] for p in on_link[a]; init=AffExpr(0.0)) - prob.capacities[a] * U <=
+                -prob.background[a]
         )
     end
     return model

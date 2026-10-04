@@ -98,7 +98,9 @@ struct TrackingErrorPortfolioProblem <: ProblemGenerator
 end
 
 """Mean absolute active return of full-universe weights `x` against benchmark returns."""
-function _tracking_error(market::PortfolioMarket, x::Vector{Float64}, benchmark_returns::Vector{Float64})
+function _tracking_error(
+    market::PortfolioMarket, x::Vector{Float64}, benchmark_returns::Vector{Float64}
+)
     active = _portfolio_scenario_returns(market, x) .- benchmark_returns
     return sum(abs, active) / length(active)
 end
@@ -134,10 +136,14 @@ function TrackingErrorPortfolioProblem(
     # Exclusions: a small random ESG list (never energy-only here).
     infeasible_request = feasibility_status == infeasible
     n_random_excl = clamp(round(Int, n * rand(rng, Uniform(0.01, 0.04))), 1, n ÷ 4)
-    excluded = sort(unique(vcat(
-        _portfolio_distinct(rng, n, n_random_excl),
-        infeasible_request ? energy_names : Int[],
-    )))
+    excluded = sort(
+        unique(
+            vcat(
+                _portfolio_distinct(rng, n, n_random_excl),
+                infeasible_request ? energy_names : Int[],
+            ),
+        ),
+    )
     investable = setdiff(1:n, excluded)
     n_inv = length(investable)
     S = max(10, V - n_inv - K)
@@ -154,7 +160,8 @@ function TrackingErrorPortfolioProblem(
     )
     commodity = 1 + n_styles                               # column in style_loadings
     for i in 1:n
-        market.style_loadings[i, commodity] = sector[i] == 1 ? rand(rng, Uniform(1.5, 3.0)) : rand(rng, Uniform(-0.01, 0.1))
+        market.style_loadings[i, commodity] =
+            sector[i] == 1 ? rand(rng, Uniform(1.5, 3.0)) : rand(rng, Uniform(-0.01, 0.1))
     end
     # Energy names are a meaningful share of the cap-weighted benchmark.
     b = market.benchmark
@@ -217,7 +224,8 @@ function TrackingErrorPortfolioProblem(
         # Keep the factor row satisfiable on its own under the position caps
         # (Σ_{B>0} B·cap above the band), so only the budget row exposes the
         # contradiction — presolve's single-row activity check cannot.
-        row_max() = sum(max(loadings[j], 0.0) * max_position[investable[j]] for j in eachindex(investable))
+        row_max() =
+            sum(max(loadings[j], 0.0) * max_position[investable[j]] for j in eachindex(investable))
         if 0.9 * row_max() < 1.5 * max_loading
             factor = 1.5 * max_loading / (0.9 * row_max())
             for i in investable
@@ -228,7 +236,8 @@ function TrackingErrorPortfolioProblem(
         gap = ceiling - max_loading
         gap > 1e-3 || error("internal: commodity exposure gap not positive")
         exposure_lower[commodity] = max_loading + gap * rand(rng, Uniform(0.3, 0.6))
-        exposure_upper[commodity] = bench_exposure[commodity] + (bench_exposure[commodity] - exposure_lower[commodity])
+        exposure_upper[commodity] =
+            bench_exposure[commodity] + (bench_exposure[commodity] - exposure_lower[commodity])
         certificate = TrackingErrorCertificate(commodity, max_loading, exposure_lower[commodity])
     end
 
@@ -260,8 +269,8 @@ function build_model(prob::TrackingErrorPortfolioProblem)
     K = _portfolio_n_factors(market)
     n_style_cols = 1 + market.n_styles
 
-    @variable(model, 0 <= x[j=1:length(prob.investable)] <= prob.max_position[prob.investable[j]])
-    @variable(model, prob.exposure_lower[k] <= exposure[k=1:K] <= prob.exposure_upper[k])
+    @variable(model, 0 <= x[j = 1:length(prob.investable)] <= prob.max_position[prob.investable[j]])
+    @variable(model, prob.exposure_lower[k] <= exposure[k = 1:K] <= prob.exposure_upper[k])
     @variable(model, u[1:S] >= 0)
 
     asset_var = Vector{Union{Nothing, VariableRef}}(nothing, n)
@@ -279,7 +288,11 @@ function build_model(prob::TrackingErrorPortfolioProblem)
         expr = AffExpr(0.0)
         add_to_expression!(expr, 1.0, exposure[k])
         for (j, i) in enumerate(prob.investable)
-            loading = k <= n_style_cols ? market.style_loadings[i, k] : (market.sector[i] == k - n_style_cols ? 1.0 : 0.0)
+            loading = if k <= n_style_cols
+                market.style_loadings[i, k]
+            else
+                (market.sector[i] == k - n_style_cols ? 1.0 : 0.0)
+            end
             iszero(loading) || add_to_expression!(expr, -loading, x[j])
         end
         @constraint(model, expr == 0)

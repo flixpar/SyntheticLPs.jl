@@ -119,7 +119,9 @@ _reserve_offer(c::EnergyDispatchCore, spin_max, nonspin_max, t::Int) = sum(
 Build a reserve co-optimization dispatch instance with about `target_variables`
 columns. See the type docstring.
 """
-function ReservesDispatchProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function ReservesDispatchProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
     T, Z, layout, per_period = _ed_dimensions(rng, target_variables)
     L = length(layout[3])
@@ -149,7 +151,9 @@ function ReservesDispatchProblem(target_variables::Int, feasibility_status::Feas
         spin_cost[g] = spin_max[g] > 0 ? _e_unif(rng, (2.0, 9.0)) + 0.05 * core.cost[g] : 0.0
         nonspin_cost[g] = nonspin_max[g] > 0 ? _e_unif(rng, (0.5, 4.0)) : 0.0
     end
-    ranked = sort([g for g in 1:G if !(core.unit_tech[g] in (:wind, :solar))]; by=g -> -core.capacity[g])
+    ranked = sort(
+        [g for g in 1:G if !(core.unit_tech[g] in (:wind, :solar))]; by=g -> -core.capacity[g]
+    )
     k = clamp(round(Int, 0.04 * G), 1, 25)
 
     if feasibility_status == unknown
@@ -161,8 +165,10 @@ function ReservesDispatchProblem(target_variables::Int, feasibility_status::Feas
         contingency_units = [g for g in ranked if core.capacity[g] <= 0.8 * spin_capability]
         contingency_units = contingency_units[1:min(k, length(contingency_units))]
         op_req = [
-            min(op_frac * _ed_system_demand(core, t), 0.9 * _reserve_offer(core, spin_max, nonspin_max, t)) for
-            t in 1:T
+            min(
+                op_frac * _ed_system_demand(core, t),
+                0.9 * _reserve_offer(core, spin_max, nonspin_max, t),
+            ) for t in 1:T
         ]
         zone_req = zeros(Z, T)
         for z in 1:Z
@@ -180,7 +186,8 @@ function ReservesDispatchProblem(target_variables::Int, feasibility_status::Feas
         for g in 1:G, t in 1:T
             head = _ed_upper(core, g, t) - x[g, t]
             head <= 0 && continue
-            ramp_room = (_ed_ramped(core, g) && t >= 2) ? core.ramp_up[g] - (x[g, t] - x[g, t - 1]) : Inf
+            ramp_room =
+                (_ed_ramped(core, g) && t >= 2) ? core.ramp_up[g] - (x[g, t] - x[g, t - 1]) : Inf
             spin[g, t] = 0.7 * max(0.0, min(spin_max[g], head, ramp_room))
             nonspin[g, t] = 0.7 * max(0.0, min(nonspin_max[g], head - spin[g, t]))
         end
@@ -193,8 +200,11 @@ function ReservesDispatchProblem(target_variables::Int, feasibility_status::Feas
             end
         end
         contingency = [
-            isempty(contingency_units) ? 0.0 : maximum(x[h, t] + spin[h, t] for h in contingency_units)
-            for t in 1:T
+            if isempty(contingency_units)
+                0.0
+            else
+                maximum(x[h, t] + spin[h, t] for h in contingency_units)
+            end for t in 1:T
         ]
         carried = vec(sum(spin .+ nonspin; dims=1))
         op_req = [min(op_frac * _ed_system_demand(core, t), 0.9 * carried[t]) for t in 1:T]
@@ -210,7 +220,9 @@ function ReservesDispatchProblem(target_variables::Int, feasibility_status::Feas
         if feasibility_status == infeasible
             witness = nothing
             m = _e_unif(rng, (0.04, 0.10))
-            stress = [(_ed_system_demand(core, t) + op_req[t]) / _ed_system_upper(core, t) for t in 1:T]
+            stress = [
+                (_ed_system_demand(core, t) + op_req[t]) / _ed_system_upper(core, t) for t in 1:T
+            ]
             for t in sortperm(stress; rev=true)
                 cap_t = _ed_system_upper(core, t)
                 offer = _reserve_offer(core, spin_max, nonspin_max, t)
@@ -264,9 +276,9 @@ function build_model(prob::ReservesDispatchProblem)
 
     spin_units = [g for g in 1:G if prob.spin_max[g] > 0]
     nonspin_units = [g for g in 1:G if prob.nonspin_max[g] > 0]
-    @variable(model, 0 <= spin[g in spin_units, t=1:T] <= prob.spin_max[g])
-    @variable(model, 0 <= nonspin[g in nonspin_units, t=1:T] <= prob.nonspin_max[g])
-    @variable(model, contingency[t=1:T] >= 0)
+    @variable(model, 0 <= spin[g in spin_units, t = 1:T] <= prob.spin_max[g])
+    @variable(model, 0 <= nonspin[g in nonspin_units, t = 1:T] <= prob.nonspin_max[g])
+    @variable(model, contingency[t = 1:T] >= 0)
     has_spin = falses(G)
     has_spin[spin_units] .= true
     has_nonspin = falses(G)
@@ -303,7 +315,9 @@ function build_model(prob::ReservesDispatchProblem)
         end
     end
     for t in 1:T
-        @constraint(model, sum(spin[g, t] for g in spin_units; init=AffExpr(0.0)) - contingency[t] >= 0)
+        @constraint(
+            model, sum(spin[g, t] for g in spin_units; init=AffExpr(0.0)) - contingency[t] >= 0
+        )
         op = AffExpr(0.0)
         for g in spin_units
             add_to_expression!(op, 1.0, spin[g, t])

@@ -25,7 +25,10 @@
     end
 
     @testset "standard: sizing, recipes, certificates" begin
-        for target in (10, 50, 300, 2_000, 12_000), status in (feasible, infeasible, unknown), seed in 0:2
+        for target in (10, 50, 300, 2_000, 12_000),
+            status in (feasible, infeasible, unknown),
+            seed in 0:2
+
             model, p = generate_problem("blending/standard", target, status, seed)
             n = length(p.pairs) + length(p.order_grade)
             @test num_variables(model) == n
@@ -53,7 +56,10 @@
     end
 
     @testset "multi_period: sizing, plan, certificate" begin
-        for target in (30, 50, 300, 2_000, 12_000), status in (feasible, infeasible, unknown), seed in 0:2
+        for target in (30, 50, 300, 2_000, 12_000),
+            status in (feasible, infeasible, unknown),
+            seed in 0:2
+
             model, p = generate_problem("blending/multi_period", target, status, seed)
             nI = length(p.materials.kind)
             grade_slots = sum(length(p.portfolio[k]) for k in 1:p.n_plants) * p.n_periods
@@ -70,7 +76,9 @@
         end
         _, p = generate_problem("blending/multi_period", 900, feasible, 1)
         w = p.feasible_witness
-        @test !S.mp_plan_satisfies(p, S.MultiPeriodBlendingPlan(w.blend, w.charge, w.buy .* 0.5, w.stock, w.finished))
+        @test !S.mp_plan_satisfies(
+            p, S.MultiPeriodBlendingPlan(w.blend, w.charge, w.buy .* 0.5, w.stock, w.finished)
+        )
     end
 
     @testset "robust: sizing, protection, plan" begin
@@ -79,9 +87,16 @@
         @test beta ≈ 5.0 + 0.5 * 3.0
         @test z ≈ 3.0 && pr ≈ [2.0, 0.0, 0.0]
         @test 1.5 * z + sum(pr) ≈ beta
-        for target in (30, 50, 300, 2_000, 12_000), status in (feasible, infeasible, unknown), seed in 0:2
+        for target in (30, 50, 300, 2_000, 12_000),
+            status in (feasible, infeasible, unknown),
+            seed in 0:2
+
             model, p = generate_problem("blending/robust", target, status, seed)
-            n = length(p.pairs) + length(p.order_grade) + length(p.robust_rows) + length(p.robust_terms)
+            n =
+                length(p.pairs) +
+                length(p.order_grade) +
+                length(p.robust_rows) +
+                length(p.robust_terms)
             @test num_variables(model) == n
             @test n >= target
             @test all(p.materials.kind[p.pairs[k][1]] == :scrap for (_, k) in p.robust_terms)
@@ -94,7 +109,9 @@
         end
         _, p = generate_problem("blending/robust", 900, feasible, 2)
         w = p.feasible_witness
-        @test !S.robust_plan_satisfies(p, S.RobustBlendPlan(w.charge_plan, zero(w.protection), zero(w.excess)))
+        @test !S.robust_plan_satisfies(
+            p, S.RobustBlendPlan(w.charge_plan, zero(w.protection), zero(w.excess))
+        )
     end
 
     @testset "reproducibility and global-RNG isolation" begin
@@ -103,8 +120,12 @@
             _, p2 = generate_problem(ref, 600, feasible, 31)
             for f in fieldnames(typeof(p1))
                 a, b = getfield(p1, f), getfield(p2, f)
-                if a isa S.BlendMaterials || a isa S.RobustBlendPlan || a isa S.MultiPeriodBlendingPlan
-                    @test all(isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a)))
+                if a isa S.BlendMaterials ||
+                    a isa S.RobustBlendPlan ||
+                    a isa S.MultiPeriodBlendingPlan
+                    @test all(
+                        isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a))
+                    )
                 else
                     @test isequal(a, b)
                 end
@@ -120,7 +141,8 @@
     @testset "HiGHS feasibility contracts" begin
         if HAS_HIGHS
             for ref in ("blending/standard", "blending/multi_period", "blending/robust"),
-                target in (60, 600), seed in 0:3
+                target in (60, 600),
+                seed in 0:3
 
                 model, _ = generate_problem(ref, target, feasible, seed)
                 set_optimizer(model, HiGHS.Optimizer)
@@ -134,7 +156,8 @@
                 set_optimizer(model, HiGHS.Optimizer)
                 set_silent(model)
                 optimize!(model)
-                @test termination_status(model) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED, MOI.OTHER_ERROR)
+                @test termination_status(model) in
+                    (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED, MOI.OTHER_ERROR)
                 @test termination_status(model) != MOI.OPTIMAL
             end
             # The framework backstop agrees with the planted contract.

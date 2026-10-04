@@ -55,7 +55,10 @@ end
             _, p = generate_problem("knapsack/multiple_choice", target, infeasible, seed)
             c = p.infeasibility_certificate
             @test c !== nothing && p.feasible_witness === nothing
-            mins = [minimum(p.shared_usage[c.resource, j] for j in p.class_options[g]) for g in 1:p.n_classes]
+            mins = [
+                minimum(p.shared_usage[c.resource, j] for j in p.class_options[g]) for
+                g in 1:p.n_classes
+            ]
             @test c.min_usage ≈ mins
             @test c.min_usage_total ≈ sum(mins)
             @test c.capacity == p.shared_capacity[c.resource]
@@ -91,7 +94,10 @@ end
             loc = SyntheticLPs._mdkp_local_totals(sel, p.window_start, p.local_usage, p.n_local)
             @test all(loc .<= p.local_capacity)
             @test all(p.global_usage * sel .<= p.global_capacity)
-            @test all(count(i -> sel[i] && p.program[i] == q, 1:p.n_items) >= p.program_floor[q] for q in 1:p.n_programs)
+            @test all(
+                count(i -> sel[i] && p.program[i] == q, 1:p.n_items) >= p.program_floor[q] for
+                q in 1:p.n_programs
+            )
             point = Dict(m[:x][i] => (sel[i] ? 1.0 : 0.0) for i in 1:p.n_items)
             @test isempty(primal_feasibility_report(m, point; atol=1e-6))
         end
@@ -101,8 +107,12 @@ end
             @test c !== nothing && p.feasible_witness === nothing
             @test c.floors == p.program_floor
             lightest = sum(
-                sum(sort([p.global_usage[c.resource, i] for i in 1:p.n_items if p.program[i] == q])[1:c.floors[q]]; init=0.0)
-                for q in 1:p.n_programs
+                sum(
+                    sort([
+                        p.global_usage[c.resource, i] for i in 1:p.n_items if p.program[i] == q
+                    ])[1:c.floors[q]];
+                    init=0.0,
+                ) for q in 1:p.n_programs
             )
             @test lightest ≈ c.lightest_sum rtol = 1e-9
             @test c.capacity == p.global_capacity[c.resource]
@@ -119,7 +129,9 @@ end
             item_rows = count(i -> p.commitment[i] > 0 || ncols[i] > 1, 1:p.n_items)
             @test kn_rows(m) == item_rows + length(unique(p.knapsack_of))
             # Lanes stay inside the item's region; each item has 1-5 lanes.
-            @test all(p.knapsack_region[p.knapsack_of[j]] == p.item_region[p.item_of[j]] for j in 1:target)
+            @test all(
+                p.knapsack_region[p.knapsack_of[j]] == p.item_region[p.item_of[j]] for j in 1:target
+            )
             @test all(1 .<= ncols .<= 5)
             @test all(0 .<= p.commitment .<= p.stock)
             @test all(has_upper_bound(v) for v in all_variables(m))
@@ -129,7 +141,9 @@ end
             w = p.feasible_witness
             @test w !== nothing && p.infeasibility_certificate === nothing
             q = w.quantities
-            shipped = [sum(q[j] for j in eachindex(q) if p.item_of[j] == i; init=0) for i in 1:p.n_items]
+            shipped = [
+                sum(q[j] for j in eachindex(q) if p.item_of[j] == i; init=0) for i in 1:p.n_items
+            ]
             @test all(p.commitment .<= shipped .<= p.stock)
             load = zeros(p.n_knapsacks)
             for j in eachindex(q)
@@ -144,9 +158,13 @@ end
             c = p.infeasibility_certificate
             @test c !== nothing && p.feasible_witness === nothing
             @test c.items == [i for i in 1:p.n_items if p.item_region[i] == c.region]
-            @test c.min_unit_weight ≈ [minimum(p.unit_weight[j] for j in eachindex(p.item_of) if p.item_of[j] == i) for i in c.items]
+            @test c.min_unit_weight ≈ [
+                minimum(p.unit_weight[j] for j in eachindex(p.item_of) if p.item_of[j] == i) for
+                i in c.items
+            ]
             @test c.committed_weight ≈ sum(p.commitment[c.items] .* c.min_unit_weight)
-            @test c.region_capacity ≈ sum(p.capacity[k] for k in 1:p.n_knapsacks if p.knapsack_region[k] == c.region)
+            @test c.region_capacity ≈
+                sum(p.capacity[k] for k in 1:p.n_knapsacks if p.knapsack_region[k] == c.region)
             @test c.committed_weight >= 1.04 * c.region_capacity * (1 - 1e-9)
         end
     end
@@ -159,7 +177,10 @@ end
             @test kn_rows(m) == p.n_rows + 1
             @test length(p.row_indices) == p.n_rows
             @test all(length(p.row_indices[r]) == length(p.row_coefficients[r]) for r in 1:p.n_rows)
-            @test all(allunique(p.row_indices[r]) && all(1 <= i <= target for i in p.row_indices[r]) for r in 1:p.n_rows)
+            @test all(
+                allunique(p.row_indices[r]) && all(1 <= i <= target for i in p.row_indices[r]) for
+                r in 1:p.n_rows
+            )
             @test count(p.dense_rows) <= 16
             @test all(length(p.row_indices[r]) <= 24 for r in 1:p.n_rows if !p.dense_rows[r])
         end
@@ -195,7 +216,9 @@ end
     end
 
     # Reproducibility, independent of the global RNG.
-    for v in ("multiple_choice", "multidimensional", "bounded", "mixed_integer_set"), status in (feasible, infeasible, unknown)
+    for v in ("multiple_choice", "multidimensional", "bounded", "mixed_integer_set"),
+        status in (feasible, infeasible, unknown)
+
         Random.seed!(1)
         _, p1 = generate_problem("knapsack/$v", 700, status, 9)
         Random.seed!(99)

@@ -191,8 +191,7 @@ end
                 @test act ≈ w.activations[layer]
                 @test all(p.pre_lower[layer] .- 1e-8 .<= pre .<= p.pre_upper[layer] .+ 1e-8)
                 @test all(
-                    p.activation_lower[layer] .- 1e-8 .<= act .<=
-                    p.activation_upper[layer] .+ 1e-8,
+                    p.activation_lower[layer] .- 1e-8 .<= act .<= p.activation_upper[layer] .+ 1e-8
                 )
 
                 unstable = findall(==(Int8(0)), p.phases[layer])
@@ -239,8 +238,7 @@ end
                         p.input_lower[i] + rand(rng) * (p.input_upper[i] - p.input_lower[i])
                     end for i in 1:p.input_dim
                 ]
-                dot(p.output_weights, SyntheticLPs.nnv_forward(p.weights, p.biases, x)[2][end]) +
-                p.output_bias
+                dot(p.output_weights, SyntheticLPs.nnv_forward(p.weights, p.biases, x)[2][end]) + p.output_bias
             end for _ in 1:n
         )
 
@@ -291,8 +289,7 @@ end
             u, v = cert.mirrored_pair
             @test cert.mirrored_pair == p.mirrored_pair
             @test cert.mirrored_gap ≈ min(
-                p.output_weights[u] * p.pre_upper[end][u],
-                p.output_weights[v] * p.pre_upper[end][v],
+                p.output_weights[u] * p.pre_upper[end][u], p.output_weights[v] * p.pre_upper[end][v]
             )
             @test cert.mirrored_gap > 0.0
             @test cert.attainable_upper <= cert.interval_upper - cert.mirrored_gap + 1e-7

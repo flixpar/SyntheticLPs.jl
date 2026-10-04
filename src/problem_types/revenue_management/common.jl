@@ -143,4 +143,3 @@ function _generate_revenue_products(
     end
     return products, fare, demand
 end
-

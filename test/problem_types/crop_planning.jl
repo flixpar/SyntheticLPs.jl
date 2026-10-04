@@ -9,13 +9,23 @@
     ref = "crop_planning/standard"
 
     @testset "sizing, data, witness, certificates" begin
-        for target in (10, 50, 100, 500, 2_000, 12_000), status in (feasible, infeasible, unknown), seed in 0:2
+        for target in (10, 50, 100, 500, 2_000, 12_000),
+            status in (feasible, infeasible, unknown),
+            seed in 0:2
+
             model, p = generate_problem(ref, target, status, seed)
             J, T, R, C, K = length(p.field_area), p.n_years, p.n_regions, length(p.crops), p.n_tiers
-            n = length(p.area_vars) + J * T + length(p.farm_region) * length(S.CROP_SEASONS) * T + C * R * T * K
+            n =
+                length(p.area_vars) +
+                J * T +
+                length(p.farm_region) * length(S.CROP_SEASONS) * T +
+                C * R * T * K
             @test num_variables(model) == n
             @test abs(n - target) <= max(0.1 * target, 12) || n <= 30
-            @test all(!S._CROP_CATALOG[p.crops[c]].irrigated_only || p.field_irrigable[j] for (j, c, _) in p.area_vars)
+            @test all(
+                !S._CROP_CATALOG[p.crops[c]].irrigated_only || p.field_irrigable[j] for
+                (j, c, _) in p.area_vars
+            )
             @test all(p.yields[(j, c)] > 0 for (j, c, _) in p.area_vars)
             @test all(p.field_region .== p.farm_region[p.field_farm])
             if status == feasible
@@ -32,8 +42,11 @@
         w = p.feasible_witness
         @test !S.crop_plan_satisfies(p, S.CropPlan(w.area .* 2.0, w.fertilizer, w.hired, w.sales))
         big = S.CropPlanningProblem(100_000, unknown, 0)
-        nb = length(big.area_vars) + length(big.field_area) * big.n_years +
-             length(big.farm_region) * 4 * big.n_years + length(big.crops) * big.n_regions * big.n_years * big.n_tiers
+        nb =
+            length(big.area_vars) +
+            length(big.field_area) * big.n_years +
+            length(big.farm_region) * 4 * big.n_years +
+            length(big.crops) * big.n_regions * big.n_years * big.n_tiers
         @test abs(nb - 100_000) <= 0.01 * 100_000
     end
 
@@ -74,7 +87,8 @@
                 set_optimizer(model, HiGHS.Optimizer)
                 set_silent(model)
                 optimize!(model)
-                @test termination_status(model) == (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
+                @test termination_status(model) ==
+                    (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
             end
             for s in 1:4
                 m, _ = generate_problem(ref, 120, infeasible, s; optimizer=HiGHS.Optimizer)

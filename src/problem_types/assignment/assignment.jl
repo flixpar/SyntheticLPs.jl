@@ -38,7 +38,9 @@ Skill popularity follows a Zipf-like law; each job needs one skill, each
 worker has a primary skill drawn from the same law plus up to two
 cross-trained skills (probability `cross_training` each).
 """
-function _asg_world(rng::AbstractRNG, n_workers::Int, n_jobs::Int, n_skills::Int; cross_training::Float64=0.3)
+function _asg_world(
+    rng::AbstractRNG, n_workers::Int, n_jobs::Int, n_skills::Int; cross_training::Float64=0.3
+)
     n = n_workers + n_jobs
     geography = let r = rand(rng)
         r < 0.45 ? :clustered : (r < 0.8 ? :uniform : :corridor)
@@ -89,7 +91,9 @@ function _asg_skill_candidates(
     result = [Int[] for _ in job_pos]
     for g in 1:n_skills
         (isempty(holders[g]) || isempty(jobs_of[g])) && continue
-        near = _geo_knn_query(worker_pos[holders[g]], job_pos[jobs_of[g]], min(k, length(holders[g])))
+        near = _geo_knn_query(
+            worker_pos[holders[g]], job_pos[jobs_of[g]], min(k, length(holders[g]))
+        )
         for (i, j) in enumerate(jobs_of[g])
             result[j] = holders[g][near[i]]
         end
@@ -105,9 +109,14 @@ when the budget is below two per job) and at most `cap[j]`, adjusted by +-1
 steps so they sum to exactly `n_edges` (requires
 `n_jobs <= n_edges <= sum(cap)`).
 """
-function _asg_edge_counts(rng::AbstractRNG, n_jobs::Int, n_edges::Int, mean_k::Float64, cap::Vector{Int})
+function _asg_edge_counts(
+    rng::AbstractRNG, n_jobs::Int, n_edges::Int, mean_k::Float64, cap::Vector{Int}
+)
     kmin = n_edges >= 2n_jobs ? 2 : 1
-    k = [clamp(round(Int, mean_k * rand(rng, LogNormal(0.0, 0.3))), min(kmin, cap[j]), cap[j]) for j in 1:n_jobs]
+    k = [
+        clamp(round(Int, mean_k * rand(rng, LogNormal(0.0, 0.3))), min(kmin, cap[j]), cap[j]) for
+        j in 1:n_jobs
+    ]
     diff = n_edges - sum(k)
     while diff != 0
         j = rand(rng, 1:n_jobs)

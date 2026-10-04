@@ -52,9 +52,9 @@ function _fl_nearest_sites(
     (n == 0 || k == 0) && return result
 
     xmin = min(minimum(first, sites), minimum(first, queries; init=Inf))
-    xmax = max(maximum(first, sites), maximum(first, queries; init=-Inf))
+    xmax = max(maximum(first, sites), maximum(first, queries; init=(-Inf)))
     ymin = min(minimum(last, sites), minimum(last, queries; init=Inf))
-    ymax = max(maximum(last, sites), maximum(last, queries; init=-Inf))
+    ymax = max(maximum(last, sites), maximum(last, queries; init=(-Inf)))
     g = max(1, ceil(Int, sqrt(n / 2)))
     width = max(max(xmax - xmin, ymax - ymin) / g, 1e-9)
     gx = floor(Int, (xmax - xmin) / width) + 1

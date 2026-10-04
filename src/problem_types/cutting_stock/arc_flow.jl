@@ -157,9 +157,8 @@ function ArcFlowCuttingStockProblem(
 )
     target_variables >= 1 ||
         throw(ArgumentError("target_variables must be positive (got $target_variables)"))
-    target_variables <= 1_000_000 || throw(
-        ArgumentError("arc_flow supports at most 1,000,000 arcs (got $target_variables)")
-    )
+    target_variables <= 1_000_000 ||
+        throw(ArgumentError("arc_flow supports at most 1,000,000 arcs (got $target_variables)"))
     rng = MersenneTwister(seed)
     n = target_variables
     n_types = clamp(round(Int, sqrt(n) / 8), 6, 40)

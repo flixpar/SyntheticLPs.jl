@@ -22,19 +22,25 @@
         # Profiles cluster by category: meat is protein-dense, fruit is not.
         meat = findall(==(5), table.category)
         fruit = findall(==(3), table.category)
-        @test sum(C[S.DIET_PROTEIN, meat]) / length(meat) > 5 * sum(C[S.DIET_PROTEIN, fruit]) / length(fruit)
+        @test sum(C[S.DIET_PROTEIN, meat]) / length(meat) >
+            5 * sum(C[S.DIET_PROTEIN, fruit]) / length(fruit)
         # Vitamin D is carried by few categories (fish, dairy, eggs, fortified).
         @test count(>(0), C[16, :]) < 0.5 * size(C, 2)
         @test all(>(0), table.cost) && all(>(0), table.max_servings)
     end
 
     @testset "standard: sizing, witness, certificates" begin
-        for target in (8, 50, 300, 2_000, 12_000), status in (feasible, infeasible, unknown), seed in 0:2
+        for target in (8, 50, 300, 2_000, 12_000),
+            status in (feasible, infeasible, unknown),
+            seed in 0:2
+
             model, p = generate_problem("diet_problem/standard", target, status, seed)
             @test num_variables(model) == p.n_foods * p.n_cohorts
             @test abs(num_variables(model) - target) <= max(p.n_cohorts / 2, 8)
-            rows = p.n_cohorts * (3 + length(p.min_nutrients) + p.has_sugar_limit + 2 * p.has_fat_band) +
-                   count(isfinite, p.supply)
+            rows =
+                p.n_cohorts *
+                (3 + length(p.min_nutrients) + p.has_sugar_limit + 2 * p.has_fat_band) +
+                count(isfinite, p.supply)
             @test num_constraints(model; count_variable_in_set_constraints=false) == rows
             @test p.min_nutrients[1:2] == [S.DIET_PROTEIN, S.DIET_FIBER]
             @test all(p.energy_band[1, :] .< p.energy_band[2, :])
@@ -67,7 +73,10 @@
     end
 
     @testset "food_groups: sizing, witness, certificates" begin
-        for target in (20, 50, 300, 2_000, 12_000), status in (feasible, infeasible, unknown), seed in 0:2
+        for target in (20, 50, 300, 2_000, 12_000),
+            status in (feasible, infeasible, unknown),
+            seed in 0:2
+
             model, p = generate_problem("diet_problem/food_groups", target, status, seed)
             @test num_variables(model) == 3 * p.n_foods * p.n_days
             @test p.n_weeks == cld(p.n_days, 7)
@@ -93,7 +102,10 @@
     end
 
     @testset "food_aid: sizing, witness, certificates" begin
-        for target in (30, 50, 300, 2_000, 12_000), status in (feasible, infeasible, unknown), seed in 0:2
+        for target in (30, 50, 300, 2_000, 12_000),
+            status in (feasible, infeasible, unknown),
+            seed in 0:2
+
             model, p = generate_problem("diet_problem/food_aid", target, status, seed)
             n = length(p.ration_pairs) + length(p.delivery_arcs) + length(p.procurement_arcs)
             @test num_variables(model) == n
@@ -113,7 +125,9 @@
         w = p.feasible_witness
         @test !S.aid_plan_satisfies(p, S.AidPlan(w.ration .* 1.5, w.delivery, w.procurement))
         big = S.FoodAidDietProblem(100_000, feasible, 0)
-        @test 100_000 <= length(big.ration_pairs) + length(big.delivery_arcs) + length(big.procurement_arcs) <= 100_060
+        @test 100_000 <=
+            length(big.ration_pairs) + length(big.delivery_arcs) + length(big.procurement_arcs) <=
+            100_060
     end
 
     @testset "reproducibility and global-RNG isolation" begin
@@ -122,8 +136,14 @@
             _, p2 = generate_problem(ref, 700, infeasible, 77)
             for f in fieldnames(typeof(p1))
                 a, b = getfield(p1, f), getfield(p2, f)
-                if a isa Union{S.DietInfeasibilityCertificate, S.MenuInfeasibilityCertificate, S.AidInfeasibilityCertificate}
-                    @test all(isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a)))
+                if a isa Union{
+                    S.DietInfeasibilityCertificate,
+                    S.MenuInfeasibilityCertificate,
+                    S.AidInfeasibilityCertificate,
+                }
+                    @test all(
+                        isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a))
+                    )
                 else
                     @test isequal(a, b)
                 end
@@ -138,14 +158,17 @@
 
     @testset "HiGHS feasibility contracts" begin
         if HAS_HIGHS
-            for ref in ("diet_problem/standard", "diet_problem/food_groups", "diet_problem/food_aid"),
-                target in (60, 800), seed in 0:3, status in (feasible, infeasible)
+            for ref in
+                ("diet_problem/standard", "diet_problem/food_groups", "diet_problem/food_aid"),
+                target in (60, 800), seed in 0:3,
+                status in (feasible, infeasible)
 
                 model, _ = generate_problem(ref, target, status, seed)
                 set_optimizer(model, HiGHS.Optimizer)
                 set_silent(model)
                 optimize!(model)
-                @test termination_status(model) == (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
+                @test termination_status(model) ==
+                    (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
             end
             # `unknown` is genuinely two-sided across seeds.
             outcomes = Set{MOI.TerminationStatusCode}()

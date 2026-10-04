@@ -128,7 +128,8 @@ function WorkloadBalanceAssignmentProblem(
     # nearest workers at a cross-skill slowdown.
     K = min(W, max(20, round(Int, 4 * mean_k)))
     skilled = _asg_skill_candidates(worker_pos, worker_skills, task_pos, task_skill, G, K)
-    unskilled = any(isempty, skilled) ? _geo_knn_query(worker_pos, task_pos, K) : Vector{Vector{Int}}()
+    unskilled =
+        any(isempty, skilled) ? _geo_knn_query(worker_pos, task_pos, K) : Vector{Vector{Int}}()
     candidates(t) = isempty(skilled[t]) ? copy(unskilled[t]) : copy(skilled[t])
     cand = [candidates(t) for t in 1:T]
     cap = [length(c) for c in cand]
@@ -151,9 +152,14 @@ function WorkloadBalanceAssignmentProblem(
         (w, t) in edges
     ]
     noise = [rand(rng, LogNormal(0.0, 0.08)) for _ in 1:E]
-    proc() = [round(base[t] / speed[w] * fit[e] * noise[e]; digits=3) for (e, (w, t)) in enumerate(edges)]
+    proc() = [
+        round(base[t] / speed[w] * fit[e] * noise[e]; digits=3) for (e, (w, t)) in enumerate(edges)
+    ]
     processing_time = proc()
-    travel = [0.5 * hypot(worker_pos[w][1] - task_pos[t][1], worker_pos[w][2] - task_pos[t][2]) for (w, t) in edges]
+    travel = [
+        0.5 * hypot(worker_pos[w][1] - task_pos[t][1], worker_pos[w][2] - task_pos[t][2]) for
+        (w, t) in edges
+    ]
     of_task = [Int[] for _ in 1:T]
     for (e, (_, t)) in enumerate(edges)
         push!(of_task[t], e)
@@ -163,7 +169,10 @@ function WorkloadBalanceAssignmentProblem(
     load = zeros(W)
     edge_of_task = zeros(Int, T)
     for t in sortperm(base; rev=true)
-        e = argmin(e -> ((load[edges[e][1]] + processing_time[e]) / availability[edges[e][1]], e), of_task[t])
+        e = argmin(
+            e -> ((load[edges[e][1]] + processing_time[e]) / availability[edges[e][1]], e),
+            of_task[t],
+        )
         edge_of_task[t] = e
         load[edges[e][1]] += processing_time[e]
     end
@@ -192,7 +201,12 @@ function WorkloadBalanceAssignmentProblem(
             need = margin * available / fastest(ts)
             # Largest surge keeping every task doable by some eligible worker
             # within 90% of that worker's cap.
-            room = minimum(maximum(0.9 * availability[edges[e][1]] * max_makespan / processing_time[e] for e in of_task[t]) for t in ts)
+            room = minimum(
+                maximum(
+                    0.9 * availability[edges[e][1]] * max_makespan / processing_time[e] for
+                    e in of_task[t]
+                ) for t in ts
+            )
             return need, room
         end
         counts = [count(==(g), task_skill) for g in 1:G]
@@ -221,10 +235,15 @@ function WorkloadBalanceAssignmentProblem(
                 processing_time = proc()
             end
         end
-        infeasibility_certificate = WorkloadBalanceCertificate(tasks, workers, fastest(tasks), available)
+        infeasibility_certificate = WorkloadBalanceCertificate(
+            tasks, workers, fastest(tasks), available
+        )
     end
 
-    costs = [round(wage[w] * processing_time[e] + travel[e]; digits=2) for (e, (w, _)) in enumerate(edges)]
+    costs = [
+        round(wage[w] * processing_time[e] + travel[e]; digits=2) for
+        (e, (w, _)) in enumerate(edges)
+    ]
     typical_cost = sum(minimum(costs[e] for e in of_task[t]) for t in 1:T)
     makespan_weight = round(typical_cost / planted_makespan * (0.5 + 1.5 * rand(rng)); sigdigits=4)
 

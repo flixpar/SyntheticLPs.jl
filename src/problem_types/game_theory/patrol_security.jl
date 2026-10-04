@@ -158,8 +158,10 @@ further shuffled grid links up to `n_edges` (clamped to what the grid holds).
 function _patrol_network(rng::AbstractRNG, n::Int, n_edges::Int)
     W = ceil(Int, sqrt(n))
     positions = [
-        (100.0 * (((i - 1) % W) + 0.5 + 0.3 * randn(rng)) / W, 100.0 * (((i - 1) ÷ W) + 0.5 + 0.3 * randn(rng)) / W)
-        for i in 1:n
+        (
+            100.0 * (((i - 1) % W) + 0.5 + 0.3 * randn(rng)) / W,
+            100.0 * (((i - 1) ÷ W) + 0.5 + 0.3 * randn(rng)) / W,
+        ) for i in 1:n
     ]
     links = Tuple{Int, Int}[]
     for i in 1:n
@@ -237,7 +239,9 @@ Continuation potentials of the longest-path DP for capped weights `wcap`:
 `Φ[(i, H)] = 0` and `Φ[(i, t)] = max_{j in moves(i)} (wcap[(j, t + 1)] +
 Φ[(j, t + 1)])`, `λ = max_i (wcap[(i, 1)] + Φ[(i, 1)])`.
 """
-function _patrol_potentials(wcap::Vector{Float64}, n::Int, H::Int, ptr::Vector{Int}, nbr::Vector{Int})
+function _patrol_potentials(
+    wcap::Vector{Float64}, n::Int, H::Int, ptr::Vector{Int}, nbr::Vector{Int}
+)
     Φ = zeros(n * H)
     @inbounds for t in (H - 1):-1:1, i in 1:n
         m = -Inf
@@ -259,7 +263,9 @@ Build a patrol security LP whose variable count is within a few percent of
 tuned to close the gap); targets above `GAME_THEORY_MAX_VARIABLES` raise an
 `ArgumentError`, tiny targets round up to a 4-station, 3-period game.
 """
-function PatrolSecurityProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function PatrolSecurityProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     _game_theory_check_target("patrol_security", target_variables)
     rng = MersenneTwister(seed)
 
@@ -293,7 +299,9 @@ function PatrolSecurityProblem(target_variables::Int, feasibility_status::Feasib
     peak1, peak2 = 0.2 + 0.15 * rand(rng), 0.6 + 0.2 * rand(rng)
     time_profile = [
         round(
-            0.4 + exp(-(((t - 0.5) / H - peak1) / 0.1)^2) + 0.8 * exp(-(((t - 0.5) / H - peak2) / 0.12)^2);
+            0.4 +
+            exp(-(((t - 0.5) / H - peak1) / 0.1)^2) +
+            0.8 * exp(-(((t - 0.5) / H - peak2) / 0.12)^2);
             digits=4,
         ) for t in 1:H
     ]
@@ -366,7 +374,9 @@ function PatrolSecurityProblem(target_variables::Int, feasibility_status::Feasib
                 count[nt] += 1
                 w[nt] = 0.0  # saturated: a second unit adds no coverage
                 if t < H
-                    slot = findfirst(==(path[t + 1]), view(nbr, ptr[path[t]]:(ptr[path[t] + 1] - 1)))
+                    slot = findfirst(
+                        ==(path[t + 1]), view(nbr, ptr[path[t]]:(ptr[path[t] + 1] - 1))
+                    )
                     fsum[n + (t - 1) * length(nbr) + ptr[path[t]] - 1 + slot] += 1
                 end
             end
@@ -387,7 +397,10 @@ function PatrolSecurityProblem(target_variables::Int, feasibility_status::Feasib
         inflow[_patrol_nt(nbr[k], t + 1, n)] += fbar[n + (t - 1) * length(nbr) + k]
     end
     coverage = min.(1.0, inflow)
-    type_values = [maximum(option_gain[j] - option_loss[j] * coverage[option_target[j]] for j in o) for o in by_type]
+    type_values = [
+        maximum(option_gain[j] - option_loss[j] * coverage[option_target[j]] for j in o) for
+        o in by_type
+    ]
     upper = sum(type_prior .* type_values)
 
     # Lower bound: average attacker mix, best threshold-Lagrangian bound,
@@ -506,7 +519,9 @@ function build_model(prob::PatrolSecurityProblem)
     end
     for j in eachindex(prob.option_type)
         @constraint(
-            model, v[prob.option_type[j]] + prob.option_loss[j] * c[prob.option_target[j]] >= prob.option_gain[j]
+            model,
+            v[prob.option_type[j]] + prob.option_loss[j] * c[prob.option_target[j]] >=
+                prob.option_gain[j]
         )
     end
     @constraint(model, loss <= prob.loss_requirement)

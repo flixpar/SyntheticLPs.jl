@@ -381,7 +381,8 @@ function _resilient_hardening_spend(
     pieces = Tuple{Float64, Float64, Float64}[]  # (cost per capacity, capacity, unit cost)
     for e in eachindex(capacity)
         cheap = forced_build[e] - forced_harden[e]
-        cheap > 0 && push!(pieces, (hardening_cost[e] / capacity[e], capacity[e] * cheap, hardening_cost[e]))
+        cheap > 0 &&
+            push!(pieces, (hardening_cost[e] / capacity[e], capacity[e] * cheap, hardening_cost[e]))
         full = 1.0 - max(forced_build[e], forced_harden[e])
         unit = build_cost[e] + hardening_cost[e]
         full > 0 && push!(pieces, (unit / capacity[e], capacity[e] * full, unit))
@@ -502,8 +503,20 @@ then the bridge-forced design levels and spend, and the cheapest fractional
 hardening of the district's remaining shortfall (`cut_spend`), are computed.
 """
 function _resilient_budget_plan(
-    rng::AbstractRNG, N, edges, adjacency, positions, sources, sinks, demands, capacities,
-    build_cost, hardening_cost, failed, hazard_radius, star::Int,
+    rng::AbstractRNG,
+    N,
+    edges,
+    adjacency,
+    positions,
+    sources,
+    sinks,
+    demands,
+    capacities,
+    build_cost,
+    hardening_cost,
+    failed,
+    hazard_radius,
+    star::Int,
 )
     excluded = falses(N)
     for s in eachindex(sources)
@@ -595,7 +608,10 @@ function ResilientNetworkDesignProblem(
     edges = _resilient_topology(rng, positions, E_target)
     E = length(edges)
     tree_count = N - 1
-    len = [hypot(positions[i][1] - positions[j][1], positions[i][2] - positions[j][2]) for (i, j) in edges]
+    len = [
+        hypot(positions[i][1] - positions[j][1], positions[i][2] - positions[j][2]) for
+        (i, j) in edges
+    ]
 
     adjacency = [Int[] for _ in 1:N]
     for (i, j) in edges
@@ -614,7 +630,9 @@ function ResilientNetworkDesignProblem(
     capacities = [round(rand(rng, Uniform(12.0, 40.0)); digits=1) for _ in 1:E]
     build_cost = [round(5.0 + 2.0 * len[e] * rand(rng, Uniform(0.8, 1.25)); digits=2) for e in 1:E]
     hardening_cost = [round(build_cost[e] * rand(rng, Uniform(0.3, 0.9)); digits=2) for e in 1:E]
-    routing_cost = [round(0.05 + 0.08 * len[e] * rand(rng, Uniform(0.9, 1.1)); digits=3) for e in 1:E]
+    routing_cost = [
+        round(0.05 + 0.08 * len[e] * rand(rng, Uniform(0.9, 1.1)); digits=3) for e in 1:E
+    ]
 
     # Regional hazards: failure probability decays with distance to the center.
     hazard_center = [(rand(rng, Uniform(0, 100)), rand(rng, Uniform(0, 100))) for _ in 1:S]
@@ -654,8 +672,20 @@ function ResilientNetworkDesignProblem(
         best = nothing
         for star in 1:S
             plan = _resilient_budget_plan(
-                rng, N, edges, adjacency, positions, sources, sinks, demands, copy(capacities),
-                build_cost, hardening_cost, copy(failed), hazard_radius, star,
+                rng,
+                N,
+                edges,
+                adjacency,
+                positions,
+                sources,
+                sinks,
+                demands,
+                copy(capacities),
+                build_cost,
+                hardening_cost,
+                copy(failed),
+                hazard_radius,
+                star,
             )
             if best === nothing || plan.cut_spend > best.cut_spend
                 best = plan
@@ -743,7 +773,7 @@ function build_model(prob::ResilientNetworkDesignProblem)
         model,
         link_capacity[e = 1:E, s = 1:S],
         forward[e, s] + reverse[e, s] <=
-        prob.capacities[e] * (prob.failed[e, s] ? harden[e] : build[e])
+            prob.capacities[e] * (prob.failed[e, s] ? harden[e] : build[e])
     )
 
     incident = [Int[] for _ in 1:prob.n_nodes]

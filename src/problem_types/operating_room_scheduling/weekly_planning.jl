@@ -181,12 +181,7 @@ function WeeklySurgeryPlanningProblem(
         spec_ids = _orsched_case_mix(rng, n_specs)
         mss, session = _orsched_master_schedule(rng, n_rooms, n_days, spec_ids)
         wl = _orsched_waiting_list(
-            rng,
-            n_surgeries,
-            spec_ids,
-            n_days;
-            with_los=true,
-            allow_urgent=false,
+            rng, n_surgeries, spec_ids, n_days; with_los=true, allow_urgent=false
         )
         counts = [count(==(k), wl.specialty) for k in 1:n_specs]
         surgeon_specialty, surgeon_budget = _orsched_surgeon_pool(rng, counts, n_days, mss)
@@ -454,8 +449,8 @@ function build_model(prob::WeeklySurgeryPlanningProblem)
     for (k, d) in sort!(collect(keys(by_specialty_day)))
         cases = by_specialty_day[(k, d)]
         # Rows that cannot bind (all admissible cases fit at once) are omitted.
-        sum(prob.surgery_duration[i] + prob.turnover for i in cases) <= prob.specialty_capacity[k, d] &&
-            continue
+        sum(prob.surgery_duration[i] + prob.turnover for i in cases) <=
+        prob.specialty_capacity[k, d] && continue
         @constraint(
             model,
             sum((prob.surgery_duration[i] + prob.turnover) * assign_day[i, d] for i in cases) <=

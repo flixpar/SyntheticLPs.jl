@@ -17,14 +17,17 @@
         while !isempty(stack)
             i = pop!(stack)
             for j in neighbors[i]
-                seen[j] || (seen[j] = true; push!(stack, j))
+                seen[j] || (seen[j]=true; push!(stack, j))
             end
         end
         return all(seen)
     end
 
     @testset "sizing, graph, witness, certificates" begin
-        for target in (3, 50, 300, 2_000, 12_000), status in (feasible, infeasible, unknown), seed in 0:2
+        for target in (3, 50, 300, 2_000, 12_000),
+            status in (feasible, infeasible, unknown),
+            seed in 0:2
+
             model, p = generate_problem(ref, target, status, seed)
             @test num_variables(model) == length(p.pairs)
             @test abs(length(p.pairs) - target) <= max(0.1 * target, 12)
@@ -60,7 +63,9 @@
             for f in fieldnames(typeof(p1))
                 a, b = getfield(p1, f), getfield(p2, f)
                 if a isa S.LandUseInfeasibilityCertificate
-                    @test all(isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a)))
+                    @test all(
+                        isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a))
+                    )
                 else
                     @test isequal(a, b)
                 end
@@ -75,12 +80,16 @@
 
     @testset "HiGHS feasibility contracts" begin
         if HAS_HIGHS
-            for relax in (true, false), target in (40, 400), seed in 0:3, status in (feasible, infeasible)
+            for relax in (true, false),
+                target in (40, 400), seed in 0:3,
+                status in (feasible, infeasible)
+
                 model, _ = generate_problem(ref, target, status, seed; relax_integer=relax)
                 set_optimizer(model, HiGHS.Optimizer)
                 set_silent(model)
                 optimize!(model)
-                @test termination_status(model) == (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
+                @test termination_status(model) ==
+                    (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
             end
         end
     end

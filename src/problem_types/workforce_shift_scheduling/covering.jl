@@ -380,7 +380,8 @@ function _workforce_pool_candidates(
     pool::Int, sites::BitVector, days::BitVector, eligible::BitVector, qualified::BitVector
 )
     out = NTuple{5, Int}[]
-    for site in findall(sites), day in findall(days), pattern in findall(eligible),
+    for site in findall(sites),
+        day in findall(days), pattern in findall(eligible),
         skill in findall(qualified)
 
         push!(out, (pool, site, day, pattern, skill))
@@ -460,7 +461,8 @@ function _workforce_select_columns(
     remaining = findall(.!taken)
     shuffle!(rng, remaining)
     needed = max(requested, length(selected)) - length(selected)
-    needed <= length(remaining) || error("Insufficient distinct workforce columns for target $requested")
+    needed <= length(remaining) ||
+        error("Insufficient distinct workforce columns for target $requested")
     append!(selected, remaining[1:needed])
     shuffle!(rng, selected)
     return candidates[selected]
@@ -495,7 +497,8 @@ function _workforce_construction_staffing(
         fill!(covered, 0.0)
         while true
             for t in 1:n_periods
-                gaps[t] = max(0.0, demand[site, day, t, skill] - covered[t]) / demand[site, day, t, skill]
+                gaps[t] =
+                    max(0.0, demand[site, day, t, skill] - covered[t]) / demand[site, day, t, skill]
             end
             period = argmax(gaps)
             gaps[period] <= 1e-9 && break
@@ -554,7 +557,9 @@ function _workforce_group_capacity_bound(
         paid = count(view(pattern_coverage, :, column_patterns[column]))
         longest[pool] = max(get(longest, pool, 0), paid)
     end
-    return sum(day_capacity[pool, day] * productivity[pool, skill] * paid for (pool, paid) in longest)
+    return sum(
+        day_capacity[pool, day] * productivity[pool, skill] * paid for (pool, paid) in longest
+    )
 end
 
 function _workforce_demand(
@@ -572,9 +577,15 @@ function _workforce_demand(
             for period in 1:n_periods
                 x = (period - 0.5) / n_periods + shift
                 if profile == :contact_center
-                    shape = 0.42 + 0.85 * exp(-((x - 0.28) / 0.17)^2) + 1.05 * exp(-((x - 0.72) / 0.15)^2)
+                    shape =
+                        0.42 +
+                        0.85 * exp(-((x - 0.28) / 0.17)^2) +
+                        1.05 * exp(-((x - 0.72) / 0.15)^2)
                 elseif profile == :retail
-                    shape = 0.52 + 0.35 * exp(-((x - 0.25) / 0.19)^2) + 1.10 * exp(-((x - 0.76) / 0.18)^2)
+                    shape =
+                        0.52 +
+                        0.35 * exp(-((x - 0.25) / 0.19)^2) +
+                        1.10 * exp(-((x - 0.76) / 0.18)^2)
                 else
                     shape = 0.82 + 0.13 * sin(2π * x - 0.4) + 0.12 * exp(-((x - 0.55) / 0.20)^2)
                 end
@@ -596,7 +607,9 @@ function _workforce_demand(
                     end
                     noise = 0.92 + 0.16 * rand(rng)
                     demand[site, day, period, skill] = round(
-                        max(0.35, site_scale * day_scale * shape * skill_share * skill_shape * noise);
+                        max(
+                            0.35, site_scale * day_scale * shape * skill_share * skill_shape * noise
+                        );
                         digits=3,
                     )
                 end
@@ -730,10 +743,19 @@ function WorkforceShiftCoveringProblem(
     demand = _workforce_demand(rng, profile, spec, n_sites, n_days, n_skills, target)
     groups = Dict{NTuple{3, Int}, Vector{Int}}()
     for column in 1:n_columns
-        push!(get!(groups, (column_sites[column], column_days[column], column_skills[column]), Int[]), column)
+        push!(
+            get!(groups, (column_sites[column], column_days[column], column_skills[column]), Int[]),
+            column,
+        )
     end
     construction_staffing = _workforce_construction_staffing(
-        demand, groups, column_pools, column_patterns, pattern_coverage, pool_productivity, staffing_costs
+        demand,
+        groups,
+        column_pools,
+        column_patterns,
+        pattern_coverage,
+        pool_productivity,
+        staffing_costs,
     )
     day_usage = zeros(Float64, n_pools, n_days)
     has_column = falses(n_pools, n_days)
@@ -749,7 +771,9 @@ function WorkforceShiftCoveringProblem(
             has_column[pool, day] || continue
             usage = day_usage[pool, day]
             reserve = max(0.35, usage * (0.05 + 0.08 * rand(rng)))
-            pool_day_capacity[pool, day] = round(max(usage + reserve, 0.75 + 1.75 * rand(rng)); digits=3)
+            pool_day_capacity[pool, day] = round(
+                max(usage + reserve, 0.75 + 1.75 * rand(rng)); digits=3
+            )
         end
         # Rest days: the week allows less than every daily maximum at once.
         week_usage = sum(day_usage[pool, :])
@@ -774,7 +798,9 @@ function WorkforceShiftCoveringProblem(
         for pool in 1:n_pools
             pool_shock = market * (0.93 + 0.14 * rand(rng))
             for day in 1:n_days
-                pool_day_capacity[pool, day] = round(pool_day_capacity[pool, day] * pool_shock; digits=3)
+                pool_day_capacity[pool, day] = round(
+                    pool_day_capacity[pool, day] * pool_shock; digits=3
+                )
             end
             pool_week_capacity[pool] = round(pool_week_capacity[pool] * pool_shock; digits=3)
         end
@@ -782,7 +808,8 @@ function WorkforceShiftCoveringProblem(
             load_shock = 0.96 + 0.08 * rand(rng)
             for skill in 1:n_skills
                 demand[site, day, period, skill] = round(
-                    demand[site, day, period, skill] * load_shock * (0.97 + 0.06 * rand(rng)); digits=3
+                    demand[site, day, period, skill] * load_shock * (0.97 + 0.06 * rand(rng));
+                    digits=3,
                 )
             end
         end
@@ -878,7 +905,9 @@ function _workforce_pool_rows(prob::WorkforceShiftCoveringProblem)
     n_pools = length(prob.pool_names)
     by_pool_day = Dict{Tuple{Int, Int}, Vector{Int}}()
     for column in eachindex(prob.column_pools)
-        push!(get!(by_pool_day, (prob.column_pools[column], prob.column_days[column]), Int[]), column)
+        push!(
+            get!(by_pool_day, (prob.column_pools[column], prob.column_days[column]), Int[]), column
+        )
     end
     days_of = [Int[] for _ in 1:n_pools]
     for (pool, day) in keys(by_pool_day)
@@ -946,7 +975,9 @@ function build_model(prob::WorkforceShiftCoveringProblem)
     supply = [Int[] for _ in 1:prod(dims)]
     lin = LinearIndices(dims)
     for column in 1:n_columns
-        site, day, skill = prob.column_sites[column], prob.column_days[column], prob.column_skills[column]
+        site, day, skill = prob.column_sites[column],
+        prob.column_days[column],
+        prob.column_skills[column]
         for period in findall(view(prob.pattern_coverage, :, prob.column_patterns[column]))
             push!(supply[lin[site, day, period, skill]], column)
         end
@@ -956,8 +987,10 @@ function build_model(prob::WorkforceShiftCoveringProblem)
         columns = supply[lin[site, day, period, skill]]
         coverage[site, day, period, skill] = @constraint(
             model,
-            sum(prob.pool_productivity[prob.column_pools[c], skill] * x[c] for c in columns; init=0.0) >=
-                prob.demand[site, day, period, skill]
+            sum(
+                prob.pool_productivity[prob.column_pools[c], skill] * x[c] for c in columns;
+                init=0.0,
+            ) >= prob.demand[site, day, period, skill]
         )
     end
     model[:skill_coverage] = coverage

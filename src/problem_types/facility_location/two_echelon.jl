@@ -203,9 +203,7 @@ function TwoEchelonFacilityLocationProblem(
     )
     n_zones = clamp(round(Int, sqrt(S)), 1, 12)
     zones = [(span * rand(rng), span * rand(rng)) for _ in 1:n_zones]
-    supplier_locations = _fl_clustered_points(
-        rng, S, zones, span / 12, span; rural_fraction=0.25
-    )
+    supplier_locations = _fl_clustered_points(rng, S, zones, span / 12, span; rural_fraction=0.25)
 
     # --- Sparse lanes ---
     nearest_dc = _fl_nearest_sites(warehouse_locations, customer_locations, max_lanes)
@@ -335,7 +333,9 @@ function TwoEchelonFacilityLocationProblem(
         region = sort!(partialsortperm([_fl_dist(p, center) for p in customer_locations], 1:m))
         in_region = falses(C)
         in_region[region] .= true
-        reach = sort!(unique(out_warehouse[l] for l in eachindex(out_customer) if in_region[out_customer[l]]))
+        reach = sort!(
+            unique(out_warehouse[l] for l in eachindex(out_customer) if in_region[out_customer[l]])
+        )
         surge = rand(rng, Uniform(1.3, 1.8))
         for c in region
             demands[c] = round(demands[c] * surge; digits=2)
@@ -357,8 +357,13 @@ function TwoEchelonFacilityLocationProblem(
     # Installation cost: concave in capacity with site-specific noise.
     size_cost = [
         round(
-            0.5 * site_factor[w] * delivery_rate * spacing * size_capacity[w, k]^0.85 *
-            max(base[w], 1.0)^0.15 * rand(rng, Uniform(0.9, 1.15));
+            0.5 *
+            site_factor[w] *
+            delivery_rate *
+            spacing *
+            size_capacity[w, k]^0.85 *
+            max(base[w], 1.0)^0.15 *
+            rand(rng, Uniform(0.9, 1.15));
             digits=2,
         ) for w in 1:W, k in 1:n_sizes
     ]
@@ -424,7 +429,10 @@ function build_model(prob::TwoEchelonFacilityLocationProblem)
         sum(prob.warehouse_fixed_costs[w] * y[w] for w in 1:W) +
             sum(prob.size_cost[w, k] * z[w, k] for w in 1:W, k in 1:K) +
             sum(prob.in_cost[l] * f1[l] for l in 1:n_in) +
-            sum((prob.out_cost[l] + prob.handling_costs[prob.out_warehouse[l]]) * f2[l] for l in 1:n_out)
+            sum(
+                (prob.out_cost[l] + prob.handling_costs[prob.out_warehouse[l]]) * f2[l] for
+                l in 1:n_out
+            )
     )
 
     for w in 1:W

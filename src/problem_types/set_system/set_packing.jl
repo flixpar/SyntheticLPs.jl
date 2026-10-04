@@ -114,7 +114,7 @@ function SetPackingProblem(target_variables::Int, feasibility_status::Feasibilit
         total += count
     end
     n_trains = length(kinds)
-    deltas = [sort(collect(-flex[r]:flex[r]); by=abs)[1:n_candidates[r]] for r in 1:n_trains]
+    deltas = [sort(collect((-flex[r]):flex[r]); by=abs)[1:n_candidates[r]] for r in 1:n_trains]
     headway = 1
     occ(r) = speed_slots[kinds[r]] + headway          # cells per section crossed
     duration(r) = length(routes[r]) * speed_slots[kinds[r]] + headway
@@ -223,8 +223,9 @@ function SetPackingProblem(target_variables::Int, feasibility_status::Feasibilit
         window_cells = [cell(bottleneck, t, 1) for t in window_start:(window_start + window - 1)]
         in_window = Set(window_cells)
         occupancy = [
-            minimum(count(in(in_window), columns[j]) for j in eachindex(train_of) if train_of[j] == r)
-            for r in group
+            minimum(
+                count(in(in_window), columns[j]) for j in eachindex(train_of) if train_of[j] == r
+            ) for r in group
         ]
         certificate = BottleneckCertificate(group, occupancy, window_cells)
     end

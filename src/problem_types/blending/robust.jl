@@ -124,7 +124,9 @@ robust_gamma(prob::RobustBlendingProblem, r::Int) =
 Check a `RobustBlendPlan` against every row of the robust model.
 """
 function robust_plan_satisfies(
-    prob::RobustBlendingProblem, plan::Union{Nothing, RobustBlendPlan}=prob.feasible_witness; atol::Float64=1e-7
+    prob::RobustBlendingProblem,
+    plan::Union{Nothing, RobustBlendPlan}=prob.feasible_witness;
+    atol::Float64=1e-7,
 )
     plan === nothing && return false
     x, z, p = plan.charge_plan, plan.protection, plan.excess
@@ -157,7 +159,8 @@ function robust_plan_satisfies(
         ks = prob.order_pairs[o]
         mass = sum(x[k] for k in ks)
         content = sum(x[k] * mats.comp[e, prob.pairs[k][1]] for k in ks)
-        content + robust_gamma(prob, r) * z[r] + extra[r] <= prob.hi[e, o] * mass + tol(mass) || return false
+        content + robust_gamma(prob, r) * z[r] + extra[r] <= prob.hi[e, o] * mass + tol(mass) ||
+            return false
     end
     usage = _blend_usage(length(prob.availability), prob.pairs, x)
     all(i -> usage[i] <= prob.availability[i] + tol(usage[i]), eachindex(usage)) || return false
@@ -170,8 +173,13 @@ end
 Recompute the stored (nominal-model) certificate and check it.
 """
 robust_certificate_holds(prob::RobustBlendingProblem) = _blend_certificate_holds(
-    prob.infeasibility_certificate, prob.pairs, prob.order_pairs, prob.materials, prob.availability,
-    prob.lo, prob.demand_min,
+    prob.infeasibility_certificate,
+    prob.pairs,
+    prob.order_pairs,
+    prob.materials,
+    prob.availability,
+    prob.lo,
+    prob.demand_min,
 )
 
 """
@@ -179,16 +187,21 @@ robust_certificate_holds(prob::RobustBlendingProblem) = _blend_certificate_holds
 
 Construct a budgeted-robust alloy-blending instance (see the type).
 """
-function RobustBlendingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function RobustBlendingProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
     target = max(target_variables, 1)
-    n_plants, mats, order_grade, order_plant, pairs, order_pairs =
-        _blend_build_network(rng, target; extra=_robust_extra)
+    n_plants, mats, order_grade, order_plant, pairs, order_pairs = _blend_build_network(
+        rng, target; extra=_robust_extra
+    )
     n_orders = length(order_grade)
     n_materials = length(mats.kind)
     price = [_BLEND_GRADES[g].price * rand(rng, Uniform(0.95, 1.08)) for g in order_grade]
     # Assay reliability: older lots and mixed classes carry wider deviations.
-    deviation = [mats.kind[i] == :scrap ? rand(rng, Uniform(0.08, 0.35)) : 0.0 for i in 1:n_materials]
+    deviation = [
+        mats.kind[i] == :scrap ? rand(rng, Uniform(0.08, 0.35)) : 0.0 for i in 1:n_materials
+    ]
     gamma = rand(rng, Uniform(0.5, 3.0))
 
     robust_rows = Tuple{Int, Int}[]
@@ -228,12 +241,15 @@ function RobustBlendingProblem(target_variables::Int, feasibility_status::Feasib
         for i in 1:n_materials
             if mats.kind[i] == :scrap
                 p = mats.site[i]
-                availability[i] = plant_demand[p] * tightness * rand(rng, Uniform(0.3, 0.8)) / lots_at[p]
+                availability[i] =
+                    plant_demand[p] * tightness * rand(rng, Uniform(0.3, 0.8)) / lots_at[p]
             elseif mats.kind[i] == :primary
                 availability[i] = total * tightness * rand(rng, Uniform(0.15, 0.35))
             else
                 e = _BLEND_HARDENERS[mats.source[i]].element
-                need = sum(demand_min[o] * _BLEND_GRADES[order_grade[o]].hi[e] for o in 1:n_orders) / mats.comp[e, i]
+                need =
+                    sum(demand_min[o] * _BLEND_GRADES[order_grade[o]].hi[e] for o in 1:n_orders) /
+                    mats.comp[e, i]
                 availability[i] = max(need, 1.0) * rand(rng, Uniform(0.6, 2.0))
             end
         end
@@ -243,8 +259,11 @@ function RobustBlendingProblem(target_variables::Int, feasibility_status::Feasib
         p = zeros(Float64, length(robust_terms))
         for (r, (o, e)) in enumerate(robust_rows)
             ts = terms_of[r]
-            a = [deviation[pairs[robust_terms[t][2]][1]] * mats.comp[e, pairs[robust_terms[t][2]][1]] *
-                 x[robust_terms[t][2]] for t in ts]
+            a = [
+                deviation[pairs[robust_terms[t][2]][1]] *
+                mats.comp[e, pairs[robust_terms[t][2]][1]] *
+                x[robust_terms[t][2]] for t in ts
+            ]
             beta, z[r], pr = _robust_protection(a, gamma)
             p[ts] .= pr
             ks = order_pairs[o]
@@ -256,22 +275,49 @@ function RobustBlendingProblem(target_variables::Int, feasibility_status::Feasib
         demand_max = output .* rand(rng, Uniform(1.15, 1.80), n_orders)
         usage = _blend_usage(n_materials, pairs, x)
         for i in 1:n_materials
-            slack = mats.kind[i] == :scrap ? rand(rng, Uniform(1.02, 1.30)) :
-                    mats.kind[i] == :primary ? rand(rng, Uniform(1.05, 1.40)) : rand(rng, Uniform(1.1, 2.0))
-            availability[i] = usage[i] > 0 ? usage[i] * slack :
-                              clamp(rand(rng, LogNormal(log(30.0), 0.7)), 2.0, 300.0)
+            slack = if mats.kind[i] == :scrap
+                rand(rng, Uniform(1.02, 1.30))
+            elseif mats.kind[i] == :primary
+                rand(rng, Uniform(1.05, 1.40))
+            else
+                rand(rng, Uniform(1.1, 2.0))
+            end
+            availability[i] = if usage[i] > 0
+                usage[i] * slack
+            else
+                clamp(rand(rng, LogNormal(log(30.0), 0.7)), 2.0, 300.0)
+            end
         end
         witness = RobustBlendPlan(x, z, p)
     end
 
     certificate = nothing
     if feasibility_status == infeasible
-        certificate = _blend_make_infeasible!(rng, availability, mats, order_grade, pairs, order_pairs, lo, demand_min)
+        certificate = _blend_make_infeasible!(
+            rng, availability, mats, order_grade, pairs, order_pairs, lo, demand_min
+        )
         witness = nothing
     end
     prob = RobustBlendingProblem(
-        n_plants, mats, availability, order_grade, order_plant, pairs, order_pairs, lo, hi, demand_min,
-        demand_max, price, deviation, gamma, robust_rows, robust_terms, witness, certificate, feasibility_status,
+        n_plants,
+        mats,
+        availability,
+        order_grade,
+        order_plant,
+        pairs,
+        order_pairs,
+        lo,
+        hi,
+        demand_min,
+        demand_max,
+        price,
+        deviation,
+        gamma,
+        robust_rows,
+        robust_terms,
+        witness,
+        certificate,
+        feasibility_status,
     )
     feasibility_status == feasible && @assert robust_plan_satisfies(prob)
     feasibility_status == infeasible && @assert robust_certificate_holds(prob)
@@ -295,7 +341,10 @@ function build_model(prob::RobustBlendingProblem)
     @objective(
         model,
         Max,
-        sum((prob.price[o] * mats.yield[i] - mats.cost[i]) * x[k] for (k, (i, o)) in enumerate(prob.pairs))
+        sum(
+            (prob.price[o] * mats.yield[i] - mats.cost[i]) * x[k] for
+            (k, (i, o)) in enumerate(prob.pairs)
+        )
     )
     protected = Dict(row => r for (r, row) in enumerate(prob.robust_rows))
     terms_of = [Int[] for _ in 1:R]
@@ -304,12 +353,23 @@ function build_model(prob::RobustBlendingProblem)
     end
     for (o, ks) in enumerate(prob.order_pairs)
         maxs = _blend_add_order_rows!(
-            model, x, charge[o], mats, prob.pairs, ks, view(prob.lo, :, o), view(prob.hi, :, o),
-            prob.demand_min[o], prob.demand_max[o],
+            model,
+            x,
+            charge[o],
+            mats,
+            prob.pairs,
+            ks,
+            view(prob.lo, :, o),
+            view(prob.hi, :, o),
+            prob.demand_min[o],
+            prob.demand_max[o],
         )
         for e in maxs
             haskey(protected, (o, e)) && continue
-            @constraint(model, _blend_max_row_expr(x, charge[o], mats, prob.pairs, ks, e, prob.hi[e, o]) <= 0)
+            @constraint(
+                model,
+                _blend_max_row_expr(x, charge[o], mats, prob.pairs, ks, e, prob.hi[e, o]) <= 0
+            )
         end
     end
     for (r, (o, e)) in enumerate(prob.robust_rows)
@@ -317,7 +377,8 @@ function build_model(prob::RobustBlendingProblem)
         @constraint(
             model,
             _blend_max_row_expr(x, charge[o], mats, prob.pairs, ks, e, prob.hi[e, o]) +
-            robust_gamma(prob, r) * z[r] + sum(p[t] for t in terms_of[r]) <= 0
+            robust_gamma(prob, r) * z[r] +
+            sum(p[t] for t in terms_of[r]) <= 0
         )
     end
     for (t, (r, k)) in enumerate(prob.robust_terms)

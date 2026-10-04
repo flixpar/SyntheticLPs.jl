@@ -58,7 +58,9 @@
         # Every routing is profitable (no dual-fixable dead columns).
         for r in 1:p.n_routings
             q = p.routing_product[r]
-            mat = sum(a * p.material_cost[k] for (k, a) in zip(p.product_materials[q], p.material_qty[q]))
+            mat = sum(
+                a * p.material_cost[k] for (k, a) in zip(p.product_materials[q], p.material_qty[q])
+            )
             @test p.price[q] - mat * p.routing_yield[r] - p.routing_cost[r] > 0
         end
     end
@@ -122,8 +124,20 @@
             @test cert.scope in (:area, :plant)
             # Single-routing floors (column bounds) leave room in the row, and
             # no single multi-routing commitment exceeds the row on its own.
-            forced = sum((use(q) * minimum(p.routing_yield[r] for r in rs[q]) * p.floor[q] for q in users if length(rs[q]) == 1 && p.floor[q] > 0); init=0.0)
-            big = maximum((use(q) * maximum(p.routing_yield[r] for r in rs[q]) * p.floor[q] for q in users if length(rs[q]) > 1); init=0.0)
+            forced = sum(
+                (
+                    use(q) * minimum(p.routing_yield[r] for r in rs[q]) * p.floor[q] for
+                    q in users if length(rs[q]) == 1 && p.floor[q] > 0
+                );
+                init=0.0,
+            )
+            big = maximum(
+                (
+                    use(q) * maximum(p.routing_yield[r] for r in rs[q]) * p.floor[q] for
+                    q in users if length(rs[q]) > 1
+                );
+                init=0.0,
+            )
             @test cert.available >= 1.3 * forced + 1.3 * big - 1e-6
         end
     end

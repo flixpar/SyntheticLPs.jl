@@ -101,7 +101,10 @@ function SupplyChainProblem(target_variables::Int, feasibility_status::Feasibili
         r = populated[rand(rng, 1:length(populated))]
         customers = regions[r]
         dcs = sort!(unique(d for (d, c) in net.arcs if net.customer_region[c] == r))
-        load = [sum(net.demand[c, k, t] for c in customers for k in net.customer_products[c]) for t in 1:net.n_periods]
+        load = [
+            sum(net.demand[c, k, t] for c in customers for k in net.customer_products[c]) for
+            t in 1:net.n_periods
+        ]
         period = argmax(load)
         required = load[period]
         target = required * rand(rng, Uniform(0.82, 0.92))

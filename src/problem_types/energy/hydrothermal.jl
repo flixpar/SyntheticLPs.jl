@@ -160,7 +160,9 @@ end
 Build a hydrothermal scheduling instance with about `target_variables`
 columns. See the type docstring.
 """
-function HydrothermalDispatchProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function HydrothermalDispatchProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
     T, Z, layout, per_period = _ed_dimensions(rng, target_variables)
     L = length(layout[3])
@@ -197,9 +199,14 @@ function HydrothermalDispatchProblem(target_variables::Int, feasibility_status::
     max_release = [_e_logunif(rng, (50.0, 600.0)) for _ in 1:P]
     volume_max = [max_release[r] * _e_logunif(rng, (12.0, 400.0)) for r in 1:P]
     volume_min = 0.1 .* volume_max
-    volume_initial = [volume_min[r] + _e_unif(rng, (0.3, 0.75)) * (volume_max[r] - volume_min[r]) for r in 1:P]
+    volume_initial = [
+        volume_min[r] + _e_unif(rng, (0.3, 0.75)) * (volume_max[r] - volume_min[r]) for r in 1:P
+    ]
     headwater = [isempty(up[r]) for r in 1:P]
-    base_inflow = [max_release[r] * (headwater[r] ? _e_unif(rng, (0.15, 0.5)) : _e_unif(rng, (0.02, 0.12))) for r in 1:P]
+    base_inflow = [
+        max_release[r] * (headwater[r] ? _e_unif(rng, (0.15, 0.5)) : _e_unif(rng, (0.02, 0.12))) for
+        r in 1:P
+    ]
     wetness = feasibility_status == unknown ? _e_unif(rng, (0.5, 1.4)) : 1.0
     inflow = zeros(P, T)
     for b in 1:nb
@@ -249,7 +256,8 @@ function HydrothermalDispatchProblem(target_variables::Int, feasibility_status::
             band_lo = volume_min[r] + 0.05 * (volume_max[r] - volume_min[r])
             band_hi = volume_max[r] - 0.05 * (volume_max[r] - volume_min[r])
             for t in 1:T
-                water = inflow[r, t] + _hydro_arrivals(r, t, up, delay, release, spill, prior_release)
+                water =
+                    inflow[r, t] + _hydro_arrivals(r, t, up, delay, release, spill, prior_release)
                 q = max(min_release[r], u * (0.6 + 0.4 * shape[t]) * max_release[r])
                 q = min(q, max_release[r])
                 if v + water - q < band_lo
@@ -258,7 +266,9 @@ function HydrothermalDispatchProblem(target_variables::Int, feasibility_status::
                         # Not enough water even at the environmental flow: the
                         # planted inflow is topped up (it is data).
                         inflow[r, t] += band_lo - (v + water - q)
-                        water = inflow[r, t] + _hydro_arrivals(r, t, up, delay, release, spill, prior_release)
+                        water =
+                            inflow[r, t] +
+                            _hydro_arrivals(r, t, up, delay, release, spill, prior_release)
                     end
                 end
                 s = 0.0
@@ -272,7 +282,9 @@ function HydrothermalDispatchProblem(target_variables::Int, feasibility_status::
                 volume[r, t] = v
             end
         end
-        volume_target = [min(volume[r, T], volume_initial[r] * _e_unif(rng, (0.85, 1.0))) for r in 1:P]
+        volume_target = [
+            min(volume[r, T], volume_initial[r] * _e_unif(rng, (0.85, 1.0))) for r in 1:P
+        ]
         hydro = zeros(Z, T)
         for r in 1:P, t in 1:T
             hydro[plant_zone[r], t] += productivity[r] * release[r, t]
@@ -290,11 +302,14 @@ function HydrothermalDispatchProblem(target_variables::Int, feasibility_status::
             outlet = basin[end]
             dry = _e_unif(rng, (0.2, 0.4))
             for r in basin
-                volume_initial[r] = volume_min[r] + _e_unif(rng, (0.02, 0.08)) * (volume_max[r] - volume_min[r])
+                volume_initial[r] =
+                    volume_min[r] + _e_unif(rng, (0.02, 0.08)) * (volume_max[r] - volume_min[r])
                 volume_target[r] = volume_initial[r]
                 inflow[r, :] .*= dry
             end
-            tmp = (; volume_initial, volume_min, volume_target, inflow, downstream, delay, prior_release)
+            tmp = (;
+                volume_initial, volume_min, volume_target, inflow, downstream, delay, prior_release
+            )
             avail = _hydro_available_water(tmp, basin)
             m = _e_unif(rng, (0.08, 0.20))
             min_release[outlet] = (1 + m) * avail / T
@@ -340,10 +355,13 @@ function build_model(prob::HydrothermalDispatchProblem)
     P = length(prob.plant_zone)
     x, _, _, balance, objective = _ed_core_variables!(model, c)
 
-    @variable(model, 0 <= release[r=1:P, t=1:T] <= prob.max_release[r])
-    @variable(model, spill[r=1:P, t=1:T] >= 0)
-    vol_lb = [t == T ? max(prob.volume_min[r], prob.volume_target[r]) : prob.volume_min[r] for r in 1:P, t in 1:T]
-    @variable(model, vol_lb[r, t] <= volume[r=1:P, t=1:T] <= prob.volume_max[r])
+    @variable(model, 0 <= release[r = 1:P, t = 1:T] <= prob.max_release[r])
+    @variable(model, spill[r = 1:P, t = 1:T] >= 0)
+    vol_lb = [
+        t == T ? max(prob.volume_min[r], prob.volume_target[r]) : prob.volume_min[r] for
+        r in 1:P, t in 1:T
+    ]
+    @variable(model, vol_lb[r, t] <= volume[r = 1:P, t = 1:T] <= prob.volume_max[r])
 
     up = _hydro_upstream(prob.downstream)
     for r in 1:P, t in 1:T

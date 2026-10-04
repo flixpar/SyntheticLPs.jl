@@ -7,7 +7,8 @@
 # and HiGHS contracts (infeasible instances must need simplex work).
 @testset "Inventory" begin
     @test :inventory in list_categories()
-    @test Set(list_variants(:inventory)) == Set([:standard, :lot_sizing, :multi_echelon, :multi_item])
+    @test Set(list_variants(:inventory)) ==
+        Set([:standard, :lot_sizing, :multi_echelon, :multi_item])
     @test problem_info(:inventory)[:default_variant] == :standard
 
     nrows(m) = num_constraints(m; count_variable_in_set_constraints=false)
@@ -29,7 +30,9 @@
         return cols, rows
     end
     function ls_counts(p)
-        cols = sum(SyntheticLPs._lot_sizing_item_columns(p.demand[i, :], p.window) for i in 1:p.n_items)
+        cols = sum(
+            SyntheticLPs._lot_sizing_item_columns(p.demand[i, :], p.window) for i in 1:p.n_items
+        )
         nw = sum(min(t, p.window) for i in 1:p.n_items for t in 1:p.n_periods if p.demand[i, t] > 0)
         return cols, count(>(0.0), p.demand) + nw + p.n_periods
     end
@@ -45,7 +48,10 @@
     end
     mi_counts(p) = (2 * p.n_items * p.n_periods, p.n_items * p.n_periods + p.n_periods)
     counts = Dict(
-        :standard => std_counts, :lot_sizing => ls_counts, :multi_echelon => me_counts, :multi_item => mi_counts
+        :standard => std_counts,
+        :lot_sizing => ls_counts,
+        :multi_echelon => me_counts,
+        :multi_item => mi_counts,
     )
 
     for v in refs, target in (60, 600, 4000), status in (feasible, infeasible, unknown), seed in 0:1
@@ -82,12 +88,16 @@
         @test cert !== nothing && p.feasible_witness === nothing
         @test all(p.vendor[i] == cert.vendor && p.fill_rate[i] > 0 for i in cert.skus)
         req = sum(
-            max(0.0, p.fill_rate[i] * sum(p.demand[i, :]) - p.initial_inventory[i] - sum(p.pipeline[i, :])) for
-            i in cert.skus
+            max(
+                0.0,
+                p.fill_rate[i] * sum(p.demand[i, :]) - p.initial_inventory[i] -
+                sum(p.pipeline[i, :]),
+            ) for i in cert.skus
         )
         T = p.n_periods
         order_periods = [
-            t for t in 1:T if any(p.vendor[i] == cert.vendor && t <= T - p.lead_time[i] for i in 1:p.n_skus)
+            t for t in 1:T if
+            any(p.vendor[i] == cert.vendor && t <= T - p.lead_time[i] for i in 1:p.n_skus)
         ]
         @test cert.required ≈ req
         @test cert.available ≈ sum(p.vendor_capacity[cert.vendor, t] for t in order_periods)
@@ -146,7 +156,9 @@
             c
         end
         @test cert.setup_lower_bounds == lbs
-        req = sum(p.proc_time[i] * sum(p.demand[i, 1:h]) + p.setup_time[i] * lbs[i] for i in 1:p.n_items)
+        req = sum(
+            p.proc_time[i] * sum(p.demand[i, 1:h]) + p.setup_time[i] * lbs[i] for i in 1:p.n_items
+        )
         @test cert.required ≈ req
         @test cert.available ≈ sum(p.capacity[1:h])
         @test cert.required >= 1.1 * cert.available * (1 - 1e-9)
@@ -175,14 +187,16 @@
         @test isempty(primal_feasibility_report(m, point; atol=1e-6))
     end
     for target in (100, 3000), seed in 0:3
-        _, p = generate_problem(ProblemVariant(:inventory, :multi_echelon), target, infeasible, seed)
+        _, p = generate_problem(
+            ProblemVariant(:inventory, :multi_echelon), target, infeasible, seed
+        )
         cert = p.infeasibility_certificate
         @test cert !== nothing && p.feasible_witness === nothing
         h = cert.horizon
         req = sum(
-            p.plant_hours[q] *
-            max(0.0, sum(p.demand[q, :, 1:h]) - sum(p.dc_initial[q, :]) - sum(p.store_initial[q, :])) for
-            q in 1:p.n_products
+            p.plant_hours[q] * max(
+                0.0, sum(p.demand[q, :, 1:h]) - sum(p.dc_initial[q, :]) - sum(p.store_initial[q, :])
+            ) for q in 1:p.n_products
         )
         @test cert.required ≈ req
         @test cert.available ≈ sum(p.plant_capacity[1:(h - 1)])
@@ -209,7 +223,10 @@
         cert = p.infeasibility_certificate
         @test cert !== nothing && p.feasible_witness === nothing
         h = cert.horizon
-        req = sum(p.usage[i] * max(0.0, sum(p.demand[i, 1:h]) - p.initial_inventory[i]) for i in 1:p.n_items)
+        req = sum(
+            p.usage[i] * max(0.0, sum(p.demand[i, 1:h]) - p.initial_inventory[i]) for
+            i in 1:p.n_items
+        )
         @test cert.required ≈ req
         @test cert.available ≈ sum(p.capacity[1:h])
         @test cert.required >= 1.1 * cert.available * (1 - 1e-9)
@@ -267,7 +284,9 @@
             # setup times and costs strictly lowers the relaxed optimum.
             gaps = 0
             for seed in 0:3
-                m, p = generate_problem(ProblemVariant(:inventory, :lot_sizing), 1500, feasible, seed)
+                m, p = generate_problem(
+                    ProblemVariant(:inventory, :lot_sizing), 1500, feasible, seed
+                )
                 solve!(m)
                 z = objective_value(m)
                 q = deepcopy(p)

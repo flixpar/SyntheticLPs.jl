@@ -206,8 +206,7 @@ function nnv_affine_bounds(
     upper::AbstractVector{<:Real},
 )
     size(weights, 1) == length(bias) || throw(DimensionMismatch("bias length"))
-    size(weights, 2) == length(lower) == length(upper) ||
-        throw(DimensionMismatch("box dimension"))
+    size(weights, 2) == length(lower) == length(upper) || throw(DimensionMismatch("box dimension"))
     positive = max.(weights, 0.0)
     negative = min.(weights, 0.0)
     affine_lower = Float64.(bias) .+ positive * lower .+ negative * upper
@@ -331,8 +330,7 @@ function nnv_phase_counts(
     n_layers = length(widths)
     unstable = [clamp(round(Int, unstable_fraction * w), 2, w) for w in widths]
     inactive = [
-        clamp(round(Int, inactive_fraction * w), 0, w - unstable[l]) for
-        (l, w) in enumerate(widths)
+        clamp(round(Int, inactive_fraction * w), 0, w - unstable[l]) for (l, w) in enumerate(widths)
     ]
     active = [widths[l] - unstable[l] - inactive[l] for l in 1:n_layers]
     residual = budget - sum(nnv_layer_variables(active[l], unstable[l]) for l in 1:n_layers)
@@ -470,7 +468,13 @@ function nnv_architecture(
     per_neuron = (1.0 - unstable_fraction - inactive_fraction) + 3.0 * unstable_fraction
     if target < NNV_SPARSE_ARCHITECTURE_THRESHOLD
         input_dim = clamp(round(Int, sqrt(target) / 1.5), 2, 24)
-        n_layers = target < 80 ? 1 : target < 300 ? 2 : rand(rng, 3:4)
+        n_layers = if target < 80
+            1
+        elseif target < 300
+            2
+        else
+            rand(rng, 3:4)
+        end
         neurons = max(NNV_MIN_LAYER_WIDTH, round(Int, (target - input_dim - 1) / per_neuron))
         n_layers = min(n_layers, max(1, neurons ÷ NNV_MIN_LAYER_WIDTH))
         base, remainder = divrem(neurons, n_layers)
@@ -487,7 +491,9 @@ function nnv_architecture(
     if rand(rng) < 0.5
         input_dim = clamp(round(Int, 0.02 * target), 64, 784)
         n_layers = rand(rng, 3:5)
-        neurons = max(n_layers * NNV_MIN_LAYER_WIDTH, round(Int, (target - input_dim - 1) / per_neuron))
+        neurons = max(
+            n_layers * NNV_MIN_LAYER_WIDTH, round(Int, (target - input_dim - 1) / per_neuron)
+        )
         base, remainder = divrem(neurons, n_layers)
         widths = [base + (l <= remainder ? 1 : 0) for l in 1:n_layers]
         return (
@@ -625,7 +631,8 @@ function NeuralNetworkVerificationProblem(
                 # Off-centre crossing points make the triangle relaxations
                 # heterogeneous; the mirrored pair stays exactly symmetric.
                 shift = neuron in mirrored_pair && layer == n_layers ? 0.0 : 0.3 * (rand(rng) - 0.5)
-                layer_bias[neuron] = -(0.5 + shift) * raw_lower[neuron] - (0.5 - shift) * raw_upper[neuron]
+                layer_bias[neuron] =
+                    -(0.5 + shift) * raw_lower[neuron] - (0.5 - shift) * raw_upper[neuron]
             elseif phase == 1
                 layer_bias[neuron] = -raw_lower[neuron] + margin
             else

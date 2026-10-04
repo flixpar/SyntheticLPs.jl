@@ -644,16 +644,7 @@ function _crew_plant_line!(
                 nxt = 0
                 if !forced_home
                     nxt = _crew_next_airport(
-                        rng,
-                        block,
-                        cur,
-                        base,
-                        home,
-                        dep_t,
-                        duty_start,
-                        duty_block,
-                        rules,
-                        is_final,
+                        rng, block, cur, base, home, dep_t, duty_start, duty_block, rules, is_final
                     )
                     nxt == 0 && (forced_home = true)
                 end
@@ -866,7 +857,17 @@ function _crew_sample_through(rng::AbstractRNG, net::_CrewNet, f::Int, is_base::
         budget = Ref(300)
         stop_prob = 0.15 + 0.45 * rand(rng)
         if _crew_extend!(
-            rng, net, base, legs, used, duty_start, block, length(last_duty), length(duties), budget, stop_prob
+            rng,
+            net,
+            base,
+            legs,
+            used,
+            duty_start,
+            block,
+            length(last_duty),
+            length(duties),
+            budget,
+            stop_prob,
         )
             return base, legs
         end
@@ -973,7 +974,8 @@ function AirlineCrewProblem(target_variables::Int, feasibility_status::Feasibili
         push!(columns, legs)
         push!(column_bases, base)
         push!(seen, legs)
-        length(coverage) < length(net.org) && append!(coverage, zeros(Int, length(net.org) - length(coverage)))
+        length(coverage) < length(net.org) &&
+            append!(coverage, zeros(Int, length(net.org) - length(coverage)))
         for f in legs
             coverage[f] += 1
         end
@@ -1028,10 +1030,20 @@ function AirlineCrewProblem(target_variables::Int, feasibility_status::Feasibili
     n_cols = length(columns)
     first_day = [_crew_day(net.dep[legs[1]]) for legs in columns]
     last_day = [_crew_day(net.arr[legs[end]]) for legs in columns]
-    block_hours = [round(sum(net.arr[f] - net.dep[f] for f in legs) / 60; digits=2) for legs in columns]
+    block_hours = [
+        round(sum(net.arr[f] - net.dep[f] for f in legs) / 60; digits=2) for legs in columns
+    ]
     costs = [
         _crew_pairing_cost(
-            net.dep, net.arr, legs, rules, pay_rate, duty_guarantee, min_daily_credit, per_diem_rate, hotel_cost
+            net.dep,
+            net.arr,
+            legs,
+            rules,
+            pay_rate,
+            duty_guarantee,
+            min_daily_credit,
+            per_diem_rate,
+            hotel_cost,
         ) for legs in columns
     ]
 
@@ -1072,7 +1084,9 @@ function AirlineCrewProblem(target_variables::Int, feasibility_status::Feasibili
             flights_per_day[_crew_day(net.dep[f])] += 1
         end
         shortage_day = argmax(flights_per_day)
-        max_legs = maximum(count(f -> _crew_day(net.dep[f]) == shortage_day, legs) for legs in columns)
+        max_legs = maximum(
+            count(f -> _crew_day(net.dep[f]) == shortage_day, legs) for legs in columns
+        )
         total_cap = floor(Int, 0.9 * flights_per_day[shortage_day] / max_legs)
         active = [b for b in 1:num_bases if ncols[b, shortage_day] > 0]
         alloc = _crew_largest_remainder(total_cap, [float(usage[b, shortage_day]) for b in active])
@@ -1116,7 +1130,8 @@ function AirlineCrewProblem(target_variables::Int, feasibility_status::Feasibili
         end
     end
 
-    witness = feasibility_status == feasible ? CrewPairingCoverWitness(sort(planted_columns)) : nothing
+    witness =
+        feasibility_status == feasible ? CrewPairingCoverWitness(sort(planted_columns)) : nothing
 
     return AirlineCrewProblem(
         num_flights,
@@ -1199,8 +1214,8 @@ function build_model(prob::AirlineCrewProblem)
         @constraint(
             model,
             prob.base_block_lower[b] <=
-            sum(prob.pairing_block_hours[p] * x[p] for p in by_base[b]) <=
-            prob.base_block_upper[b]
+                sum(prob.pairing_block_hours[p] * x[p] for p in by_base[b]) <=
+                prob.base_block_upper[b]
         )
     end
 

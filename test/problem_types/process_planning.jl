@@ -68,10 +68,7 @@
         pools = count(g -> length(g) * p.n_tiers >= 2, p.supply_groups)
         per_task = 2T + 1 + 3 * (T - 1) + (T - L + 1)
         return T * (
-            length(p.material_names) +
-            count(p.campaign_unit) +
-            pools +
-            length(p.market_groups)
+            length(p.material_names) + count(p.campaign_unit) + pools + length(p.market_groups)
         ) + length(campaign_tasks(p)) * per_task
     end
 
@@ -366,9 +363,7 @@
                 # potential argument recomputes.
                 @test certificate.required > certificate.achievable
                 @test isapprox(
-                    certificate.achievable,
-                    PP._pp_production_bound(p.flowsheet, p.data);
-                    rtol=1e-9,
+                    certificate.achievable, PP._pp_production_bound(p.flowsheet, p.data); rtol=1e-9
                 )
                 @test isapprox(certificate.required, sum(p.data.demand_min); rtol=1e-9)
             end
@@ -577,8 +572,7 @@
             @test all(potential[j] == 0.0 for j in p.raw_chemicals)
             @test all(>=(0.0), potential)
             unit_costs = [
-                t.variable_investment + t.fixed_investment / t.max_expansion for
-                t in p.technologies
+                t.variable_investment + t.fixed_investment / t.max_expansion for t in p.technologies
             ]
             nets = [
                 sum(c * potential[j] for (j, c) in t.outputs) -
@@ -762,7 +756,9 @@
                 target in (1000, 3000),
                 seed in 0:1
 
-                m, _ = generate_problem(:process_planning, target, infeasible, seed; variant=variant)
+                m, _ = generate_problem(
+                    :process_planning, target, infeasible, seed; variant=variant
+                )
                 set_optimizer(m, HiGHS.Optimizer)
                 set_silent(m)
                 set_time_limit_sec(m, 60.0)

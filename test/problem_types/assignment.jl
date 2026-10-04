@@ -14,18 +14,23 @@
             @test num_variables(m) == length(p.edges)
             target >= 100 && @test num_variables(m) == target
             n_worker_rows = length(unique(w for (w, _) in p.edges))
-            @test num_constraints(m; count_variable_in_set_constraints=false) == p.n_jobs + n_worker_rows
+            @test num_constraints(m; count_variable_in_set_constraints=false) ==
+                p.n_jobs + n_worker_rows
 
             m, q = generate_problem("assignment/workload_balance", target, status, 4)
             @test num_variables(m) == length(q.edges) + 1
             target >= 100 && @test num_variables(m) == target
-            @test num_constraints(m; count_variable_in_set_constraints=false) == q.n_tasks + q.n_workers
+            @test num_constraints(m; count_variable_in_set_constraints=false) ==
+                q.n_tasks + q.n_workers
         end
-        @test_throws ArgumentError SyntheticLPs.AssignmentProblem(SyntheticLPs.ASSIGNMENT_MAX_VARIABLES + 1, unknown, 0)
+        @test_throws ArgumentError SyntheticLPs.AssignmentProblem(
+            SyntheticLPs.ASSIGNMENT_MAX_VARIABLES + 1, unknown, 0
+        )
         @test_throws ArgumentError SyntheticLPs.WorkloadBalanceAssignmentProblem(0, unknown, 0)
         # Large-target sizing (constructors only; both build in well under a second).
         @test length(SyntheticLPs.AssignmentProblem(100_000, unknown, 0).edges) == 100_000
-        @test length(SyntheticLPs.WorkloadBalanceAssignmentProblem(100_000, infeasible, 0).edges) == 99_999
+        @test length(SyntheticLPs.WorkloadBalanceAssignmentProblem(100_000, infeasible, 0).edges) ==
+            99_999
     end
 
     @testset "eligibility invariants" begin
@@ -94,7 +99,8 @@
             Tq = Set(cq.tasks)
             @test cq.workers == sort!(unique([w for (w, t) in q.edges if t in Tq]))
             fastest = sum(
-                minimum(q.processing_time[e] for e in eachindex(q.edges) if q.edges[e][2] == t) for t in cq.tasks
+                minimum(q.processing_time[e] for e in eachindex(q.edges) if q.edges[e][2] == t) for
+                t in cq.tasks
             )
             @test cq.required ≈ fastest
             @test cq.available ≈ sum(q.availability[cq.workers]) * q.max_makespan
@@ -104,7 +110,9 @@
     end
 
     @testset "reproducibility" begin
-        for ref in ("assignment/standard", "assignment/workload_balance"), status in (feasible, infeasible, unknown)
+        for ref in ("assignment/standard", "assignment/workload_balance"),
+            status in (feasible, infeasible, unknown)
+
             Random.seed!(8)
             _, p1 = generate_problem(ref, 900, status, 13)
             Random.seed!(9)
@@ -115,7 +123,9 @@
                 if a === nothing || a isa Union{Number, Symbol, AbstractArray, FeasibilityStatus}
                     @test isequal(a, b)
                 else
-                    @test all(isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a)))
+                    @test all(
+                        isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a))
+                    )
                 end
             end
         end
@@ -129,7 +139,10 @@
                 optimize!(m)
                 return termination_status(m), MOI.get(m, MOI.SimplexIterations())
             end
-            for ref in ("assignment/standard", "assignment/workload_balance"), target in (150, 4000), seed in 0:2
+            for ref in ("assignment/standard", "assignment/workload_balance"),
+                target in (150, 4000),
+                seed in 0:2
+
                 ts, _ = asg_solve(generate_problem(ref, target, feasible, seed)[1])
                 @test ts == MOI.OPTIMAL
                 ts, iters = asg_solve(generate_problem(ref, target, infeasible, seed)[1])

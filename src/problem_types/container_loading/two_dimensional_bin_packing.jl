@@ -150,7 +150,12 @@ function TwoDimensionalBinPackingProblem(
     Wmin, Hmin = minimum(sheet_widths), minimum(sheet_heights)
 
     # Standard heights catalogue (mm), then item types on it.
-    heights = sort!(unique!([10 * round(Int, (150 + (0.55 * Hmin - 150) * rand(rng, Beta(1.5, 2.5))) / 10) for _ in 1:K_target]))
+    heights = sort!(
+        unique!([
+            10 * round(Int, (150 + (0.55 * Hmin - 150) * rand(rng, Beta(1.5, 2.5))) / 10) for
+            _ in 1:K_target
+        ]),
+    )
     m = m_target
     item_heights = [heights[rand(rng, 1:length(heights))] for _ in 1:m]
     item_widths = [round(Int, 150 + (0.6 * Wmin - 150) * rand(rng, Beta(1.4, 2.6))) for _ in 1:m]
@@ -204,7 +209,8 @@ function TwoDimensionalBinPackingProblem(
         length(strip_class) >= n_strip && break
         add_strip!(c, s, [i], [k])
     end
-    length(strip_class) == n_strip || error("two_dimensional_bin_packing: strip pattern space exhausted")
+    length(strip_class) == n_strip ||
+        error("two_dimensional_bin_packing: strip pattern space exhausted")
 
     # --- Sheet patterns ---
     sheet_type = Int[]
@@ -249,7 +255,9 @@ function TwoDimensionalBinPackingProblem(
             end
         end
     end
-    length(sheet_type) == n_sheetp || error("two_dimensional_bin_packing: sheet pattern space exhausted ($(length(sheet_type)) of $n_sheetp, K=$K, heights=$class_heights)")
+    length(sheet_type) == n_sheetp || error(
+        "two_dimensional_bin_packing: sheet pattern space exhausted ($(length(sheet_type)) of $n_sheetp, K=$K, heights=$class_heights)",
+    )
 
     # --- Trivial plan ---
     plan_sheet = [rand(rng, 1:S) for _ in 1:m]
@@ -272,15 +280,22 @@ function TwoDimensionalBinPackingProblem(
     infeasibility_certificate = nothing
     if feasibility_status == feasible
         availability = [ceil(Int, usage[s] * (1.05 + 0.30 * rand(rng))) for s in 1:S]
-        feasible_witness = TwoStagePlanWitness(strip_pattern, strip_runs, plan_sheet, single_sheet, sheet_runs)
+        feasible_witness = TwoStagePlanWitness(
+            strip_pattern, strip_runs, plan_sheet, single_sheet, sheet_runs
+        )
     else
         base = [usage[s] * (1.05 + 0.30 * rand(rng)) + 1.0 for s in 1:S]
         area = sum(Float64(sheet_widths[s]) * sheet_heights[s] * base[s] for s in 1:S)
-        ratio = feasibility_status == infeasible ? 1.0 / (1.08 + 0.12 * rand(rng)) : 0.98 + 0.20 * rand(rng)
+        ratio = if feasibility_status == infeasible
+            1.0 / (1.08 + 0.12 * rand(rng))
+        else
+            0.98 + 0.20 * rand(rng)
+        end
         availability = [floor(Int, base[s] * ratio * demand_area / area) for s in 1:S]
         if feasibility_status == infeasible
             supply = sum(Float64(sheet_widths[s]) * sheet_heights[s] * availability[s] for s in 1:S)
-            demand_area >= 1.04 * supply || error("two_dimensional_bin_packing: certificate margin lost")
+            demand_area >= 1.04 * supply ||
+                error("two_dimensional_bin_packing: certificate margin lost")
             infeasibility_certificate = AreaShortageCertificate(demand_area, supply)
         end
     end

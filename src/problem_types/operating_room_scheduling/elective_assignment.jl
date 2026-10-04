@@ -203,9 +203,7 @@ function ElectiveSurgeryAssignmentProblem(
     for _ in 1:60
         spec_ids = _orsched_case_mix(rng, n_specs)
         mss, session = _orsched_master_schedule(rng, n_rooms, n_days, spec_ids)
-        wl = _orsched_waiting_list(
-            rng, n_surgeries, spec_ids, n_days; allow_urgent=false
-        )
+        wl = _orsched_waiting_list(rng, n_surgeries, spec_ids, n_days; allow_urgent=false)
         counts = [count(==(k), wl.specialty) for k in 1:n_specs]
         surgeon_specialty, surgeon_budget = _orsched_surgeon_pool(rng, counts, n_days, mss)
         surgery_surgeon = _elective_assign_surgeons(rng, wl.specialty, surgeon_specialty)
@@ -286,8 +284,8 @@ function ElectiveSurgeryAssignmentProblem(
     room_fits(i, d) = d in room_fit_days[i]
     # Referral candidates need two fitting days, so presolve cannot pin them.
     has_option = [
-        count(surgeon_budget[surgery_surgeon[i], d] >= wl.duration[i] for d in room_fit_days[i]) >= 2
-        for i in 1:n_surgeries
+        count(surgeon_budget[surgery_surgeon[i], d] >= wl.duration[i] for d in room_fit_days[i]) >=
+        2 for i in 1:n_surgeries
     ]
     mandatory = BitVector(urgency[i] == :urgent && has_option[i] for i in 1:n_surgeries)
 
@@ -441,7 +439,8 @@ function build_model(prob::ElectiveSurgeryAssignmentProblem)
     for (s, d) in sort!(collect(keys(by_surgeon_day)))
         idxs = by_surgeon_day[(s, d)]
         # Rows that cannot bind (all admissible cases fit at once) are omitted.
-        sum(prob.surgery_duration[admissible[a][1]] for a in idxs) <= prob.surgeon_budget[s, d] && continue
+        sum(prob.surgery_duration[admissible[a][1]] for a in idxs) <= prob.surgeon_budget[s, d] &&
+            continue
         @constraint(
             model,
             sum(prob.surgery_duration[admissible[a][1]] * assign[a] for a in idxs) <=

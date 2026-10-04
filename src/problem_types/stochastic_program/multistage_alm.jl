@@ -11,15 +11,96 @@ and the maximum portfolio weight.
 """
 const _ALM_ASSET_CLASSES = (
     (name=:cash, kind=:cash, duration=0.0, premium=0.0, beta=0.0, vol=0.0, tc=0.0, max_weight=1.0),
-    (name=:gov_bond, kind=:bond, duration=7.0, premium=0.006, beta=0.0, vol=0.01, tc=0.002, max_weight=0.8),
-    (name=:equity_dom, kind=:equity, duration=0.0, premium=0.045, beta=1.0, vol=0.06, tc=0.006, max_weight=0.45),
-    (name=:corp_bond, kind=:bond, duration=5.0, premium=0.014, beta=0.15, vol=0.02, tc=0.004, max_weight=0.4),
-    (name=:equity_intl, kind=:equity, duration=0.0, premium=0.05, beta=0.9, vol=0.09, tc=0.008, max_weight=0.35),
-    (name=:real_estate, kind=:real, duration=0.0, premium=0.035, beta=0.45, vol=0.08, tc=0.024, max_weight=0.2),
-    (name=:index_linked, kind=:bond, duration=10.0, premium=0.004, beta=0.0, vol=0.015, tc=0.003, max_weight=0.4),
-    (name=:equity_em, kind=:equity, duration=0.0, premium=0.065, beta=1.25, vol=0.14, tc=0.016, max_weight=0.15),
-    (name=:high_yield, kind=:bond, duration=4.0, premium=0.03, beta=0.45, vol=0.05, tc=0.01, max_weight=0.15),
-    (name=:infrastructure, kind=:real, duration=0.0, premium=0.04, beta=0.35, vol=0.07, tc=0.03, max_weight=0.15),
+    (
+        name=:gov_bond,
+        kind=:bond,
+        duration=7.0,
+        premium=0.006,
+        beta=0.0,
+        vol=0.01,
+        tc=0.002,
+        max_weight=0.8,
+    ),
+    (
+        name=:equity_dom,
+        kind=:equity,
+        duration=0.0,
+        premium=0.045,
+        beta=1.0,
+        vol=0.06,
+        tc=0.006,
+        max_weight=0.45,
+    ),
+    (
+        name=:corp_bond,
+        kind=:bond,
+        duration=5.0,
+        premium=0.014,
+        beta=0.15,
+        vol=0.02,
+        tc=0.004,
+        max_weight=0.4,
+    ),
+    (
+        name=:equity_intl,
+        kind=:equity,
+        duration=0.0,
+        premium=0.05,
+        beta=0.9,
+        vol=0.09,
+        tc=0.008,
+        max_weight=0.35,
+    ),
+    (
+        name=:real_estate,
+        kind=:real,
+        duration=0.0,
+        premium=0.035,
+        beta=0.45,
+        vol=0.08,
+        tc=0.024,
+        max_weight=0.2,
+    ),
+    (
+        name=:index_linked,
+        kind=:bond,
+        duration=10.0,
+        premium=0.004,
+        beta=0.0,
+        vol=0.015,
+        tc=0.003,
+        max_weight=0.4,
+    ),
+    (
+        name=:equity_em,
+        kind=:equity,
+        duration=0.0,
+        premium=0.065,
+        beta=1.25,
+        vol=0.14,
+        tc=0.016,
+        max_weight=0.15,
+    ),
+    (
+        name=:high_yield,
+        kind=:bond,
+        duration=4.0,
+        premium=0.03,
+        beta=0.45,
+        vol=0.05,
+        tc=0.01,
+        max_weight=0.15,
+    ),
+    (
+        name=:infrastructure,
+        kind=:real,
+        duration=0.0,
+        premium=0.04,
+        beta=0.35,
+        vol=0.07,
+        tc=0.03,
+        max_weight=0.15,
+    ),
 )
 
 """
@@ -184,8 +265,11 @@ function _alm_dimensions(target::Int)
         total = internal * (3A - 1) + leaves * 3A
         size_error = abs(total - t)
         shape =
-            abs(A - ideal_assets) + (T < 3 ? 1.5 : 0.0) + (T > 5 ? 1.0 : 0.0) +
-            (b < 3 ? 1.0 : 0.0) + 0.3 * (1 - leaves / leaves_hi)
+            abs(A - ideal_assets) +
+            (T < 3 ? 1.5 : 0.0) +
+            (T > 5 ? 1.0 : 0.0) +
+            (b < 3 ? 1.0 : 0.0) +
+            0.3 * (1 - leaves / leaves_hi)
         score = (size_error <= max(1, 3A) ? 0 : size_error, shape)
         if score < best_score
             best_score = score
@@ -290,7 +374,9 @@ function _alm_best_growth(returns, caps, wealth::Float64)
     return value / wealth
 end
 
-function MultistageALMProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function MultistageALMProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     rng = MersenneTwister(seed)
     A, T, b, n_leaves = _alm_dimensions(target_variables)
     classes = _ALM_ASSET_CLASSES[1:A]
@@ -326,12 +412,16 @@ function MultistageALMProblem(target_variables::Int, feasibility_status::Feasibi
             elseif c.name == :index_linked
                 inflation + 0.006 * Δ - 0.5 * c.duration * drate + c.vol * sqrt(Δ) * randn(rng)
             elseif c.kind == :bond
-                carry + c.premium * Δ - c.duration * drate + c.beta * 0.5 * market +
+                carry + c.premium * Δ - c.duration * drate +
+                c.beta * 0.5 * market +
                 c.vol * sqrt(Δ) * randn(rng)
             else
                 total_vol2 = (c.beta * market_vol)^2 + c.vol^2
-                carry + (market_premium_scale * c.premium - total_vol2 / 2) * Δ + c.beta * market +
-                (c.kind == :real ? 0.3 * inflation : 0.0) + c.vol * sqrt(Δ) * randn(rng)
+                carry +
+                (market_premium_scale * c.premium - total_vol2 / 2) * Δ +
+                c.beta * market +
+                (c.kind == :real ? 0.3 * inflation : 0.0) +
+                c.vol * sqrt(Δ) * randn(rng)
             end
             returns[a, n] = exp(logret)
         end
@@ -389,7 +479,9 @@ function MultistageALMProblem(target_variables::Int, feasibility_status::Feasibi
         mix[1] += freed
     end
 
-    holdings, buys, sells = _alm_fixed_mix(returns, inflow, outflow, parent, initial_holdings, mix, tc)
+    holdings, buys, sells = _alm_fixed_mix(
+        returns, inflow, outflow, parent, initial_holdings, mix, tc
+    )
     wealth = vec(sum(holdings; dims=1))
     @assert all(>(0), wealth)
     @assert all(>=(-1e-12), holdings)
@@ -488,7 +580,8 @@ function build_model(prob::MultistageALMProblem)
     L = prob.liability_value
 
     # Exposure limits in liability units are plain upper bounds on holdings.
-    exposure(a, n) = prob.max_weight[a] < 1.0 ? prob.max_weight[a] * prob.exposure_scale * L[n] : Inf
+    exposure(a, n) =
+        prob.max_weight[a] < 1.0 ? prob.max_weight[a] * prob.exposure_scale * L[n] : Inf
     @variable(model, 0 <= h[a = 1:A, n = 1:N] <= exposure(a, n))
     @variable(model, buy[2:A, 1:N] >= 0)
     @variable(model, sell[2:A, 1:N] >= 0)
@@ -506,20 +599,20 @@ function build_model(prob::MultistageALMProblem)
     )
 
     previous(a, n) =
-        prob.parent[n] == 0 ? prob.initial_holdings[a] :
-        prob.returns[a, n] * h[a, prob.parent[n]]
+        prob.parent[n] == 0 ? prob.initial_holdings[a] : prob.returns[a, n] * h[a, prob.parent[n]]
 
     @constraint(
-        model,
-        asset_balance[a = 2:A, n = 1:N],
-        h[a, n] == previous(a, n) + buy[a, n] - sell[a, n]
+        model, asset_balance[a = 2:A, n = 1:N], h[a, n] == previous(a, n) + buy[a, n] - sell[a, n]
     )
     @constraint(
         model,
         cash_balance[n = 1:N],
         h[1, n] ==
-        previous(1, n) +
-        sum((1 - prob.transaction_cost[a]) * sell[a, n] - (1 + prob.transaction_cost[a]) * buy[a, n] for a in 2:A) +
+            previous(1, n) +
+        sum(
+            (1 - prob.transaction_cost[a]) * sell[a, n] -
+            (1 + prob.transaction_cost[a]) * buy[a, n] for a in 2:A
+        ) +
         prob.inflow[n] - prob.outflow[n]
     )
     @constraint(model, wealth_definition[n = 1:N], wealth[n] == sum(h[a, n] for a in 1:A))
@@ -529,9 +622,7 @@ function build_model(prob::MultistageALMProblem)
         sum(h[a, n] for a in equities) <= prob.equity_cap * prob.exposure_scale * L[n]
     )
     @constraint(
-        model,
-        terminal_target[n in leaves],
-        shortfall[n] + wealth[n] >= prob.target_ratio * L[n]
+        model, terminal_target[n in leaves], shortfall[n] + wealth[n] >= prob.target_ratio * L[n]
     )
     return model
 end

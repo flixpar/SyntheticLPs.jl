@@ -170,9 +170,15 @@ function _generalized_flow_local_repair!(
         touched = falses(n)
         for v in 1:n
             demands[v] > 0 || continue
-            avail(u) = is_supply[u] ? supplies[u] + inflow_cap[u] :
-                (demands[u] > 0 ? max(inflow_cap[u] - demands[u], 0.0) : inflow_cap[u])
-            intake = sum(gains[a] * min(capacities[a], avail(arcs[a][1])) for a in in_adj[v]; init=0.0)
+            avail(u) =
+                if is_supply[u]
+                    supplies[u] + inflow_cap[u]
+                else
+                    (demands[u] > 0 ? max(inflow_cap[u] - demands[u], 0.0) : inflow_cap[u])
+                end
+            intake = sum(
+                gains[a] * min(capacities[a], avail(arcs[a][1])) for a in in_adj[v]; init=0.0
+            )
             deficit = 1.3 * demands[v] - intake
             deficit > 0 || continue
             for a in in_adj[v]
@@ -312,7 +318,10 @@ function GeneralizedFlowProblem(
             # best-connected hubs (whose customers have alternatives) run
             # short rather than a site that is some district's only source.
             deg = [length(out_adj[u]) for u in supply_nodes]
-            w = [source_draw[i] * deg[i]^2 * supply_weight[i]^(0.1 / 0.6) for i in eachindex(supply_nodes)]
+            w = [
+                source_draw[i] * deg[i]^2 * supply_weight[i]^(0.1 / 0.6) for
+                i in eachindex(supply_nodes)
+            ]
             shortfall = sum(source_draw) - total
             caps = [source_draw[i] - shortfall * w[i] / sum(w) for i in eachindex(supply_nodes)]
             if minimum(caps) < 0.05 * maximum(source_draw)
@@ -325,7 +334,9 @@ function GeneralizedFlowProblem(
             # (with 4% site noise): below 1 the routing must find more
             # efficient paths than the planted ones, above 1 it has slack.
             phi = 0.9 + 0.2 * rand(rng)
-            [max(floor(source_draw[i] * phi * rand(rng, LogNormal(0.0, 0.04)); digits=2), 0.01) for i in eachindex(supply_nodes)]
+            [
+                max(floor(source_draw[i] * phi * rand(rng, LogNormal(0.0, 0.04)); digits=2), 0.01) for i in eachindex(supply_nodes)
+            ]
         end
     end
     supplies = zeros(n)
@@ -334,7 +345,13 @@ function GeneralizedFlowProblem(
         # Infeasible: keep the total (the certificate depends on it). Unknown:
         # just top up starved sites (a natural instance).
         _generalized_flow_local_repair!(
-            supplies, n, arcs, capacities, gains, demands, supply_nodes;
+            supplies,
+            n,
+            arcs,
+            capacities,
+            gains,
+            demands,
+            supply_nodes;
             keep_total=feasibility_status == infeasible,
         )
     end
@@ -343,7 +360,9 @@ function GeneralizedFlowProblem(
         total_supply = sum(supply_caps)
         total_supply < required ||
             error("generalized_flow: loss certificate failed to separate (seed $seed)")
-        infeasibility_certificate = GeneralizedFlowLossCertificate(efficiency, required, total_supply)
+        infeasibility_certificate = GeneralizedFlowLossCertificate(
+            efficiency, required, total_supply
+        )
     end
 
     return GeneralizedFlowProblem(
@@ -387,7 +406,8 @@ function build_model(prob::GeneralizedFlowProblem)
     is_supply = falses(n)
     is_supply[prob.supply_nodes] .= true
     for v in 1:n
-        net_in = sum(prob.gains[k] * flow[k] for k in in_adj[v]; init=AffExpr(0.0)) -
+        net_in =
+            sum(prob.gains[k] * flow[k] for k in in_adj[v]; init=AffExpr(0.0)) -
             sum(flow[k] for k in out_adj[v]; init=AffExpr(0.0))
         if is_supply[v]
             @constraint(model, -net_in <= prob.supplies[v])

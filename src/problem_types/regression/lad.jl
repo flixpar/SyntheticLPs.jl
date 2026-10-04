@@ -177,7 +177,9 @@ function LADRegressionProblem(
     end
 
     # Replicates: the last `n_replicates` samples repeat earlier design rows.
-    n_replicates = clamp(round(Int, n_samples * rand(rng, Uniform(0.10, 0.25)) / 2), 1, n_samples ÷ 3)
+    n_replicates = clamp(
+        round(Int, n_samples * rand(rng, Uniform(0.10, 0.25)) / 2), 1, n_samples ÷ 3
+    )
     n_original = n_samples - n_replicates
 
     # --- Correlated dense covariates from a latent factor model. ---

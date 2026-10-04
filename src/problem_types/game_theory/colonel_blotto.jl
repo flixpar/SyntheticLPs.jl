@@ -171,7 +171,8 @@ function _blotto_choose_size(rng::AbstractRNG, target::Int)
         best, best_err = (3, 2, 2), Inf
         for K in Ks
             for S in 2:5000
-                _blotto_size_formula(K, S, max(2, ceil(Int, 0.6 * S)))[1] > 1.05 * target + 60 && break
+                _blotto_size_formula(K, S, max(2, ceil(Int, 0.6 * S)))[1] > 1.05 * target + 60 &&
+                    break
                 for So in max(2, ceil(Int, 0.6 * S)):max(2, floor(Int, 1.5 * S))
                     v = _blotto_size_formula(K, S, So)[1]
                     err = abs(v - target)
@@ -318,7 +319,9 @@ Build a compact Blotto equilibrium LP within about 2% of `target_variables`
 (exact formula in `_blotto_size_formula`); targets above
 `GAME_THEORY_MAX_VARIABLES` raise an `ArgumentError`.
 """
-function ColonelBlottoProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function ColonelBlottoProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
     _game_theory_check_target("colonel_blotto", target_variables)
     rng = MersenneTwister(seed)
     K, S, So = _blotto_choose_size(rng, target_variables)

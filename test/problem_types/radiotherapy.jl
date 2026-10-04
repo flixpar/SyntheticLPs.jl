@@ -189,7 +189,8 @@ const RT_VARIANTS = (RT_WEIGHTED, RT_MEAN_TAIL, RT_MINMAX, RT_ROBUST, RT_BEAM_AN
             @test feasible_problem.infeasibility_certificate === nothing
             @test SyntheticLPs._rt_witness_is_valid(feasible_problem)
             @test all(
-                0 .<= feasible_problem.feasible_witness.fluence .<=
+                0 .<=
+                feasible_problem.feasible_witness.fluence .<=
                 feasible_problem.case_data.fluence_max,
             )
             if ref == RT_MEAN_TAIL
@@ -218,8 +219,7 @@ const RT_VARIANTS = (RT_WEIGHTED, RT_MEAN_TAIL, RT_MINMAX, RT_ROBUST, RT_BEAM_AN
             for matrix in SyntheticLPs._rt_scenario_matrices(infeasible_problem)
                 combination = zeros(size(matrix, 2))
                 for (k, voxel) in enumerate(certificate.target_voxels)
-                    combination .+= certificate.interpolation_weights[k] .*
-                                    Vector(matrix[voxel, :])
+                    combination .+= certificate.interpolation_weights[k] .* Vector(matrix[voxel, :])
                 end
                 organ_row = Vector(matrix[certificate.organ_voxel, :])
                 @test organ_row ≈ certificate.multiplier .* combination
@@ -274,8 +274,9 @@ const RT_VARIANTS = (RT_WEIGHTED, RT_MEAN_TAIL, RT_MINMAX, RT_ROBUST, RT_BEAM_AN
                 problem.structure_max[structure] - problem.desired_dose[voxel]
         end
         # Each voxel's dose-influence row appears exactly once.
-        dose_rows = length(model[:target_dose_deviation]) +
-                    sum(length(rows) for rows in values(model[:organ_overdose]))
+        dose_rows =
+            length(model[:target_dose_deviation]) +
+            sum(length(rows) for rows in values(model[:organ_overdose]))
         @test dose_rows == size(case.voxel_locations_cm, 1)
         @test num_constraints(model; count_variable_in_set_constraints=false) ==
             dose_rows + 2 * length(case.beamlet_edges)
@@ -326,7 +327,7 @@ const RT_VARIANTS = (RT_WEIGHTED, RT_MEAN_TAIL, RT_MINMAX, RT_ROBUST, RT_BEAM_AN
             voxel = first(indices)
             @test coefficient(objective_function(model), model[:dose][voxel]) ≈
                 problem.mean_dose_weight[structure] / structure_volume *
-                case.voxel_volume_cc[voxel]
+                  case.voxel_volume_cc[voxel]
         end
 
         model, problem = generate_problem(RT_MINMAX, 100, feasible, 2)

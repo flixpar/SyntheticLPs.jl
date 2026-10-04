@@ -198,8 +198,9 @@ function EmissionConstrainedTransportationProblem(
     lambda_star = _network_flow_max_scale(nS + nD, arcs, caps, src_nodes, supplies, dst_nodes, d0)
     load_factor = feasibility_status == unknown ? 0.7 + 0.25 * rand(rng) : 0.6 + 0.3 * rand(rng)
     demands = max.(round.(load_factor * lambda_star .* d0; digits=2), 0.01)
-    value, ext_flows, _, _, _ =
-        _network_flow_extended(nS + nD, arcs, caps, src_nodes, supplies, dst_nodes, demands)
+    value, ext_flows, _, _, _ = _network_flow_extended(
+        nS + nD, arcs, caps, src_nodes, supplies, dst_nodes, demands
+    )
     value >= sum(demands) * (1 - 1e-9) ||
         error("transportation/emission_constrained: planted load not deliverable (seed $seed)")
 
@@ -220,16 +221,24 @@ function EmissionConstrainedTransportationProblem(
         m == 2 && (rail_volume[lanes[l][1]] += plan[k])
     end
     rail_capacity = [
-        siding[i] ? round(rail_volume[i] * (1.1 + 0.4 * rand(rng)) + 0.05 * supplies[i]; digits=2) :
-        0.0 for i in 1:nS
+        if siding[i]
+            round(rail_volume[i] * (1.1 + 0.4 * rand(rng)) + 0.05 * supplies[i]; digits=2)
+        else
+            0.0
+        end for i in 1:nS
     ]
 
     # Sales regions: nearest of n_regions random source seats.
     n_regions = clamp(round(Int, nS / 25), min(2, nS), 12)
     seats = randperm(rng, nS)[1:n_regions]
     region_of_source = [
-        argmin(r -> (hypot(src_pos[i][1] - src_pos[seats[r]][1], src_pos[i][2] - src_pos[seats[r]][2]), r), 1:n_regions)
-        for i in 1:nS
+        argmin(
+            r -> (
+                hypot(src_pos[i][1] - src_pos[seats[r]][1], src_pos[i][2] - src_pos[seats[r]][2]),
+                r,
+            ),
+            1:n_regions,
+        ) for i in 1:nS
     ]
     planted_region = zeros(n_regions)
     for (k, (l, _)) in enumerate(options)
@@ -258,7 +267,9 @@ function EmissionConstrainedTransportationProblem(
             feasible_witness = EmissionTransportationWitness(plan)
         else
             global_cap = floor(lower_bound * (0.85 + 0.1 * rand(rng)); digits=2)
-            infeasibility_certificate = EmissionTransportationCertificate(min_rate, lower_bound, global_cap)
+            infeasibility_certificate = EmissionTransportationCertificate(
+                min_rate, lower_bound, global_cap
+            )
         end
     end
 
@@ -321,7 +332,8 @@ function build_model(prob::EmissionConstrainedTransportationProblem)
     for r in eachindex(prob.region_cap)
         @constraint(
             model,
-            sum(prob.emission[k] * x[k] for k in in_region[r]; init=AffExpr(0.0)) <= prob.region_cap[r]
+            sum(prob.emission[k] * x[k] for k in in_region[r]; init=AffExpr(0.0)) <=
+                prob.region_cap[r]
         )
     end
     @constraint(model, sum(prob.emission[k] * x[k] for k in 1:K) <= prob.global_cap)

@@ -6,7 +6,10 @@
 # reproducibility, and HiGHS feasibility contracts.
 
 "Recompute the per-column total harvest volume (sum of harvest-definition coefficients)."
-fp_column_totals(p) = [sum(p.vol_amount[p.vol_ptr[j]:(p.vol_ptr[j + 1] - 1)]; init=0.0) for j in eachindex(p.col_source)]
+fp_column_totals(p) = [
+    sum(p.vol_amount[p.vol_ptr[j]:(p.vol_ptr[j + 1] - 1)]; init=0.0) for
+    j in eachindex(p.col_source)
+]
 
 "Zone of every column's source."
 function fp_column_zone(p)
@@ -40,14 +43,18 @@ end
     # target (exact up to one column); rows are strata + Model II nodes +
     # harvest definitions + 2(T-1) even-flow rows + non-empty green-up rows +
     # the ending-inventory row.
-    for v in variants, target in (10, 50, 200, 1000, 5000), status in (feasible, infeasible, unknown), seed in 0:1
+    for v in variants,
+        target in (10, 50, 200, 1000, 5000), status in (feasible, infeasible, unknown),
+        seed in 0:1
+
         m, p = generate_problem(:forest_planning, target, status, seed; variant=v)
         T, K = p.n_periods, length(p.products)
         @test num_variables(m) == length(p.col_source) + T * K
         expected = max(target, 30 + T * K)   # 30-column floor keeps tiny instances schedulable
         @test expected - 1 <= num_variables(m) <= expected
         n_green = length(fp_greenup_rows(p, ones(length(p.col_source))))
-        expected_rows = length(p.stratum_area) + length(p.node_period) + T * K + 2 * (T - 1) + n_green + 1
+        expected_rows =
+            length(p.stratum_area) + length(p.node_period) + T * K + 2 * (T - 1) + n_green + 1
         @test num_constraints(m; count_variable_in_set_constraints=false) == expected_rows
         @test v == :model_ii || isempty(p.node_period)
     end
@@ -62,7 +69,9 @@ end
         cap = SyntheticLPs.FOREST_PLANNING_MAX_VARIABLES
         @test cap == 1_000_000
         @test_throws ArgumentError SyntheticLPs.ForestPlanningProblem{v}(cap + 1, unknown, 0)
-        @test_throws ArgumentError generate_problem(:forest_planning, cap + 1, unknown, 0; variant=v)
+        @test_throws ArgumentError generate_problem(
+            :forest_planning, cap + 1, unknown, 0; variant=v
+        )
     end
 
     # Yield tables: Chapman-Richards volume is zero up to the regeneration
@@ -89,7 +98,8 @@ end
         S, N, T = length(p.stratum_area), length(p.node_period), p.n_periods
         n = length(p.col_source)
         @test all(p.stratum_area .> 0)
-        @test p.zone_area ≈ [sum(p.stratum_area[p.stratum_zone .== z]) for z in eachindex(p.zone_area)]
+        @test p.zone_area ≈
+            [sum(p.stratum_area[p.stratum_zone .== z]) for z in eachindex(p.zone_area)]
         @test all(0.25 .<= p.greenup_fraction .<= 0.40)
         @test p.greenup_window == max(1, ceil(Int, 20 / p.period_length))
         # unique (type, site, age class) analysis areas within a watershed
@@ -110,7 +120,9 @@ end
         @test all(counts .>= 2)
         for s in 1:S
             # one do-nothing (grow-to-end, unthinned) column per stratum
-            @test count(j -> p.col_source[j] == s && p.col_cut1[j] == 0 && p.col_thin[j] == 0, 1:n) == 1
+            @test count(
+                j -> p.col_source[j] == s && p.col_cut1[j] == 0 && p.col_thin[j] == 0, 1:n
+            ) == 1
         end
         for j in 1:n
             c1, c2, th = Int(p.col_cut1[j]), Int(p.col_cut2[j]), Int(p.col_thin[j])
@@ -217,8 +229,11 @@ end
         @test length(π) == S + length(p.node_period)
         ch = fp_column_totals(p)
         slack = [
-            π[p.col_source[j]] - (ch[j] + μ * p.col_ending_inventory[j] + (p.col_dest[j] > 0 ? π[S + p.col_dest[j]] : 0.0))
-            for j in eachindex(ch)
+            π[p.col_source[j]] - (
+                ch[j] +
+                μ * p.col_ending_inventory[j] +
+                (p.col_dest[j] > 0 ? π[S + p.col_dest[j]] : 0.0)
+            ) for j in eachindex(ch)
         ]
         @test minimum(slack) >= -1e-9 * maximum(abs, π)
         # tight: every source attains its value on some column (exact DP)
@@ -257,14 +272,16 @@ end
         Random.seed!(12345)
         m2, p2 = generate_problem(:forest_planning, 700, status, 42; variant=v)
         for f in fieldnames(typeof(p1))
-            f in (:feasible_witness, :infeasibility_certificate, :forest_types, :stand_models) && continue
+            f in (:feasible_witness, :infeasibility_certificate, :forest_types, :stand_models) &&
+                continue
             @test isequal(getfield(p1, f), getfield(p2, f))
         end
         if p1.feasible_witness !== nothing
             @test p1.feasible_witness.areas == p2.feasible_witness.areas
         end
         if p1.infeasibility_certificate !== nothing
-            @test p1.infeasibility_certificate.source_values == p2.infeasibility_certificate.source_values
+            @test p1.infeasibility_certificate.source_values ==
+                p2.infeasibility_certificate.source_values
         end
         @test sprint(print, m1) == sprint(print, m2)
     end
@@ -279,7 +296,9 @@ end
                 @test termination_status(m) == (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
             end
             for v in variants, status in (feasible, infeasible)
-                m, _ = generate_problem(:forest_planning, 400, status, 1; variant=v, optimizer=HiGHS.Optimizer)
+                m, _ = generate_problem(
+                    :forest_planning, 400, status, 1; variant=v, optimizer=HiGHS.Optimizer
+                )
                 @test num_variables(m) > 0
             end
             # The planted schedule is feasible, so the optimum is at least its NPV.
@@ -288,7 +307,8 @@ end
                 set_optimizer(m, HiGHS.Optimizer)
                 set_silent(m)
                 optimize!(m)
-                @test objective_value(m) >= sum(p.col_npv .* p.feasible_witness.areas) - 1e-6 * abs(objective_value(m))
+                @test objective_value(m) >=
+                    sum(p.col_npv .* p.feasible_witness.areas) - 1e-6 * abs(objective_value(m))
             end
             # `unknown` is genuinely two-sided.
             for v in variants

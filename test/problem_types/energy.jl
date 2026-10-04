@@ -94,7 +94,7 @@ function energy_connected(n, from, to)
     while !isempty(stack)
         v = pop!(stack)
         for u in adj[v]
-            seen[u] || (seen[u] = true; push!(stack, u))
+            seen[u] || (seen[u]=true; push!(stack, u))
         end
     end
     return all(seen)
@@ -103,7 +103,8 @@ end
 @testset "Energy" begin
     @testset "Registry" begin
         @test :energy in list_categories()
-        @test Set(list_variants(:energy)) == Set([ENERGY_DISPATCH_VARIANTS..., ENERGY_DC_VARIANTS...])
+        @test Set(list_variants(:energy)) ==
+            Set([ENERGY_DISPATCH_VARIANTS..., ENERGY_DC_VARIANTS...])
         info = problem_info(:energy)
         @test info[:default_variant] == :standard
         # The deleted variants (folded into the dispatch core, or removed for a
@@ -140,7 +141,8 @@ end
             for g in eachindex(c.unit_tech)
                 spec = SyntheticLPs.ENERGY_TECHNOLOGIES[c.unit_tech[g]]
                 @test spec.capacity[1] - 1e-9 <= c.capacity[g] <= spec.capacity[2] + 1e-9
-                @test c.min_stable[g] == 0 || spec.min_stable[1] <= c.min_stable[g] <= spec.min_stable[2]
+                @test c.min_stable[g] == 0 ||
+                    spec.min_stable[1] <= c.min_stable[g] <= spec.min_stable[2]
                 @test spec.emission[1] <= c.emission_rate[g] <= spec.emission[2]
                 @test isfinite(c.ramp_up[g]) == isfinite(spec.ramp[1])
             end
@@ -159,8 +161,13 @@ end
             c = p.core
             for z in 1:c.n_zones
                 floor = maximum(
-                    sum((c.min_stable[g] * c.capacity[g] * c.availability[g, t] for g in eachindex(c.unit_tech) if c.unit_zone[g] == z); init=0.0)
-                    for t in 1:c.n_periods
+                    sum(
+                        (
+                            c.min_stable[g] * c.capacity[g] * c.availability[g, t] for
+                            g in eachindex(c.unit_tech) if c.unit_zone[g] == z
+                        );
+                        init=0.0,
+                    ) for t in 1:c.n_periods
                 )
                 @test floor <= 0.75 * minimum(c.demand[z, :]) + 1e-6
             end
@@ -171,7 +178,8 @@ end
         for target in (30, 500, 5_000), status in (feasible, infeasible, unknown), seed in 0:1
             m, p = generate_problem("energy/dc_opf", target, status, seed)
             @test num_variables(m) == p.n_generators + p.n_buses == target
-            @test num_constraints(m; count_variable_in_set_constraints=false) == p.n_buses + p.n_lines
+            @test num_constraints(m; count_variable_in_set_constraints=false) ==
+                p.n_buses + p.n_lines
             @test energy_connected(p.n_buses, p.line_from, p.line_to)
             @test allunique(minmax.(p.line_from, p.line_to))
             @test all(p.line_limit .> 0) && all(5.0 .<= p.susceptance .<= 1000.0)
@@ -208,7 +216,10 @@ end
     end
 
     @testset "Planted witnesses satisfy every row" begin
-        for v in (ENERGY_DISPATCH_VARIANTS..., ENERGY_DC_VARIANTS...), target in (60, 700, 3_000), seed in 0:2
+        for v in (ENERGY_DISPATCH_VARIANTS..., ENERGY_DC_VARIANTS...),
+            target in (60, 700, 3_000),
+            seed in 0:2
+
             m, p = generate_problem(ProblemVariant(:energy, v), target, feasible, seed)
             @test p.feasible_witness !== nothing
             @test p.infeasibility_certificate === nothing
@@ -225,15 +236,21 @@ end
             @test sum(w.dispatch) ≈ sum(p.demand) rtol = 1e-9
             @test all(p.pmin .- 1e-9 .<= w.dispatch .<= p.pmax .+ 1e-9)
             # Every generator sits at the same fraction of its range.
-            β = [(w.dispatch[g] - p.pmin[g]) / (p.pmax[g] - p.pmin[g]) for g in eachindex(w.dispatch) if p.pmax[g] > p.pmin[g] + 1e-6]
+            β = [
+                (w.dispatch[g] - p.pmin[g]) / (p.pmax[g] - p.pmin[g]) for
+                g in eachindex(w.dispatch) if p.pmax[g] > p.pmin[g] + 1e-6
+            ]
             @test maximum(β) - minimum(β) < 1e-9
             inj = -copy(p.demand)
             for g in eachindex(w.dispatch)
                 inj[p.gen_bus[g]] += w.dispatch[g]
             end
             for l in 1:p.n_lines
-                @test w.flows[l] ≈ p.susceptance[l] * (w.angles[p.line_from[l]] - w.angles[p.line_to[l]]) atol = 1e-6
-                @test abs(w.flows[l]) <= p.line_limit[l] / 1.15 + 1e-6 || abs(w.flows[l]) <= p.line_limit[l] - 1.0
+                @test w.flows[l] ≈
+                    p.susceptance[l] * (w.angles[p.line_from[l]] - w.angles[p.line_to[l]]) atol =
+                    1e-6
+                @test abs(w.flows[l]) <= p.line_limit[l] / 1.15 + 1e-6 ||
+                    abs(w.flows[l]) <= p.line_limit[l] - 1.0
                 inj[p.line_from[l]] -= w.flows[l]
                 inj[p.line_to[l]] += w.flows[l]
             end
@@ -275,7 +292,9 @@ end
             @test all(h.downstream[r] == 0 || h.downstream[r] > r for r in eachindex(h.downstream))
             @test all(0 .<= h.delay .<= 3)
             @test all(h.feasible_witness.volume[:, end] .>= h.volume_target .- 1e-9)
-            @test all(h.feasible_witness.release .+ h.feasible_witness.spill .>= h.min_release .- 1e-9)
+            @test all(
+                h.feasible_witness.release .+ h.feasible_witness.spill .>= h.min_release .- 1e-9
+            )
             # Water value grows downstream-to-upstream (stored water passes more plants).
             for r in eachindex(h.downstream)
                 d = h.downstream[r]
@@ -294,8 +313,10 @@ end
             if v == :hydrothermal
                 @test cert isa SyntheticLPs.HydroDroughtCertificate
                 @test cert.outlet == cert.basin[end] && p.downstream[cert.outlet] == 0
-                @test cert.available_water ≈ SyntheticLPs._hydro_available_water(p, cert.basin) rtol = 1e-9
-                @test cert.required_release ≈ p.core.n_periods * p.min_release[cert.outlet] rtol = 1e-9
+                @test cert.available_water ≈ SyntheticLPs._hydro_available_water(p, cert.basin) rtol =
+                    1e-9
+                @test cert.required_release ≈ p.core.n_periods * p.min_release[cert.outlet] rtol =
+                    1e-9
                 @test cert.required_release >= 1.07 * cert.available_water
                 continue
             end
@@ -329,23 +350,29 @@ end
                 @test cert.supply_bound ≈ SyntheticLPs._ed_system_upper(c, t) rtol = 1e-9
                 @test cert.requirement ≈ D + p.operating_requirement[t] rtol = 1e-9
                 @test D <= cert.supply_bound                       # load alone fits
-                @test p.operating_requirement[t] <= SyntheticLPs._reserve_offer(c, p.spin_max, p.nonspin_max, t) + 1e-9
+                @test p.operating_requirement[t] <=
+                    SyntheticLPs._reserve_offer(c, p.spin_max, p.nonspin_max, t) + 1e-9
             elseif cert.kind == :energy_limited_peak
                 W = cert.periods
                 @test W == collect(first(W):last(W))
                 energy = sum(p.eta_discharge .* (p.soc_max .- p.soc_min))
-                @test cert.supply_bound ≈ sum(SyntheticLPs._ed_system_upper(c, t) for t in W) + energy rtol = 1e-9
-                @test cert.requirement ≈ sum(SyntheticLPs._ed_system_demand(c, t) for t in W) rtol = 1e-9
+                @test cert.supply_bound ≈
+                    sum(SyntheticLPs._ed_system_upper(c, t) for t in W) + energy rtol = 1e-9
+                @test cert.requirement ≈ sum(SyntheticLPs._ed_system_demand(c, t) for t in W) rtol =
+                    1e-9
                 local_dis = zeros(c.n_zones)
                 for s in eachindex(p.storage_zone)
                     local_dis[p.storage_zone[s]] += p.discharge_max[s]
                 end
                 for t in W, z in 1:c.n_zones
-                    @test c.demand[z, t] <= SyntheticLPs._ed_zone_row_max(c, z, t; extra=local_dis[z])
+                    @test c.demand[z, t] <=
+                        SyntheticLPs._ed_zone_row_max(c, z, t; extra=local_dis[z])
                 end
             end
         end
-        @test :emissions_budget in kinds && :reserve_scarcity in kinds && :energy_limited_peak in kinds
+        @test :emissions_budget in kinds &&
+            :reserve_scarcity in kinds &&
+            :energy_limited_peak in kinds
         # The standard variant's pocket mode can be forced.
         p = SyntheticLPs._economic_dispatch(3_000, infeasible, 1; infeasible_mode=:import_pocket)
         @test p.infeasibility_certificate.kind == :import_pocket
@@ -377,11 +404,14 @@ end
                 @test cert.contingency >= 1 && p.contingencies[cert.contingency] == out
                 @test out in crossing
                 # The base case alone can still serve the pocket.
-                @test cert.local_capacity + sum(p.line_limit[l] for l in crossing) >= cert.pocket_demand
+                @test cert.local_capacity + sum(p.line_limit[l] for l in crossing) >=
+                    cert.pocket_demand
             else
                 @test cert.contingency == 0 && out == 0
             end
-            @test cert.local_capacity ≈ sum((p.pmax[g] for g in eachindex(p.pmax) if p.gen_bus[g] in S); init=0.0) rtol = 1e-9
+            @test cert.local_capacity ≈
+                sum((p.pmax[g] for g in eachindex(p.pmax) if p.gen_bus[g] in S); init=0.0) rtol =
+                1e-9
             @test cert.import_capability ≈ sum(ratings[l] for l in cert.cut_lines) rtol = 1e-9
             @test cert.pocket_demand ≈ sum(p.demand[S]) rtol = 1e-9
             @test cert.pocket_demand >= 1.05 * (cert.local_capacity + cert.import_capability)
@@ -389,7 +419,9 @@ end
     end
 
     @testset "Reproducibility" begin
-        for v in (ENERGY_DISPATCH_VARIANTS..., ENERGY_DC_VARIANTS...), status in (feasible, infeasible, unknown)
+        for v in (ENERGY_DISPATCH_VARIANTS..., ENERGY_DC_VARIANTS...),
+            status in (feasible, infeasible, unknown)
+
             ref = ProblemVariant(:energy, v)
             _, a = generate_problem(ref, 900, status, 42)
             _, b = generate_problem(ref, 900, status, 42)
@@ -404,8 +436,9 @@ end
 
     @testset "HiGHS feasibility contracts" begin
         if HAS_HIGHS
-            for v in (ENERGY_DISPATCH_VARIANTS..., ENERGY_DC_VARIANTS...), status in (feasible, infeasible),
-                target in (300, 2_500), seed in 0:1
+            for v in (ENERGY_DISPATCH_VARIANTS..., ENERGY_DC_VARIANTS...),
+                status in (feasible, infeasible), target in (300, 2_500),
+                seed in 0:1
 
                 m, _ = generate_problem(ProblemVariant(:energy, v), target, status, seed)
                 set_optimizer(m, HiGHS.Optimizer)

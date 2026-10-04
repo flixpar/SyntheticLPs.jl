@@ -86,7 +86,9 @@ function _forest_model_ii_source!(rng::AbstractRNG, b::_ForestBuilder, src::Int,
             added + 1 + length(pending) > budget && continue
             _forest_draft_reset!(d)
             _forest_thin_event!(d, b, m, thin, thin_age)
-            _forest_push_column!(b, d, src, 0, thin, 0, 0, 0, _forest_standing(b, m, age_end, thin_age))
+            _forest_push_column!(
+                b, d, src, 0, thin, 0, 0, 0, _forest_standing(b, m, age_end, thin_age)
+            )
             added += 1
         end
         # Pass 1 offers one clearcut per period (preferred regeneration
@@ -95,7 +97,9 @@ function _forest_model_ii_source!(rng::AbstractRNG, b::_ForestBuilder, src::Int,
         done = falses(T, nopt)
         for pass in 1:2, t in E
             t <= thin && continue
-            terminal = BitVector([t + _forest_min_rotation_periods(b, b.regen_targets[m][r]) > T for r in 1:nopt])
+            terminal = BitVector([
+                t + _forest_min_rotation_periods(b, b.regen_targets[m][r]) > T for r in 1:nopt
+            ])
             keep = _forest_terminal_regen_keep(b, m, t, terminal) .| .!terminal
             for k in 0:(nopt - 1)
                 r = mod1(pref + k, nopt)
@@ -125,7 +129,9 @@ function _forest_model_ii_source!(rng::AbstractRNG, b::_ForestBuilder, src::Int,
     # Expand the nodes this source opened; each later pending node keeps one
     # reserved column for its own clearcut.
     for (i, nd) in enumerate(pending)
-        added += _forest_model_ii_source!(rng, b, FOREST_NODE_OFFSET + nd, budget - added - (length(pending) - i))
+        added += _forest_model_ii_source!(
+            rng, b, FOREST_NODE_OFFSET + nd, budget - added - (length(pending) - i)
+        )
     end
     return added
 end
