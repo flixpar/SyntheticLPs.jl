@@ -1,186 +1,116 @@
 # Load Balancing
 
-Load balancing generates a continuous network LP that minimizes maximum link utilization while routing fixed traffic demands along preselected paths.
+Minimise the worst-case load: traffic engineering on an ISP-style backbone
+(`standard`) and service placement with workload routing across machines
+(`discrete_placement`). Both generators use a constructor-local RNG;
+`build_model` does no sampling.
 
-## Overview
+## Variants
 
-This generator represents network traffic load balancing. A directed network has link capacities and source-target traffic demands. Each demand is assigned a single generated path. The optimization sets link flows and minimizes the maximum utilization factor needed to carry all path demands.
+| Variant | Model class | Key structure |
+|---|---|---|
+| `standard` (default) | LP | path-based min-max-utilization TE: OD demand rows, link rows `sum_{p uses a} x_p - c_a U <= -background_a`, SLA bound on `U` |
+| `discrete_placement` | MIP | binary service placements, continuous per-class workload routing linked to placements, machine-load definitions, makespan |
 
-Unlike a full multicommodity flow model, this implementation does not choose paths or split flow. The paths are generated before the model is built, and each link on a demand path must carry at least that demand amount.
-
-## Generator Data and Sizing
-
-The constructor documents `target_variables` as `1 + number of links`, matching the model variables `u` plus one flow variable per link. It sets:
-
-```text
-target_links = max(1, target_variables - 1)
-n_links = target_links
-```
-
-Network scale parameters depend on `target_variables`.
-
-For `target_variables <= 250`:
-
-- `base_nodes`: rounded `Uniform(5, 20)`.
-- `density_dist`: `Uniform(0.4, 0.7)`.
-- `capacity_mean`: `500.0`.
-- `capacity_std`: `150.0`.
-- `demand_mean`: `50.0`.
-- `demand_std`: `20.0`.
-- `max_path_length`: `DiscreteUniform(2, 4)`.
-
-For `250 < target_variables <= 1000`:
-
-- `base_nodes`: rounded `Uniform(20, 60)`.
-- `density_dist`: `Uniform(0.25, 0.5)`.
-- `capacity_mean`: `2000.0`.
-- `capacity_std`: `600.0`.
-- `demand_mean`: `150.0`.
-- `demand_std`: `60.0`.
-- `max_path_length`: `DiscreteUniform(3, 6)`.
-
-For `target_variables > 1000`:
-
-- `base_nodes`: rounded `Uniform(50, 150)`.
-- `density_dist`: `Uniform(0.15, 0.35)`.
-- `capacity_mean`: `8000.0`.
-- `capacity_std`: `2000.0`.
-- `demand_mean`: `500.0`.
-- `demand_std`: `200.0`.
-- `max_path_length`: `DiscreteUniform(4, 8)`.
-
-`link_density = rand(density_dist)` is sampled but is not used when building links.
-
-Topology generation:
-
-- All directed non-self links are candidates.
-- If `n_links` is at least the number of possible links, all possible directed links are used.
-- Otherwise, the generator first builds a bidirectional spanning structure by adding `(from_node, to_node)` and `(to_node, from_node)` while connecting all nodes.
-- It then appends random remaining links up to the target count and applies `unique`.
-
-Capacity generation:
-
-- `min_capacity`: truncated normal around `capacity_mean * 0.3`, lower-bounded at `10.0`.
-- `max_capacity`: `min_capacity` plus a truncated normal around `capacity_mean * 1.2`.
-- Each link capacity is sampled from a truncated normal centered between `min_capacity` and `max_capacity`.
-
-Demand generation:
-
-- Possible demands are all ordered source-target node pairs with `i != j`.
-- A demand ratio is sampled from `Uniform(0.3, 0.7)`.
-- `n_demands` is that ratio times `n_nodes * (n_nodes - 1)`, rounded and clamped to available pairs.
-- Demand amounts are sampled from a truncated gamma distribution whose support is based on sampled `min_demand` and `max_demand`.
-
-Path generation:
-
-- For each demand, the generator attempts a random walk from source to target with length up to `max_path_length`.
-- It prefers unvisited outgoing neighbors, but may revisit if needed.
-- If the random walk reaches the target, the path is stored.
-- Otherwise, if a direct link exists, the direct one-link path is stored.
-- If no path is found, the demand is deleted.
-
-The stored struct fields are:
-
-- `n_nodes::Int`
-- `links::Vector{Tuple{Int,Int}}`
-- `capacities::Dict{Tuple{Int,Int},Float64}`
-- `demands::Dict{Tuple{Int,Int},Float64}`
-- `paths::Dict{Tuple{Int,Int},Vector{Tuple{Int,Int}}}`
-- `max_utilization::Union{Float64,Nothing}`
-
-The constructor calls `Random.seed!(seed)`, so generation is reproducible for the same inputs and resets Julia's global RNG.
-
-## LP Formulation
-
-Sets and indices:
-
-- Directed links `a in L`.
-- Demands `k = (source, target) in K`.
-- Generated path `P_k subseteq L` for each demand with a stored path.
-
-Decision variables:
+## `standard`: path-based traffic engineering
 
 ```text
-u >= 0      maximum link utilization
-f_a >= 0    flow on link a
+minimize    U + latency_weight * sum_p latency[p] * x[p]
+subject to  sum_{p in P(k)} x[p] = demand[k]                         every TE OD pair k
+            sum_{p uses a} x[p] - capacity[a] * U <= -background[a]   every link in use
+            0 <= U <= max_utilization,  x >= 0
 ```
 
-Objective:
+The previous version routed a single aggregated injection vector (the
+per-pair demand dictionary it stored was unused), so its "multi-commodity"
+story collapsed to one commodity; its unknown profile was a 70/30 coin flip,
+its infeasible profile zeroed a source's links (refuted by presolve) and it
+presolved to nothing on downstream pipelines. The rebuild is a genuine
+path-based TE LP — structurally distinct from the arc-based
+`multi_commodity_flow`: long path columns (about 14 links each at 100k), one
+row per OD pair and per link, and the utilization column `U` in every link row.
 
-```math
-\min u
-```
+### Data grounding
 
-Link utilization constraints:
+- **Backbone**: `n ~ 1.2 sqrt(target / 3)` PoPs from `_geo_positions`
+  (metro clusters dominate), links from `_geo_network` (4.5-6.5 directed links
+  per PoP, strongly connected, no dead ends). Link latency =
+  distance / 200 + 0.1 per hop.
+- **Traffic**: OD pairs drawn by gravity weight `w_o w_d / (1 + dist / L)`,
+  demands the same gravity times lognormal noise (mean 10).
+- **Candidate paths**: 5-8 successive shortest-path trees per origin, link
+  lengths multiplied by `exp(0.7 * uses)` on links earlier trees used (plus
+  10% noise), deduplicated — the diverse k-path sets TE tools precompute. OD
+  pairs with three or more distinct paths are TE pairs (paths trimmed at
+  random, never below three, to hit the size); pairs with fewer stay on their
+  shortest path as fixed **background** traffic (otherwise their demand rows
+  would be presolve-substitutable doubletons).
+- **Capacities** are standard router ports (1, 2.5, 10, 40, 100, 400 units;
+  bundles of 400 beyond), provisioned so the planted routing runs at a target
+  utilization of 45%-80% of the SLA; the SLA `max_utilization` is 0.8, 0.9 or
+  1.0.
 
-```math
-f_a \le u \cdot capacity_a \quad \forall a \in L
-```
+### Feasibility control
 
-Demand/path constraints:
+The planted routing puts every TE demand on its first (shortest) path.
 
-```math
-f_a \ge demand_k \quad \forall k \in K, a \in P_k
-```
+- `feasible`: witness = that routing and its utilization (at most the SLA).
+- `infeasible`: TE traffic grows until a **latency-metric certificate**
+  separates: with `l` = link latency on the links in the model,
+  `sum_k demand_k * min_{p in P(k)} l(p) + sum_a l_a background_a`
+  exceeds `max_utilization * sum_a l_a capacity_a` (capacity-length 80%-93% of
+  the requirement). A **local repair** with 15% slack keeps every link able to
+  carry its forced load (background plus the demands of pairs all of whose
+  paths use it) and every pair's summed path bottlenecks above its demand, by
+  upgrading ports — so no single link or demand row is refutable and presolve
+  keeps the whole model. (On tiny backbones the slack is relaxed so the
+  certificate can separate.)
+- `unknown`: traffic grows by 0.6-1.2x the factor that would bring the planted
+  routing to the SLA (never shrinking), with the same repair: rerouting over
+  the alternative paths may or may not absorb it.
 
-Optional maximum utilization constraint, used for forced infeasibility:
+### Sizing
 
-```math
-u \le max\_utilization
-```
+Variables = TE candidate paths + 1, within 2 of the target (paths are trimmed
+in steps that keep at least three per pair). Rows = TE OD pairs + links
+carrying a path or background (about a third of the columns). Build is about
+half a second at 100k variables and ten seconds at the 1,000,000 cap
+(`LOAD_BALANCING_MAX_VARIABLES`); nonzeros grow like the mean path length
+(about 1.4M at 100k).
 
-Bounds:
-
-- `u` and all link-flow variables are continuous and nonnegative.
-
-Interpretation: `u` is the largest capacity multiplier needed for any link flow. Each selected path link must be able to carry the full demand amount for every demand whose generated path uses that link.
-
-## Feasibility Controls
-
-The constructor sets `actual_status = feasibility_status`. If `feasibility_status == unknown`, it randomly chooses `feasible` with probability `0.7` and `infeasible` with probability `0.3`.
-
-For `feasible`, no extra cap on `u` is added. Because `u` is unbounded above and all capacities are positive, the model can choose a sufficiently large `u` to satisfy all path lower bounds.
-
-For `infeasible`, if there are nonempty demands and paths, the generator:
-
-1. Initializes a minimum required flow per link to zero.
-2. For each demand path, updates each path link's required flow to the maximum demand using that link.
-3. Computes:
-
-   ```text
-   min_u = maximum(required_flow[link] / capacities[link])
-   ```
-
-4. Sets `max_utilization = min_u * (0.5 + 0.3 * rand())`.
-
-The model then enforces `u <= max_utilization`, which is below the utilization needed by at least one demanded path link.
-
-If the infeasible branch has empty demands or paths, `max_utilization` remains `nothing`, so no infeasibility constraint is added.
-
-For `unknown`, the chosen actual status follows the same feasible or infeasible path above.
-
-## Model Characteristics
-
-Variable count:
+## `discrete_placement`
 
 ```text
-1 + length(links)
+minimize    makespan + 1e-4 * sum placement
+subject to  1 <= sum_m placement[s,m] <= max_replicas[s]                    every service
+            sum_m workload[k,s,m] = demand[k,s]                              every class, service
+            workload[k,s,m] <= demand[k,s] * placement[s,m]                  every class, service, machine
+            machine_load[m] = sum_{k,s} processing_time[s,m] * workload[k,s,m]
+            machine_load[m] <= makespan,  0 <= machine_load[m] <= capacity[m]
+            placement binary
 ```
 
-Constraint count drivers:
+The routing upper bounds use each class's own demand (not a big-M), so they
+stay tight after relaxation; the replica cardinality rows keep placement
+decisions meaningful. A `grid_side x grid_side` placement grid (3-20) with the
+number of traffic classes absorbing the rest of the target gives
+`S*M + K*S*M + M + 1` variables.
 
-- One utilization constraint per link.
-- One lower-bound flow constraint for each pair `(demand, link)` where the link lies on that demand's generated path.
-- Optional one upper bound on `u` for forced infeasibility.
+- `feasible`: a permutation places every service on one machine
+  (`DiscretePlacementWitness`, MIP-feasible), capacities 1.10-1.35x the planted
+  loads.
+- `infeasible`: total capacity is 65%-85% of the workload lower bound
+  `sum demand * min_m processing_time` (`DiscretePlacementCertificate`) —
+  valid when the placement binaries are relaxed.
+- `unknown`: every machine is sized at a common factor in [0.65, 1.1] times
+  0.85-1.15 of its planted load: some machines are short, and replicas on
+  other machines may or may not absorb the gap.
 
-The link-flow model is sparse with respect to demand constraints because each demand only constrains links on its generated path. However, link utilization constraints cover every link.
+## References
 
-The model is a continuous LP. There are no integer variables.
-
-## Practical Notes
-
-This generator is useful for continuous minimax-style network LPs and for testing models with one global utilization variable coupled to many link variables.
-
-The formulation is not a conservation-based routing model: `f[link]` is a single aggregate flow variable, and each demand path imposes lower bounds on those shared link variables. Multiple demands on the same link do not add in the model; the binding requirement is the maximum lower bound among those constraints, not the sum of all traffic on the link.
-
-For small `target_variables`, the connectivity-building step can create more links than `target_variables - 1` because it first adds bidirectional tree links for all sampled nodes. In that case the final variable count can exceed the target. The sampled `link_density` is currently unused.
+- Fortz, B., Thorup, M. (2000). Internet traffic engineering by optimizing
+  OSPF weights. INFOCOM.
+- Wang, Y., Wang, Z. (1999). Explicit routing algorithms for Internet traffic
+  engineering. ICCCN.
+- Onaga, K., Kakusho, O. (1971). On feasibility conditions of multicommodity
+  flows in networks. IEEE Transactions on Circuit Theory 18(4).
