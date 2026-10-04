@@ -129,6 +129,15 @@ Deviation magnitudes are calibrated from the empirical fitted standard
 deviations. A feasible robust witness is checked against the exact fractional
 Γ-budget (largest deviations first), not a proxy average.
 
+### Presolve hygiene (elective, robust, weekly)
+
+A case is admissible to a slot only if it fits on its own (surgeon budget;
+room session plus overtime, or the specialty's OR minutes), and surgeon-day,
+specialty-day and bed rows that cannot bind - every admissible case fits at
+once - are not emitted. Previously ~20% of the weekly rows were redundant or
+singleton rows (presolve kept 0.60-0.76 of them); now presolve keeps 95-100%
+of rows and columns at 10k and above.
+
 ### Weekly downstream beds
 
 Cases needing critical care occupy ICU first and enter the ward only after ICU
@@ -201,10 +210,10 @@ the regular close plus a small completion-time term.
     are added; booked cases and referrals must fit at least two days on their
     own. Elective/robust also draw overtime availability globally (cap scaled
     by U(0, 1)); weekly applies one global OR-capacity shock after planning
-    (the plan's utilization times U(0.95, 1.30), so the pressure does not
+    (the plan's utilization times U(0.90, 1.50), so the pressure does not
     drift with hospital size) and caps the referral share at 50%. Measured
-    infeasible share at 3k / 30k / 100k: elective 2/6, 4/6, 3/6; robust 5/6,
-    3/6, 1/6; weekly 6/8, 2/8, 2/8. Robust also raises a block's overtime cap
+    infeasible share at 3k / 30k / 100k: elective 2/6, 4/6, 1/6; robust 5/6,
+    2/6, 3/6; weekly 4/8, 1/8, 6/8. Robust also raises a block's overtime cap
     where a mandatory case would not fit any block on its own under its
     robust load;
   - MSS: quotas loosen or tighten around the plan and a hospital-wide bed

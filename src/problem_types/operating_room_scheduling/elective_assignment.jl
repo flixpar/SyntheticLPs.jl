@@ -58,7 +58,11 @@ scaled by U(0, 1)), a share U(0.5, 1.0) of the planned cases are already booked
 not place - are added ([`_orsched_add_referrals!`]); booked cases and
 referrals must fit at least two days on their own. Whether the LP can still
 fit everything depends on these global draws, so both outcomes occur at every
-size (measured 2/6, 4/6, 3/6 infeasible at 3k, 30k, 100k).
+size (measured 2/6, 4/6, 1/6 infeasible at 3k, 30k, 100k).
+
+Admissible triples require the case to fit its surgeon's day budget and the
+session plus overtime on its own, and surgeon-day rows that cannot bind are
+omitted (also in `robust_elective`), so presolve keeps 98-100% of rows at 10k+.
 
 The hospital grows with the target from 2,500 variables up (about
 `sqrt(target * specialties / 150)` rooms, see [`_orsched_hospital_scale`]), and the surgeon
@@ -128,13 +132,21 @@ function _elective_admissible_triples(
     surgery_surgeon::Vector{Int},
     surgeon_budget::Matrix{Float64},
     mss::Matrix{Int},
+    duration::Vector{Float64},
+    session::Matrix{Float64},
+    room_allowance::Float64,
 )
+    # A triple is admissible only if the case fits its surgeon's day budget
+    # and the session (plus `room_allowance` minutes of overtime, net of
+    # turnover) on its own; otherwise the column could never be fully used
+    # and only adds singleton rows that presolve turns into bounds.
     triples = Tuple{Int, Int, Int}[]
     n_rooms, n_days = size(mss)
     for i in 1:n_surgeries, d in 1:min(n_days, surgery_deadline[i])
-        surgeon_budget[surgery_surgeon[i], d] > 0 || continue
+        surgeon_budget[surgery_surgeon[i], d] >= duration[i] || continue
         for r in 1:n_rooms
-            mss[r, d] == surgery_specialty[i] && push!(triples, (i, r, d))
+            (mss[r, d] == surgery_specialty[i] && session[r, d] + room_allowance >= duration[i]) &&
+                push!(triples, (i, r, d))
         end
     end
     return triples
@@ -198,7 +210,15 @@ function ElectiveSurgeryAssignmentProblem(
         surgeon_specialty, surgeon_budget = _orsched_surgeon_pool(rng, counts, n_days, mss)
         surgery_surgeon = _elective_assign_surgeons(rng, wl.specialty, surgeon_specialty)
         admissible = _elective_admissible_triples(
-            n_surgeries, wl.specialty, wl.deadline, surgery_surgeon, surgeon_budget, mss
+            n_surgeries,
+            wl.specialty,
+            wl.deadline,
+            surgery_surgeon,
+            surgeon_budget,
+            mss,
+            wl.duration,
+            session,
+            max_overtime - turnover,
         )
         open_blocks = [(r, d) for d in 1:n_days for r in 1:n_rooms if session[r, d] > 0]
         # Mandatory cases carry no postponement column: about the urgent share
@@ -420,6 +440,8 @@ function build_model(prob::ElectiveSurgeryAssignmentProblem)
     # Surgeon-day operating-time budgets (sorted keys for deterministic builds).
     for (s, d) in sort!(collect(keys(by_surgeon_day)))
         idxs = by_surgeon_day[(s, d)]
+        # Rows that cannot bind (all admissible cases fit at once) are omitted.
+        sum(prob.surgery_duration[admissible[a][1]] for a in idxs) <= prob.surgeon_budget[s, d] && continue
         @constraint(
             model,
             sum(prob.surgery_duration[admissible[a][1]] * assign[a] for a in idxs) <=
