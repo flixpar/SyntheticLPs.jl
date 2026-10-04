@@ -453,7 +453,8 @@ function _generate_problem_verified(
                 "seed=$current_seed): the verification solve returned $ts " *
                 "after a $(feasibility_timeout)s limit. This is not evidence of a " *
                 "contract violation. Raise `feasibility_timeout`, use a stronger " *
-                "optimizer, or drop `optimizer` to skip verification.",
+                "optimizer (or a vector of optimizers to escalate through, e.g. " *
+                "dual simplex then IPM), or drop `optimizer` to skip verification.",
             )
         end
         # Contract disproved — rebuild with a fresh seed if another attempt remains.
@@ -529,6 +530,14 @@ end
 # Solve `model` and classify the result via `_classify_termination`, returning
 # `(verdict, termination_status)`. Solves a structural copy so the caller's model is
 # returned pristine (no optimizer attached, no time limit set, not pre-solved).
+#
+# `optimizer` may also be a vector of optimizers: an escalation chain consulted in
+# order until one returns a conclusive verdict. Large infeasible LPs sometimes defeat
+# one algorithm's infeasibility proof (HiGHS dual simplex reports `OTHER_ERROR` on
+# some MDP, forest, and refinery instances that its IPM proves `INFEASIBLE` in
+# seconds), so e.g. `[HiGHS.Optimizer, optimizer_with_attributes(HiGHS.Optimizer,
+# "solver" => "ipm")]` keeps verification cheap without raising on those. Only an
+# inconclusive result escalates; a `:violated` verdict is final.
 function _check_feasibility_contract(
     model::Model, optimizer, feasibility_status::FeasibilityStatus; timeout::Float64=10.0
 )
@@ -539,6 +548,22 @@ function _check_feasibility_contract(
     optimize!(check)
     ts = termination_status(check)
     return _classify_termination(ts, feasibility_status), ts
+end
+function _check_feasibility_contract(
+    model::Model,
+    optimizers::AbstractVector,
+    feasibility_status::FeasibilityStatus;
+    timeout::Float64=10.0,
+)
+    isempty(optimizers) && error("An optimizer escalation chain must not be empty.")
+    verdict, ts = :inconclusive, nothing
+    for optimizer in optimizers
+        verdict, ts = _check_feasibility_contract(
+            model, optimizer, feasibility_status; timeout=timeout
+        )
+        verdict === :inconclusive || break
+    end
+    return verdict, ts
 end
 
 """
@@ -713,7 +738,11 @@ variant is used; pass `variant=:name` to select a specific variant.
   - `transforms`: Practitioner-style reformulations ([`ModelTransforms`](@ref)),
     applied before dualization; the identity by default
   - `optimizer`: Optional solver used to verify the feasibility contract (see
-    [`_generate_problem_verified`](@ref)). `nothing` disables verification.
+    [`_generate_problem_verified`](@ref)). `nothing` disables verification. A
+    vector of optimizers is an escalation chain: each later entry is tried only
+    when the previous one certifies nothing (e.g. dual simplex, then IPM — some
+    large infeasible MDP, forest, and refinery LPs defeat HiGHS's dual-simplex
+    infeasibility proof but not its IPM).
   - `max_feasibility_retries`: Maximum number of rebuild attempts when verification
     disproves the requested status.
   - `feasibility_timeout`: Time limit (seconds) for each verification solve. Exceeding

@@ -1155,6 +1155,31 @@ end
                     bounded, HiGHS.Optimizer, infeasible
                 )[1] === :violated
             end
+
+            # An optimizer vector is an escalation chain: an inconclusive solve (here an
+            # iteration limit of 0) falls through to the next optimizer, a conclusive one
+            # stops the chain, and an all-inconclusive chain still raises.
+            stalled = optimizer_with_attributes(
+                HiGHS.Optimizer, "simplex_iteration_limit" => 0, "presolve" => "off"
+            )
+            let lp = first(generate_problem("transportation/standard", 80, feasible, 5))
+                @test SyntheticLPs._check_feasibility_contract(lp, stalled, feasible)[1] ===
+                    :inconclusive
+                verdict, ts = SyntheticLPs._check_feasibility_contract(
+                    lp, [stalled, HiGHS.Optimizer], feasible
+                )
+                @test verdict === :holds && ts == MOI.OPTIMAL
+                @test_throws ErrorException SyntheticLPs._check_feasibility_contract(
+                    lp, [], feasible
+                )
+            end
+            m3, _ = generate_problem(
+                "transportation/standard", 80, feasible, 5; optimizer=[stalled, HiGHS.Optimizer]
+            )
+            @test num_variables(m3) == num_variables(m2)
+            @test_throws ErrorException generate_problem(
+                "transportation/standard", 80, feasible, 5; optimizer=[stalled]
+            )
         end
 
         # Dataset generation honors the contract when an optimizer is supplied.
