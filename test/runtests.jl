@@ -21,7 +21,7 @@ end
 
 # Optional focus filter, taken from the command line. Naming one or more
 # categories limits the per-variant sweeps and the per-category include loop to
-# them, for iterating on one generator without paying for all 127:
+# them, for iterating on one generator without paying for all of them:
 #
 #     julia --project=@. -O1 test/runtests.jl transportation
 #     julia --project=@. -O1 test/runtests.jl tsp,knapsack

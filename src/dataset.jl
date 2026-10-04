@@ -1071,9 +1071,11 @@ index) carrying `failures` and the `manifest`.
 
 # Solver (optional; the package stays solver-agnostic)
 
-  - `optimizer = nothing`: e.g. `HiGHS.Optimizer`. Without `quality_filter`, it
-    verifies `feasible`/`infeasible` requests (rebuilding on violation); with
-    `quality_filter=true`, the quality solve doubles as verification.
+  - `optimizer = nothing`: e.g. `HiGHS.Optimizer`, or a vector of optimizers
+    forming a verification escalation chain (see [`generate_problem`](@ref)).
+    Without `quality_filter`, it verifies `feasible`/`infeasible` requests
+    (rebuilding on violation); with `quality_filter=true`, the quality solve
+    doubles as verification and uses the chain's first entry.
   - `quality_filter::Bool = false`, `quality_criteria = QualityCriteria()`,
     `optimizer_attributes = ()`: see [`check_quality`](@ref). An `infeasible`
     request that the quality solve shows feasible is rejected as
@@ -1188,7 +1190,9 @@ function generate_dataset(;
         # Skip separate verification when the quality filter is on: `check_quality`
         # already solves every candidate and rejects contract violations.
         verify_optimizer=quality_filter ? nothing : optimizer,
-        optimizer,
+        # A verification escalation chain's first entry is the quality-filter
+        # solver: iteration-count criteria need a single, simplex-like solve.
+        optimizer=optimizer isa AbstractVector ? first(optimizer) : optimizer,
         quality_filter,
         quality_criteria,
         optimizer_attributes,

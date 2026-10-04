@@ -28,6 +28,7 @@ Pkg.instantiate()
 using ArgParse
 using SyntheticLPs
 using HiGHS
+using JuMP: optimizer_with_attributes
 
 function parse_commandline()
     s = ArgParseSettings(;
@@ -308,7 +309,13 @@ function main()
         write_manifest=(!args["no-manifest"]),
         quality_filter=args["quality-filter"],
         quality_criteria=criteria,
-        optimizer=HiGHS.Optimizer,
+        # Dual simplex first (also the quality-filter solver); HiGHS IPM proves
+        # infeasibility on the large MDP/forest/refinery LPs whose dual-simplex
+        # proof sometimes ends in OTHER_ERROR, so verification escalates to it.
+        optimizer=[
+            optimizer_with_attributes(HiGHS.Optimizer, "solver" => "simplex"),
+            optimizer_with_attributes(HiGHS.Optimizer, "solver" => "ipm"),
+        ],
         optimizer_attributes=("solver" => "simplex",),
         max_retries=args["max-retries"],
         verbose=args["verbose"],
