@@ -88,6 +88,26 @@ function RobustElectiveSurgeryAssignmentProblem(
     gamma = [rand(rng, Uniform(1.0, 3.0)) for _ in base.open_blocks]
     max_overtime = fill(base.max_overtime, length(base.open_blocks))
 
+    # A mandatory case must fit at least one admissible block on its own under
+    # the robust load (nominal + turnover + its own deviation); otherwise its
+    # assignment row is a one-row contradiction. Raise that block's overtime
+    # cap where needed (the surgeon-overload certificate does not use blocks).
+    block_of = Dict(q => k for (k, q) in enumerate(base.open_blocks))
+    options_of = [Int[] for _ in 1:base.n_surgeries]
+    for (i, r, d) in base.admissible
+        push!(options_of[i], block_of[(r, d)])
+    end
+    for i in findall(base.mandatory)
+        options = options_of[i]
+        isempty(options) && continue
+        need(q) =
+            base.surgery_duration[i] + base.turnover + min(1.0, gamma[q]) * deviation[i] -
+            base.session_length[base.open_blocks[q]...]
+        any(need(q) <= max_overtime[q] for q in options) && continue
+        q = options[argmin([need(q) for q in options])]
+        max_overtime[q] = ceil(need(q))
+    end
+
     if feasibility_status == feasible
         open_index = Dict(q => k for (k, q) in enumerate(base.open_blocks))
         assigned_by_block = [Int[] for _ in base.open_blocks]

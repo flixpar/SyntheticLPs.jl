@@ -76,7 +76,9 @@ blocks in proportion to workload (smaller suites run fewer services, about one
 per three OR-days), and a case may only be loaded into blocks of its own
 specialty inside its scheduling window `[case_release, case_due]` - about ten
 admissible blocks per case (8-12 of its team's blocks when a one-day window
-holds more). The dense `cases x OR-days` model it replaces had only
+holds more; windows are widened until a case has at least three blocks, so no
+mandatory case is pinned to one block). The dense `cases x OR-days` model it
+replaces had only
 `cases + OR-days` rows (327 rows at 10k columns); the sparse one keeps rows at
 10-15% of the columns. Mandatory cases have no cancellation column.
 
@@ -161,10 +163,13 @@ the regular close plus a small completion-time term.
 - `infeasible` stores a structural certificate that aggregates many rows, so
   presolve cannot refute it and the simplex has to:
   - `elective_assignment`, `robust_elective`, `weekly_planning`:
-    `SurgeonOverloadCertificate` - the surgeon with the most schedulable cases
-    must do all of them, but their day budgets total at most 90% of the
-    cases' minutes (each budget stays positive and, where possible, one day
-    per case still fits it);
+    `SurgeonOverloadCertificate` - three or more of one surgeon's cases, each
+    admissible only on (at least two of) two or three shared days and fitting
+    the room/specialty capacity on each, become mandatory while each of those
+    days is budgeted only the longest case, so the budgets total at most 90%
+    of the cases' minutes; no single row is contradictory and no variable
+    bound tightens (three-day sets are preferred because presolve can
+    aggregate two-day doubleton assignment rows);
   - `master_surgical_schedule`: `MSSWardShortageCertificate` - the patient-days
     the busiest specialty ward receives from its services' minimum quotas
     exceed the ward's cycle capacity by more than 10%;
@@ -183,8 +188,12 @@ the regular close plus a small completion-time term.
   size. (Previously, elective/robust/weekly `unknown` instances were always
   presolve-infeasible because urgent cases without any admissible slot were
   mandatory.)
-  - elective/robust/weekly: urgent cases come from a greedy plan, plus urgent
-    referrals of a random 0-60% of the cases the plan could not place;
+  - elective/robust/weekly: urgent cases come from a greedy plan (for every
+    status, so no urgent case is stranded on a single impossible slot), plus
+    urgent referrals of a random 0-100% of the cases the plan could not place
+    that fit at least two days on their own (robust: each block's overtime cap
+    is raised where a mandatory case would not fit any block on its own under
+    its robust load);
   - MSS: quotas loosen or tighten around the plan and a hospital-wide bed
     pressure factor in `[0.70, 1.05]` scales capacities (critical ~0.85);
   - case sequencing: up to ~20 surgeons receive one short add-on case

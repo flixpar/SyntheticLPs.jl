@@ -47,13 +47,14 @@ Minimize postponement penalties plus day-preference costs, subject to:
 Same pattern as the `elective_assignment` variant: for `feasible` instances a
 greedy earliest-deadline schedule respecting all four capacity families is
 built first (stored as `feasible_witness`, the scheduled day per surgery), then
-mandatory urgent cases are designated from the scheduled set. For `infeasible`
-instances the surgeon with the most schedulable cases is overloaded
-([`SurgeonOverloadCertificate`]): all their cases become mandatory and their
-day budgets total at most 90% of those cases' minutes, a contradiction only
-visible by aggregating many rows. For `unknown`, urgent cases are designated
-from the greedy plan plus random urgent referrals of cases it could not place
-([`_orsched_add_referrals!`]), so both outcomes occur.
+mandatory urgent cases are designated from the scheduled set (for every
+status, so no urgent case is stranded). For `infeasible` instances a surgeon
+overload is planted on top ([`SurgeonOverloadCertificate`]): three or more of
+one surgeon's cases sharing two or three admissible days become mandatory with
+each of those days budgeted only the longest case, a contradiction only
+visible by aggregating many rows. For `unknown`, urgent referrals of a random
+0-100% of the cases the plan could not place (each fitting two days on its
+own) are added ([`_orsched_add_referrals!`]), so both outcomes occur.
 
 The hospital grows linearly with the target from 2,500 variables up (about
 `target / 190` rooms, see [`_orsched_hospital_scale`]).
@@ -170,7 +171,7 @@ function WeeklySurgeryPlanningProblem(
             spec_ids,
             n_days;
             with_los=true,
-            allow_urgent=feasibility_status == infeasible,
+            allow_urgent=false,
         )
         counts = [count(==(k), wl.specialty) for k in 1:n_specs]
         surgeon_specialty, surgeon_budget = _orsched_surgeon_pool(rng, counts, n_days, mss)
@@ -193,11 +194,7 @@ function WeeklySurgeryPlanningProblem(
             specialty_capacity,
             n_days,
         )
-        n_mandatory = if feasibility_status != infeasible
-            round(Int, wl.requested_urgent_fraction * n_surgeries)
-        else
-            count(i -> wl.urgency[i] == :urgent && !isempty(admissible_days[i]), 1:n_surgeries)
-        end
+        n_mandatory = round(Int, wl.requested_urgent_fraction * n_surgeries)
         total = sum(length, admissible_days) + n_surgeries - n_mandatory
         gap = abs(total - target) / target
         if gap < best_gap
@@ -263,16 +260,26 @@ function WeeklySurgeryPlanningProblem(
 
     witness = nothing
     certificate = nothing
-    # Urgent cases with no admissible day are referred elsewhere rather than
-    # made mandatory (a one-row contradiction, not a planning problem).
-    mandatory = BitVector(
-        urgency[i] == :urgent && !isempty(admissible_days[i]) for i in 1:n_surgeries
-    )
+    # `day_fits(i, d)`: case i fits its specialty's OR minutes on day d on its
+    # own; `has_option[i]`: it also fits its surgeon's budget on such a day.
+    # Urgent cases without such a day are referred elsewhere rather than made
+    # mandatory (a one-row contradiction presolve spots, not a planning
+    # problem).
+    day_fits(i, d) = specialty_capacity[wl.specialty[i], d] >= wl.duration[i] + turnover
+    # Referral candidates need two fitting days, so presolve cannot pin them.
+    has_option = [
+        count(
+            day_fits(i, d) && surgeon_budget[surgery_surgeon[i], d] >= wl.duration[i] for
+            d in admissible_days[i]
+        ) >= 2 for i in 1:n_surgeries
+    ]
+    mandatory = BitVector(urgency[i] == :urgent && has_option[i] for i in 1:n_surgeries)
 
-    if feasibility_status in (feasible, unknown)
+    let
         # The urgent list is designated from a greedy plan that respects every
-        # capacity, so for `feasible` the plan is a witness. For `unknown`,
-        # referrals add urgent cases the plan could not place (see below).
+        # capacity (for every status), so for `feasible` the plan is a witness.
+        # For `unknown`, referrals add urgent cases the plan could not place;
+        # for `infeasible`, the surgeon overload is planted on top.
         # Greedy earliest-deadline schedule respecting specialty-day OR
         # capacity, surgeon budgets, and day-by-day ward/ICU bed occupancy.
         rem_spec = copy(specialty_capacity)
@@ -310,16 +317,18 @@ function WeeklySurgeryPlanningProblem(
         day_cost .= 0.02 .* penalty
         if feasibility_status == feasible
             witness = assignment
-        else
-            _orsched_add_referrals!(rng, mandatory, urgency, penalty, assignment, [!isempty(admissible_days[i]) for i in 1:n_surgeries])
+        elseif feasibility_status == unknown
+            _orsched_add_referrals!(rng, mandatory, urgency, penalty, assignment, has_option)
         end
-    elseif feasibility_status == infeasible
+    end
+    if feasibility_status == infeasible
         certificate = _orsched_plant_surgeon_overload!(
             rng,
             surgeon_budget,
             surgery_surgeon,
             wl.duration,
             [copy(days) for days in admissible_days],
+            day_fits,
             mandatory,
             urgency,
             penalty,

@@ -258,8 +258,9 @@ end
     _orsched_add_referrals!(rng, mandatory, urgency, penalty, assignment, has_option)
 
 `unknown` instances: on top of the urgent cases designated from the greedy
-plan, a random 0-60% of the cases the plan could not place (but that have an
-admissible slot) arrive as urgent referrals and become mandatory. Whether the
+plan, a random 0-100% of the cases the plan could not place (but that fit some
+admissible slot on their own, `has_option`) arrive as urgent referrals and
+become mandatory. Whether the
 LP can fit them depends on how much slack the greedy plan left, so the
 instance may or may not be feasible.
 """
@@ -273,7 +274,7 @@ function _orsched_add_referrals!(
 )
     pool = [i for i in eachindex(assignment) if assignment[i] == 0 && has_option[i] && !mandatory[i]]
     isempty(pool) && return mandatory
-    n_referrals = round(Int, rand(rng, Uniform(0.0, 0.6)) * length(pool))
+    n_referrals = round(Int, rand(rng, Uniform(0.0, 1.0)) * length(pool))
     for i in shuffle(rng, pool)[1:n_referrals]
         mandatory[i] = true
         urgency[i] = :urgent
@@ -351,18 +352,23 @@ end
     SurgeonOverloadCertificate
 
 Relaxation-proof infeasibility certificate shared by the waiting-list
-variants: surgeon `surgeon` must operate every case in `cases` (all mandatory),
-but the operating minutes budgeted over the days those cases are admissible
-total `budget_minutes < case_minutes`. Summing the surgeon's day-budget rows
-(`sum duration_i * assign <= budget[s, d]`) and the cases' assignment rows
-(`sum assign = 1`, no postponement) gives `case_minutes <= budget_minutes`, a
-contradiction for any fractional assignment. Budgets are cut to at most 90%
-of the case minutes, and every case keeps at least one day whose budget fits
-it when that is possible, so no single row is contradictory: presolve has to
-aggregate many rows to see it.
+variants: surgeon `surgeon` must operate every case in `cases` (all mandatory,
+each admissible only on days in `days`), but the operating minutes budgeted
+over `days` total `budget_minutes <= 0.9 * case_minutes`. Summing the
+surgeon's day-budget rows over `days` (`sum duration_i * assign <= budget[s, d]`)
+and the cases' assignment rows (`sum assign = 1`, no postponement) gives
+`case_minutes <= budget_minutes`, a contradiction for any fractional
+assignment.
+
+Every day in `days` gets the same budget, the longest of the cases, and
+(except in the small-hospital fallback) every case is admissible on at least
+two of those days and fits the room (or specialty) capacity on each of them. So no variable bound is tightened by a
+single row, no single row is contradictory, and presolve has to aggregate the
+rows to see the shortage.
 """
 struct SurgeonOverloadCertificate
     surgeon::Int
+    days::Vector{Int}
     cases::Vector{Int}
     case_minutes::Float64
     budget_minutes::Float64
@@ -370,14 +376,18 @@ end
 
 """
     _orsched_plant_surgeon_overload!(rng, surgeon_budget, surgery_surgeon, duration,
-                                     case_days, mandatory, urgency, penalty)
+                                     case_days, fits, mandatory, urgency, penalty)
 
-Pick the surgeon with the most schedulable cases, make all of them mandatory
-(urgent) and cut that surgeon's day budgets so their total is at most 90% of the
-cases' minutes, keeping every budget positive (so the admissible variable set
-is unchanged) and, where possible, one day per case that fits it. `case_days[i]`
-lists the days case `i` is admissible. Returns a
-[`SurgeonOverloadCertificate`](@ref).
+Plant a [`SurgeonOverloadCertificate`](@ref). `case_days[i]` lists the days
+case `i` is admissible; `fits(i, d)` says whether it fits the non-surgeon
+capacity of day `d` on its own. For each surgeon (in random order) and each
+set `D` of two or three of its working days, the candidate cases are those
+admissible only on days of `D`, on at least two of them, fitting on each; the
+first `D` whose cases' minutes reach `|D| * longest / 0.9` (and that leaves no
+other mandatory case of the surgeon stranded on `D`) is used, with every day
+of `D` budgeted at the longest case. Small hospitals without such a surgeon
+fall back to single shared days and pairs of cases (still a valid
+certificate). Errors if no surgeon qualifies at all.
 """
 function _orsched_plant_surgeon_overload!(
     rng::AbstractRNG,
@@ -385,59 +395,83 @@ function _orsched_plant_surgeon_overload!(
     surgery_surgeon::Vector{Int},
     duration::Vector{Float64},
     case_days::Vector{Vector{Int}},
+    fits::Function,
     mandatory::BitVector,
     urgency::Vector{Symbol},
     penalty::Vector{Float64},
 )
-    n_surgeons = size(surgeon_budget, 1)
+    n_surgeons, n_days = size(surgeon_budget)
     cases_of = [Int[] for _ in 1:n_surgeons]
     for i in eachindex(surgery_surgeon)
         isempty(case_days[i]) || push!(cases_of[surgery_surgeon[i]], i)
     end
-    counts = length.(cases_of)
-    best = maximum(counts)
-    best > 0 || error("no schedulable case to overload")
-    surgeon = rand(rng, findall(==(best), counts))
-    cases = sort(cases_of[surgeon])
-    days = sort(unique(reduce(vcat, case_days[cases])))
-    case_minutes = sum(duration[cases])
-    goal = min(floor(0.9 * case_minutes), case_minutes - 5.0)
-
-    budget = Dict(d => 0.0 for d in days)
-    for i in sort(cases; by=i -> -duration[i])
-        any(budget[d] >= duration[i] for d in case_days[i]) && continue
-        d = case_days[i][argmax([budget[d] for d in case_days[i]])]
-        budget[d] = duration[i]
-    end
-    for d in days
-        budget[d] = max(budget[d], 5.0)
-    end
-    total = sum(values(budget))
-    if total <= goal
-        extra = floor((goal - total) / length(days) / 5.0) * 5.0
-        for d in days
-            budget[d] += extra
+    order = shuffle(rng, collect(1:n_surgeons))
+    # Strict mode first (every case on >= 2 days, >= 3 cases: presolve-proof);
+    # small hospitals fall back to single shared days and pairs of cases.
+    for (min_days, min_group) in ((2, 3), (1, 2))
+        for s in order
+            length(cases_of[s]) >= min_group || continue
+            good = [
+                i for i in cases_of[s] if
+                length(case_days[i]) >= min_days && all(fits(i, d) for d in case_days[i])
+            ]
+            length(good) >= min_group || continue
+            working = sort(unique(reduce(vcat, case_days[good])))
+            sets = vcat(
+                min_days == 1 ? [[d] for d in working] : Vector{Int}[],
+                [[d1, d2] for d1 in working for d2 in working if d1 < d2],
+                [[d1, d2, d3] for d1 in working for d2 in working for d3 in working if d1 < d2 < d3],
+            )
+            best = nothing
+            for D in sets
+                group = [i for i in good if issubset(case_days[i], D)]
+                length(group) >= min_group || continue
+                longest = maximum(duration[group])
+                sum(duration[group]) * 0.9 >= length(D) * longest || continue
+                # Other mandatory cases confined to D would face the cut budgets.
+                any(
+                    mandatory[i] && !(i in group) && issubset(case_days[i], D) for i in cases_of[s]
+                ) && continue
+                # Prefer three days (two-day sets of doubleton assignment rows
+                # can be aggregated by presolve), then the larger group.
+                if best === nothing || (length(D), length(group)) > (length(best[1]), length(best[2]))
+                    best = (D, group, longest)
+                end
+            end
+            best === nothing && continue
+            D, group, longest = best
+            for d in D
+                surgeon_budget[s, d] = longest
+            end
+            for i in group
+                mandatory[i] = true
+                if urgency[i] != :urgent
+                    urgency[i] = :urgent
+                    penalty[i] = rand(rng, Uniform(300.0, 600.0))
+                end
+            end
+            return SurgeonOverloadCertificate(s, D, sort(group), sum(duration[group]), length(D) * longest)
         end
-    else
-        # Cannot keep every case fitting a day; spread the allowance evenly.
-        share = max(5.0, floor(goal / length(days) / 5.0) * 5.0)
-        for d in days
-            budget[d] = share
-        end
     end
-    for d in days
-        surgeon_budget[surgeon, d] = budget[d]
+    # Tiny instances: overload one surgeon's whole list by spreading 90% of
+    # its minutes over its days (single rows may then be contradictory, which
+    # presolve can see, but the certificate is still valid).
+    s = argmax(length.(cases_of))
+    group = sort(cases_of[s])
+    isempty(group) && error("no schedulable case for an overload certificate")
+    D = sort(unique(reduce(vcat, case_days[group])))
+    share = max(1.0, floor(0.9 * sum(duration[group]) / length(D)))
+    for d in D
+        surgeon_budget[s, d] = share
     end
-    for i in cases
+    for i in group
         mandatory[i] = true
         if urgency[i] != :urgent
             urgency[i] = :urgent
             penalty[i] = rand(rng, Uniform(300.0, 600.0))
         end
     end
-    budget_minutes = sum(surgeon_budget[surgeon, d] for d in days)
-    @assert budget_minutes < case_minutes
-    return SurgeonOverloadCertificate(surgeon, cases, case_minutes, budget_minutes)
+    return SurgeonOverloadCertificate(s, D, group, sum(duration[group]), share * length(D))
 end
 
 include("elective_assignment.jl")

@@ -55,19 +55,24 @@
     end
 
     # Surgeon-overload certificate arithmetic, shared by the waiting-list
-    # variants: every listed case belongs to the surgeon, is mandatory, has an
-    # admissible day, and the surgeon's budget over those days is at most 90%
-    # of the cases' minutes (and below them).
-    function check_overload(p, cert, durations, days_of)
+    # variants: every listed case belongs to the surgeon, is mandatory and is
+    # admissible only on the certificate days, whose budgets total at most 90%
+    # of the cases' minutes. In the presolve-proof (strict) form every case has
+    # at least two of those days and each day is budgeted the longest case.
+    function check_overload(p, cert, durations, days_of; strict=false)
         @test all(p.surgery_surgeon[i] == cert.surgeon for i in cert.cases)
         @test all(p.mandatory[i] for i in cert.cases)
-        @test all(!isempty(days_of(i)) for i in cert.cases)
+        @test all(issubset(days_of(i), cert.days) for i in cert.cases)
         @test cert.case_minutes ≈ sum(durations[cert.cases])
-        days = unique(reduce(vcat, [days_of(i) for i in cert.cases]))
-        @test cert.budget_minutes ≈ sum(p.surgeon_budget[cert.surgeon, d] for d in days)
+        @test cert.budget_minutes ≈ sum(p.surgeon_budget[cert.surgeon, d] for d in cert.days)
         @test cert.budget_minutes <= 0.9 * cert.case_minutes + 1e-9
-        @test cert.budget_minutes < cert.case_minutes
-        @test all(p.surgeon_budget[cert.surgeon, d] > 0 for d in days)
+        @test all(p.surgeon_budget[cert.surgeon, d] > 0 for d in cert.days)
+        if strict
+            @test length(cert.cases) >= 3
+            @test all(length(days_of(i)) >= 2 for i in cert.cases)
+            longest = maximum(durations[cert.cases])
+            @test all(p.surgeon_budget[cert.surgeon, d] ≈ longest for d in cert.days)
+        end
     end
 
     # Elective assignment: sparse graph and planted witness.
@@ -103,7 +108,10 @@
     for seed in 0:3, target in (200, 3000)
         _, p = generate_problem(elective_ref, target, infeasible, seed)
         cert = something(p.infeasibility_certificate)
-        check_overload(p, cert, p.surgery_duration, i -> unique(t[3] for t in p.admissible if t[1] == i))
+        check_overload(
+            p, cert, p.surgery_duration, i -> unique(t[3] for t in p.admissible if t[1] == i);
+            strict=target >= 3000,
+        )
     end
     # Unknown: mandatory cases always have an admissible slot.
     for seed in 0:3
@@ -142,7 +150,9 @@
     for seed in 0:3
         _, p = generate_problem(robust_ref, 600, infeasible, seed)
         cert = something(p.infeasibility_certificate)
-        check_overload(p, cert, p.nominal_duration, i -> unique(t[3] for t in p.admissible if t[1] == i))
+        check_overload(
+            p, cert, p.nominal_duration, i -> unique(t[3] for t in p.admissible if t[1] == i)
+        )
     end
 
     # Weekly planning: the patient path is ICU followed by ward, and beds
@@ -176,7 +186,7 @@
     for seed in 0:3, target in (200, 3000)
         _, p = generate_problem(weekly_ref, target, infeasible, seed)
         cert = something(p.infeasibility_certificate)
-        check_overload(p, cert, p.surgery_duration, i -> p.admissible_days[i])
+        check_overload(p, cert, p.surgery_duration, i -> p.admissible_days[i]; strict=target >= 3000)
     end
 
     # Tactical MSS: periodized ICU/ward profiles keep bed-days per block.

@@ -143,7 +143,8 @@ Lay the OR-days out as `rooms_per_day` rooms over `n_calendar_days` days, deal
 them to specialties in proportion to workload (every specialty with cases gets
 at least one block), and give each case a window over the calendar sized for
 about ten admissible blocks of its specialty (widened until it holds at least
-one). Returns `(or_spec, or_cal, n_cal, rooms, release, due, admissible)`.
+three, so no mandatory case is pinned to a single block by presolve).
+Returns `(or_spec, or_cal, n_cal, rooms, release, due, admissible)`.
 """
 function _benchmark_blocks(
     rng::AbstractRNG, specs::Vector{Int}, means::Vector{Float64}, n_or_days::Int
@@ -180,7 +181,7 @@ function _benchmark_blocks(
         start = rand(rng, 1:(n_cal - width + 1))
         while true
             adm = [q for q in blocks if start <= or_cal[q] <= start + width - 1]
-            if !isempty(adm) || width >= n_cal
+            if length(adm) >= min(3, length(blocks)) || width >= n_cal
                 # In a large suite a one-day window can still hold dozens of
                 # same-specialty blocks; a case is booked into its surgical
                 # team's blocks, 8-12 of them.
