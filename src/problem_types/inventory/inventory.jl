@@ -6,6 +6,7 @@
 # explicitly to give the category its own description). Add a variant by
 # creating a file in this folder and including it below.
 
+include("common.jl")
 include("standard.jl")
 include("lot_sizing.jl")
 include("multi_item.jl")

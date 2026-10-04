@@ -1,253 +1,254 @@
 using JuMP
 using Random
 using Distributions
-using Statistics
+
+"""
+Planted production plan: built by a backward (as-late-as-possible) pass that
+fills each period's capacity with the pending net requirements, so it exists
+exactly when every demand prefix fits the cumulative capacity. `production[i,
+t]` and `inventory[i, t]` are a feasible point of the built model.
+"""
+struct MultiItemPlanWitness
+    production::Matrix{Float64}
+    inventory::Matrix{Float64}
+end
+
+"""
+Prefix capacity certificate. Summing item `i`'s balance rows over periods
+`1..horizon` (no backlog, nonnegative stock) gives `Σ_{t<=horizon} x[i,t] >=
+D_i(1..horizon) - initial_inventory[i]`; weighting by resource usage and
+summing the capacity rows of those periods shows the prefix needs `required =
+Σ_i usage[i] max(0, D_i(1..horizon) - I0_i)` resource units but only has
+`available = Σ_{t<=horizon} capacity[t] < required`.
+"""
+struct MultiItemPrefixCertificate
+    horizon::Int
+    required::Float64
+    available::Float64
+end
 
 """
     MultiItemInventoryProblem <: ProblemGenerator
 
-Generator for multi-item lot-sizing inventory problems with a shared per-period
+Multi-item production/inventory planning with a shared, time-varying
 production capacity.
 
 # Overview
 
-Models a deterministic, multi-period production/inventory plan for several items
-that compete for a single, shared production resource each period. The decisions
-are production quantities `x[i, t]` and end-of-period inventories `I[i, t]` for
-every item `i` and period `t`. The objective minimizes total production plus
-holding cost. Each item has its own inventory-balance constraints linking
-production, demand and carried inventory. The items are coupled through a single
-shared resource constraint per period:
-`sum_i resource_usage[i] * x[i, t] <= prod_capacity`, where `resource_usage[i]`
-is the amount of the shared resource consumed per unit produced of item `i`.
+`n_items` items compete for one production resource over `n_periods`
+periods. Columns `x[i, t] >= 0` (production) and `I[i, t] >= 0` (end-of-period
+stock); rows: per-item balance `I[i,t-1] + x[i,t] - I[i,t] = d[i,t]` (with
+`I[i,0] = initial_inventory[i]`, no backlog) and the shared capacity
+`Σ_i usage[i] x[i,t] <= capacity[t]` per period. Capacity varies over time
+(planned maintenance, holiday weeks), and demand is seasonal with a peak, so
+building ahead of the peak is what the LP must decide.
 
-Backlogging is not permitted (inventories are nonnegative), so demand must be met
-on time from carried inventory plus current production.
+For a single shared resource, the instance is feasible **iff** every demand
+prefix fits: `Σ_i usage[i] max(0, D_i(1..τ) - I0_i) <= Σ_{t<=τ} capacity[t]`
+for all `τ` (an as-late-as-possible schedule meets it). The profiles place the
+binding prefix ratio:
+
+  - `feasible`: ratio `0.70–0.92`, witness from the backward pass
+    ([`MultiItemPlanWitness`](@ref));
+  - `infeasible`: ratio `1.10–1.35` at the binding prefix
+    ([`MultiItemPrefixCertificate`](@ref)); initial stock covers the first
+    period's demand, so no single row is violated and presolve cannot decide it;
+  - `unknown`: ratio `1 ± U(0.03, 0.30)` — feasible exactly when it is `<= 1`.
 
 # Fields
 
-  - `n_items::Int`: Number of distinct items sharing the production resource
-  - `n_periods::Int`: Number of planning periods
-  - `prod_capacity::Float64`: Shared per-period resource capacity
-  - `item_demands::Matrix{Int}`: Demand per item per period (`n_items × n_periods`)
-  - `item_production_costs::Matrix{Float64}`: Unit production cost (`n_items × n_periods`)
-  - `item_holding_costs::Matrix{Float64}`: Unit holding cost (`n_items × n_periods`)
-  - `item_initial_inventory::Vector{Int}`: Starting inventory per item
-  - `item_resource_usage::Vector{Float64}`: Shared-resource consumption per unit per item
+  - `n_items::Int`, `n_periods::Int`
+  - `demand::Matrix{Float64}`: `n_items × n_periods`
+  - `initial_inventory::Vector{Float64}`, `usage::Vector{Float64}`
+  - `production_cost::Matrix{Float64}`, `holding_cost::Vector{Float64}`
+  - `capacity::Vector{Float64}`: per period
+  - `binding_ratio::Float64`: max over prefixes of required / available
+  - `feasible_witness`, `infeasibility_certificate`, `feasibility_status`
 """
 struct MultiItemInventoryProblem <: ProblemGenerator
     n_items::Int
     n_periods::Int
-    prod_capacity::Float64
-    item_demands::Matrix{Int}
-    item_production_costs::Matrix{Float64}
-    item_holding_costs::Matrix{Float64}
-    item_initial_inventory::Vector{Int}
-    item_resource_usage::Vector{Float64}
+    demand::Matrix{Float64}
+    initial_inventory::Vector{Float64}
+    usage::Vector{Float64}
+    production_cost::Matrix{Float64}
+    holding_cost::Vector{Float64}
+    capacity::Vector{Float64}
+    binding_ratio::Float64
+    feasible_witness::Union{Nothing, MultiItemPlanWitness}
+    infeasibility_certificate::Union{Nothing, MultiItemPrefixCertificate}
+    feasibility_status::FeasibilityStatus
+end
+
+"""
+    _multi_item_prefix(demand, initial_inventory, usage, capacity) -> (ratio, horizon)
+
+The binding demand prefix: `max_τ required(τ) / available(τ)` and its `τ`.
+"""
+function _multi_item_prefix(demand, initial_inventory, usage, capacity)
+    N, T = size(demand)
+    cum = zeros(N)
+    best, best_h, avail = -Inf, 1, 0.0
+    for t in 1:T
+        avail += capacity[t]
+        req = 0.0
+        for i in 1:N
+            cum[i] += demand[i, t]
+            req += usage[i] * max(0.0, cum[i] - initial_inventory[i])
+        end
+        r = req / avail
+        if r > best
+            best, best_h = r, t
+        end
+    end
+    return best, best_h
+end
+
+"""
+    _multi_item_prefix_requirement(demand, initial_inventory, usage, horizon) -> Float64
+"""
+function _multi_item_prefix_requirement(demand, initial_inventory, usage, horizon::Int)
+    return sum(
+        usage[i] * max(0.0, sum(view(demand, i, 1:horizon)) - initial_inventory[i]) for i in 1:size(demand, 1)
+    )
 end
 
 """
     MultiItemInventoryProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
-Construct a multi-item shared-capacity inventory problem instance.
-
-# Variable count
-
-The model creates two variable blocks:
-
-  - `x[1:n_items, 1:n_periods]` → `n_items * n_periods` production variables
-  - `I[1:n_items, 0:n_periods]` → `n_items * (n_periods + 1)` inventory variables
-
-Total variables = `n_items * (2 * n_periods + 1)` ≈ `2 * n_items * n_periods`.
-Dimensions are sized so this total lands near `target_variables`.
-
-# Feasibility handling
-
-Feasibility is controlled through the shared per-period capacity relative to the
-*resource-usage-weighted* per-period demand load,
-`weighted_load[t] = sum_i resource_usage[i] * item_demands[i, t]`:
-
-  - `feasible`: `prod_capacity` is set to comfortably exceed `max_t weighted_load[t]`
-    (with a positive margin), so each period's demand can be produced just-in-time
-    and a feasible plan provably exists.
-  - `infeasible`: `prod_capacity` is set strictly below `max_t weighted_load[t]`
-    (with a margin) while backlogging is disallowed, so the shared resource cannot
-    supply enough in the binding period and no feasible plan exists.
-  - `unknown`: `prod_capacity` is left at a naturally sampled level (no forced
-    infeasibility).
-
-# Arguments
-
-  - `target_variables`: Target number of variables
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
+Construct a multi-item shared-capacity instance with `2 · n_items · n_periods`
+columns close to `target_variables`.
 """
 function MultiItemInventoryProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
+    target_variables >= 1 ||
+        throw(ArgumentError("target_variables must be >= 1 (got $target_variables)."))
     rng = MersenneTwister(seed)
+    target = max(target_variables, 8)
 
-    # Determine business scale by target size
-    scale = if target_variables <= 250
-        :small
-    elseif target_variables <= 1000
-        :medium
-    else
-        :large
-    end
+    T = target <= 400 ? rand(rng, 4:8) : (target <= 10_000 ? rand(rng, 10:20) : rand(rng, 20:40))
+    N = max(1, round(Int, target / (2T)))
 
-    # --- Dimension sizing ---
-    # Total variables = n_items * (2 * n_periods + 1) ≈ 2 * n_items * n_periods.
-    # Sample n_items ONCE, then size n_periods to hit the target.
-    n_items = rand(rng, max(2, target_variables ÷ 50):max(5, target_variables ÷ 20))
-    n_periods = max(2, min(500, round(Int, (target_variables / n_items - 1) / 2)))
-
-    # Scale-specific demand / cost ranges
-    if scale == :small
-        demand_base = round(Int, rand(rng, Uniform(10, 100)))
-        prod_cost_base = rand(rng, Uniform(10, 100))
-        holding_rate = rand(rng, Uniform(0.05, 0.25)) / 12
-    elseif scale == :medium
-        demand_base = round(Int, rand(rng, Uniform(50, 1000)))
-        prod_cost_base = rand(rng, Uniform(5, 200))
-        holding_rate = rand(rng, Uniform(0.03, 0.20)) / 12
-    else
-        demand_base = round(Int, rand(rng, Uniform(100, 10000)))
-        prod_cost_base = rand(rng, Uniform(1, 500))
-        holding_rate = rand(rng, Uniform(0.01, 0.15)) / 12
-    end
-
-    # --- Per-item demands ---
-    item_demands = zeros(Int, n_items, n_periods)
-    for i in 1:n_items
-        item_base = demand_base * rand(rng, Uniform(0.3, 1.5))
-        item_demands[i, :] = round.(
-            Int,
-            clamp.(
-                rand(rng, Normal(item_base, item_base * 0.25), n_periods),
-                max(1, item_base * 0.3),
-                item_base * 2.0,
-            ),
+    phase = 2π * rand(rng)
+    amp = 0.2 + 0.25 * rand(rng)     # pronounced seasonal peak: pre-building matters
+    demand = zeros(N, T)
+    for i in 1:N
+        demand[i, :] = _inventory_demand(
+            rng, T, rand(rng, LogNormal(log(100.0), 0.8)); amp=amp, phase=phase + 0.3 * randn(rng),
+            trend=0.01 * randn(rng), cv=0.15 + 0.25 * rand(rng), intermittent=rand(rng) < 0.1,
         )
     end
-    # Keep all demands strictly positive
-    item_demands = max.(item_demands, 1)
+    # Initial stock covers the first period plus a little: no single capacity
+    # row can ever be contradicted on its own.
+    initial_inventory = [round(demand[i, 1] + sum(demand[i, :]) / T * rand(rng, Uniform(0.05, 0.4)); digits=1) for i in 1:N]
+    usage = rand(rng, LogNormal(log(1.0), 0.4), N)
+    base_cost = rand(rng, LogNormal(log(20.0), 0.6), N)
+    production_cost = [base_cost[i] * (1 + 0.05 * randn(rng)) for i in 1:N, _ in 1:T]
+    production_cost = max.(production_cost, 0.1)
+    holding_cost = base_cost .* rand(rng, Uniform(0.004, 0.02), N)
 
-    # --- Per-item production and holding costs ---
-    item_production_costs = zeros(n_items, n_periods)
-    item_holding_costs = zeros(n_items, n_periods)
-    for i in 1:n_items
-        base_cost = prod_cost_base * rand(rng, Uniform(0.5, 2.0))
-        item_production_costs[i, :] = clamp.(
-            rand(rng, Normal(base_cost, base_cost * 0.1), n_periods),
-            base_cost * 0.8,
-            base_cost * 1.2,
-        )
-        item_holding_costs[i, :] = item_production_costs[i, :] .* holding_rate
-    end
-
-    # --- Initial inventory and shared-resource usage ---
-    item_initial_inventory = round.(
-        Int, [mean(item_demands[i, :]) * rand(rng, Uniform(0.1, 0.4)) for i in 1:n_items]
-    )
-    item_resource_usage = [rand(rng, Uniform(0.5, 2.0)) for _ in 1:n_items]
-
-    # --- Resource-usage-weighted per-period demand load ---
-    # weighted_load[t] = sum_i resource_usage[i] * item_demands[i, t]
-    weighted_load = [
-        sum(item_resource_usage[i] * item_demands[i, t] for i in 1:n_items) for t in 1:n_periods
-    ]
-    peak_load = maximum(weighted_load)
-
-    # --- Feasibility handling (capacity vs. cumulative weighted load) ---
-    # With inventory carryover and no backlogging, feasibility is governed by the
-    # cumulative (prefix) load against cumulative capacity, NOT the single-period
-    # peak: production can be pre-built in slack periods and carried into a spike.
-    # The binding per-period rate is
-    #   max_t (cumulative_weighted_demand[t] - weighted_initial_inventory) / t.
-    weighted_init = sum(item_resource_usage[i] * item_initial_inventory[i] for i in 1:n_items)
-    cumulative = 0.0
-    binding_rate = 0.0
-    for t in 1:n_periods
-        cumulative += weighted_load[t]
-        binding_rate = max(binding_rate, (cumulative - weighted_init) / t)
-    end
-    if feasibility_status == infeasible
-        # Below the binding cumulative rate: some prefix cannot be supplied even
-        # by producing flat-out in every prior period (a true contradiction).
-        prod_capacity = max(binding_rate, 1.0) * rand(rng, Uniform(0.4, 0.7))
+    # Time-varying capacity shape (maintenance and holiday dips).
+    shape = [rand(rng) < 0.12 ? rand(rng, Uniform(0.5, 0.8)) : rand(rng, Uniform(0.95, 1.05)) for _ in 1:T]
+    ratio0, _ = _multi_item_prefix(demand, initial_inventory, usage, shape)
+    target_ratio = if feasibility_status == feasible
+        0.7 + 0.22 * rand(rng)
     else
-        # feasible and unknown: capacity comfortably above the peak weighted load
-        # (>= the binding cumulative rate), so just-in-time production suffices.
-        prod_capacity = peak_load * rand(rng, Uniform(1.3, 2.0))
+        _inventory_scale_ratio(rng, feasibility_status)
+    end
+    capacity = shape .* (max(ratio0, 1e-9) / target_ratio)
+    # With every requirement already met by initial stock the scale is moot:
+    # give the plant a nominal capacity proportional to demand.
+    if ratio0 <= 1e-9
+        capacity = shape .* max(sum(usage[i] * sum(demand[i, :]) for i in 1:N) / T, 1.0)
+    end
+    binding_ratio, horizon = _multi_item_prefix(demand, initial_inventory, usage, capacity)
+
+    witness = nothing
+    certificate = nothing
+    if feasibility_status == feasible
+        # Backward (as-late-as-possible) fill of each period's capacity.
+        net = copy(demand)
+        for i in 1:N
+            left = initial_inventory[i]
+            for t in 1:T
+                used = min(left, net[i, t])
+                net[i, t] -= used
+                left -= used
+            end
+        end
+        production = zeros(N, T)
+        pending = zeros(N)
+        for t in T:-1:1
+            pending .+= view(net, :, t)
+            total = sum(usage .* pending)
+            frac = total <= capacity[t] ? 1.0 : capacity[t] / total
+            for i in 1:N
+                production[i, t] = frac * pending[i]
+                pending[i] -= production[i, t]
+            end
+        end
+        inventory = zeros(N, T)
+        for i in 1:N
+            level = initial_inventory[i]
+            for t in 1:T
+                level += production[i, t] - demand[i, t]
+                inventory[i, t] = max(level, 0.0)
+            end
+        end
+        witness = MultiItemPlanWitness(production, inventory)
+    elseif feasibility_status == infeasible
+        req = _multi_item_prefix_requirement(demand, initial_inventory, usage, horizon)
+        certificate = MultiItemPrefixCertificate(horizon, req, sum(capacity[1:horizon]))
     end
 
     return MultiItemInventoryProblem(
-        n_items,
-        n_periods,
-        prod_capacity,
-        item_demands,
-        item_production_costs,
-        item_holding_costs,
-        item_initial_inventory,
-        item_resource_usage,
+        N,
+        T,
+        demand,
+        initial_inventory,
+        usage,
+        production_cost,
+        holding_cost,
+        capacity,
+        binding_ratio,
+        witness,
+        certificate,
+        feasibility_status,
     )
 end
 
 """
     build_model(prob::MultiItemInventoryProblem)
 
-Build a JuMP model for the multi-item shared-capacity inventory problem.
-Deterministic — uses only data from the struct fields.
-
-# Returns
-
-  - `model`: The JuMP model
+Build the multi-item shared-capacity LP. Deterministic.
 """
 function build_model(prob::MultiItemInventoryProblem)
     model = Model()
-
-    # Variables: x[i,t] production, I[i,t] end-of-period inventory.
-    # Var count = n_items*n_periods + n_items*(n_periods+1) = n_items*(2*n_periods+1).
-    @variable(model, x[1:prob.n_items, 1:prob.n_periods] >= 0)
-    @variable(model, I[1:prob.n_items, 0:prob.n_periods] >= 0)
-
-    # Objective: total production + holding cost
+    N, T = prob.n_items, prob.n_periods
+    @variable(model, x[1:N, 1:T] >= 0)
+    @variable(model, I[1:N, 1:T] >= 0)
+    for i in 1:N, t in 1:T
+        if t == 1
+            @constraint(model, x[i, 1] - I[i, 1] == prob.demand[i, 1] - prob.initial_inventory[i])
+        else
+            @constraint(model, I[i, t - 1] + x[i, t] - I[i, t] == prob.demand[i, t])
+        end
+    end
+    for t in 1:T
+        @constraint(model, sum(prob.usage[i] * x[i, t] for i in 1:N) <= prob.capacity[t])
+    end
     @objective(
         model,
         Min,
-        sum(
-            prob.item_production_costs[i, t] * x[i, t] + prob.item_holding_costs[i, t] * I[i, t] for
-            i in 1:prob.n_items, t in 1:prob.n_periods
-        )
+        sum(prob.production_cost[i, t] * x[i, t] + prob.holding_cost[i] * I[i, t] for i in 1:N, t in 1:T)
     )
-
-    # Initial inventory per item
-    for i in 1:prob.n_items
-        @constraint(model, I[i, 0] == prob.item_initial_inventory[i])
-    end
-
-    # Per-item inventory balance (no backlogging: I >= 0)
-    for i in 1:prob.n_items, t in 1:prob.n_periods
-        @constraint(model, I[i, t - 1] + x[i, t] - prob.item_demands[i, t] == I[i, t])
-    end
-
-    # Shared per-period resource capacity
-    for t in 1:prob.n_periods
-        @constraint(
-            model,
-            sum(prob.item_resource_usage[i] * x[i, t] for i in 1:prob.n_items) <=
-                prob.prod_capacity
-        )
-    end
-
     return model
 end
 
-# Register the variant
 register_variant(
     :inventory,
     :multi_item,
     MultiItemInventoryProblem,
-    "Multi-item lot-sizing inventory with a shared resource-usage-weighted per-period production capacity",
+    "Multi-item production/inventory planning with a shared time-varying capacity and seasonal peaks: feasibility decided exactly by the binding demand prefix, with a planted as-late-as-possible plan and a prefix capacity certificate",
 )
