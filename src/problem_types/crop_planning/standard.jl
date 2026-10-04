@@ -602,6 +602,23 @@ function CropPlanningProblem(target_variables::Int, feasibility_status::Feasibil
             break
         end
         achievable, required = _crop_certificate_value(prob, kind, r, t)
+        if required < 1.05 * achievable
+            # Tiny regions (one or two fields) cannot reach the margin with
+            # every contract below its solo bound. Fall back to an uncapped
+            # land shortage: still a valid LP-row proof, though a single
+            # production row may then expose it to presolve.
+            kind = crop_land_shortage
+            targets = [c for c in 1:C if solo[c] > 0]
+            for c in targets
+                contract[c, r, t] = max(contract[c, r, t], production[c, r, t], 0.05 * solo[c])
+            end
+            achievable, required = _crop_certificate_value(prob, kind, r, t)
+            scale = achievable * rand(rng, Uniform(1.08, 1.25)) / required
+            for c in targets
+                contract[c, r, t] *= scale
+            end
+            achievable, required = _crop_certificate_value(prob, kind, r, t)
+        end
         prob = CropPlanningProblem(
             crops, R, T, K, field_area, field_farm, field_region, field_soil, field_irrigable, farm_region,
             area_vars, yields, crop_cost, price, tier_width, tier_factor, initial_nitrogen, fert_price, fert_quota,
