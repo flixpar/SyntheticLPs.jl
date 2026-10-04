@@ -1,372 +1,259 @@
 using JuMP
 using Random
-using Distributions
-using StatsBase
+
+"""
+    SetupPlanWitness
+
+Single-item plan for a `feasible` setup-cost instance: item `i` is cut on
+column pair `pair[i]` (its maximal single-item pattern on one eligible
+machine) `runs[i] = cld(demand[i], yield)` times with that pair's setup
+switched on. Demands, stock availabilities, machine minutes and the
+`x <= M * y` links all hold in exact arithmetic.
+"""
+struct SetupPlanWitness
+    pair::Vector{Int}
+    runs::Vector{Int}
+end
 
 """
     SetupCostCuttingStockProblem <: ProblemGenerator
 
-Generator for cutting stock optimization problems with a fixed setup cost per pattern.
+Multi-machine cutting stock with pattern setups: every pattern can run on 1-3
+of several parallel saws; running a (pattern, machine) pair needs a setup
+(knife positioning) that costs money and machine minutes.
 
 # Overview
 
-Models one-dimensional cutting stock where, in addition to consuming stock pieces,
-activating (setting up) a cutting pattern incurs a fixed cost. The decisions are a
-continuous usage count `x[j]` for each pattern and a binary activation `y[j]`
-indicating whether the pattern is used at all. The objective minimizes the total
-number of stock pieces consumed plus the total setup cost of the activated
-patterns. Demand constraints require enough pieces of every requested length, a
-linking constraint `x[j] <= M * y[j]` forces a setup whenever a pattern is used,
-and an optional stock limit caps total pattern usage.
+Patterns come from the shared generator (`cs_generate_patterns`) over a
+multi-stock bar catalogue and a large order book. Column pair `q = (j, m)` has
+a continuous run count `x_q` and a binary setup `y_q`:
 
-The setup costs are scaled relative to the per-roll material value (each roll
-contributes `1.0` to the `sum(x)` term of the objective). They are sized so that a
-setup is worth a small number of rolls, which makes the consolidation tradeoff
-(use fewer distinct patterns vs. accept some extra waste) non-degenerate rather
-than setup-dominated.
+```text
+min  sum_q cost[stock[j]] x_q + sum_q setup_cost_q y_q
+s.t. sum_q a_{i,j(q)} x_q >= d_i                      for every item
+     sum_{q on stock k} x_q <= S_k                     for every stock type
+     sum_{q on m} (run_q x_q + setup_q y_q) <= H_m     for every machine (minutes)
+     x_q <= M_q y_q                                    for every pair
+     x >= 0, y binary
+```
 
-# Fields
+Run time grows with the number of cuts, setup time with the number of
+distinct lengths in the pattern (more knife moves), and both differ by
+machine. `M_q = min(max_i ceil(d_i / a_ij), floor(H_m / run_q))` is the
+tightest valid link (never run a pattern beyond its largest order or beyond the
+machine's shift). Because `y_q` also sits in its machine's time row, it is not
+a column singleton: under relaxation a setup still consumes `setup_q / M_q`
+minutes and costs `setup_cost_q / M_q` per bar, so machine capacity and setup
+economics shape the LP (the old single-machine big-M variant collapsed to 50%
+of its columns and 2% of its rows in presolve).
 
-  - `piece_lengths::Vector{Float64}`: Length of each piece type required
-  - `demands::Vector{Int}`: Demand for each piece type
-  - `patterns::Vector{Vector{Int}}`: Cutting patterns (how many of each piece per stock)
-  - `stock_length::Float64`: Length of stock material
-  - `stock_limit::Int`: Maximum number of stock pieces available (0 = unlimited)
-  - `setup_costs::Vector{Float64}`: Fixed setup cost incurred when a pattern is activated
-  - `big_m::Vector{Float64}`: Per-pattern big-M coefficient linking `x[j]` to its activation `y[j]`
+Sizing: `Q = target_variables ÷ 2` pairs (columns `2Q`), patterns
+`ceil(Q / 2)`, machines `clamp(round(Q / 400), 2, 250)`, items
+`clamp(round(Q / 12), 1, ...)`. Rows: `Q + n_types + n_stock + n_machines`.
+
+# Feasibility
+
+  - `feasible`: single-item plan (`SetupPlanWitness`); stock availability
+    `U(1.05, 1.35)` and machine minutes `U(1.02, 1.15)` times the plan's usage.
+  - `infeasible`: stock availabilities scaled so ordered material exceeds the
+    total stock length by `U(8%, 20%)` (`MaterialShortageCertificate`).
+  - `unknown`: stock length `U(0.97, 1.10)` times the ordered material, machine
+    minutes as for `feasible`; the LP decides.
 """
 struct SetupCostCuttingStockProblem <: ProblemGenerator
-    piece_lengths::Vector{Float64}
+    stock_lengths::Vector{Int}
+    stock_costs::Vector{Float64}
+    piece_lengths::Vector{Int}
     demands::Vector{Int}
-    patterns::Vector{Vector{Int}}
-    stock_length::Float64
-    stock_limit::Int
-    setup_costs::Vector{Float64}
-    big_m::Vector{Float64}
+    patterns::CSPatterns
+    n_machines::Int
+    pair_pattern::Vector{Int}
+    pair_machine::Vector{Int}
+    run_minutes::Vector{Float64}
+    setup_minutes::Vector{Float64}
+    setup_cost::Vector{Float64}
+    link_bound::Vector{Float64}
+    machine_minutes::Vector{Float64}
+    availability::Vector{Int}
+    feasibility_status::FeasibilityStatus
+    feasible_witness::Union{Nothing, SetupPlanWitness}
+    infeasibility_certificate::Union{Nothing, MaterialShortageCertificate}
 end
 
-"""
-    SetupCostCuttingStockProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+function cs_setup_dimensions(n::Int)
+    Q = max(1, n ÷ 2)
+    P = max(1, cld(Q, 2))
+    n_machines = clamp(round(Int, Q / 400), 2, 250)
+    n_stock = clamp(round(Int, log10(max(n, 1))) - 1, 1, 4)
+    n_types = clamp(max(round(Int, Q / 12), min(6, P ÷ (2 * n_stock))), 1, max(1, P ÷ n_stock))
+    n_stock = clamp(n_stock, 1, max(1, P ÷ n_types))
+    return Q, P, n_machines, n_stock, n_types
+end
 
-Construct a cutting-stock-with-setup-cost problem instance.
-
-The model has two variable sets of equal size: continuous usage `x[1:n_patterns]`
-and binary activation `y[1:n_patterns]`. Total variables = 2 * n_patterns, so the
-number of generated patterns is sized to roughly `target_variables / 2`.
-
-# Arguments
-
-  - `target_variables`: Target number of variables (= 2 * number of cutting patterns)
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
-"""
 function SetupCostCuttingStockProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
+    target_variables >= 1 ||
+        throw(ArgumentError("target_variables must be positive (got $target_variables)"))
     rng = MersenneTwister(seed)
+    Q, P, n_machines, n_stock, n_types = cs_setup_dimensions(target_variables)
 
-    # Variable count = n_patterns (x) + n_patterns (y) = 2 * n_patterns.
-    # Size the number of patterns to hit the target variable count.
-    max_patterns = max(2, round(Int, target_variables / 2))
+    stock_lengths, stock_costs = cs_stock_types(rng, n_stock)
+    piece_lengths = cs_piece_lengths(rng, n_types, floor(Int, 0.45 * stock_lengths[end]))
+    demands = cs_demands(rng, n_types)
+    patterns = cs_generate_patterns(rng, stock_lengths, piece_lengths, P)
+    single = cs_single_index(patterns, stock_lengths, piece_lengths)
 
-    # Scale parameters based on target variable count.
-    #
-    # The number of DISTINCT cutting patterns is what sets the variable count, and
-    # it grows combinatorially with both the number of piece types and how many
-    # pieces fit per roll. With too few piece types and a short stock, the pattern
-    # generator quickly exhausts distinct patterns and undershoots the target. To
-    # reliably reach ~max_patterns distinct patterns we keep the number of piece
-    # types comfortably large relative to the target and use a generous stock
-    # length so many pieces fit per roll.
-    base_piece_types = max(6, ceil(Int, 1.5 * sqrt(max_patterns)))
+    # Pairs: every pattern on one random machine, then extra machines for
+    # random patterns until Q pairs exist (at most n_machines per pattern).
+    pair_pattern = Int[]
+    pair_machine = Int[]
+    machines_of = [Int[] for _ in 1:P]
+    for j in 1:P
+        m = rand(rng, 1:n_machines)
+        push!(machines_of[j], m)
+    end
+    extra = Q - P
+    while extra > 0
+        j = rand(rng, 1:P)
+        length(machines_of[j]) < min(3, n_machines) || continue
+        m = rand(rng, 1:n_machines)
+        m in machines_of[j] && continue
+        push!(machines_of[j], m)
+        extra -= 1
+    end
+    for j in 1:P, m in sort!(machines_of[j])
+        push!(pair_pattern, j)
+        push!(pair_machine, m)
+    end
 
-    if target_variables <= 250
-        n_piece_types = clamp(base_piece_types, 6, 40)
-        stock_length = rand(rng, Uniform(6.0, 10.0))
-        demand_min = rand(rng, 5:20)
-        demand_max = rand(rng, 50:200)
-        common_lengths = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
-        common_length_prob = rand(rng, Uniform(0.3, 0.6))
-        waste_factor = rand(rng, Uniform(0.05, 0.15))
-    elseif target_variables <= 1000
-        n_piece_types = clamp(base_piece_types, 12, 80)
-        stock_length = rand(rng, Uniform(8.0, 14.0))
-        demand_min = rand(rng, 20:100)
-        demand_max = rand(rng, 200:1000)
-        common_lengths = [1.0, 1.2, 1.5, 2.0, 2.4, 3.0, 4.0, 6.0]
-        common_length_prob = rand(rng, Uniform(0.4, 0.7))
-        waste_factor = rand(rng, Uniform(0.03, 0.10))
+    # Machine characteristics (minutes).
+    speed = [0.7 + 0.6 * rand(rng) for _ in 1:n_machines]
+    setup_base = [8.0 + 12.0 * rand(rng) for _ in 1:n_machines]
+    labour_rate = 0.6 + 0.4 * rand(rng)     # cost units per setup minute
+    npairs = length(pair_pattern)
+    run_minutes = zeros(npairs)
+    setup_minutes = zeros(npairs)
+    setup_cost = zeros(npairs)
+    for q in 1:npairs
+        j, m = pair_pattern[q], pair_machine[q]
+        pieces = sum(patterns.counts[j])
+        run_minutes[q] = speed[m] * (1.5 + 0.4 * pieces)
+        setup_minutes[q] = setup_base[m] * (1.0 + 0.15 * length(patterns.items[j]))
+        setup_cost[q] = labour_rate * setup_minutes[q] + 0.3 * stock_costs[patterns.stock[j]]
+    end
+
+    # Single-item plan on the first pair of each single pattern.
+    first_pair = zeros(Int, P)
+    for q in npairs:-1:1
+        first_pair[pair_pattern[q]] = q
+    end
+    plan_pair = zeros(Int, n_types)
+    runs = zeros(Int, n_types)
+    per_stock = zeros(Int, n_stock)
+    plan_minutes = zeros(n_machines)
+    for i in 1:n_types
+        fits = [k for k in 1:n_stock if single[i, k] > 0]
+        k = fits[rand(rng, 1:length(fits))]
+        q = first_pair[single[i, k]]
+        plan_pair[i] = q
+        runs[i] = cld(demands[i], stock_lengths[k] ÷ piece_lengths[i])
+        per_stock[k] += runs[i]
+        plan_minutes[pair_machine[q]] += run_minutes[q] * runs[i] + setup_minutes[q]
+    end
+    shift = 480.0 * (1 + round(Int, sum(plan_minutes) / (480.0 * n_machines)))
+    machine_minutes = [
+        plan_minutes[m] > 0 ? plan_minutes[m] * (1.02 + 0.13 * rand(rng)) : shift * (0.5 + 0.5 * rand(rng)) for m in 1:n_machines
+    ]
+
+    # Tightest valid links.
+    link_bound = zeros(npairs)
+    for q in 1:npairs
+        j, m = pair_pattern[q], pair_machine[q]
+        dem = maximum(cld(demands[i], c) for (i, c) in zip(patterns.items[j], patterns.counts[j]))
+        link_bound[q] = max(1.0, min(Float64(dem), floor(machine_minutes[m] / run_minutes[q])))
+    end
+
+    material = sum(Float64(piece_lengths[i]) * demands[i] for i in 1:n_types)
+    feasible_witness = nothing
+    infeasibility_certificate = nothing
+    if feasibility_status == feasible
+        availability = [ceil(Int, per_stock[k] * (1.05 + 0.30 * rand(rng))) for k in 1:n_stock]
+        feasible_witness = SetupPlanWitness(plan_pair, runs)
     else
-        n_piece_types = clamp(base_piece_types, 25, 200)
-        stock_length = rand(rng, Uniform(10.0, 20.0))
-        demand_min = rand(rng, 100:500)
-        demand_max = rand(rng, 1000:10000)
-        common_lengths = [1.0, 1.2, 1.5, 2.0, 2.4, 3.0, 4.0, 6.0, 8.0, 10.0, 12.0]
-        common_length_prob = rand(rng, Uniform(0.5, 0.8))
-        waste_factor = rand(rng, Uniform(0.02, 0.08))
-    end
-
-    # Generate realistic piece lengths (all must fit in stock)
-    piece_lengths = Float64[]
-    effective_max_length = min(stock_length * 0.95, stock_length - 0.1)
-
-    for i in 1:n_piece_types
-        if rand(rng) < common_length_prob && !isempty(common_lengths)
-            base_length = rand(rng, common_lengths)
-            if base_length > effective_max_length
-                valid_lengths = filter(x -> x <= effective_max_length, common_lengths)
-                base_length =
-                    isempty(valid_lengths) ? effective_max_length * 0.8 : rand(rng, valid_lengths)
-            end
-            variation = rand(rng, Normal(0, 0.02))
-            length = clamp(base_length + variation, 0.1, effective_max_length)
-            push!(piece_lengths, round(length; digits=2))
-        else
-            α, β = 2.0, 3.0
-            normalized = rand(rng, Beta(α, β))
-            length = 0.1 + (effective_max_length - 0.1) * normalized
-            precision = stock_length > 10 ? 0.1 : 0.05
-            length = round(length / precision) * precision
-            push!(piece_lengths, length)
+        base = [per_stock[k] * (1.05 + 0.30 * rand(rng)) + 1.0 for k in 1:n_stock]
+        supply = sum(stock_lengths[k] * base[k] for k in 1:n_stock)
+        ratio = feasibility_status == infeasible ? 1.0 / (1.08 + 0.12 * rand(rng)) : 0.97 + 0.13 * rand(rng)
+        availability = [floor(Int, base[k] * ratio * material / supply) for k in 1:n_stock]
+        if feasibility_status == infeasible
+            supply = sum(Float64(stock_lengths[k]) * availability[k] for k in 1:n_stock)
+            material >= 1.04 * supply || error("setup_cost: shortage certificate lost its margin")
+            infeasibility_certificate = MaterialShortageCertificate(material, supply)
         end
-    end
-
-    unique!(piece_lengths)
-    n_piece_types = length(piece_lengths)
-
-    # Generate initial demands using realistic distributions
-    base_demands = Int[]
-    for length in piece_lengths
-        if length in common_lengths
-            μ = log((demand_min + demand_max) / 1.3)
-            σ = 0.5
-        else
-            μ = log((demand_min + demand_max) / 2.0)
-            σ = 0.7
-        end
-
-        base_demand = rand(rng, LogNormal(μ, σ))
-        if base_demand < 50
-            base_demand = round(base_demand / 5) * 5
-        elseif base_demand < 200
-            base_demand = round(base_demand / 10) * 10
-        else
-            base_demand = round(base_demand / 25) * 25
-        end
-
-        push!(base_demands, clamp(round(Int, base_demand), demand_min, demand_max))
-    end
-
-    # Always generate a full set of feasible patterns (single-piece + mixed) so
-    # that demand is satisfiable in principle; feasibility is then controlled
-    # purely through the stock limit.
-    patterns = generate_setup_cost_patterns(
-        rng, stock_length, piece_lengths, max_patterns, waste_factor
-    )
-    n_patterns = length(patterns)
-
-    # Apply demand variation (realistic manufacturing scenario).
-    demands = copy(base_demands)
-    for i in 1:length(demands)
-        variation = rand(rng, Uniform(0.8, 1.2))
-        demands[i] = max(1, round(Int, demands[i] * variation))
-    end
-
-    # Compute the best per-pattern efficiency for each piece (max units of piece i
-    # producible from a single stock roll across all patterns). Used both for a
-    # tight big-M and for the infeasibility construction.
-    best_eff = ones(Int, n_piece_types)
-    for i in 1:n_piece_types
-        e = 0
-        for pattern in patterns
-            e = max(e, pattern[i])
-        end
-        if e == 0
-            e = max(1, floor(Int, stock_length / piece_lengths[i]))
-        end
-        best_eff[i] = e
-    end
-
-    # Minimum number of rolls needed for each piece if cut with its best pattern.
-    min_rolls_per_piece = [ceil(Int, demands[i] / best_eff[i]) for i in 1:n_piece_types]
-    # A safe (but reasonably tight) upper bound on rolls needed for total demand.
-    max_rolls_needed = max(1, sum(min_rolls_per_piece))
-
-    # Determine target feasibility (unknown -> natural instance, no forced infeasibility).
-    target_feasible = if feasibility_status == feasible
-        true
-    elseif feasibility_status == infeasible
-        false
-    else
-        true
-    end
-
-    if feasibility_status == infeasible
-        target_feasible = false
-    end
-
-    if target_feasible
-        # No binding stock limit: every pattern usage is allowed up to big-M.
-        stock_limit = 0
-    else
-        # INFEASIBLE: impose a stock limit strictly below the minimum number of
-        # rolls required (with margin), so total demand cannot be met regardless
-        # of which patterns are activated. The largest single-piece requirement
-        # is the dominant lower bound.
-        hardest = maximum(min_rolls_per_piece)
-        stock_limit = max(1, floor(Int, hardest * rand(rng, Uniform(0.5, 0.7))))
-        # Guarantee the contradiction with a safety margin.
-        stock_limit = min(stock_limit, hardest - 1)
-        stock_limit = max(1, stock_limit)
-    end
-
-    # Setup costs scaled RELATIVE to per-roll material value (1.0 per roll in the
-    # objective). A setup is worth a few rolls so the consolidation tradeoff is
-    # non-degenerate (neither free nor setup-dominated). The cost is tied to each
-    # pattern's trim waste: low-waste (efficient) patterns are cheaper to set up,
-    # which is realistic and breaks the symmetry between near-equivalent patterns
-    # (keeping the MILP's LP relaxation tight and fast to solve to optimality).
-    setup_costs = Vector{Float64}(undef, n_patterns)
-    for j in 1:n_patterns
-        used_length = sum(patterns[j][i] * piece_lengths[i] for i in 1:n_piece_types)
-        trim_fraction = clamp(1.0 - used_length / stock_length, 0.0, 1.0)
-        # Base cost ~1 roll, plus up to ~2 rolls penalty for waste, with a small
-        # per-pattern jitter so ties are broken deterministically. Kept modest
-        # (sub-handful of rolls) so the setup term does not dominate the objective
-        # and the MILP's LP relaxation stays tight and fast to prove optimal.
-        setup_costs[j] = 1.0 + 2.0 * trim_fraction + rand(rng, Uniform(0.0, 0.3))
-    end
-
-    # Valid PER-PATTERN big-M. Overproduction is allowed (the demand
-    # constraints are >=), so cutting pattern j to satisfy its HIGHEST-demand
-    # piece may legitimately overproduce a co-produced low-demand byproduct.
-    # The bound must therefore be the *largest* per-piece requirement the
-    # pattern can be cut to meet, x[j] <= max_i ceil(demand[i] / pattern[j][i]);
-    # using the minimum (as a tighter bound) would wrongly forbid valid and
-    # sometimes optimal uses of the pattern. Capped by the global
-    # max_rolls_needed and >= 1 for degenerate/empty patterns.
-    big_m = Vector{Float64}(undef, n_patterns)
-    for j in 1:n_patterns
-        cap = 0
-        for i in 1:n_piece_types
-            if patterns[j][i] > 0
-                cap = max(cap, ceil(Int, demands[i] / patterns[j][i]))
-            end
-        end
-        big_m[j] = float(clamp(cap, 1, max_rolls_needed))
     end
 
     return SetupCostCuttingStockProblem(
-        piece_lengths, demands, patterns, stock_length, stock_limit, setup_costs, big_m
+        stock_lengths,
+        stock_costs,
+        piece_lengths,
+        demands,
+        patterns,
+        n_machines,
+        pair_pattern,
+        pair_machine,
+        run_minutes,
+        setup_minutes,
+        setup_cost,
+        link_bound,
+        machine_minutes,
+        availability,
+        feasibility_status,
+        feasible_witness,
+        infeasibility_certificate,
     )
 end
 
-"""
-Helper: generate feasible one-dimensional cutting patterns for the setup-cost variant.
-
-Produces direct single-piece patterns (guaranteeing demand is satisfiable in
-principle) plus sampled mixed patterns up to `max_patterns`. Self-contained so it
-does not collide with helpers defined in sibling variant files.
-"""
-function generate_setup_cost_patterns(
-    rng::AbstractRNG, standard_length, piece_lengths, max_patterns, waste_factor=0.1
-)
-    patterns = Vector{Vector{Int}}()
-
-    # Single-piece patterns
-    for (i, piece_length) in enumerate(piece_lengths)
-        pattern = zeros(Int, length(piece_lengths))
-        pattern[i] = max(1, floor(Int, standard_length / piece_length))
-        push!(patterns, pattern)
-    end
-
-    # Mixed patterns
-    attempts = 0
-    max_attempts = max_patterns * 10
-
-    while length(patterns) < max_patterns && attempts < max_attempts
-        attempts += 1
-
-        new_pattern = zeros(Int, length(piece_lengths))
-        remaining_length = standard_length
-        indices = collect(1:length(piece_lengths))
-
-        num_types_to_use = min(
-            length(piece_lengths), max(1, round(Int, rand(rng, Exponential(2.0))))
-        )
-
-        selected_indices = sample(rng, indices, num_types_to_use; replace=false)
-
-        while !isempty(selected_indices)
-            weights = [standard_length / piece_lengths[i] for i in selected_indices]
-            idx = sample(rng, selected_indices, Weights(weights))
-
-            if piece_lengths[idx] <= remaining_length
-                new_pattern[idx] += 1
-                remaining_length -= piece_lengths[idx]
-
-                if remaining_length / standard_length <= waste_factor
-                    break
-                end
-            else
-                filter!(i -> piece_lengths[i] <= remaining_length, selected_indices)
-            end
-        end
-
-        if sum(new_pattern) > 0 && !(new_pattern in patterns)
-            push!(patterns, new_pattern)
-        end
-    end
-
-    return patterns
-end
-
-"""
-    build_model(prob::SetupCostCuttingStockProblem)
-
-Build a JuMP model for the cutting-stock-with-setup-cost problem. Deterministic —
-uses only data from the struct fields.
-
-# Returns
-
-  - `model`: The JuMP model
-"""
 function build_model(prob::SetupCostCuttingStockProblem)
     model = Model()
-
-    n_patterns = length(prob.patterns)
-    n_pieces = length(prob.piece_lengths)
-
-    # Variables: continuous pattern usage x and binary pattern activation y.
-    # Total variables = n_patterns (x) + n_patterns (y) = 2 * n_patterns.
-    @variable(model, x[1:n_patterns] >= 0)
-    @variable(model, y[1:n_patterns], Bin)
-
-    # Objective: minimize stock pieces used + total setup cost of active patterns.
-    @objective(model, Min, sum(x) + sum(prob.setup_costs[j] * y[j] for j in 1:n_patterns))
-
-    # Meet demand for each piece size.
-    for i in 1:n_pieces
-        @constraint(model, sum(prob.patterns[j][i] * x[j] for j in 1:n_patterns) >= prob.demands[i])
+    pats = prob.patterns
+    Q = length(prob.pair_pattern)
+    @variable(model, x[1:Q] >= 0)
+    @variable(model, y[1:Q], Bin)
+    @objective(
+        model,
+        Min,
+        sum(prob.stock_costs[pats.stock[prob.pair_pattern[q]]] * x[q] for q in 1:Q) +
+            sum(prob.setup_cost[q] * y[q] for q in 1:Q)
+    )
+    produced = [AffExpr() for _ in eachindex(prob.piece_lengths)]
+    used = [AffExpr() for _ in eachindex(prob.stock_lengths)]
+    minutes = [AffExpr() for _ in 1:prob.n_machines]
+    for q in 1:Q
+        j = prob.pair_pattern[q]
+        for (i, c) in zip(pats.items[j], pats.counts[j])
+            add_to_expression!(produced[i], c, x[q])
+        end
+        add_to_expression!(used[pats.stock[j]], 1.0, x[q])
+        m = prob.pair_machine[q]
+        add_to_expression!(minutes[m], prob.run_minutes[q], x[q])
+        add_to_expression!(minutes[m], prob.setup_minutes[q], y[q])
     end
-
-    # Link usage to activation: a pattern can only be used if it is set up.
-    for j in 1:n_patterns
-        @constraint(model, x[j] <= prob.big_m[j] * y[j])
+    @constraint(model, demand[i in eachindex(produced)], produced[i] >= prob.demands[i])
+    for k in eachindex(used)
+        isempty(used[k].terms) && continue
+        @constraint(model, used[k] <= prob.availability[k])
     end
-
-    # Optional stock limit (drives the infeasibility path).
-    if prob.stock_limit > 0
-        @constraint(model, sum(x) <= prob.stock_limit)
+    for m in 1:prob.n_machines
+        isempty(minutes[m].terms) && continue
+        @constraint(model, minutes[m] <= prob.machine_minutes[m])
     end
-
+    @constraint(model, link[q in 1:Q], x[q] <= prob.link_bound[q] * y[q])
     return model
 end
 
-# Register the variant
 register_variant(
     :cutting_stock,
     :setup_cost,
     SetupCostCuttingStockProblem,
-    "Cutting stock with a fixed setup cost per activated pattern (binary activation linked to usage), minimizing stock pieces plus setup costs",
+    "Multi-machine cutting stock with pattern setups: run counts linked to setup binaries that cost money and machine minutes",
 )

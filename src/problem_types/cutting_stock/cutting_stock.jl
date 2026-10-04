@@ -1,12 +1,18 @@
 # cutting_stock category
 #
-# Entry point for the `cutting_stock` problem category. A category groups one or
-# more variant formulations; the category is registered lazily from its
-# first variant's `register_variant` call (or call `register_category`
-# explicitly to give the category its own description). Add a variant by
-# creating a file in this folder and including it below.
+# One-dimensional cutting stock in its two classic LP forms: the
+# Gilmore-Gomory pattern master LP (`standard`, multi-period `due_dates`,
+# multi-machine `setup_cost`) over a shared near-linear sparse pattern
+# enumerator (`common.jl`), and the pseudo-polynomial arc-flow formulation
+# (`arc_flow`).
 
+register_category(
+    :cutting_stock,
+    "One-dimensional cutting stock: Gilmore-Gomory pattern LPs (multi-stock, multi-period, multi-machine) and the arc-flow formulation",
+)
+
+include("common.jl")
 include("standard.jl")
-include("setup_cost.jl")
 include("due_dates.jl")
-include("integer_patterns.jl")
+include("setup_cost.jl")
+include("arc_flow.jl")

@@ -18,7 +18,27 @@ function assert_common_bin_packing_data(problem)
     @test problem.n_items >= 3
     @test problem.n_bins >= 2
     @test 2 <= problem.n_categories <= 8
-    @test problem.actual_variables == problem.n_bins * (problem.n_items + problem.n_categories + 1)
+    if problem isa SyntheticLPs.BinPackingProblem
+        @test problem.actual_variables ==
+            problem.n_bins * (problem.n_items + problem.n_categories + 1)
+    else
+        # Sparse typed fleet: only eligible (item, slot) and (category, slot)
+        # pairs carry variables.
+        compat(category, bin) =
+            problem.type_category_compatibility[problem.bin_types[bin], category]
+        eligible_x = count(
+            compat(problem.item_categories[item], bin) for item in 1:problem.n_items,
+            bin in 1:problem.n_bins
+        )
+        eligible_presence = count(
+            compat(category, bin) for category in 1:problem.n_categories, bin in 1:problem.n_bins
+        )
+        @test problem.actual_variables == eligible_x + problem.n_bins + eligible_presence
+        @test problem.actual_variables ==
+            SyntheticLPs._heterogeneous_variable_count(
+                problem.n_items, problem.n_bins, problem.n_categories
+            )
+    end
     @test length(problem.item_sizes) == problem.n_items
     @test all(>(0.0), problem.item_sizes)
     @test length(problem.item_categories) == problem.n_items
@@ -113,15 +133,17 @@ function assert_complete_witness_start(model, problem)
         present[problem.item_categories[item], bin] = true
     end
 
-    for item in 1:problem.n_items, bin in 1:problem.n_bins
+    for key in eachindex(model[:x])
+        item, bin = Tuple(key)
         @test start_value(model[:x][item, bin]) == (witness[item] == bin ? 1.0 : 0.0)
+    end
+    for key in eachindex(model[:category_present])
+        category, bin = Tuple(key)
+        @test start_value(model[:category_present][category, bin]) ==
+            (present[category, bin] ? 1.0 : 0.0)
     end
     for bin in 1:problem.n_bins
         @test start_value(model[:y][bin]) == (used[bin] ? 1.0 : 0.0)
-        for category in 1:problem.n_categories
-            @test start_value(model[:category_present][category, bin]) ==
-                (present[category, bin] ? 1.0 : 0.0)
-        end
     end
 end
 
@@ -149,11 +171,19 @@ end
             5000 => 5000,
             10_000 => 10_000,
         )
-        for ref in BIN_PACKING_REFS, (target, expected) in expected_sizes
-            model, problem = generate_problem(ref, target, unknown, 17)
+        for (target, expected) in expected_sizes
+            model, problem = generate_problem(BIN_PACKING_STANDARD, target, unknown, 17)
             @test problem.target_variables == target
             @test problem.actual_variables == expected
             @test num_variables(model) == expected
+            assert_common_bin_packing_data(problem)
+        end
+        # The typed fleet sizes against its exact sparse count.
+        for target in (12, 49, 100, 251, 1000, 5000, 10_000)
+            model, problem = generate_problem(BIN_PACKING_HETEROGENEOUS, target, unknown, 17)
+            @test problem.target_variables == target
+            @test num_variables(model) == problem.actual_variables
+            @test abs(problem.actual_variables - target) <= max(3, 0.02 * target)
             assert_common_bin_packing_data(problem)
         end
     end
@@ -265,24 +295,25 @@ end
         @test objective_function(model) isa JuMP.AffExpr
         @test length(model[:item_assignment]) == problem.n_items
         @test length(model[:bin_capacity]) == problem.n_bins
-        @test length(model[:presence_lower]) == problem.n_items * problem.n_bins
-        @test length(model[:presence_upper]) == problem.n_categories * problem.n_bins
-        @test length(model[:presence_used]) == problem.n_categories * problem.n_bins
-        @test length(model[:category_conflict]) ==
-            length(problem.incompatible_pairs) * problem.n_bins
-        expected_eligibility_rows = count(
-            !problem.type_category_compatibility[
-                problem.bin_types[bin], problem.item_categories[item]
-            ] for item in 1:problem.n_items, bin in 1:problem.n_bins
+        compat(category, bin) =
+            problem.type_category_compatibility[problem.bin_types[bin], category]
+        eligible_x = count(
+            compat(problem.item_categories[item], bin) for item in 1:problem.n_items,
+            bin in 1:problem.n_bins
         )
-        @test length(model[:category_eligibility]) == expected_eligibility_rows
-        if expected_eligibility_rows > 0
-            row_index = first(eachindex(model[:category_eligibility]))
-            row = model[:category_eligibility][row_index]
-            item, bin = Tuple(row_index)
-            @test constraint_object(row).set == BIN_PACKING_MOI.EqualTo(0.0)
-            @test normalized_coefficient(row, model[:x][item, bin]) == 1.0
-        end
+        eligible_presence = count(
+            compat(category, bin) for category in 1:problem.n_categories, bin in 1:problem.n_bins
+        )
+        @test length(model[:x]) == length(model[:presence_lower]) == eligible_x
+        @test eligible_x < problem.n_items * problem.n_bins
+        @test length(model[:presence_upper]) == length(model[:presence_used]) == eligible_presence
+        @test length(model[:category_conflict]) == count(
+            compat(a, bin) && compat(b, bin) for (a, b) in problem.incompatible_pairs,
+            bin in 1:problem.n_bins
+        )
+        # No `x == 0` eligibility rows: ineligible pairs simply have no column.
+        @test !haskey(object_dictionary(model), :category_eligibility)
+        @test num_variables(model) == problem.actual_variables
 
         @test length(model[:used_type_prefix]) == problem.n_bins - problem.n_bin_types
         if !isempty(model[:used_type_prefix])
@@ -368,7 +399,7 @@ end
                     ref, target, status, seed; relax_integer=relax_integer
                 )
                 @test num_variables(model) == problem.actual_variables
-                @test is_binary(model[:x][1, 1]) == !relax_integer
+                @test is_binary(first(model[:x])) == !relax_integer
                 set_optimizer(model, HiGHS.Optimizer)
                 set_silent(model)
                 set_time_limit_sec(model, 15.0)

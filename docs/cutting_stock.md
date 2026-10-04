@@ -1,163 +1,124 @@
 # Cutting Stock
 
-`CuttingStockProblem` (`cutting_stock/standard`) generates a cutting-pattern
-model that minimizes the number of stock pieces used to satisfy demand for
-required piece lengths, with certificate-backed control of the requested
-feasibility status.
+One-dimensional cutting stock in its two classic LP forms: the Gilmore-Gomory
+pattern master LP (`standard`, multi-period `due_dates`, multi-machine
+`setup_cost`) and the pseudo-polynomial arc-flow formulation (`arc_flow`).
+All variants scale their row count with the instance, build in O(nnz), and
+store a typed witness (`feasible`) or a relaxation-valid certificate
+(`infeasible`) that combines many rows, so HiGHS presolve does not detect it.
 
-## Overview
+## Shared data (`common.jl`)
 
-This generator represents a one-dimensional cutting stock planning problem. A
-manufacturer has stock material of a standard length and must cut it into
-demanded piece lengths. The model chooses how many times to use each generated
-cutting pattern. Pattern usage is continuous, so the model is the LP relaxation
-of the pattern-count problem; the category's `integer_patterns` variant covers
-the integral formulation.
+- **Stock catalogue.** Bar lengths (mm) from `6000, 7500, 9000, 10500, 12000,
+  13500`; a bar costs `L * p * (L / 6000)^-0.06` (per-mm price with a small
+  long-bar discount, ±3% noise).
+- **Order book.** Integer-mm lengths in `[120, 0.45 L_max]`, `Beta(1.6, 3.2)`
+  skewed short, 55% snapped to a 50 mm grid; quantities lognormal around 60
+  pieces, packs of 5 above 50.
+- **Pattern enumerator** (`cs_generate_patterns`), near-linear: the maximal
+  single-item pattern of every (item, stock) pair that fits first, then
+  knapsack-like greedy fills (a stock type, 2-6 random candidate items, random
+  counts, longest-first top-up to a maximal, low-trim pattern), deduplicated
+  through a hash set; a deterministic sub-maximal/two-item fallback only for
+  tiny catalogues. Patterns are stored sparse (`CSPatterns`). The previous
+  per-variant enumerators were dense and quadratic (121-165 s builds at 50k)
+  and `standard` could not reach 50k patterns at all.
+- **`MaterialShortageCertificate`**: with multipliers `len_i` on demand rows and
+  `L_k` on availability rows, `sum_i len_i d_i >= 1.04 * sum_k L_k S_k`
+  refutes the LP because every pattern fits its bar.
 
-## Generator Data and Sizing
-
-`target_variables` is the exact number of generated cutting patterns, and
-therefore the exact variable count:
+## `standard` — multi-stock Gilmore-Gomory master LP
 
 ```text
-n_patterns = target_variables
+min  sum_j cost[stock j] x_j
+s.t. sum_j a_ij x_j >= d_i         (every item type)
+     sum_{j on k} x_j <= S_k       (every stock type)
 ```
 
-Pattern generation has three stages: one single-piece pattern per piece type
-(emitted first, in piece order), a greedy residual-fill sampler for mixed
-patterns, and a deterministic enumeration of sub-maximal single-type and
-two-type patterns that tops the list up to `n_patterns` even if the greedy
-stage stalls. Duplicate patterns are rejected, and the generator errors rather
-than returning fewer patterns than requested.
+Exactly `n` patterns; `n_stock = clamp(round(log10 n), 1, 5)`,
+`n_types = clamp(round(n / 20), 1, n / n_stock)` — rows ≈ 5% of columns
+(previously ~100 rows at any size).
 
-Piece-type counts and distributions scale by target size:
+- `feasible`: single-item plan (`StockPlanWitness`), availabilities
+  `U(1.05, 1.35)` × its usage per stock type.
+- `infeasible`: availabilities scaled so ordered material exceeds the stock
+  length by `U(8%, 20%)` (`MaterialShortageCertificate`).
+- `unknown`: total stock length `U(0.97, 1.10)` × the ordered material — around
+  the trim-loss threshold of the best patterns.
 
-- `target_variables <= 250`: `n_piece_types` from `3:min(15, max(3, target_variables / 10))`, stock length from `Uniform(3, 8)`, demand range from random `5:20` to random `50:200`, common-length probability `0.3-0.6`, waste factor `0.05-0.15`.
-- `target_variables <= 1000`: `n_piece_types` from `8:min(50, max(8, target_variables / 20))`, stock length from `Uniform(6, 12)`, demand range from random `20:100` to random `200:1000`, common-length probability `0.4-0.7`, waste factor `0.03-0.10`.
-- larger targets: `n_piece_types` from `20:min(200, max(20, target_variables / 50))`, stock length from `Uniform(8, 20)`, demand range from random `100:500` to random `1000:10000`, common-length probability `0.5-0.8`, waste factor `0.02-0.08`.
+## `due_dates` — multi-period with inventory
 
-The sampled count is then raised to at least `clamp(round(target_variables / 4), 20, 200)` so the distinct-pattern pool can reach the target, and capped at
-`target_variables` so every piece type can own a single-piece pattern (a piece
-type without one could leave its demand row structurally uncoverable). Duplicate
-lengths are removed, so the actual piece-type count may shrink slightly.
-
-Piece lengths are either near common catalog sizes, with `Normal(0, 0.02)` variation around a drawn catalog value, or sampled from a transformed `Beta(2, 3)` distribution between `0.1` and about 95 percent of stock length. Lengths are rounded to two digits (catalog) or to precision `0.05` for stock up to 10 and `0.1` above. Which lengths are catalog sizes is tracked as a flag, because the jittered, rounded lengths almost never equal a catalog value exactly.
-
-Base demands are lognormal with parameters quantile-matched to the drawn range:
-`[demand_min, demand_max]` is a roughly two-sigma band (`sigma = log(demand_max / demand_min) / 4`, median `sqrt(demand_min * demand_max)`), so the range clamp only trims the outer few percent of draws instead of piling mass on the minimum. Catalog lengths are ordered at 1.25x the volume with three-quarters of the spread; demands are rounded to coarser increments as they grow.
-
-The struct stores:
-
-- `stock_length`
-- `piece_lengths`
-- `demands`, all positive
-- `patterns`, where `patterns[p][i]` is the count of piece type `i` produced by pattern `p`; entries `1:length(piece_lengths)` are the single-piece patterns in piece order
-- `stock_limit`, a finite positive cap on total pattern usage (there is no unlimited mode)
-- `scenario`, the demand regime the instance narrates
-- `feasible_witness`, set for `feasible` requests
-- `infeasibility_certificate`, set for `infeasible` requests
-- `feasibility_status`, the requested profile
-
-All randomness lives in the constructor behind a constructor-local
-`MersenneTwister(seed)`; the caller's global RNG is never read or advanced.
-
-## LP Formulation
-
-Sets:
-
-- `P = {1, ..., number of patterns}` cutting patterns
-- `I = {1, ..., number of piece types}` required piece lengths
-
-Decision variable:
-
-- `x_p >= 0`: number of times pattern `p` is used
-
-Objective:
-
-```math
-\min \sum_{p \in P} x_p
+```text
+min  sum cost x_jt + sum h_i inv_it
+s.t. inv_{i,t-1} + sum_j a_ij x_jt - inv_it = d_it    (inv_{i,0} = 0)
+     sum_{j on k} x_jt <= S_kt
 ```
 
-Demand satisfaction:
+Each item has orders in about half of the `T = clamp(round(2 log10 n), 4, 12)`
+periods (seasonal profile); holding cost ~1.5% of the material value per
+period. `n_types = round(n / (16 T))`, `n_patterns = n ÷ T - n_types`; columns
+`T (n_patterns + n_types)` (within `T - 1` of the target), rows
+`T (n_types + n_stock)`.
 
-```math
-\sum_{p \in P} a_{pi} x_p \ge d_i \quad \forall i \in I
+- `feasible`: just-in-time single-item plan (`DueDatePlanWitness`), deliveries
+  `U(1.05, 1.35)` × its per-period usage.
+- `infeasible`: the opening delivery is short — material due in period 1
+  exceeds period-1 stock by `U(8%, 20%)` (`CumulativeShortageCertificate`
+  with `period = 1`, combining every item's period-1 balance row with the
+  period-1 availability rows). A later cut-off period is an equally valid
+  proof, but at 100k columns HiGHS's dual simplex intermittently returned
+  UNKNOWN on the longer multi-period ray (IPM proves infeasibility), so the
+  robust first-period form is used.
+- `unknown`: per-period stock length `U(0.95, 1.12) × U(0.85, 1.15)` × that
+  period's due material; carryover decides.
+
+## `setup_cost` — multi-machine with pattern setups
+
+Every pattern runs on 1-3 of `clamp(round(Q / 400), 2, 250)` parallel saws.
+Pair `q = (pattern, machine)` has a run count `x_q` and setup binary `y_q`;
+run minutes grow with the number of pieces, setup minutes with the number of
+distinct lengths (knife moves), both machine-dependent; setup cost = labour
+minutes + 30% of a bar.
+
+```text
+min  sum cost x_q + sum setup_cost_q y_q
+s.t. demand rows, stock rows,
+     sum_{q on m} (run_q x_q + setup_q y_q) <= H_m
+     x_q <= M_q y_q,  M_q = min(max_i ceil(d_i / a_ij), floor(H_m / run_q))
 ```
 
-Stock limit (always present, since `stock_limit >= 1`):
+`y_q` sits in its machine row as well as its link, so it is not a column
+singleton and survives presolve (the old single-machine big-M variant was
+reduced to 50% of its columns and 2% of its rows). `Q = n ÷ 2` pairs; rows
+`Q + n_types + n_stock + n_machines`.
 
-```math
-\sum_{p \in P} x_p \le S
+- `feasible`: single-item plan on one machine each (`SetupPlanWitness`);
+  stock `U(1.05, 1.35)`, machine minutes `U(1.02, 1.15)` × plan usage.
+- `infeasible`: material shortage as in `standard`.
+- `unknown`: stock length `U(0.97, 1.10)` × material.
+
+## `arc_flow` — Valério de Carvalho arc-flow
+
+Nodes are reachable cut positions `0..L`; item `i` (sorted longest first) has
+arcs `(u, u + len_i)` from every node reachable with items `1..i` (symmetry
+reduction), and every reachable node has a loss arc to the next one. Flows are
+general integers (relaxed by default).
+
+```text
+min  sum_{a out of 0} f_a
+s.t. flow conservation at every internal node
+     sum_{a of item i} f_a >= d_i,   sum_{a out of 0} f_a <= S
 ```
 
-Bounds are nonnegativity only. Although cutting stock is naturally integer, `x_p` is continuous in the implemented model, so this is the LP relaxation of the pattern-count problem.
+`n_types = clamp(round(sqrt(n) / 16), 4, 30)` relative lengths
+(`0.04-0.42 L`); `L` is chosen by bisection so the exact arc count is as close
+to the target as the integer graph allows. Its LP bound equals the
+Gilmore-Gomory bound but the matrix is a network with side constraints. This
+replaces `integer_patterns`, whose relaxation was the same pattern LP as
+`standard` with 31 rows.
 
-## Feasibility Controls
-
-Feasibility is decided by the stock limit relative to two elementary bounds
-computed from the final pattern list. Let `s_i = floor(L / ℓ_i)` be the yield
-of piece `i`'s single-piece pattern and `e_i = max_p a_{pi} >= s_i >= 1` its
-best yield over all patterns. Then:
-
-- Any `x >= 0` produces at most `e_i * sum(x)` units of piece `i`, so
-  `d_i > S * e_i` for any single `i` proves infeasibility.
-- Running each single-piece pattern `cld(d_i, s_i)` times meets every demand
-  using `U = sum_i cld(d_i, s_i)` stock pieces, so `S >= U` proves
-  feasibility.
-
-The three profiles place `S` relative to `U`:
-
-- `feasible`: `S = U * Uniform(1.3, 1.8)`. The budget is generous but real —
-  any plan restricted to single-piece patterns must respect it (the planted
-  plan uses 55-77 percent of it) — while the trivial plan itself is stored as
-  a `StockPlanWitness` whose integer arithmetic (`s_i * usage[i] >= d_i`,
-  `sum(usage) <= S`) needs no tolerances.
-- `infeasible`: demands are first scaled by scenario flavor (rush order,
-  seasonal spike, backlog clearing, or mixed, with rush orders concentrated on
-  catalog lengths), then `S = U * Uniform(0.30, 0.55)`. The piece type with
-  the largest demand-per-yield ratio is the bottleneck; its demand is raised,
-  if the scenario draw did not already do so, to `ceil(margin * S * e_i)` with
-  `margin` in `1.2-1.5`, and the result is stored as a
-  `StockShortageCertificate(piece_index, max_yield_per_stock, stock_limit, demand)`
-  with the invariant `demand > stock_limit * max_yield_per_stock`. The
-  constructor verifies the invariant on the returned fields; the refutation is
-  a two-row Farkas argument on the demand and stock rows alone, so it survives
-  `relax_integer = true`.
-- `unknown`: `S = U * exp(Normal(-0.15, 0.45))`, log-centered slightly below
-  the direct plan's need. Whether the sampled mixed patterns close the gap
-  depends on the draw; across seeds the profile lands near an even
-  OPTIMAL/INFEASIBLE split at every scale. Neither a witness nor a
-  certificate is stored.
-
-Unlike earlier versions of this generator, there is no "no-pattern" mode: an
-instance whose demand row has no production route at all is trivially
-detectable and useless for solver testing, and every infeasible instance is
-now built around the stored certificate.
-
-## Model Characteristics
-
-Variable count is exactly `target_variables`. Constraint count is one row per
-piece type plus one stock-limit row. The pattern matrix is sparse because each
-mixed pattern uses only a subset of piece types, biased toward shorter pieces;
-the leading single-piece patterns are very sparse. Coefficients are small
-nonnegative integers and the right-hand sides are moderate integers, so the
-instances are numerically tame.
-
-## Practical Notes
-
-This generator is useful for testing column-style covering LPs, sparse
-nonnegative matrices, and infeasibility that requires combining a covering row
-with an aggregate budget row. It does not generate patterns by solving a
-pricing problem; it samples a fixed pattern list up front. The `unknown`
-profile genuinely depends on how well the sampled patterns pack, rather than
-on a hidden coin flip between two committed constructions.
-
-One caveat for dataset work: the infeasible instances are *correct but
-presolve-friendly*. Because the certificate is a two-row argument with integer
-coefficients, HiGHS detects the contradiction in a handful of simplex
-iterations, so `check_quality` rejects them under the default
-`min_iterations = 3` when `quality_filter = true` (the same holds, and
-strictly worse, for an aggregate all-pieces certificate — scaling every demand
-uniformly makes the contradiction even easier to aggregate). The `feasible` and
-`unknown` profiles pass the quality filter normally; pair `infeasible`
-requests with `quality_filter = false`, or accept that the filter drops them.
+- `feasible`: superposed single-item paths (`ArcFlowWitness`),
+  `S = U(1.05, 1.30)` × its rolls.
+- `infeasible`: `S = floor(material / (L U(1.08, 1.20)))`
+  (`ArcFlowMaterialCertificate`, node potentials `pi_u = u`).
+- `unknown`: `S = round(U(0.97, 1.10) material / L)`.
