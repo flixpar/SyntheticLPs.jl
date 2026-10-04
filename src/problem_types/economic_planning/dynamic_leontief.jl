@@ -45,34 +45,36 @@ end
 """
     LeontiefCertificate
 
-Farkas certificate for an infeasible plan, built from LP rows of a single
-period `period` only (it survives every transform). With
-`M = I + diag(ρ̃) - A` (ρ̃ the import ceilings, zero on non-tradables):
+Farkas certificate for an infeasible plan target, built from LP rows of every
+period (it survives every transform). With `M = I + diag(ρ̃) - A` (ρ̃ the import
+ceilings, zero on non-tradables), for each period `t`:
 
-  - `balance_multipliers = π ≥ 0` weights the commodity-balance equalities of
-    `period` and `import_multipliers = π[tradable]` the import-ceiling rows
-    `m ≤ ρ x`; together they give `π' M x ≥ π' (G + d C)` because investment,
-    exports, and consumption above the floor only add demand;
-  - `labor_multipliers = μ ≥ 0` (per skill) and `capacity_multipliers = ν ≥ 0`
-    (per sector; nonzero only in period 1, where capacity is data) satisfy
-    `M' π ≤ Σ_k μ_k ℓ_k + ν` elementwise, so `π' M x ≤ μ' L + ν' K0`.
+  - weights `π_t ≥ 0` on the commodity-balance equalities and on the
+    import-ceiling rows `m ≤ ρ x` (tradable entries) give
+    `π_t' M x_t ≥ π_t' (G_t + d C_t)`, because investment, exports and imports
+    below the ceiling only add demand;
+  - labor weights `μ_t ≥ 0` (per skill) and, in period 1 only, capacity weights
+    `ν ≥ 0` (capacity is data there) satisfy `M' π_t ≤ Σ_k μ_{k,t} ℓ_k + ν`
+    elementwise, so `π_t' M x_t ≤ μ_t' L_t + ν' K0`.
 
-Hence `consumption ≤ consumption_bound = (μ'L + ν'K0 - π'G) / (π'd)`, while the
-consumption floor of `period` is `consumption_floor > consumption_bound` (by a
-planted 10–30% margin). `mode` is `:labor` (the labor-content multipliers of the
-import-augmented Leontief inverse, `π = M⁻ᵀ ℓ_k`) or `:capital` (`π = M⁻ᵀ e_s`
-for a bottleneck sector `s` whose installed period-1 capacity cannot carry the
-consumption the floor demands).
+Hence `C_t ≤ consumption_bounds[t] = (μ_t'L_t + ν'K0 - π_t'G_t) / (π_t'd)`.
+`π_t` is the labor content of the import-augmented Leontief inverse,
+`M⁻ᵀ ℓ_k`, for the period's binding skill, or — in period 1 of a
+`:labor_capital` certificate — `M⁻ᵀ e_s` for a bottleneck sector `s` whose
+installed capacity binds first. The stored matrices are already scaled by
+`w_t / (π_t'd)` (`w` the target's period weights), so adding them to the
+plan-target row (multiplier 1) cancels every consumption column and refutes
+`Σ_t w_t C_t ≥ consumption_target`: the target exceeds
+`Σ_t w_t consumption_bounds[t]` by a planted 10–30% margin.
 """
 struct LeontiefCertificate
     mode::Symbol
-    period::Int
-    balance_multipliers::Vector{Float64}
-    import_multipliers::Vector{Float64}
-    labor_multipliers::Vector{Float64}
+    balance_multipliers::Matrix{Float64}
+    import_multipliers::Matrix{Float64}
+    labor_multipliers::Matrix{Float64}
     capacity_multipliers::Vector{Float64}
-    consumption_bound::Float64
-    consumption_floor::Float64
+    consumption_bounds::Vector{Float64}
+    consumption_target::Float64
 end
 
 """
@@ -92,6 +94,7 @@ energy–economy model (Netlib `PILOT*`), and development-planning LPs.
   - labor by skill class: `ℓ_k' x ≤ L_{k,t}`
   - external debt: `F_t = R F_{t-1} + Δ (p_m' m - p_e' e)`, `F_t ≤ F̄_t`
   - consumption floor `C_t ≥ C̲_t` and no decline `C_{t+1} ≥ C_t`
+  - plan target on cumulative discounted consumption `Σ_t w_t C_t ≥ W`
   - terminal capacity `K_T ≥ K_term`, exports `e ≤ ē`
 
 maximizing discounted consumption plus the discounted value of terminal capital
@@ -134,24 +137,28 @@ columns take minutes.
 
   - `feasible`: a balanced-growth reference trajectory is planted
     (`feasible_witness`); labor supply, debt ceilings, export ceilings, terminal
-    capacity and consumption floors are set with margins around it.
-  - `infeasible`: the same economy with a consumption-floor path that is
-    provably unsupportable — by the labor force in some period (`:labor`), or by
-    the installed period-1 capacity of a bottleneck sector (`:capital`) — with a
-    `LeontiefCertificate` built from LP rows (10–30% margin). Neither mode is
-    visible in a single row: the refutation aggregates every balance row of a
-    period through the Leontief inverse.
-  - `unknown`: the same ambitious-target construction (labor or capital route)
-    with the floor at 75–108% of the provable consumption bound. The true
-    frontier lies between the reference path and the bound, so instances land on
-    both sides; no claim is stored.
+    capacity, consumption floors and the plan target are set with margins below
+    it.
+  - `infeasible`: the plan target is set 10–30% above `Σ_t w_t b_t`, where `b_t`
+    is a provable upper bound on period-`t` consumption — the labor force through
+    the labor content of the import-augmented Leontief inverse (`:labor`), and
+    in period 1 possibly the installed capacity of a bottleneck sector
+    (`:labor_capital`) — with a `LeontiefCertificate` aggregating every balance,
+    import-ceiling and labor row of every period. Nothing is visible in a single
+    row, and the per-period floors stay comfortable, so presolve bound
+    propagation does not reach the contradiction.
+  - `unknown`: the target sits 10–80% of the way from the reference path's
+    `Σ_t w_t C_t` to `Σ_t w_t b_t`; the true frontier lies in between (measured
+    at 15–75%, typically ~40%), so instances land on both sides; no claim is
+    stored.
 
 # Sizing
 
 Variables are exactly `T (3n + 2 n_tr + 2)` for `n` sectors (`n_tr` tradable)
-over `T` periods; the dimension search lands within `T/2` of the target (larger
-deviations only at the 45-variable minimum). Rows are
-`T (3n + n_tr + n_skills + 1) + (T - 1)`. Targets above
+over `T ≤ 25` periods (`n ≤ LEONTIEF_MAX_SECTORS`, an MRIO-scale table); the
+dimension search lands within a couple of `T` of the target (≤ 4% above 100
+variables, < 0.1% above 10k; the minimum instance has 45 variables). Rows are
+`T (3n + n_tr + n_skills + 1) + T`. Targets above
 `LEONTIEF_MAX_VARIABLES` raise an `ArgumentError`.
 """
 struct DynamicLeontiefProblem <: ProblemGenerator
@@ -179,6 +186,7 @@ struct DynamicLeontiefProblem <: ProblemGenerator
     interest_factor::Float64
     debt_ceiling::Vector{Float64}
     consumption_floor::Vector{Float64}
+    consumption_target::Float64
     consumption_weight::Vector{Float64}
     terminal_capital_value::Vector{Float64}
     terminal_debt_weight::Float64
@@ -643,65 +651,74 @@ function DynamicLeontiefProblem(
     export_ceiling_v = ew .* rand(rng, Uniform(1.1, 1.6), n_tr)
     terminal_v = Kw[:, T] .* term_factor
     cfloor = [floor_factor * Cw[t] for t in 1:T]
+    consumption_weight = [Δ * β^(Δ * (t - 1)) for t in 1:T]
 
-    # Infeasible and unknown plans replace the comfortable floor path with an
-    # ambitious consumption target placed relative to a provable upper bound on
-    # consumption: `margin` x bound, with margin in [1.1, 1.3] (infeasible,
-    # certified) or [0.75, 1.08] (unknown: either side of the bound, and the true
-    # frontier lies somewhere between the reference path and the bound).
+    # Plan target on cumulative discounted consumption, Σ_t w_t C_t ≥ W. Feasible
+    # plans aim below the reference path. Infeasible plans aim 10–30% above
+    # Σ_t w_t b_t, where b_t is a provable per-period upper bound on consumption
+    # from the Leontief inverse (certified). Unknown plans aim between the
+    # reference path and that bound, where the true frontier lies.
     certificate_v = nothing
-    if feasibility_status != feasible
-        M_A = A_v  # M = I + diag(ρ̃) - A
-        margin = feasibility_status == infeasible ? rand(rng, Uniform(1.1, 1.3)) :
-                 rand(rng, Uniform(0.75, 1.08))
-        mode = rand(rng) < 0.6 ? :labor : :capital
-        if mode == :labor
-            tstar = rand(rng, cld(T, 2):T)
-            best_k, best_bound, best_pi = 0, Inf, Float64[]
+    if feasibility_status == feasible
+        target = sum(consumption_weight .* Cw) * rand(rng, Uniform(0.85, 0.97))
+    else
+        margin = rand(rng, Uniform(1.1, 1.3))
+        # Labor content of the import-augmented Leontief inverse, per skill.
+        pis = [_leontief_solve(A_v, q_ceiling, labor_v[k, :]; transposed=true) for k in 1:n_skills]
+        bounds = zeros(T)
+        best_k = zeros(Int, T)
+        for t in 1:T
+            bounds[t] = Inf
             for k in 1:n_skills
-                pik = _leontief_solve(M_A, q_ceiling, labor_v[k, :]; transposed=true)
-                bound = (L_v[k, tstar] - dot(pik, Gmat[:, tstar])) / dot(pik, d_v)
-                if bound < best_bound
-                    best_k, best_bound, best_pi = k, bound, pik
+                b = (L_v[k, t] - dot(pis[k], Gmat[:, t])) / dot(pis[k], d_v)
+                if b < bounds[t]
+                    bounds[t], best_k[t] = b, k
                 end
             end
-            # "Too ambitious" consumption-growth target: starts at the comfortable
-            # level and grows faster than the economy, reaching `margin` x bound at t*.
-            c1 = floor_factor * Cw[1]
-            goal = margin * best_bound
-            if tstar == 1 || goal <= c1
-                cfloor = [goal * grow(t - tstar + 1) for t in 1:T]
-            else
-                gamma_c = (goal / c1)^(1 / (tstar - 1))
-                cfloor = [c1 * gamma_c^(t - 1) for t in 1:T]
-            end
-            mu = zeros(n_skills)
-            mu[best_k] = 1.0
-            certificate_v = (:labor, tstar, best_pi, mu, zeros(n), best_bound, cfloor[tstar])
-        else
+        end
+        # Optionally a capacity bottleneck in period 1, where capacity is data.
+        cap_sector = 0
+        cap_pi = Float64[]
+        if rand(rng) < 0.5
             cand_pool = [i for i in 1:n if d_v[i] > 0]
-            cands = shuffle(rng, cand_pool)[1:min(8, length(cand_pool))]
-            best_s, best_bound, best_pi = 0, Inf, Float64[]
-            for sct in cands
+            for sct in shuffle(rng, cand_pool)[1:min(8, length(cand_pool))]
                 unit = zeros(n)
                 unit[sct] = 1.0
-                pis = _leontief_solve(M_A, q_ceiling, unit; transposed=true)
-                pd = dot(pis, d_v)
+                pis_s = _leontief_solve(A_v, q_ceiling, unit; transposed=true)
+                pd = dot(pis_s, d_v)
                 pd > 0 || continue
-                bound = (K_start1[sct] - dot(pis, Gmat[:, 1])) / pd
-                if bound < best_bound
-                    best_s, best_bound, best_pi = sct, bound, pis
+                b = (K_start1[sct] - dot(pis_s, Gmat[:, 1])) / pd
+                if b < bounds[1]
+                    bounds[1], cap_sector, cap_pi = b, sct, pis_s
                 end
             end
-            # An immediate consumption jump the installed capacity of the
-            # bottleneck sector cannot carry (no-decline rows keep it afterwards).
-            goal = margin * best_bound
-            cfloor = [max(goal, floor_factor * Cw[t]) for t in 1:T]
-            nu = zeros(n)
-            nu[best_s] = 1.0
-            certificate_v = (:capital, 1, best_pi, zeros(n_skills), nu, best_bound, cfloor[1])
         end
-        feasibility_status == unknown && (certificate_v = nothing)
+        bound_total = sum(consumption_weight .* bounds)
+        if feasibility_status == infeasible
+            target = margin * bound_total
+        else
+            # The frontier sits 15–75% of the way from the reference path to the
+            # bound (it is below the bound because the bound ignores investment).
+            ref_total = sum(consumption_weight .* Cw)
+            target = ref_total + rand(rng, Uniform(0.1, 0.8)) * (bound_total - ref_total)
+        end
+        if feasibility_status == infeasible
+            bal = zeros(n, T)
+            lab = zeros(n_skills, T)
+            capm = zeros(n)
+            for t in 1:T
+                π_t = (t == 1 && cap_sector > 0) ? cap_pi : pis[best_k[t]]
+                scale = consumption_weight[t] / dot(π_t, d_v)
+                bal[:, t] .= scale .* π_t
+                if t == 1 && cap_sector > 0
+                    capm[cap_sector] = scale
+                else
+                    lab[best_k[t], t] = scale
+                end
+            end
+            mode = cap_sector > 0 ? :labor_capital : :labor
+            certificate_v = (mode, bal, lab, capm, bounds, target)
+        end
     end
 
     # ---- Convert to hybrid (physical / value) units ----------------------------
@@ -719,7 +736,6 @@ function DynamicLeontiefProblem(
     B_h = to_hybrid(B_v)
     ptr = price[tradable]
     terminal_value = rand(rng, Uniform(0.3, 0.6)) .* vec(sum(B_v; dims=1)) .* price
-    consumption_weight = [Δ * β^(Δ * (t - 1)) for t in 1:T]
     terminal_weight = β^(Δ * T)
 
     witness = nothing
@@ -736,10 +752,10 @@ function DynamicLeontiefProblem(
     end
     certificate = nothing
     if certificate_v !== nothing
-        mode, tstar, pi_v, mu, nu_v, bound, flr = certificate_v
-        pi_h = pi_v .* price
+        mode, bal_v, lab, capm_v, bounds, tgt = certificate_v
+        bal_h = bal_v .* price
         certificate = LeontiefCertificate(
-            mode, tstar, pi_h, pi_h[tradable], mu, nu_v .* price, bound, flr
+            mode, bal_h, bal_h[tradable, :], lab, capm_v .* price, bounds, tgt
         )
     end
 
@@ -768,6 +784,7 @@ function DynamicLeontiefProblem(
         Rp,
         debt_ceiling,
         cfloor,
+        target,
         consumption_weight,
         terminal_value .* terminal_weight,
         terminal_weight,
@@ -783,7 +800,7 @@ end
 Build the dynamic Leontief planning LP. Deterministic — uses only struct data.
 Registered containers: variables `x`, `C`, `N`, `K`, `imp`, `ex`, `F`;
 constraints `balance`, `capacity`, `accumulation`, `import_limit`, `labor`,
-`debt`, `no_decline`.
+`debt`, `no_decline`, `consumption_target`.
 """
 function build_model(prob::DynamicLeontiefProblem)
     model = Model()
@@ -854,6 +871,11 @@ function build_model(prob::DynamicLeontiefProblem)
         prob.interest_factor * (t == 1 ? prob.initial_debt : 1.0 * F[t - 1])
     )
     @constraint(model, no_decline[t=1:(T - 1)], C[t + 1] - C[t] >= 0)
+    @constraint(
+        model,
+        consumption_target,
+        sum(prob.consumption_weight[t] * C[t] for t in 1:T) >= prob.consumption_target
+    )
 
     @objective(
         model,

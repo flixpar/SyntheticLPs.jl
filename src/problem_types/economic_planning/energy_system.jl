@@ -233,15 +233,19 @@ capacity factors 0.12–0.95, 31.536 PJ/GW-yr conversion, investment costs from
     slice by slice); capacities, residual stocks, growth seeds, potentials,
     supply steps, import capacities, reserves, peak reserve, and emission
     limits are all set with margins around it.
-  - `infeasible`: one of `:emission_cap` (a period's cap below the certified
-    minimum emissions), `:carbon_budget` (the cumulative budget below the sum
-    of those minima), or `:supply_shortfall` (domestic production and import
-    capacity cut below the certified minimum primary-energy requirement), with an
-    `EnergySystemCertificate` and a 15–40% margin. All modes aggregate the whole
-    process network; none is visible in a single row.
-  - `unknown`: the per-period emission caps are drawn between the certified
-    lower bound on emissions and the reference plan's emissions (and slightly
-    below the bound), so the true minimum falls on either side.
+  - `infeasible`: one of `:emission_cap` (a period's cap 15–40% below the
+    certified minimum emissions), `:carbon_budget` (the cumulative budget
+    15–40% below the sum of those minima, a multi-period certificate), or
+    `:supply_shortfall` (a permitting freeze holds clean capacity at the existing
+    stock and, from some period on, domestic production and import capacity are
+    cut so the certified minimum primary-energy requirement exceeds availability
+    by 15–40%), with an `EnergySystemCertificate`. All modes aggregate the whole
+    process network (and, through the growth rows, several periods); none is
+    visible in a single row.
+  - `unknown`: one ambition level `u ~ U(0.25, 1.05)` per instance places every
+    period's emission cap at fraction `u` of the way from the certified emission
+    floor to the reference plan's emissions; the true minimum lies in between,
+    so instances fall on both sides.
 
 # Sizing
 

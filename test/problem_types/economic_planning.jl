@@ -76,17 +76,20 @@ using SparseArrays
     end
     function dl_mult(m, p)
         c = p.infeasibility_certificate
-        t = c.period
-        d = Dict{Any, Float64}()
+        d = Dict{Any, Float64}(m[:consumption_target] => 1.0)
+        for t in 1:p.n_periods
+            for s in 1:p.n_sectors
+                d[m[:balance][s, t]] = c.balance_multipliers[s, t]
+            end
+            for i in eachindex(p.tradable)
+                d[m[:import_limit][i, t]] = -c.import_multipliers[i, t]
+            end
+            for k in axes(c.labor_multipliers, 1)
+                d[m[:labor][k, t]] = -c.labor_multipliers[k, t]
+            end
+        end
         for s in 1:p.n_sectors
-            d[m[:balance][s, t]] = c.balance_multipliers[s]
-            d[m[:capacity][s, t]] = -c.capacity_multipliers[s]
-        end
-        for i in eachindex(p.tradable)
-            d[m[:import_limit][i, t]] = -c.import_multipliers[i]
-        end
-        for k in eachindex(c.labor_multipliers)
-            d[m[:labor][k, t]] = -c.labor_multipliers[k]
+            d[m[:capacity][s, 1]] = -c.capacity_multipliers[s]
         end
         return d
     end
@@ -98,7 +101,7 @@ using SparseArrays
             nk = size(p.labor_coef, 1)
             @test num_variables(m) == dl_count(p)
             @test num_constraints(m; count_variable_in_set_constraints=false) ==
-                T * (3n + ntr + nk + 1) + (T - 1)
+                T * (3n + ntr + nk + 1) + T
             @test abs(num_variables(m) - target) <= max(2T, 0.05 * target)
             @test 3 <= T <= 25
             @test 2 <= ntr <= n - 1
@@ -175,6 +178,7 @@ using SparseArrays
             lhs .-= p.B * inv_goods
             @test maximum(abs.(lhs .- p.government_demand[:, t]) ./ (abs.(p.government_demand[:, t]) .+ x .+ 1e-9)) < 1e-8
             @test all(w.consumption .>= p.consumption_floor)
+            @test dot(p.consumption_weight, w.consumption) >= p.consumption_target
             @test all(w.output[:, 1] .<= p.initial_capacity)
         end
     end
@@ -187,32 +191,41 @@ using SparseArrays
             @test c !== nothing
             @test p.feasible_witness === nothing
             push!(modes, c.mode)
-            piv = c.balance_multipliers
-            @test all(>=(0), piv)
-            @test c.import_multipliers == piv[p.tradable]
+            @test all(>=(0), c.balance_multipliers)
+            @test c.import_multipliers == c.balance_multipliers[p.tradable, :]
             @test all(>=(0), c.labor_multipliers)
             @test all(>=(0), c.capacity_multipliers)
-            c.mode == :labor && @test all(iszero, c.capacity_multipliers)
-            c.mode == :capital && @test c.period == 1
-            # M'π <= Σ_k μ_k ℓ_k + ν with M = I + diag(ρ̃) - A.
+            @test (c.mode == :labor_capital) == any(>(0), c.capacity_multipliers)
+            @test c.consumption_target == p.consumption_target
             ρ̃ = zeros(p.n_sectors)
             ρ̃[p.tradable] .= p.import_ceiling
-            u = piv .+ ρ̃ .* piv .- transpose(p.A) * piv
-            cover = vec(transpose(c.labor_multipliers) * p.labor_coef) .+ c.capacity_multipliers
-            @test all(u .<= cover .+ 1e-9 .* (abs.(cover) .+ abs.(u)))
-            # The aggregated rows bound consumption, and the floor exceeds it.
-            t = c.period
-            resource = dot(c.labor_multipliers, p.labor_supply[:, t]) + dot(c.capacity_multipliers, p.initial_capacity)
-            bound = (resource - dot(piv, p.government_demand[:, t])) / dot(piv, p.consumption_bundle)
-            @test bound ≈ c.consumption_bound rtol = 1e-8
-            @test c.consumption_floor == p.consumption_floor[t]
-            @test c.consumption_floor >= 1.1 * c.consumption_bound * (1 - 1e-9)
+            total = 0.0
+            for t in 1:p.n_periods
+                piv = c.balance_multipliers[:, t]
+                # M'π_t <= Σ_k μ_kt ℓ_k + ν (ν only in period 1), M = I + diag(ρ̃) - A.
+                # Tolerance: the floating-point scale of the terms being combined
+                # (π, A'π >= 0), since entries with zero cover cancel exactly.
+                upstream = transpose(p.A) * piv
+                u = piv .+ ρ̃ .* piv .- upstream
+                cover = vec(transpose(c.labor_multipliers[:, t]) * p.labor_coef)
+                t == 1 && (cover .+= c.capacity_multipliers)
+                @test all(u .<= cover .+ 1e-10 .* ((1 .+ ρ̃) .* piv .+ upstream .+ cover))
+                # Scaled so the consumption column cancels against the target row.
+                @test dot(piv, p.consumption_bundle) ≈ p.consumption_weight[t] rtol = 1e-9
+                resource = dot(c.labor_multipliers[:, t], p.labor_supply[:, t]) +
+                    (t == 1 ? dot(c.capacity_multipliers, p.initial_capacity) : 0.0)
+                @test (resource - dot(piv, p.government_demand[:, t])) / p.consumption_weight[t] ≈
+                    c.consumption_bounds[t] rtol = 1e-8
+                total += p.consumption_weight[t] * c.consumption_bounds[t]
+            end
+            @test p.consumption_target >= 1.1 * total * (1 - 1e-9)
             # Re-derived from the built model's rows and bounds.
             yb, bmax = ep_farkas(dl_mult(m, p))
             @test isfinite(bmax)
             @test yb > bmax
+            @test yb - bmax ≈ p.consumption_target - total rtol = 1e-6
         end
-        @test modes == Set([:labor, :capital])
+        @test modes == Set([:labor, :labor_capital])
         for seed in 0:5
             _, p = generate_problem(DL, 400, unknown, seed)
             @test p.feasible_witness === nothing
