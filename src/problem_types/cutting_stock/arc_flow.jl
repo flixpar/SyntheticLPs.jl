@@ -283,5 +283,7 @@ register_variant(
     :cutting_stock,
     :arc_flow,
     ArcFlowCuttingStockProblem,
-    "Arc-flow (Valério de Carvalho) cutting stock: integer flows on a reduced cut-position graph with demand and stock-limit side constraints",
+    "Arc-flow (Valério de Carvalho) cutting stock: integer flows on a reduced cut-position graph with demand and stock-limit side constraints";
+    tags=[:production, :network],
+    max_target_variables=1_000_000,
 )

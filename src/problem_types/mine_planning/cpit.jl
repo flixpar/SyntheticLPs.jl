@@ -217,4 +217,6 @@ register_variant(
     MineCPITProblem,
     "Constrained pit limit (MineLib CPIT) open-pit production scheduling: cumulative block-extraction variables over a precedence-closed 3D block model with 1-5/1-9 slope precedence, per-period mining and milling capacities and a minimum mill-feed contract, maximizing NPV";
     default=true,
+    tags=[:mining, :degenerate],
+    max_target_variables=1_000_000,
 )

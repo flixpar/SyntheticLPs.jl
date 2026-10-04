@@ -197,5 +197,6 @@ register_variant(
     :hub_location,
     :compact_single_allocation,
     CompactSingleAllocationHubProblem,
-    "Compact origin-indexed O(n^3) single-allocation p-hub median with directed OD traffic and passenger/freight/telecom profiles",
+    "Compact origin-indexed O(n^3) single-allocation p-hub median with directed OD traffic and passenger/freight/telecom profiles";
+    tags=[:location, :network, :multicommodity, :big_m],
 )

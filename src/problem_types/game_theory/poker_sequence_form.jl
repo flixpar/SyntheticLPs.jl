@@ -840,4 +840,6 @@ register_variant(
     PokerSequenceFormProblem,
     "Sequence-form LP (Koller-Megiddo-von Stengel) for an equilibrium of a generalized Kuhn/Leduc poker game: tree-structured realization-plan flow rows coupled to the opponent's dualized best-response rows through a sparse chance-weighted payoff block, with an optional trembling-hand perturbation and a guaranteed-value requirement certified by CFR+ strategies and exact best responses";
     default=true,
+    tags=[:game_theory],
+    max_target_variables=1_000_000,
 )

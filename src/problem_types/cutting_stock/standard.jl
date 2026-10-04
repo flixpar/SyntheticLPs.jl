@@ -183,4 +183,5 @@ register_variant(
     CuttingStockProblem,
     "Multi-stock Gilmore-Gomory cutting stock LP: many order lengths, several bar lengths in limited supply, and a large generated pattern pool";
     default=true,
+    tags=[:production, :covering],
 )

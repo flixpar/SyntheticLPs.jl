@@ -558,5 +558,6 @@ register_variant(
     :product_mix,
     :standard,
     ProductMixProblem,
-    "Single-period product mix with alternative routings over many machines, department labor pools, and materials: ranged market rows, planted operating plan, and an area/plant material-shortage infeasibility certificate",
+    "Single-period product mix with alternative routings over many machines, department labor pools, and materials: ranged market rows, planted operating plan, and an area/plant material-shortage infeasibility certificate";
+    tags=[:production, :packing, :block_angular],
 )

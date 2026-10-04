@@ -396,5 +396,6 @@ register_variant(
     :hub_location,
     :hub_covering,
     HubSetCoveringProblem,
-    "Budgeted multiple-allocation hub set covering: every ordered OD pair needs an open two-hub path within the service threshold, with tight per-hub path linking",
+    "Budgeted multiple-allocation hub set covering: every ordered OD pair needs an open two-hub path within the service threshold, with tight per-hub path linking";
+    tags=[:location, :covering],
 )

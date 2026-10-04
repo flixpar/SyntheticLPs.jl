@@ -431,4 +431,5 @@ register_variant(
     PortfolioProblem,
     "Multi-asset CVaR portfolio on a factor-structured crash-regime scenario market with exposure, sector, region, class, position, and turnover limits";
     default=true,
+    tags=[:finance, :dense],
 )

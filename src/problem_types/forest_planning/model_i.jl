@@ -158,4 +158,6 @@ register_variant(
     ForestModelIProblem,
     "Model I forest harvest scheduling: whole-horizon stratum prescriptions (clearcut timing, regeneration, second rotation, thinning) coupled by harvest-volume accounting, even-flow, watershed green-up, mill-supply and ending-inventory rows";
     default=true,
+    tags=[:forestry, :block_angular],
+    max_target_variables=1_000_000,
 )

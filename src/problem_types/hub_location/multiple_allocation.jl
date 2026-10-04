@@ -427,5 +427,6 @@ register_variant(
     :hub_location,
     :multiple_allocation,
     MultipleAllocationHubProblem,
-    "Fixed-charge multiple-allocation hub location with feeder reach windows and an opening budget (per-destination flow formulation, AP postal cost conventions)",
+    "Fixed-charge multiple-allocation hub location with feeder reach windows and an opening budget (per-destination flow formulation, AP postal cost conventions)";
+    tags=[:location, :network, :multicommodity, :big_m],
 )

@@ -840,5 +840,7 @@ register_variant(
     :supply_chain,
     :network_planning,
     SupplyChainNetworkPlanningProblem,
-    "Multi-period, multi-product supply-chain network-planning LP with sparse period-specific lanes, specialized production, shared resource capacity, inventory carryover, exact service, structural profiles, and constructive feasibility certificates",
+    "Multi-period, multi-product supply-chain network-planning LP with sparse period-specific lanes, specialized production, shared resource capacity, inventory carryover, exact service, structural profiles, and constructive feasibility certificates";
+    tags=[:logistics, :network, :multicommodity, :staircase],
+    max_target_variables=1_000_000,
 )

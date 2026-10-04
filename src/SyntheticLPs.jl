@@ -28,7 +28,7 @@ export list_problem_types
 export list_variants
 export list_problems
 export problem_info
-export list_tags, register_tag, variant_tags, model_class, supports_target
+export list_tags, register_tag, DOMAIN_TAGS, variant_tags, model_class, supports_target
 export model_statistics
 export bounds_to_constraints!
 export dualize_model, dual_reformulation, is_dual_reformulation
@@ -99,7 +99,7 @@ const VARIANT_TAGS = Dict{Symbol, String}(
     :degenerate => "known to be highly primal or dual degenerate",
     :lp_relaxation => "purpose-built continuous relaxation of a combinatorial problem",
     :robust => "robust or adversarial reformulation (dualized uncertainty sets)",
-    # -- Domain ----------------------------------------------------------------
+    # -- Domain (see DOMAIN_TAGS) ------------------------------------------------
     :logistics => "transportation, distribution, and supply-chain planning",
     :routing => "vehicle/tour routing",
     :location => "facility, hub, or network location",
@@ -110,17 +110,53 @@ const VARIANT_TAGS = Dict{Symbol, String}(
     :healthcare => "healthcare and medical planning",
     :telecom => "telecommunication and network design",
     :agriculture => "agriculture, food, and land use",
-    :statistics => "statistics, regression, and machine learning",
+    :statistics => "statistics and regression (estimation and model fitting)",
+    :machine_learning => "training or verifying learned models (SVMs, neural-network verification)",
     :combinatorial => "abstract combinatorial optimization (graphs, sets, packing)",
+    :economics => "economic planning and markets (input-output models, auctions)",
+    :game_theory => "equilibrium and minimax LPs of two-player zero-sum games",
+    :markov => "occupation-measure LPs of finite Markov decision processes",
+    :mining => "open-pit mine production scheduling and mineral resource planning",
+    :forestry => "forest management and harvest scheduling",
 )
 
 """
-    register_tag(tag::Symbol, description::AbstractString)
+    DOMAIN_TAGS
+
+The subset of [`VARIANT_TAGS`](@ref) that names an application domain (the rest
+describe matrix structure). Every registered variant carries exactly one domain tag;
+[`register_tag`](@ref) with `domain=true` extends the set.
+"""
+const DOMAIN_TAGS = Set{Symbol}([
+    :logistics,
+    :routing,
+    :location,
+    :scheduling,
+    :production,
+    :energy,
+    :finance,
+    :healthcare,
+    :telecom,
+    :agriculture,
+    :statistics,
+    :machine_learning,
+    :combinatorial,
+    :economics,
+    :game_theory,
+    :markov,
+    :mining,
+    :forestry,
+])
+
+"""
+    register_tag(tag::Symbol, description::AbstractString; domain::Bool=false)
 
 Add `tag` to the [`VARIANT_TAGS`](@ref) vocabulary (or update its description).
+`domain=true` also records it as a domain tag in [`DOMAIN_TAGS`](@ref).
 """
-function register_tag(tag::Symbol, description::AbstractString)
+function register_tag(tag::Symbol, description::AbstractString; domain::Bool=false)
     VARIANT_TAGS[tag] = String(description)
+    domain && push!(DOMAIN_TAGS, tag)
     return tag
 end
 

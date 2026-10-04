@@ -473,4 +473,5 @@ register_variant(
     RevenueManagementProblem,
     "Choice-based network revenue management (sales-based LP with MNL choice) on a multi-hub banked airline schedule over several days, with flight capacities and minimum-load contracts";
     default=true,
+    tags=[:finance, :block_angular],
 )

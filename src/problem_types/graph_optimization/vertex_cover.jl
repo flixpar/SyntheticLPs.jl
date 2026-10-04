@@ -201,5 +201,7 @@ register_variant(
     :graph_optimization,
     :vertex_cover,
     VertexCoverProblem,
-    "Capacitated vertex cover: link-monitoring probe placement with port capacities on a scale-free network",
+    "Capacitated vertex cover: link-monitoring probe placement with port capacities on a scale-free network";
+    tags=[:telecom, :covering, :big_m],
+    min_target_variables=6,
 )

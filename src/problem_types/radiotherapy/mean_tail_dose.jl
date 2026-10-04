@@ -248,5 +248,6 @@ register_variant(
     :radiotherapy,
     :mean_tail_dose,
     MeanTailDoseIMRTProblem,
-    "Convex IMRT fluence-map LP with target cold-tail and organ hot-tail dose constraints",
+    "Convex IMRT fluence-map LP with target cold-tail and organ hot-tail dose constraints";
+    tags=[:healthcare],
 )

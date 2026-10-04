@@ -671,5 +671,6 @@ register_variant(
     :maritime_inventory_routing,
     :standard,
     MaritimeInventoryRoutingProblem,
-    "Time-expanded maritime inventory routing on a sailing-time network with binary vessel legs, onboard cargo, depot pickup, deliveries, and customer tank balances",
+    "Time-expanded maritime inventory routing on a sailing-time network with binary vessel legs, onboard cargo, depot pickup, deliveries, and customer tank balances";
+    tags=[:routing, :network, :staircase, :big_m],
 )

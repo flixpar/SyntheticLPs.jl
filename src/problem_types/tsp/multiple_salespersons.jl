@@ -152,5 +152,6 @@ register_variant(
     :tsp,
     :multiple_salespersons,
     TSPMultipleSalespersonsProblem,
-    "Balanced multiple-salesperson TSP with exact per-route stop limits and lifted order constraints",
+    "Balanced multiple-salesperson TSP with exact per-route stop limits and lifted order constraints";
+    tags=[:routing, :big_m],
 )

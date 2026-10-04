@@ -586,5 +586,6 @@ register_variant(
     :production_planning,
     :standard,
     ProductionPlanningProblem,
-    "Multi-level, multi-period capacitated MRP planning LP: bill-of-materials balance rows with lead times, backlog, work-center capacity with bounded overtime, and supplier capacity, with a planted lot-for-lot MRP plan and an echelon-load infeasibility certificate",
+    "Multi-level, multi-period capacitated MRP planning LP: bill-of-materials balance rows with lead times, backlog, work-center capacity with bounded overtime, and supplier capacity, with a planted lot-for-lot MRP plan and an echelon-load infeasibility certificate";
+    tags=[:production, :staircase],
 )

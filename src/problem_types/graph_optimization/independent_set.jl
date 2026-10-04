@@ -137,4 +137,6 @@ register_variant(
     IndependentSetProblem,
     "Weighted maximum independent set on a hotspot unit-disk interference graph, in the clique formulation";
     default=true,
+    tags=[:telecom, :packing],
+    min_target_variables=2,
 )

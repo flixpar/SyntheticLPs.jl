@@ -423,5 +423,6 @@ register_variant(
     :vehicle_routing,
     :cvrp,
     CVRPProblem,
-    "Capacitated vehicle routing problem (CVRP) with single-commodity-flow subtour elimination; a MIP whose continuous relaxation is a genuine depot-anchored routing relaxation",
+    "Capacitated vehicle routing problem (CVRP) with single-commodity-flow subtour elimination; a MIP whose continuous relaxation is a genuine depot-anchored routing relaxation";
+    tags=[:routing, :network, :big_m],
 )

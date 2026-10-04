@@ -398,5 +398,6 @@ register_variant(
     RefineryModeSwitchingProblem,
     "Multi-period refinery campaign planning: one operating mode per conversion " *
     "unit and period, mode-dependent yields, gated turndown, exact starts, " *
-    "minimum runs, and changeover costs",
+    "minimum runs, and changeover costs";
+    tags=[:production, :staircase, :blending, :big_m],
 )

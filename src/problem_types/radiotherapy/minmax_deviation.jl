@@ -129,5 +129,6 @@ register_variant(
     :radiotherapy,
     :minmax_deviation,
     MinMaxDeviationIMRTProblem,
-    "IMRT fluence-map LP minimizing the worst weighted voxel dose deviation",
+    "IMRT fluence-map LP minimizing the worst weighted voxel dose deviation";
+    tags=[:healthcare, :dense],
 )

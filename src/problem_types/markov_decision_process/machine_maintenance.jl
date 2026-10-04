@@ -334,5 +334,7 @@ register_variant(
     :markov_decision_process,
     :machine_maintenance,
     MachineMaintenanceMDP,
-    "Occupation-measure LP of condition-based maintenance with speed control, imperfect repair, shock failures, a spare-parts stock, and a seasonal production calendar, with an optional availability (downtime) row refuted by a value-function Farkas certificate",
+    "Occupation-measure LP of condition-based maintenance with speed control, imperfect repair, shock failures, a spare-parts stock, and a seasonal production calendar, with an optional availability (downtime) row refuted by a value-function Farkas certificate";
+    tags=[:markov],
+    max_target_variables=1_000_000,
 )

@@ -170,4 +170,6 @@ register_variant(
     SetCoverProblem,
     "Location set covering with heterogeneous station radii over clustered demand points and a site budget";
     default=true,
+    tags=[:location, :covering],
+    min_target_variables=2,
 )

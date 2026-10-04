@@ -198,5 +198,6 @@ register_variant(
     :tsp,
     :flow,
     TSPFlowProblem,
-    "Symmetric travelling-salesman problem with single-commodity-flow subtour elimination; a MIP whose continuous relaxation is a genuine depot-anchored tour relaxation",
+    "Symmetric travelling-salesman problem with single-commodity-flow subtour elimination; a MIP whose continuous relaxation is a genuine depot-anchored tour relaxation";
+    tags=[:routing, :network, :big_m],
 )

@@ -285,5 +285,7 @@ register_variant(
     :set_system,
     :set_packing,
     SetPackingProblem,
-    "Set packing as railway train-path allocation over space-time track cells with mandatory services",
+    "Set packing as railway train-path allocation over space-time track cells with mandatory services";
+    tags=[:scheduling, :packing, :time_indexed],
+    min_target_variables=2,
 )

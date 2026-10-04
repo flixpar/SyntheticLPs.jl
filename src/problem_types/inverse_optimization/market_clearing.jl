@@ -559,5 +559,8 @@ register_variant(
     :inverse_optimization,
     :market_clearing,
     InverseDispatchCostProblem,
-    "Copper-plate market offer-cost inference: recover generator costs closest to a prior that explain an observed multi-period dispatch",
+    "Copper-plate market offer-cost inference: recover generator costs closest to a prior that explain an observed multi-period dispatch";
+    tags=[:energy, :dual_block_angular],
+    min_target_variables=2,
+    max_target_variables=250_000,
 )

@@ -954,4 +954,5 @@ register_variant(
     NeuralNetworkVerificationProblem,
     "Bound-aware ReLU verification (dense, pruned, or convolutional networks) with stable-neuron elimination and propagated big-M coefficients";
     default=true,
+    tags=[:machine_learning, :big_m],
 )

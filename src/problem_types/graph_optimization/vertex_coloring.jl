@@ -238,5 +238,7 @@ register_variant(
     :graph_optimization,
     :vertex_coloring,
     VertexColoringProblem,
-    "Minimum-interference WLAN channel assignment (list coloring) with per-channel clique rows on a hotspot unit-disk graph",
+    "Minimum-interference WLAN channel assignment (list coloring) with per-channel clique rows on a hotspot unit-disk graph";
+    tags=[:telecom, :partitioning, :packing],
+    min_target_variables=12,
 )

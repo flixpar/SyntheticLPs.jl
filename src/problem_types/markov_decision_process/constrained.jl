@@ -114,5 +114,7 @@ register_variant(
     :markov_decision_process,
     :constrained,
     ConstrainedMDP,
-    "Constrained MDP (Altman) occupation-measure LP over an inventory, tandem-queue, or maintenance model: minimize operating cost subject to 2-3 dense budget rows on conflicting service / capital / energy / labour streams, with joint infeasibility certified by a weighted value-function Farkas certificate while every single budget stays individually achievable",
+    "Constrained MDP (Altman) occupation-measure LP over an inventory, tandem-queue, or maintenance model: minimize operating cost subject to 2-3 dense budget rows on conflicting service / capital / energy / labour streams, with joint infeasibility certified by a weighted value-function Farkas certificate while every single budget stays individually achievable";
+    tags=[:markov],
+    max_target_variables=1_000_000,
 )

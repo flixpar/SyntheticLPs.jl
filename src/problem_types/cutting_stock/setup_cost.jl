@@ -255,5 +255,6 @@ register_variant(
     :cutting_stock,
     :setup_cost,
     SetupCostCuttingStockProblem,
-    "Multi-machine cutting stock with pattern setups: run counts linked to setup binaries that cost money and machine minutes",
+    "Multi-machine cutting stock with pattern setups: run counts linked to setup binaries that cost money and machine minutes";
+    tags=[:production, :covering, :big_m],
 )

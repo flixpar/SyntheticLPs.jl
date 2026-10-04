@@ -520,5 +520,6 @@ register_variant(
     :project_selection,
     :standard,
     ProjectSelectionProblem,
-    "Multi-year, multi-division capital portfolio selection with yearly budget and headcount envelopes, platform prerequisites, exclusive alternatives, and division delivery mandates",
+    "Multi-year, multi-division capital portfolio selection with yearly budget and headcount envelopes, platform prerequisites, exclusive alternatives, and division delivery mandates";
+    tags=[:finance, :packing],
 )

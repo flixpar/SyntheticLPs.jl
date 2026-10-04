@@ -540,5 +540,6 @@ register_variant(
     :stochastic_program,
     :multistage_alm,
     MultistageALMProblem,
-    "Multistage stochastic asset-liability management LP of a pension fund on a scenario tree: nested rebalancing with transaction costs, allocation caps, inflation-indexed liabilities, and a regulatory funding floor at every node",
+    "Multistage stochastic asset-liability management LP of a pension fund on a scenario tree: nested rebalancing with transaction costs, allocation caps, inflation-indexed liabilities, and a regulatory funding floor at every node";
+    tags=[:finance, :staircase],
 )

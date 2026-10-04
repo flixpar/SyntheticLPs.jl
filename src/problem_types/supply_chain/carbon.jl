@@ -186,5 +186,6 @@ register_variant(
     :supply_chain,
     :carbon,
     CarbonSupplyChainProblem,
-    "Multi-echelon, multi-period supply-chain network design under a horizon carbon budget on production, linehaul (truck/rail/intermodal), and last-mile emissions",
+    "Multi-echelon, multi-period supply-chain network design under a horizon carbon budget on production, linehaul (truck/rail/intermodal), and last-mile emissions";
+    tags=[:logistics, :network, :staircase, :big_m],
 )

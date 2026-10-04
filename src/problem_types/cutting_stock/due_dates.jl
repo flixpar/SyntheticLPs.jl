@@ -250,5 +250,6 @@ register_variant(
     :cutting_stock,
     :due_dates,
     DueDatesCuttingStockProblem,
-    "Multi-period cutting stock with due-date order buckets, inventory carryover at a holding cost, and per-period stock deliveries",
+    "Multi-period cutting stock with due-date order buckets, inventory carryover at a holding cost, and per-period stock deliveries";
+    tags=[:production, :staircase],
 )

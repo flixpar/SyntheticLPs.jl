@@ -402,4 +402,5 @@ register_variant(
     StochasticProgramProblem,
     "Two-stage stochastic capacity/distribution LP (extensive form): first-stage capacity under a capital budget, sparse-lane recourse with penalized shortfall and per-scenario service levels over correlated demand scenarios — dual block-angular structure";
     default=true,
+    tags=[:logistics, :dual_block_angular, :bipartite],
 )

@@ -236,4 +236,5 @@ register_variant(
     ContainerLoadingProblem,
     "Loading palletised consignments into a heterogeneous ISO container fleet under payload, volume and floor limits";
     default=true,
+    tags=[:logistics, :partitioning, :big_m],
 )

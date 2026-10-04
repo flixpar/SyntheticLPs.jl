@@ -140,5 +140,8 @@ register_variant(
     :inverse_optimization,
     :linf,
     InverseLPMaxErrorProblem,
-    "Min-max (weighted L-infinity) inverse linear program: minimize the largest weighted cost deviation that makes an observed plan optimal for a forward LP",
+    "Min-max (weighted L-infinity) inverse linear program: minimize the largest weighted cost deviation that makes an observed plan optimal for a forward LP";
+    tags=[:production],
+    min_target_variables=2,
+    max_target_variables=250_000,
 )

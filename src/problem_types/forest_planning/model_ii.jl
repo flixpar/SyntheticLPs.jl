@@ -159,5 +159,7 @@ register_variant(
     :forest_planning,
     :model_ii,
     ForestModelIIProblem,
-    "Model II forest harvest scheduling: rotation-by-rotation area flows through watershed regeneration nodes (a network with side constraints) with harvest-volume accounting, even-flow, green-up, mill-supply and ending-inventory rows",
+    "Model II forest harvest scheduling: rotation-by-rotation area flows through watershed regeneration nodes (a network with side constraints) with harvest-volume accounting, even-flow, green-up, mill-supply and ending-inventory rows";
+    tags=[:forestry, :network, :block_angular],
+    max_target_variables=1_000_000,
 )

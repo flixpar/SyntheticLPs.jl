@@ -271,5 +271,6 @@ register_variant(
     :knapsack,
     :multidimensional,
     MultidimensionalKnapsackProblem,
-    "Sparse multi-dimensional 0/1 knapsack: machine-week window resources, shared budgets, and program minimum-selection commitments",
+    "Sparse multi-dimensional 0/1 knapsack: machine-week window resources, shared budgets, and program minimum-selection commitments";
+    tags=[:production, :packing],
 )

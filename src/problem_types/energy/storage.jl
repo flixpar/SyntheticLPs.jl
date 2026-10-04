@@ -292,5 +292,6 @@ register_variant(
     :energy,
     :storage,
     StorageDispatchProblem,
-    "Multi-area dispatch with batteries and pumped hydro: charge/discharge limits, state-of-charge recursion with round-trip losses, terminal level floor, and storage arbitrage across zones and hours",
+    "Multi-area dispatch with batteries and pumped hydro: charge/discharge limits, state-of-charge recursion with round-trip losses, terminal level floor, and storage arbitrage across zones and hours";
+    tags=[:energy, :network, :staircase],
 )

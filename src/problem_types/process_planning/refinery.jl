@@ -384,4 +384,5 @@ register_variant(
     "assay-driven distillation cuts, fixed-yield conversion units, intermediate " *
     "tankage, and component blending into specification-constrained grades";
     default=true,
+    tags=[:production, :staircase, :blending],
 )

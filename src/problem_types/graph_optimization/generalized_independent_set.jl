@@ -167,5 +167,7 @@ register_variant(
     :graph_optimization,
     :generalized_independent_set,
     GeneralizedIndependentSetProblem,
-    "Generalized independent set as wind-farm layout: spacing cliques, wake-loss soft conflicts, and a capacity floor",
+    "Generalized independent set as wind-farm layout: spacing cliques, wake-loss soft conflicts, and a capacity floor";
+    tags=[:energy, :packing],
+    min_target_variables=6,
 )

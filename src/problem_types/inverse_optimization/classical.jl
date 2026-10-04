@@ -160,5 +160,8 @@ register_variant(
     :inverse_optimization,
     :classical_normalized,
     ClassicalInverseLPProblem,
-    "Simplex-normalized classical weighted-L1 inverse packing LP with exact, strictly-interior, and unresolved observations",
+    "Simplex-normalized classical weighted-L1 inverse packing LP with exact, strictly-interior, and unresolved observations";
+    tags=[:production],
+    min_target_variables=2,
+    max_target_variables=250_000,
 )

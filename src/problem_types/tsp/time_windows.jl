@@ -284,5 +284,6 @@ register_variant(
     :tsp,
     :time_windows,
     TSPTimeWindowsProblem,
-    "Travelling-salesman problem with delivery time windows, service times, a route-duration budget, and a shift limit; a MIP whose time-propagation relaxation is a genuine tour relaxation",
+    "Travelling-salesman problem with delivery time windows, service times, a route-duration budget, and a shift limit; a MIP whose time-propagation relaxation is a genuine tour relaxation";
+    tags=[:routing, :big_m],
 )

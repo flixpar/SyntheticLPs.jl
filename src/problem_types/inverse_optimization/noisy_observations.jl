@@ -266,5 +266,8 @@ register_variant(
     :inverse_optimization,
     :noisy_observations,
     NoisyInverseLPProblem,
-    "Multi-observation inverse LP minimizing normalized absolute suboptimality with realistic behavioral noise",
+    "Multi-observation inverse LP minimizing normalized absolute suboptimality with realistic behavioral noise";
+    tags=[:production, :dual_block_angular],
+    min_target_variables=2,
+    max_target_variables=250_000,
 )

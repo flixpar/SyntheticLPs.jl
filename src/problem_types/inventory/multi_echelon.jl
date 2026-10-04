@@ -408,5 +408,6 @@ register_variant(
     :inventory,
     :multi_echelon,
     MultiEchelonInventoryProblem,
-    "Two-echelon multi-product distribution planning (plant -> regional DCs -> stores) with primary and backup lanes, transit times, plant/DC throughput/storage/shelf capacities, a planted JIT plan, and a network-wide prefix capacity certificate",
+    "Two-echelon multi-product distribution planning (plant -> regional DCs -> stores) with primary and backup lanes, transit times, plant/DC throughput/storage/shelf capacities, a planted JIT plan, and a network-wide prefix capacity certificate";
+    tags=[:logistics, :network, :multicommodity, :staircase],
 )
