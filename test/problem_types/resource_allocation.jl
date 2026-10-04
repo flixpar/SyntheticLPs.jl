@@ -1,9 +1,11 @@
 # Focused quality contracts for the resource_allocation category: registry
-# shape, exact sizing against the documented cap, sparsity and data
-# invariants, planted-plan witness and floor-overcommit certificate arithmetic
-# recomputed directly from the struct fields, the analytic utilization
-# characterization that keeps the `unknown` profile genuinely mixed at every
-# scale, reproducibility, and HiGHS feasibility contracts.
+# shape, exact column-count sizing and the row formula, window/eligibility data
+# invariants, planted-plan witness feasibility (via JuMP's primal feasibility
+# report) and department over-commitment certificate arithmetic recomputed from
+# the struct fields, the two-sided `unknown` profile, reproducibility under a
+# dirty global RNG, and HiGHS feasibility contracts including a presolve
+# survival regression (the previous single-period formulation presolved to an
+# empty model on every instance).
 @testset "Resource Allocation" begin
     @test :resource_allocation in list_categories()
     @test list_variants(:resource_allocation) == [:standard]
@@ -11,177 +13,175 @@
     @test info[:default_variant] == :standard
     @test occursin("resource", lowercase(info[:description]))
 
-    # Sizing: variables are exactly the activities, i.e. the clamped target,
-    # and the old silent 2000-activity cap is gone (5000 realizes in full).
-    tier_bounds = Dict(50 => (4, 12), 200 => (4, 12), 1000 => (10, 36), 5000 => (20, 64))
-    for target in (50, 200, 1000, 5000), status in (feasible, infeasible, unknown), seed in 0:2
+    ra_rows(p) =
+        length(
+            Set(
+                (q, t) for a in 1:p.n_activities for q in p.eligible_pools[a] for
+                t in p.release[a]:p.deadline[a]
+            ),
+        ) +
+        p.n_activities +
+        sum(
+            length(p.eligible_pools[a]) > 1 ? p.deadline[a] - p.release[a] + 1 : 0 for
+            a in 1:p.n_activities
+        )
+
+    # Sizing: the column count is exactly the target (targets below 4 round
+    # up), rows are one per used (pool, period) pair, one scope row per
+    # activity, and one rate row per in-window period of every multi-pool
+    # activity (single-pool rate limits become variable bounds).
+    for target in (4, 50, 500, 3000), status in (feasible, infeasible, unknown), seed in 0:2
         m, p = generate_problem(:resource_allocation, target, status, seed)
-        @test num_variables(m) == p.n_activities
-        @test p.n_activities == max(3, min(100_000, target))
-        @test abs(num_variables(m) - target) <= 0.25 * target || num_variables(m) <= 50
-        @test num_constraints(m; count_variable_in_set_constraints=false) ==
-            p.n_resources + count(>(0.0), p.min_levels)
-        # Pool counts follow the documented tiers, so resources scale with the
-        # portfolio instead of being a size-independent 2:50 draw.
-        lo, hi = tier_bounds[target]
-        @test lo <= p.n_resources <= hi
+        act, _, _ = SyntheticLPs._resource_allocation_columns(p)
+        @test num_variables(m) == length(act) == max(target, 4)
+        @test num_constraints(m; count_variable_in_set_constraints=false) == ra_rows(p)
+    end
+    for target in (1, 2, 3)
+        m, _ = generate_problem(:resource_allocation, target, feasible, 0)
+        @test num_variables(m) == 4
     end
 
-    # The documented sizing limit raises instead of silently undersizing,
-    # and targets far above the old cap realize exactly.
-    @test_throws ArgumentError generate_problem(:resource_allocation, 100_001, feasible, 0)
-    m, p = generate_problem(:resource_allocation, 20_000, unknown, 0)
-    @test num_variables(m) == 20_000
-    @test 32 <= p.n_resources <= 96
-
-    # Structural data contracts shared by all three profiles.
-    for target in (60, 400, 1500), status in (feasible, infeasible, unknown)
-        _, p = generate_problem(:resource_allocation, target, status, 7)
-        @test size(p.usage) == (p.n_activities, p.n_resources)
-        @test all(>=(0.0), p.usage)
-        # Sparsity: every activity draws on at least one pool (this keeps the
-        # profit-max LP bounded), every pool is drawn on by at least one
-        # activity (no vacuous capacity rows), and the matrix really is sparse.
-        @test all(any(p.usage[i, :] .> 0) for i in 1:p.n_activities)
-        @test all(any(p.usage[:, j] .> 0) for j in 1:p.n_resources)
-        @test count(>(0.0), p.usage) < 0.75 * p.n_activities * p.n_resources
-        @test all(>(0.0), p.profits)
-        @test all(>(0.0), p.nominal_plan)
-        @test all(>(0.0), p.capacities)
-        @test all(>=(0.0), p.min_levels)
-        @test p.profile in
-            (:manufacturing_capacity, :cloud_compute, :workforce_hours, :advertising_budget)
+    # Structural data contracts.
+    for target in (80, 900, 4000), status in (feasible, infeasible, unknown)
+        _, p = generate_problem(:resource_allocation, target, status, 3)
+        @test p.profile in (:engineering_portfolio, :cloud_capacity, :maintenance_crews)
+        @test size(p.capacity) == (p.n_pools, p.n_periods)
+        @test all(>(0.0), p.capacity)
+        @test length(p.pool_department) == p.n_pools
+        @test sort(unique(p.pool_department)) == collect(1:p.n_departments)
+        @test all(1 .<= p.release .<= p.deadline .<= p.n_periods)
+        @test all(issorted(e) && allunique(e) && !isempty(e) for e in p.eligible_pools)
+        @test all(length(p.efficiency[a]) == length(p.eligible_pools[a]) for a in 1:p.n_activities)
+        @test all(all(>(0.0), e) for e in p.efficiency)
+        @test all(0.0 .<= p.floors .< p.workload)
+        @test all(>(0.0), p.rate_cap)
+        @test 0.97 - 1e-12 <= p.discount < 1.0
+        # Most activities are profitable at an average hour: value per unit
+        # exceeds the mean pool cost, so dual fixing cannot zero the model.
+        @test count(p.value .> sum(p.pool_cost) / p.n_pools) >= 0.7 * p.n_activities
         @test p.feasibility_status == status
-        # The stored utilization scalar recomputes exactly from the data.
-        required = [
-            sum(p.usage[i, j] * p.min_levels[i] for i in 1:p.n_activities) for j in 1:p.n_resources
-        ]
-        @test p.floor_utilization ≈ maximum(required[j] / p.capacities[j] for j in 1:p.n_resources)
     end
 
-    # Planted-plan witness: the nominal plan is an actual feasible point of
-    # the built model. Checked by arithmetic on the struct fields *and*
-    # against the model itself via JuMP's primal feasibility report.
-    for target in (50, 300, 2000), seed in 0:2
+    # Planted-plan witness: arithmetic on the struct fields and the built model.
+    for target in (60, 700, 3000), seed in 0:2
         m, p = generate_problem(:resource_allocation, target, feasible, seed)
         w = p.feasible_witness
         @test w !== nothing
         @test p.infeasibility_certificate === nothing
-        @test w.plan == p.nominal_plan
-        @test w.consumption ≈
-            [sum(p.usage[i, j] * w.plan[i] for i in 1:p.n_activities) for j in 1:p.n_resources]
-        @test w.slack ≈ p.capacities .- w.consumption
-        # Capacities strictly cover the plan's consumption ...
-        @test all(w.slack .> 0.0)
-        # ... and commitment floors sit at or below the plan's levels.
-        @test all(p.min_levels .<= w.plan)
-        # Hence the floors can never over-commit a pool.
-        @test p.floor_utilization < 1.0
-
-        atol = 1e-6 * maximum(p.capacities)
+        act, pool, period = SyntheticLPs._resource_allocation_columns(p)
+        @test length(w.allocation) == length(act)
+        @test all(>(0.0), w.allocation)
+        hours = zeros(p.n_pools, p.n_periods)
+        output = zeros(p.n_activities)
+        for c in eachindex(act)
+            hours[pool[c], period[c]] += w.allocation[c]
+            k = findfirst(==(pool[c]), p.eligible_pools[act[c]])
+            output[act[c]] += p.efficiency[act[c]][k] * w.allocation[c]
+        end
+        @test hours ≈ w.pool_hours
+        @test output ≈ w.output
+        @test all(w.pool_hours .< p.capacity)           # strict slack on pool rows
+        @test all(p.floors .<= w.output .+ 1e-9)
+        @test all(w.output .< p.workload)
         report = primal_feasibility_report(
-            m, Dict(m[:x][i] => w.plan[i] for i in 1:p.n_activities); atol=atol
+            m, Dict(m[:y][c] => w.allocation[c] for c in eachindex(act)); atol=1e-7
         )
         @test isempty(report)
     end
 
-    # Floor-overcommit certificate: the committed activities' mandatory
-    # minimums provably exhaust one pool's capacity. Recomputed from the raw
-    # fields, with the refutation relying only on LP rows.
-    for target in (50, 300, 2000), seed in 0:3
+    # Department over-commitment certificate: recomputed from the data.
+    for target in (60, 700, 3000), seed in 0:3
         _, p = generate_problem(:resource_allocation, target, infeasible, seed)
         cert = p.infeasibility_certificate
         @test cert !== nothing
         @test p.feasible_witness === nothing
-        @test 1 <= cert.resource <= p.n_resources
-        @test !isempty(cert.activities)
-        @test allunique(cert.activities)
-        @test all(p.min_levels[i] > 0.0 for i in cert.activities)
-        @test all(p.usage[i, cert.resource] > 0.0 for i in cert.activities)
-        # Every activity left out contributes nothing to that capacity row.
-        listed = Set(cert.activities)
-        @test all(
-            p.usage[i, cert.resource] * p.min_levels[i] == 0.0 for
-            i in 1:p.n_activities if !(i in listed)
-        )
-        recomputed = sum(p.usage[i, cert.resource] * p.min_levels[i] for i in cert.activities)
-        @test cert.floor_consumption ≈ recomputed
-        @test cert.capacity == p.capacities[cert.resource]
-        @test cert.floor_consumption > cert.capacity
-        # The violation is a deliberate margin above 1, not a rounding hair.
-        @test p.floor_utilization > 1.0
-        @test 1.1 - 1e-9 <= p.floor_utilization <= 1.4 + 1e-9
-    end
-
-    # The `unknown` profile must stay genuinely mixed at every scale. Because
-    # usage is nonnegative and there are no activity ceilings, `x = min_levels`
-    # is the pointwise-smallest candidate, so the instance is feasible exactly
-    # when `floor_utilization <= 1` -- which makes the mix measurable without
-    # a solver (the solver-backed cross-check lives below).
-    for target in (50, 100, 500, 1000, 5000)
-        feas = count(0:39) do seed
-            _, p = generate_problem(:resource_allocation, target, unknown, seed)
-            p.floor_utilization <= 1.0
-        end
-        @test 10 <= feas <= 30      # neither outcome dominates
-    end
-
-    # Reproducibility, including isolation from a seeded/dirty global RNG.
-    # Witness and certificate are compared subfield by subfield because
-    # `isequal` on structs holding heap vectors falls back to object identity.
-    for status in (feasible, infeasible, unknown)
-        Random.seed!(987)
-        _, p1 = generate_problem(:resource_allocation, 220, status, 42)
-        Random.seed!(12345)
-        _, p2 = generate_problem(:resource_allocation, 220, status, 42)
-        plain = filter(!in((:feasible_witness, :infeasibility_certificate)), fieldnames(typeof(p1)))
-        @test all(isequal(getfield(p1, f), getfield(p2, f)) for f in plain)
-        if p1.feasible_witness !== nothing
-            @test p2.feasible_witness !== nothing
-            @test p1.feasible_witness.plan == p2.feasible_witness.plan
-            @test p1.feasible_witness.consumption == p2.feasible_witness.consumption
-            @test p1.feasible_witness.slack == p2.feasible_witness.slack
+        pools = Set(cert.pools)
+        if cert.department == 0
+            @test pools == Set(1:p.n_pools)
         else
-            @test p2.feasible_witness === nothing
+            @test cert.pools == findall(==(cert.department), p.pool_department)
+        end
+        @test !isempty(cert.activities)
+        for (k, a) in enumerate(cert.activities)
+            @test all(q -> q in pools, p.eligible_pools[a])   # only department pools
+            @test p.floors[a] > 0
+            @test cert.max_efficiency[k] == maximum(p.efficiency[a])
+            # No single activity's own rows refute it: its floor fits under
+            # its workload and its cumulative rate cap.
+            len = p.deadline[a] - p.release[a] + 1
+            @test p.floors[a] < min(p.workload[a], p.rate_cap[a] * len)
+        end
+        required = sum(p.floors[a] / cert.max_efficiency[k] for (k, a) in enumerate(cert.activities))
+        available = sum(p.capacity[q, t] for q in cert.pools, t in 1:p.n_periods)
+        @test cert.required_hours ≈ required rtol = 1e-10
+        @test cert.available_hours ≈ available rtol = 1e-10
+        @test 1.12 - 1e-9 <= required / available <= 1.35 + 1e-9   # planted margin
+    end
+
+    # `unknown`: neither witness nor certificate.
+    for seed in 0:5
+        _, p = generate_problem(:resource_allocation, 400, unknown, seed)
+        @test p.feasible_witness === nothing
+        @test p.infeasibility_certificate === nothing
+    end
+
+    # Large targets realize exactly and build quickly (constructor + model).
+    m, p = generate_problem(:resource_allocation, 100_000, feasible, 0)
+    @test num_variables(m) == 100_000
+    @test num_constraints(m; count_variable_in_set_constraints=false) > 25_000
+
+    # Reproducibility, isolated from a dirty global RNG.
+    for status in (feasible, infeasible, unknown)
+        Random.seed!(1)
+        _, p1 = generate_problem(:resource_allocation, 600, status, 42)
+        Random.seed!(999)
+        _, p2 = generate_problem(:resource_allocation, 600, status, 42)
+        for f in fieldnames(typeof(p1))
+            f in (:feasible_witness, :infeasibility_certificate) && continue
+            @test isequal(getfield(p1, f), getfield(p2, f))
+        end
+        if p1.feasible_witness !== nothing
+            @test p1.feasible_witness.allocation == p2.feasible_witness.allocation
         end
         if p1.infeasibility_certificate !== nothing
-            c1, c2 = p1.infeasibility_certificate, p2.infeasibility_certificate
-            @test c2 !== nothing
-            @test c1.resource == c2.resource
-            @test c1.activities == c2.activities
-            @test c1.floor_consumption == c2.floor_consumption
-            @test c1.capacity == c2.capacity
-        else
-            @test p2.infeasibility_certificate === nothing
+            @test p1.infeasibility_certificate.activities == p2.infeasibility_certificate.activities
+            @test p1.infeasibility_certificate.available_hours ==
+                p2.infeasibility_certificate.available_hours
         end
     end
 
-    if HAS_HIGHS
-        # End-to-end feasibility contract across scales and seeds.
-        for target in (50, 200, 1000, 5000), status in (feasible, infeasible), seed in 0:4
-            m, _ = generate_problem(:resource_allocation, target, status, seed)
-            set_optimizer(m, HiGHS.Optimizer)
-            set_silent(m)
-            optimize!(m)
-            expected = status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE
-            @test termination_status(m) == expected
-        end
-
-        # The analytic characterization used above agrees with the solver on
-        # the `unknown` profile, and both outcomes really occur at scale.
-        for target in (500, 5000)
-            outcomes = MOI.TerminationStatusCode[]
-            for seed in 0:9
-                m, p = generate_problem(:resource_allocation, target, unknown, seed)
+    @testset "HiGHS contracts" begin
+        if HAS_HIGHS
+            for target in (100, 800, 3000), status in (feasible, infeasible), seed in 0:2
+                m, _ = generate_problem(:resource_allocation, target, status, seed)
                 set_optimizer(m, HiGHS.Optimizer)
                 set_silent(m)
                 optimize!(m)
-                ts = termination_status(m)
-                push!(outcomes, ts)
-                @test ts == (p.floor_utilization <= 1.0 ? MOI.OPTIMAL : MOI.INFEASIBLE)
+                @test termination_status(m) == (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
+            end
+
+            # `unknown` lands on both sides of the boundary.
+            outcomes = Set{MOI.TerminationStatusCode}()
+            for seed in 0:11
+                m, _ = generate_problem(:resource_allocation, 600, unknown, seed)
+                set_optimizer(m, HiGHS.Optimizer)
+                set_silent(m)
+                optimize!(m)
+                push!(outcomes, termination_status(m))
             end
             @test MOI.OPTIMAL in outcomes
             @test MOI.INFEASIBLE in outcomes
+
+            # Presolve survival: HiGHS presolve keeps most of the model and
+            # simplex has real work to do, on feasible and infeasible requests.
+            for status in (feasible, infeasible)
+                m, _ = generate_problem(:resource_allocation, 5000, status, 1)
+                set_optimizer(m, HiGHS.Optimizer)
+                set_silent(m)
+                optimize!(m)
+                # Infeasibility needs simplex work too (not disproved by presolve).
+                @test MOI.get(m, MOI.SimplexIterations()) > (status == feasible ? 500 : 0)
+            end
         end
     end
 end

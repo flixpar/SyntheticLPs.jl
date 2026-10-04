@@ -1,132 +1,117 @@
 # Production Planning
 
-Production planning generates a continuous profit-maximization LP that chooses production quantities for products subject to shared resource capacities and optional minimum production requirements.
+Multi-level, multi-period capacitated production planning (MRP II). The
+category has one variant, `standard`: a bill-of-materials (BOM) explosion over a
+planning horizon with lead times, end-product backlog, work-center capacity with
+bounded overtime, and supplier capacity. It is a pure continuous LP with the
+classical staircase structure — inventory chains linked across periods, coupled
+across items by the BOM and shared capacity rows — that makes such LPs hard for
+simplex. Compare `product_mix`, which is single-period (routing choice over many
+resources, no inventory dynamics).
 
-## Overview
+The previous `standard` was a dense single-period profit-maximisation over at
+most 2,000 products and 5–50 resource rows (a strict subset of `product_mix`);
+it was rebuilt from scratch.
 
-This generator represents a classical production planning setting: a firm can manufacture several products, each product earns a per-unit profit, and each unit consumes limited resources such as labor, machine time, materials, or capacity. The optimization chooses how much of each product to make in order to maximize profit without exceeding available resources.
+## Variants
 
-The infeasible variant adds minimum production commitments for selected products and then reduces a critical resource capacity so that those minimum commitments cannot all be met.
+| Variant | Model class | Key structure | Domain grounding |
+|---|---|---|---|
+| `standard` | continuous LP | BOM balance staircase with lead-time offsets, capacity + overtime, supplier rows | discrete manufacturing MRP: end products, subassemblies, components, purchased materials |
 
-## Generator Data and Sizing
+## Formulation
 
-`target_variables` maps directly to products:
+Items `i` are indexed level by level (end products first, purchased raw materials
+last), so every BOM edge `(parent p, child c, quantity a)` has `p < c`.
+`L_i` is the lead time; `I0_i` the initial stock.
 
-```text
-n_products = max(2, min(2000, target_variables))
-```
-
-The number of resources is sampled independently:
-
-```text
-n_resources = rand(1:50)
-```
-
-Generated random data:
-
-- `profits[i]`: integer profit for product `i`, sampled uniformly from `10:500`.
-- `usage[i, j]`: resource `j` consumed per unit of product `i`, sampled uniformly from the float range `0.1:50.0`.
-- `resource_factor`: sampled from `0.4:0.1:0.8`.
-- `resources[j]`: set to `sum_i usage[i, j] * resource_factor`, so each resource capacity is a fixed fraction of the total consumption that would occur if every product were produced at one unit.
-- `min_production[i]`: initialized to zero and only made positive by the infeasible branch.
-
-The stored struct fields are:
-
-- `n_products::Int`
-- `n_resources::Int`
-- `profits::Vector{Int}`
-- `usage::Matrix{Float64}`
-- `resources::Vector{Float64}`
-- `min_production::Vector{Float64}`
-
-The constructor calls `Random.seed!(seed)`, so the generator resets Julia's global RNG and is reproducible for the same arguments and package version.
-
-## LP Formulation
-
-Sets and indices:
-
-- Products `i in P = {1, ..., n_products}`.
-- Resources `j in R = {1, ..., n_resources}`.
-
-Decision variables:
+Columns:
 
 ```text
-x_i >= 0    quantity of product i to produce
+x[i, t] >= 0    release of item i in period t (production start / purchase order),
+                t = 1 .. T - L_i (arrives in t + L_i)
+I[i, t] >= 0    end-of-period inventory, t = 1 .. T
+B[e, t] >= 0    backlog of end product e, t = 1 .. T - 1 (cleared by the horizon end)
+O[w, t] in [0, max_overtime[w, t]]   overtime hours at work center w
 ```
 
-Objective:
-
-```math
-\max \sum_{i \in P} profit_i x_i
-```
-
-Resource constraints:
-
-```math
-\sum_{i \in P} usage_{i,j} x_i \le resource_j \quad \forall j \in R
-```
-
-Minimum production constraints are added only for products with positive `min_production[i]`:
-
-```math
-x_i \ge min\_production_i
-```
-
-Bounds:
-
-- All variables are continuous and nonnegative.
-- There are no explicit upper bounds on products except those implied by resource capacities.
-
-Interpretation: the model chooses a product mix that consumes no more than each available resource and maximizes total profit. Positive minimum production values model contractual, policy, or demand-floor commitments.
-
-## Feasibility Controls
-
-The constructor first sets `actual_status = feasibility_status`. If `feasibility_status == unknown`, it randomly chooses `feasible` with probability `0.7` and `infeasible` with probability `0.3`.
-
-For `feasible`, the generator leaves `min_production` at all zeros. Because `x = 0` satisfies all resource constraints, the generated LP is feasible.
-
-For `infeasible`, the generator:
-
-1. Computes a per-product single-product maximum:
-
-   ```text
-   max_possible[i] = minimum(resources[j] / usage[i, j] for j in 1:n_resources)
-   ```
-
-2. Selects `n_constrained` products, where:
-
-   ```text
-   n_constrained = max(2, rand(max(1, div(n_products, 4)):max(2, div(n_products, 2))))
-   ```
-
-3. Sets each selected minimum production to `max_possible[i] * (0.3 + 0.3 * rand())`.
-4. Computes the resource usage required by all minimum productions.
-5. Finds the resource with the largest required-to-available ratio.
-6. Reduces that critical resource to `required[critical_j] * (0.7 + 0.2 * rand())`.
-
-This final reduction makes the lower-bound requirements exceed the capacity of at least the critical resource.
-
-For `unknown`, the selected actual status follows the same feasible or infeasible path described above.
-
-## Model Characteristics
-
-Variable count:
+Rows:
 
 ```text
-n_products
+I[i,t-1] + x[i,t-L_i] - sum_p a[i,p] x[p,t] - d[i,t] + B[i,t] - B[i,t-1] = I[i,t]
+                                      (balance, every item and period; I[i,0] = I0_i;
+                                       backlog terms only for end products)
+sum_{i at w} run_time[i] x[i,t] - O[w,t] <= regular_capacity[w,t]      (work centers)
+sum_{i from s} volume[i] x[i,t] <= supplier_capacity[s,t]              (suppliers)
 ```
 
-Constraint count drivers:
+Objective (minimize): value-added labor cost on manufactured releases, purchase
+prices on raw materials, holding cost on inventory, backlog penalties on end
+products, and overtime premiums.
 
-- `n_resources` capacity constraints.
-- One extra lower-bound constraint for each product with `min_production[i] > 0`.
+## Data Grounding
 
-The resource matrix is dense. Every sampled `usage[i, j]` is positive because the range starts at `0.1`, so each resource constraint includes every product.
+- Product structure: 4 levels (3 for tiny instances) with shares 15/25/35/25%.
+  Items belong to product families of 16–40 items; children are drawn from the
+  parent's family with a lognormal popularity (shared common parts), 8% of
+  picks go to plant-wide common parts, and 20% of parents also use a material
+  two levels down (e.g. packaging on an end product). Every non-end item has a
+  parent.
+- Quantities: end product → subassembly 1–2, → component 1–4, → raw material a
+  lognormal amount (kg, metres).
+- Lead times: 0–1 period for manufactured items, 1–3 for purchased ones.
+- Cells and work centers: families are grouped 2–3 per manufacturing cell with
+  its own work centers per level (common parts in a shared cell); run times are
+  lognormal by level. Suppliers serve one cell (plus one plant-wide supplier).
+- Demand: end products have seasonal (26-period cycle) demand with trend and
+  Gamma noise, 15% of them intermittent; 15% of subassemblies/components carry
+  service-part demand.
+- Economics: item values roll up through the BOM (children plus 1.6× labor
+  content); weekly carrying rate 18–35%/52; backlog penalties 4–12% of value per
+  period; overtime 1.5× the labor rate.
+- Capacity: regular hours are flat per work center around the planted plan's
+  average load (a quarter of the centers are bottlenecks at 0.88–1.02× it, the
+  rest 1.12–1.45×), with holiday dips; overtime covers peaks (at least 20% of
+  regular hours).
 
-The model is a continuous LP. Product quantities are not integer-restricted, so this is a production-rate or divisible-production relaxation rather than a batch/integer production model.
+## Feasibility Control
 
-## Practical Notes
+- `feasible`: the lot-for-lot MRP explosion (initial stock covers the lead-time
+  gap; safety stock retained; overtime only where the lumpy load exceeds
+  regular hours) is planted as `ProductionPlanWitness(production, inventory,
+  overtime)`.
+- `infeasible`: the most loaded work center loses capacity (regular hours and
+  overtime scaled) until its echelon load exceeds its horizon capacity by
+  8–30%. `EchelonCapacityCertificate(work_center, items, lower_bounds,
+  required_load, available_capacity)`: summing each item's balance rows over
+  the horizon gives `sum_t x[i,t] >= LB_i := max(0, sum_p a[i,p] LB_p + D_i -
+  I0_i)` by induction down the BOM, so the center needs `sum run_time[i] LB_i`
+  hours; its capacity rows plus overtime bounds supply fewer. The argument uses
+  balance rows of every upstream item and all capacity rows of the center —
+  presolve does not see it.
+- `unknown`: the same scaling with ratio `1 ± U(0.03, 0.30)`; above 1 provably
+  infeasible, below 1 decided by timing.
 
-This generator is useful for dense continuous LP benchmarks with direct control over the number of variables. The feasible instances are structurally simple because zero production is always feasible and all profits are positive, so the optimum is driven by resource bottlenecks rather than demand satisfaction. The infeasible instances are created by lower-bound commitments and a targeted resource shortage.
+## Sizing
 
-The number of resources is independent of `target_variables`, so small product sets can still receive many capacity constraints and large product sets can receive only a few.
+```text
+columns = sum_i (T - L_i) + n_items * T + n_end * (T - 1) + n_work_centers * T
+rows    = n_items * T + n_work_centers * T + (supplier, period) rows with an order column
+```
+
+`T` is 3–8 for tiny targets, 6–10 up to 1.5k, 10–20 up to 20k, 16–30 beyond;
+`n_items ≈ target / (2.14 T)`. The column count lands within a few percent of
+the target from ~100 to 100k+ (rows ≈ 50% of columns). Build time is well under
+a second at 100k. Solve time grows quickly with capacity tightness — the
+coupled staircase is the point — 100k feasible instances solve in ~7–30 s with
+HiGHS; HiGHS's dual-ray recomputation after proving infeasibility can add
+substantial time on large infeasible instances.
+
+## References
+
+- Orlicky, J. (1975). Material Requirements Planning. McGraw-Hill.
+- Billington, P.J., McClain, J.O., Thomas, L.J. (1983). Mathematical
+  programming approaches to capacity-constrained MRP systems. Management
+  Science 29(10).
+- Pochet, Y., Wolsey, L.A. (2006). Production Planning by Mixed Integer
+  Programming. Springer.

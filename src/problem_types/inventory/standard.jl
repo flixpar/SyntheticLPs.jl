@@ -1,462 +1,368 @@
 using JuMP
 using Random
 using Distributions
-using Statistics
+
+"""
+Planted replenishment plan: orders `orders[i, t]` (placed in period `t`, zero
+where no order column exists), end-of-period stock `stock[i, t]`, no lost
+sales. It covers every period's demand with the SKU's safety stock retained,
+and all shared capacities (vendor, storage zone, receiving) are drawn with
+headroom above what it uses.
+"""
+struct ReplenishmentPlanWitness
+    orders::Matrix{Float64}
+    stock::Matrix{Float64}
+end
+
+"""
+Vendor allocation certificate. Every SKU in `skus` comes from vendor `vendor`
+and has a service-level row `Σ_t lost[i,t] <= (1 - fill_rate[i]) Σ_t demand[i,t]`.
+Summing its balance rows over the horizon gives `Σ_t q[i,t] >= fill_rate[i]
+D_i - initial_inventory[i] - pipeline[i]`, so the vendor must ship at least
+`required = Σ_i max(0, ...)` units, while its capacity rows allow only
+`available < required` over all order periods. Uses balance, service, and
+vendor rows only — an aggregate argument presolve does not see.
+"""
+struct VendorAllocationCertificate
+    vendor::Int
+    skus::Vector{Int}
+    required::Float64
+    available::Float64
+end
 
 """
     InventoryProblem <: ProblemGenerator
 
-Generator for inventory control problems with realistic and diverse patterns, combining richer scenario generation with precise feasibility control.
+Multi-SKU replenishment planning at a distribution center (the `inventory`
+category's `standard` variant).
 
 # Overview
 
-Models single-item production and inventory planning over time. The decisions
-are production quantities and ending inventory levels; when backlog is enabled,
-the model also decides carried shortage. The objective minimizes production,
-holding, and, when applicable, backlog costs. Balance constraints link adjacent
-periods, and production capacity limits each period's production. When
-`backlog_allowed` is false, the model uses a single nonnegative inventory state;
-when it is true, inventory is split into positive inventory and backlog states.
+A distribution center plans weekly purchase orders for `n_skus` SKUs bought
+from `n_vendors` vendors with vendor-specific lead times, over `n_periods`
+periods. Columns per SKU:
+
+  - `q[i, t] >= 0` — order placed in period `t` (arrives `lead_time[i]` later),
+    for `t <= n_periods - lead_time[i]`;
+  - `I[i, t] >= 0` — end-of-period stock;
+  - `u[i, t] ∈ [0, demand[i, t]]` — lost sales (periods with positive demand).
+
+Rows:
+
+  - stock balance: `I[i,t-1] + q[i,t-L_i] + pipeline[i,t] + u[i,t] - I[i,t] = demand[i,t]`
+    (`I[i,0] = initial_inventory[i]`; open orders arrive as `pipeline`);
+  - service level for A/B-class SKUs: `Σ_t u[i,t] <= (1 - fill_rate[i]) Σ_t demand[i,t]`;
+  - vendor capacity (allocation), per vendor and order period:
+    `Σ_{i from v} q[i,t] <= vendor_capacity[v,t]`;
+  - storage, per temperature/handling zone and period:
+    `Σ_{i in z} volume[i] I[i,t] <= zone_capacity[z]`;
+  - receiving, per zone and period: `Σ_{i in z} pallets[i] q[i,t-L_i] <= receiving_capacity[z,t]`.
+
+Objective: purchase cost plus holding cost plus lost-sales penalties (margin
+plus goodwill). The SKU chains are coupled by vendor, storage, and receiving
+rows — a multi-commodity staircase, unlike the single-resource production
+model of `multi_item` or the network of `multi_echelon`.
+
+# Feasibility control
+
+  - `feasible`: an order-up-to plan without lost sales is planted
+    ([`ReplenishmentPlanWitness`](@ref)); capacities are drawn above it.
+  - `infeasible`: one vendor's allocation is cut so that its service-level
+    SKUs need 10–35% more units than it can ship
+    ([`VendorAllocationCertificate`](@ref)).
+  - `unknown`: the same ratio drawn as `1 ± U(0.03, 0.30)`.
+
+Lost sales make every instance without service rows trivially feasible, so the
+service rows are what give the infeasibility certificate teeth.
 
 # Fields
 
-  - `n_periods::Int`: Number of time periods
-  - `prod_capacity::Int`: Production capacity per period
-  - `initial_inventory::Int`: Starting inventory level
-  - `backlog_allowed::Bool`: Whether backorders are permitted
-  - `demands::Vector{Int}`: Demand for each period
-  - `production_costs::Vector{Float64}`: Production cost per period
-  - `holding_costs::Vector{Float64}`: Holding cost per period
-  - `backlog_costs::Vector{Float64}`: Backlog/shortage cost per period
+  - `n_skus`, `n_periods`, `n_vendors`, `n_zones::Int`
+  - `vendor::Vector{Int}`, `zone::Vector{Int}`, `lead_time::Vector{Int}`: per SKU
+  - `demand::Matrix{Float64}`, `pipeline::Matrix{Float64}`: `n_skus × n_periods`
+  - `initial_inventory`, `fill_rate`, `volume`, `pallets::Vector{Float64}`: per SKU
+  - `unit_cost`, `holding_cost`, `lost_sale_cost::Vector{Float64}`: per SKU
+  - `vendor_capacity::Matrix{Float64}`: `n_vendors × n_periods`
+  - `zone_capacity::Vector{Float64}`, `receiving_capacity::Matrix{Float64}`
+  - `feasible_witness`, `infeasibility_certificate`, `feasibility_status`
 """
 struct InventoryProblem <: ProblemGenerator
+    n_skus::Int
     n_periods::Int
-    prod_capacity::Int
-    initial_inventory::Int
-    backlog_allowed::Bool
-    demands::Vector{Int}
-    production_costs::Vector{Float64}
-    holding_costs::Vector{Float64}
-    backlog_costs::Vector{Float64}
+    n_vendors::Int
+    n_zones::Int
+    vendor::Vector{Int}
+    zone::Vector{Int}
+    lead_time::Vector{Int}
+    demand::Matrix{Float64}
+    pipeline::Matrix{Float64}
+    initial_inventory::Vector{Float64}
+    fill_rate::Vector{Float64}
+    volume::Vector{Float64}
+    pallets::Vector{Float64}
+    unit_cost::Vector{Float64}
+    holding_cost::Vector{Float64}
+    lost_sale_cost::Vector{Float64}
+    vendor_capacity::Matrix{Float64}
+    zone_capacity::Vector{Float64}
+    receiving_capacity::Matrix{Float64}
+    feasible_witness::Union{Nothing, ReplenishmentPlanWitness}
+    infeasibility_certificate::Union{Nothing, VendorAllocationCertificate}
+    feasibility_status::FeasibilityStatus
+end
+
+"""
+    _replenishment_required(prob_fields..., skus) -> Float64
+
+Units vendor-sourced SKUs `skus` must receive over the horizon to meet their
+fill rates (see [`VendorAllocationCertificate`](@ref)).
+"""
+function _replenishment_required(demand, pipeline, initial_inventory, fill_rate, skus)
+    return sum(
+        (
+            max(0.0, fill_rate[i] * sum(view(demand, i, :)) - initial_inventory[i] - sum(view(pipeline, i, :)))
+            for i in skus
+        );
+        init=0.0,
+    )
 end
 
 """
     InventoryProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
-Construct an inventory control problem instance with sophisticated feasibility control.
-
-# Arguments
-
-  - `target_variables`: Target number of variables
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
+Construct a multi-SKU replenishment instance with about `target_variables`
+columns (within one SKU's columns).
 """
 function InventoryProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+    target_variables >= 1 ||
+        throw(ArgumentError("target_variables must be >= 1 (got $target_variables)."))
     rng = MersenneTwister(seed)
+    target = max(target_variables, 12)
 
-    # Determine business scale by target size
-    scale = if target_variables <= 250
-        :small
-    elseif target_variables <= 1000
-        :medium
+    T = target <= 300 ? rand(rng, 4:8) : (target <= 10_000 ? rand(rng, 8:16) : rand(rng, 13:30))
+    n_vendor_hint = max(1, round(Int, target / (3T * rand(rng, 6:15))))
+    vendor_lead = [rand(rng, 1:min(3, T - 1)) for _ in 1:n_vendor_hint]
+    phase = 2π * rand(rng)
+    amp = 0.35 * rand(rng)
+
+    # SKUs until the column budget is used.
+    vendor, lead_time, demand_rows = Int[], Int[], Vector{Vector{Float64}}()
+    cols = 0
+    while cols < target
+        v = rand(rng, 1:n_vendor_hint)
+        L = vendor_lead[v]
+        base = rand(rng, LogNormal(log(40.0), 1.0))
+        d = _inventory_demand(
+            rng, T, base; amp=amp, phase=phase + 0.5 * randn(rng), trend=0.01 * randn(rng),
+            cv=0.15 + 0.35 * rand(rng), intermittent=rand(rng) < 0.12,
+        )
+        push!(vendor, v)
+        push!(lead_time, L)
+        push!(demand_rows, d)
+        cols += (T - L) + T + count(>(0.0), d)
+    end
+    N = length(vendor)
+    # Compact vendor ids.
+    used = sort(unique(vendor))
+    vmap = Dict(v => k for (k, v) in enumerate(used))
+    vendor = [vmap[v] for v in vendor]
+    V = length(used)
+    demand = permutedims(reduce(hcat, demand_rows))
+    n_zones = max(1, round(Int, N / rand(rng, 20:60)))
+    zone = [rand(rng, 1:n_zones) for _ in 1:N]
+
+    # SKU economics and service classes (ABC by demand volume).
+    unit_cost = rand(rng, LogNormal(log(12.0), 0.8), N)
+    holding_cost = unit_cost .* rand(rng, Uniform(0.003, 0.008), N)   # weekly carrying
+    lost_sale_cost = unit_cost .* rand(rng, Uniform(0.3, 1.5), N)
+    volume = rand(rng, LogNormal(log(0.05), 0.7), N)                  # m3 per unit
+    pallets = volume ./ rand(rng, Uniform(0.8, 1.6), N)
+    totals = [sum(demand[i, :]) for i in 1:N]
+    rank = sortperm(totals; rev=true)
+    fill_rate = zeros(N)
+    for (k, i) in enumerate(rank)
+        q = k / N
+        fill_rate[i] = q <= 0.2 ? rand(rng, Uniform(0.95, 0.99)) : (q <= 0.5 ? rand(rng, Uniform(0.85, 0.95)) : 0.0)
+    end
+
+    # --- Planted order-up-to plan (no lost sales) --------------------------------
+    initial_inventory = zeros(N)
+    pipeline = zeros(N, T)
+    orders = zeros(N, T)
+    stock = zeros(N, T)
+    for i in 1:N
+        L = lead_time[i]
+        avg = totals[i] / T
+        safety = avg * rand(rng, Uniform(0.2, 0.8))
+        # Open orders cover the lead-time gap; initial stock is the safety level.
+        for t in 1:L
+            pipeline[i, t] = demand[i, t]
+        end
+        initial_inventory[i] = round(safety + avg * rand(rng, Uniform(0.0, 0.5)); digits=1)
+        level = initial_inventory[i]
+        for t in 1:T
+            arrival = pipeline[i, t]
+            if t > L
+                arrival = max(0.0, demand[i, t] + safety - level)
+                orders[i, t - L] = arrival
+            end
+            level += arrival - demand[i, t]
+            stock[i, t] = level
+        end
+    end
+
+    # Capacities around the plan: vendor allocations flat-ish with headroom,
+    # zone storage above the plan's peak, receiving above its arrivals.
+    vendor_capacity = zeros(V, T)
+    for v in 1:V
+        skus = findall(==(v), vendor)
+        load = [sum(orders[i, t] for i in skus) for t in 1:T]
+        base = sum(load) / T * rand(rng, Uniform(1.0, 1.3))
+        for t in 1:T
+            vendor_capacity[v, t] = max(base, load[t] * rand(rng, Uniform(1.05, 1.25)), 1.0)
+        end
+    end
+    zone_capacity = zeros(n_zones)
+    receiving_capacity = zeros(n_zones, T)
+    for z in 1:n_zones
+        skus = findall(==(z), zone)
+        if isempty(skus)
+            zone_capacity[z] = 1.0
+            receiving_capacity[z, :] .= 1.0
+            continue
+        end
+        peak = maximum(sum(volume[i] * stock[i, t] for i in skus) for t in 1:T)
+        zone_capacity[z] = peak * rand(rng, Uniform(1.1, 1.5))
+        arrivals = [
+            sum(pallets[i] * (t > lead_time[i] ? orders[i, t - lead_time[i]] : 0.0) for i in skus) for
+            t in 1:T
+        ]
+        base = sum(arrivals) / T * rand(rng, Uniform(1.05, 1.3))
+        for t in 1:T
+            receiving_capacity[z, t] = max(base, arrivals[t] * 1.1, 1.0)
+        end
+    end
+
+    witness = nothing
+    certificate = nothing
+    if feasibility_status == feasible
+        witness = ReplenishmentPlanWitness(orders, stock)
     else
-        :large
-    end
-
-    # Backlog incidence increases with scale
-    backlog_prob = scale == :small ? 0.2 : (scale == :medium ? 0.4 : 0.6)
-    backlog_allowed = rand(rng, Bernoulli(backlog_prob))
-
-    # Choose n_periods from variable-budget formula
-    if backlog_allowed
-        # x[1:T], I_plus[0:T], I_minus[0:T] => 3T + 2
-        n_periods = max(2, min(5000, round(Int, (target_variables - 2) / 3)))
-    else
-        # x[1:T], I[0:T] => 2T + 1
-        n_periods = max(2, min(5000, round(Int, (target_variables - 1) / 2)))
-    end
-
-    # Quick iterative refinement for variable count
-    for _ in 1:10
-        current = backlog_allowed ? (3*n_periods + 2) : (2*n_periods + 1)
-        if abs(current - target_variables) / target_variables < 0.1
-            break
+        # The vendor whose service-level SKUs weigh most on its allocation.
+        req = zeros(V)
+        avail = [sum(vendor_capacity[v, t] for t in 1:T if any(vendor[i] == v && t <= T - lead_time[i] for i in 1:N); init=0.0) for v in 1:V]
+        for v in 1:V
+            skus = [i for i in 1:N if vendor[i] == v && fill_rate[i] > 0]
+            req[v] = _replenishment_required(demand, pipeline, initial_inventory, fill_rate, skus)
         end
-        if current < target_variables
-            n_periods = min(5000, n_periods + 1)
-        else
-            n_periods = max(2, n_periods - 1)
-        end
-    end
-
-    # Scale-specific ranges
-    if scale == :small
-        prod_capacity = round(Int, rand(rng, Uniform(50, 500)))
-        demand_base = round(Int, rand(rng, Uniform(10, 100)))
-        demand_vol = rand(rng, Uniform(0.2, 0.5))
-        demand_min = max(1, round(Int, demand_base * (1 - demand_vol)))
-        demand_max = round(Int, demand_base * (1 + demand_vol))
-
-        avgd = (demand_min + demand_max) / 2
-        initial_inventory = round(Int, avgd * rand(rng, Uniform(0.1, 0.5)))
-
-        prod_cost_base = rand(rng, Uniform(10, 100))
-        prod_cost_spread = rand(rng, Uniform(0.1, 0.3))
-        prod_cost_min = round(Int, prod_cost_base * (1 - prod_cost_spread))
-        prod_cost_max = round(Int, prod_cost_base * (1 + prod_cost_spread))
-
-        holding_rate = rand(rng, Uniform(0.05, 0.25)) / 12
-        holding_cost_min = max(0.01, round(prod_cost_base * holding_rate * 0.8; digits=2))
-        holding_cost_max = round(prod_cost_base * holding_rate * 1.2; digits=2)
-
-    elseif scale == :medium
-        prod_capacity = round(Int, rand(rng, Uniform(200, 2000)))
-        demand_base = round(Int, rand(rng, Uniform(50, 1000)))
-        demand_vol = rand(rng, Uniform(0.15, 0.4))
-        demand_min = max(1, round(Int, demand_base * (1 - demand_vol)))
-        demand_max = round(Int, demand_base * (1 + demand_vol))
-
-        avgd = (demand_min + demand_max) / 2
-        initial_inventory = round(Int, avgd * rand(rng, Uniform(0.05, 0.4)))
-
-        prod_cost_base = rand(rng, Uniform(5, 200))
-        prod_cost_spread = rand(rng, Uniform(0.05, 0.25))
-        prod_cost_min = round(Int, prod_cost_base * (1 - prod_cost_spread))
-        prod_cost_max = round(Int, prod_cost_base * (1 + prod_cost_spread))
-
-        holding_rate = rand(rng, Uniform(0.03, 0.20)) / 12
-        holding_cost_min = max(0.01, round(prod_cost_base * holding_rate * 0.8; digits=2))
-        holding_cost_max = round(prod_cost_base * holding_rate * 1.2; digits=2)
-
-    else # :large
-        prod_capacity = round(Int, rand(rng, Uniform(1000, 50000)))
-        demand_base = round(Int, rand(rng, Uniform(100, 10000)))
-        demand_vol = rand(rng, Uniform(0.1, 0.3))
-        demand_min = max(1, round(Int, demand_base * (1 - demand_vol)))
-        demand_max = round(Int, demand_base * (1 + demand_vol))
-
-        avgd = (demand_min + demand_max) / 2
-        initial_inventory = round(Int, avgd * rand(rng, Uniform(0.02, 0.3)))
-
-        prod_cost_base = rand(rng, Uniform(1, 500))
-        prod_cost_spread = rand(rng, Uniform(0.02, 0.20))
-        prod_cost_min = round(Int, prod_cost_base * (1 - prod_cost_spread))
-        prod_cost_max = round(Int, prod_cost_base * (1 + prod_cost_spread))
-
-        holding_rate = rand(rng, Uniform(0.01, 0.15)) / 12
-        holding_cost_min = max(0.01, round(prod_cost_base * holding_rate * 0.8; digits=2))
-        holding_cost_max = round(prod_cost_base * holding_rate * 1.2; digits=2)
-    end
-
-    backlog_cost_factor = rand(rng, Uniform(1.5, 5.0))
-
-    # Base stochastic series with seasonality & trends
-    demand_mean = (demand_min + demand_max) / 2
-    demand_std = (demand_max - demand_min) / 4
-    base_demands = rand(rng, Normal(demand_mean, demand_std), n_periods)
-    demands = round.(Int, clamp.(base_demands, demand_min, demand_max))
-
-    # Production & holding costs with mild dispersion and optional trends
-    prod_cost_mean = (prod_cost_min + prod_cost_max) / 2
-    prod_cost_std = (prod_cost_max - prod_cost_min) / 4
-    production_costs = clamp.(
-        rand(rng, Normal(prod_cost_mean, prod_cost_std), n_periods), prod_cost_min, prod_cost_max
-    )
-
-    holding_cost_mean = (holding_cost_min + holding_cost_max) / 2
-    holding_cost_std = (holding_cost_max - holding_cost_min) / 4
-    holding_costs = clamp.(
-        rand(rng, Normal(holding_cost_mean, holding_cost_std), n_periods),
-        holding_cost_min,
-        holding_cost_max,
-    )
-
-    # Seasonality patterns
-    if rand(rng) < 0.6
-        if n_periods >= 12
-            annual = 1.0 .+ 0.2 * sin.(2π .* (1:n_periods) ./ 12)
-            demands = round.(Int, demands .* annual)
-        end
-        if n_periods >= 52
-            weekly = 1.0 .+ 0.1 * sin.(2π .* (1:n_periods) ./ 7)
-            demands = round.(Int, demands .* weekly)
-        end
-        if n_periods >= 24
-            quarterly = 1.0 .+ 0.15 * sin.(2π .* (1:n_periods) ./ (n_periods/4))
-            demands = round.(Int, demands .* quarterly)
-        end
-    end
-
-    # Cost trends
-    if rand(rng) < 0.4
-        dir = rand(rng) < 0.7 ? 1 : -1
-        strength = rand(rng, Uniform(0.001, 0.01))
-        trend = [exp(dir * strength * t) for t in 1:n_periods]
-        production_costs = production_costs .* trend
-    end
-    if rand(rng) < 0.3
-        dir = rand(rng) < 0.6 ? 1 : -1
-        strength = rand(rng, Uniform(0.0005, 0.005))
-        trend = [exp(dir * strength * t) for t in 1:n_periods]
-        holding_costs = holding_costs .* trend
-    end
-
-    # Occasional demand disruptions
-    if rand(rng) < 0.2
-        n_disruptions = rand(rng, Poisson(max(1, n_periods ÷ 20)))
-        for _ in 1:n_disruptions
-            t = rand(rng, 1:n_periods)
-            f = rand(rng) < 0.5 ? rand(rng, Uniform(0.3, 0.7)) : rand(rng, Uniform(1.4, 2.0))
-            demands[t] = round(Int, demands[t] * f)
-        end
-    end
-
-    # Keep demands in reasonable bounds
-    demands = max.(demands, max(1, demand_min ÷ 2))
-    demands = min.(demands, demand_max * 2)
-
-    # Backlog costs
-    backlog_costs = production_costs .* backlog_cost_factor
-
-    # Cumulative demand helper
-    function cum(x)
-        c = similar(x)
-        s = zero(eltype(x))
-        @inbounds for i in eachindex(x)
-            s += x[i]
-            c[i] = s
-        end
-        return c
-    end
-    cum_demands = cum(demands)
-
-    # Max prefix shortfall helper
-    function max_shortfall(cap::Int)
-        max_sf = 0
-        @inbounds for t in 1:n_periods
-            sf = cum_demands[t] - (initial_inventory + t * cap)
-            if sf > max_sf
-                max_sf = sf
+        vstar = argmax(req ./ max.(avail, 1e-9))
+        if req[vstar] <= 0.0
+            # No service-level SKU at any vendor yet: put the largest vendor's
+            # SKUs under contract.
+            vstar = argmax([count(==(v), vendor) for v in 1:V])
+            for i in findall(==(vstar), vendor)
+                fill_rate[i] = rand(rng, Uniform(0.9, 0.98))
             end
         end
-        return max_sf
-    end
-
-    # ENFORCE FEASIBILITY/INFEASIBILITY with sophisticated logic
-    solution_status = if feasibility_status == feasible
-        :feasible
-    elseif feasibility_status == infeasible
-        :infeasible
-    else
-        :all
-    end
-
-    if solution_status == :feasible
-        # Realistic operator-side actions
-        if !backlog_allowed
-            r = rand(rng)
-            if r < 0.30
-                prod_capacity = round(Int, prod_capacity * rand(rng, Uniform(1.10, 1.25)))
-            elseif r < 0.60
-                avgd = mean(demands)
-                ss = round(Int, avgd * rand(rng, Uniform(0.20, 0.40)))
-                initial_inventory = max(initial_inventory, ss)
-            elseif r < 0.80
-                backlog_allowed = true
-            else
-                thr = quantile(demands, 0.90)
-                for t in 1:n_periods
-                    if demands[t] > thr
-                        excess = demands[t] - round(Int, thr)
-                        demands[t] = round(Int, thr)
-                        if t > 1
-                            demands[t - 1] += round(Int, excess * 0.3)
-                        end
-                        if t < n_periods
-                            demands[t + 1] += round(Int, excess * 0.3)
-                        end
-                        if rand(rng) < 0.5
-                            prod_capacity = round(Int, prod_capacity * 1.05)
-                        end
-                    end
-                end
-                demands = max.(demands, 1)
-                demands = min.(demands, demand_max * 2)
-                cum_demands = cum(demands)
-            end
-        end
-
-        # Surgical feasibility pass
-        if !backlog_allowed
-            sf = max_shortfall(prod_capacity)
-            if sf > 0
-                required_caps = [
-                    ceil(Int, max(0, cum_demands[t] - initial_inventory) / t) for t in 1:n_periods
-                ]
-                min_cap_needed = maximum(required_caps)
-                extra_inv_needed = sf
-
-                uplift_ratio = min_cap_needed > 0 ? min_cap_needed / max(1, prod_capacity) : 1.0
-                if uplift_ratio <= 1.5 && rand(rng) < 0.6
-                    prod_capacity = max(prod_capacity, min_cap_needed)
-                elseif extra_inv_needed <= round(Int, max(10, 2 * (demand_min + demand_max) / 2)) &&
-                    rand(rng) < 0.5
-                    initial_inventory += extra_inv_needed
-                else
-                    backlog_allowed = true
-                end
-            end
-        end
-
-    elseif solution_status == :infeasible
-        # Disallow backlog
-        if backlog_allowed
-            backlog_allowed = false
-        end
-
-        # Create diverse causes of trouble
-        scenario = rand(rng)
-        if scenario < 0.25
-            # Sustained high demand
-            start = rand(rng, 1:max(1, n_periods - 3))
-            dur = min(rand(rng, 2:4), n_periods - start + 1)
-            surge = rand(rng, Uniform(1.5, 2.0))
-            for t in start:(start + dur - 1)
-                demands[t] = round(Int, demands[t] * surge)
-            end
-        elseif scenario < 0.50
-            # Capacity cut + lower starting stock
-            prod_capacity = round(Int, prod_capacity * rand(rng, Uniform(0.6, 0.8)))
-            initial_inventory = round(Int, max(0, initial_inventory * 0.5))
-        elseif scenario < 0.75
-            # Supplier disruptions
-            ndis = rand(rng, 1:min(3, n_periods ÷ 4))
-            for _ in 1:ndis
-                tp = rand(rng, 1:n_periods)
-                sev = rand(rng, Uniform(0.3, 0.6))
-                if tp <= n_periods ÷ 2
-                    for t in tp:n_periods
-                        demands[t] = round(Int, demands[t] * rand(rng, Uniform(1.1, 1.3)))
-                    end
-                else
-                    demands[tp] = round(Int, demands[tp] / sev)
-                end
-            end
-            initial_inventory = round(Int, max(0, initial_inventory * 0.3))
-        else
-            # Very low starting stock + high variability
-            initial_inventory = max(1, round(Int, initial_inventory * 0.1))
-            for t in 1:n_periods
-                demands[t] = round(Int, demands[t] * rand(rng, Uniform(0.7, 1.4)))
-            end
-            crisis = rand(rng, ceil(Int, n_periods / 3):n_periods)
-            demands[crisis] = max(
-                demands[crisis], round(Int, prod_capacity * rand(rng, Uniform(1.2, 1.5)))
-            )
-        end
-
-        demands = max.(demands, 1)
-        demands = min.(demands, demand_max * 2)
-        cum_demands = cum(demands)
-
-        # Guarantee prefix infeasibility
-        sf = max_shortfall(prod_capacity)
-        if sf <= 0
-            required_caps = [
-                ceil(Int, max(0, cum_demands[t] - initial_inventory) / t) for t in 1:n_periods
-            ]
-            min_cap_needed = maximum(required_caps)
-            margin = rand(rng, 1:max(1, round(Int, 0.1 * max(1, min_cap_needed))))
-            new_cap = max(0, min_cap_needed - margin)
-            if max_shortfall(new_cap) <= 0
-                new_cap = max(0, min_cap_needed - 1)
-            end
-            prod_capacity = new_cap
+        skus = [i for i in 1:N if vendor[i] == vstar && fill_rate[i] > 0]
+        required = _replenishment_required(demand, pipeline, initial_inventory, fill_rate, skus)
+        ratio = _inventory_scale_ratio(rng, feasibility_status)
+        vendor_capacity[vstar, :] .*= required / (ratio * avail[vstar])
+        if feasibility_status == infeasible
+            certificate = VendorAllocationCertificate(vstar, skus, required, required / ratio)
         end
     end
 
     return InventoryProblem(
-        n_periods,
-        prod_capacity,
+        N,
+        T,
+        V,
+        n_zones,
+        vendor,
+        zone,
+        lead_time,
+        demand,
+        pipeline,
         initial_inventory,
-        backlog_allowed,
-        demands,
-        production_costs,
-        holding_costs,
-        backlog_costs,
+        fill_rate,
+        volume,
+        pallets,
+        unit_cost,
+        holding_cost,
+        lost_sale_cost,
+        vendor_capacity,
+        zone_capacity,
+        receiving_capacity,
+        witness,
+        certificate,
+        feasibility_status,
     )
 end
 
 """
     build_model(prob::InventoryProblem)
 
-Build a JuMP model for the inventory control problem.
-
-# Arguments
-
-  - `prob`: InventoryProblem instance
-
-# Returns
-
-  - `model`: The JuMP model
+Build the multi-SKU replenishment LP. Deterministic. Variables: `q[i, t]` for
+`t <= n_periods - lead_time[i]`, `I[i, t]`, `u[i, t]`.
 """
 function build_model(prob::InventoryProblem)
     model = Model()
+    N, T = prob.n_skus, prob.n_periods
+    @variable(model, q[i = 1:N, t = 1:(T - prob.lead_time[i])] >= 0)
+    @variable(model, I[1:N, 1:T] >= 0)
+    @variable(model, 0 <= u[i = 1:N, t = 1:T; prob.demand[i, t] > 0] <= prob.demand[i, t])
 
-    if prob.backlog_allowed
-        # With backlogging
-        @variable(model, x[1:prob.n_periods] >= 0)
-        @variable(model, I_plus[0:prob.n_periods] >= 0)
-        @variable(model, I_minus[0:prob.n_periods] >= 0)
-
-        @objective(
+    for i in 1:N, t in 1:T
+        L = prob.lead_time[i]
+        expr = AffExpr(prob.pipeline[i, t] + (t == 1 ? prob.initial_inventory[i] : 0.0))
+        t > 1 && add_to_expression!(expr, 1.0, I[i, t - 1])
+        t > L && add_to_expression!(expr, 1.0, q[i, t - L])
+        prob.demand[i, t] > 0 && add_to_expression!(expr, 1.0, u[i, t])
+        add_to_expression!(expr, -1.0, I[i, t])
+        @constraint(model, expr == prob.demand[i, t])
+    end
+    for i in 1:N
+        prob.fill_rate[i] > 0 || continue
+        @constraint(
             model,
-            Min,
-            sum(
-                prob.production_costs[t]*x[t] +
-                prob.holding_costs[t]*I_plus[t] +
-                prob.backlog_costs[t]*I_minus[t] for t in 1:prob.n_periods
-            )
+            sum(u[i, t] for t in 1:T if prob.demand[i, t] > 0) <= (1 - prob.fill_rate[i]) * sum(prob.demand[i, :])
         )
-
-        @constraint(model, I_plus[0] == prob.initial_inventory)
-        @constraint(model, I_minus[0] == 0)
-
-        for t in 1:prob.n_periods
+    end
+    vendor_skus = [findall(==(v), prob.vendor) for v in 1:prob.n_vendors]
+    for v in 1:prob.n_vendors, t in 1:T
+        skus = [i for i in vendor_skus[v] if t <= T - prob.lead_time[i]]
+        isempty(skus) && continue
+        @constraint(model, sum(q[i, t] for i in skus) <= prob.vendor_capacity[v, t])
+    end
+    zone_skus = [findall(==(z), prob.zone) for z in 1:prob.n_zones]
+    for z in 1:prob.n_zones
+        isempty(zone_skus[z]) && continue
+        for t in 1:T
+            @constraint(model, sum(prob.volume[i] * I[i, t] for i in zone_skus[z]) <= prob.zone_capacity[z])
+            arriving = [i for i in zone_skus[z] if t > prob.lead_time[i]]
+            isempty(arriving) && continue
             @constraint(
                 model,
-                I_plus[t - 1] - I_minus[t - 1] + x[t] - prob.demands[t] == I_plus[t] - I_minus[t]
+                sum(prob.pallets[i] * q[i, t - prob.lead_time[i]] for i in arriving) <=
+                    prob.receiving_capacity[z, t]
             )
-            @constraint(model, x[t] <= prob.prod_capacity)
-        end
-    else
-        # No backlogging
-        @variable(model, x[1:prob.n_periods] >= 0)
-        @variable(model, I[0:prob.n_periods] >= 0)
-
-        @objective(
-            model,
-            Min,
-            sum(
-                prob.production_costs[t]*x[t] + prob.holding_costs[t]*I[t] for t in 1:prob.n_periods
-            )
-        )
-
-        @constraint(model, I[0] == prob.initial_inventory)
-
-        for t in 1:prob.n_periods
-            @constraint(model, I[t - 1] + x[t] - prob.demands[t] == I[t])
-            @constraint(model, x[t] <= prob.prod_capacity)
         end
     end
 
+    @objective(
+        model,
+        Min,
+        sum(prob.unit_cost[i] * q[i, t] for i in 1:N for t in 1:(T - prob.lead_time[i])) +
+        sum(prob.holding_cost[i] * I[i, t] for i in 1:N, t in 1:T) +
+        sum(prob.lost_sale_cost[i] * u[i, t] for i in 1:N, t in 1:T if prob.demand[i, t] > 0)
+    )
     return model
 end
 
-# Register the variant
 register_variant(
     :inventory,
     :standard,
     InventoryProblem,
-    "Inventory control problem that minimizes production and holding costs while meeting demand over multiple periods",
+    "Multi-SKU distribution-center replenishment LP: SKU stock chains with vendor lead times, lost sales and service-level rows, coupled by vendor allocation, zone storage, and receiving capacity rows, with a planted order-up-to plan and a vendor-allocation certificate";
+    default=true,
 )
