@@ -57,6 +57,11 @@ function RobustFluenceIMRTProblem(
             setup_shift_cm=shift,
         )
         matrix .*= case.dose_normalization
+        if conflict_indices !== nothing
+            # The overlap is anatomical, so the organ sample interpolates the
+            # same target samples under every rigid shift.
+            matrix = _rt_interpolate_conflict_row(matrix, conflict_indices)
+        end
         push!(matrices, matrix)
     end
 
@@ -78,7 +83,7 @@ function RobustFluenceIMRTProblem(
     end
 
     n_voxels = size(case.voxel_locations_cm, 1)
-    desired_dose = zeros(n_voxels)
+    desired_dose = _rt_desired_dose(spec, case, structure_max)
     underdose_weight = zeros(n_voxels)
     overdose_weight = zeros(n_voxels)
     kind_by_structure = Dict(zip(spec.structures, spec.kinds))
@@ -87,11 +92,9 @@ function RobustFluenceIMRTProblem(
         volume_share = case.voxel_volume_cc[indices] ./ sum(case.voxel_volume_cc[indices])
         kind = kind_by_structure[structure]
         if kind == :target
-            desired_dose[indices] .= 1.0
             underdose_weight[indices] .= (30.0 + 20rand(rng)) .* volume_share
             overdose_weight[indices] .= (8.0 + 7rand(rng)) .* volume_share
         else
-            desired_dose[indices] .= 0.72 * spec.clinical_caps[structure]
             base = if kind == :serial_oar
                 17.0
             elseif kind == :parallel_oar
@@ -147,7 +150,7 @@ function build_model(problem::RobustFluenceIMRTProblem)
     n_edges = length(case.beamlet_edges)
     n_scenarios = length(problem.scenario_dose_matrices)
 
-    @variable(model, fluence[1:n_beamlets] >= 0)
+    @variable(model, 0 <= fluence[1:n_beamlets] <= case.fluence_max)
     @variable(model, underdose[target, 1:n_scenarios] >= 0)
     @variable(model, overdose[1:n_voxels, 1:n_scenarios] >= 0)
     @variable(model, variation[1:n_edges] >= 0)
@@ -155,39 +158,14 @@ function build_model(problem::RobustFluenceIMRTProblem)
     for scenario in 1:n_scenarios
         dose = _rt_dose_expressions(model, fluence, problem.scenario_dose_matrices[scenario])
         scenario_dose[scenario] = dose
-        @constraint(
+        _rt_add_dose_rows!(
             model,
-            [i in target],
-            dose[i] + underdose[i, scenario] >= problem.desired_dose[i],
-            base_name="scenario_$(scenario)_underdose_hinge"
+            problem,
+            dose,
+            i -> underdose[i, scenario],
+            i -> overdose[i, scenario];
+            prefix="scenario_$(scenario)_",
         )
-        @constraint(
-            model,
-            [i in 1:n_voxels],
-            dose[i] - overdose[i, scenario] <= problem.desired_dose[i],
-            base_name="scenario_$(scenario)_overdose_hinge"
-        )
-        @constraint(
-            model,
-            [i in target],
-            dose[i] >= problem.target_floor,
-            base_name="scenario_$(scenario)_target_floor"
-        )
-        @constraint(
-            model,
-            [i in target],
-            dose[i] <= problem.target_ceiling,
-            base_name="scenario_$(scenario)_target_ceiling"
-        )
-        for structure in case.structure_names[2:end]
-            indices = case.structure_voxels[structure]
-            @constraint(
-                model,
-                [i in indices],
-                dose[i] <= problem.structure_max[structure],
-                base_name="scenario_$(scenario)_$(structure)_maximum"
-            )
-        end
     end
     @constraint(
         model,

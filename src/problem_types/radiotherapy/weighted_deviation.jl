@@ -6,7 +6,9 @@ Beamlet fluence-map optimization with the classical linear dose relation
 hinge-loss variables, and absolute differences between adjacent beamlets form
 an anisotropic total-variation delivery penalty. Hard target and organ limits
 keep feasibility clinically meaningful instead of allowing slacks to make
-every instance feasible.
+every instance feasible; they are carried as bounds on the deviation
+variables, so each voxel's dose-influence row appears exactly once (see
+`_rt_add_dose_rows!`).
 
 The anatomy profile is one of `:prostate`, `:head_neck`, `:c_shape`, `:liver`,
 `:lung`, or `:breast`. The shared case stores 3-D sampled voxel coordinates,
@@ -40,7 +42,7 @@ function WeightedDeviationIMRTProblem(
     )
 
     n_voxels = size(case.voxel_locations_cm, 1)
-    desired_dose = zeros(Float64, n_voxels)
+    desired_dose = _rt_desired_dose(spec, case, structure_max)
     underdose_weight = zeros(Float64, n_voxels)
     overdose_weight = zeros(Float64, n_voxels)
     kind_by_structure = Dict(zip(spec.structures, spec.kinds))
@@ -49,11 +51,9 @@ function WeightedDeviationIMRTProblem(
         volume_share = case.voxel_volume_cc[indices] ./ sum(case.voxel_volume_cc[indices])
         kind = kind_by_structure[structure]
         if kind == :target
-            desired_dose[indices] .= 1.0
             underdose_weight[indices] .= (28.0 + 24.0 * rand(rng)) .* volume_share
             overdose_weight[indices] .= (8.0 + 8.0 * rand(rng)) .* volume_share
         else
-            desired_dose[indices] .= 0.72 * spec.clinical_caps[structure]
             base_weight = if kind == :serial_oar
                 18.0
             elseif kind == :parallel_oar
@@ -92,18 +92,12 @@ function build_model(problem::WeightedDeviationIMRTProblem)
     target = case.structure_voxels[:ptv]
     n_edges = length(case.beamlet_edges)
 
-    @variable(model, fluence[1:n_beamlets] >= 0)
+    @variable(model, 0 <= fluence[1:n_beamlets] <= case.fluence_max)
     @variable(model, underdose[target] >= 0)
     @variable(model, overdose[1:n_voxels] >= 0)
     @variable(model, variation[1:n_edges] >= 0)
     dose = _rt_dose_expressions(model, fluence, case.dose_matrix)
 
-    @constraint(
-        model, underdose_hinge[i in target], dose[i] + underdose[i] >= problem.desired_dose[i]
-    )
-    @constraint(
-        model, overdose_hinge[i in 1:n_voxels], dose[i] - overdose[i] <= problem.desired_dose[i]
-    )
     @constraint(
         model,
         variation_positive[e in 1:n_edges],
@@ -114,7 +108,11 @@ function build_model(problem::WeightedDeviationIMRTProblem)
         variation_negative[e in 1:n_edges],
         variation[e] >= fluence[case.beamlet_edges[e][2]] - fluence[case.beamlet_edges[e][1]]
     )
-    _rt_add_hard_constraints!(model, problem, dose)
+    target_rows, organ_rows = _rt_add_dose_rows!(
+        model, problem, dose, i -> underdose[i], i -> overdose[i]
+    )
+    model[:target_dose_deviation] = target_rows
+    model[:organ_overdose] = organ_rows
 
     @objective(
         model,
@@ -125,20 +123,6 @@ function build_model(problem::WeightedDeviationIMRTProblem)
             problem.smoothness_penalty * sum(variation),
     )
 
-    for j in 1:n_beamlets
-        set_start_value(fluence[j], case.reference_fluence[j])
-    end
-    reference_dose = case.reference_dose
-    for i in target
-        set_start_value(underdose[i], max(0.0, problem.desired_dose[i] - reference_dose[i]))
-    end
-    for i in 1:n_voxels
-        set_start_value(overdose[i], max(0.0, reference_dose[i] - problem.desired_dose[i]))
-    end
-    for e in 1:n_edges
-        a, b = case.beamlet_edges[e]
-        set_start_value(variation[e], abs(case.reference_fluence[a] - case.reference_fluence[b]))
-    end
     model[:dose] = dose
     return model
 end

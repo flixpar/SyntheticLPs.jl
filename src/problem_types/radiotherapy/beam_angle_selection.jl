@@ -69,7 +69,7 @@ function BeamAngleSelectionIMRTProblem(
     beamlet_fluence_max = max.(beamlet_fluence_max, 1.05 .* case.reference_fluence)
 
     n_voxels = size(case.voxel_locations_cm, 1)
-    desired_dose = zeros(n_voxels)
+    desired_dose = _rt_desired_dose(spec, case, structure_max)
     underdose_weight = zeros(n_voxels)
     overdose_weight = zeros(n_voxels)
     kind_by_structure = Dict(zip(spec.structures, spec.kinds))
@@ -78,11 +78,9 @@ function BeamAngleSelectionIMRTProblem(
         volume_share = case.voxel_volume_cc[indices] ./ sum(case.voxel_volume_cc[indices])
         kind = kind_by_structure[structure]
         if kind == :target
-            desired_dose[indices] .= 1.0
             underdose_weight[indices] .= (28.0 + 22rand(rng)) .* volume_share
             overdose_weight[indices] .= (8.0 + 7rand(rng)) .* volume_share
         else
-            desired_dose[indices] .= 0.72 * spec.clinical_caps[structure]
             base = if kind == :serial_oar
                 17.0
             elseif kind == :parallel_oar
@@ -143,7 +141,7 @@ function build_model(problem::BeamAngleSelectionIMRTProblem)
     target = case.structure_voxels[:ptv]
     n_edges = length(case.beamlet_edges)
 
-    @variable(model, fluence[1:n_beamlets] >= 0)
+    @variable(model, 0 <= fluence[1:n_beamlets] <= case.fluence_max)
     @variable(model, beam_open[1:n_beams], Bin)
     @variable(model, underdose[target] >= 0)
     @variable(model, overdose[1:n_voxels] >= 0)
@@ -158,12 +156,6 @@ function build_model(problem::BeamAngleSelectionIMRTProblem)
     @constraint(model, minimum_fields, sum(beam_open) >= problem.minimum_open_beams)
     @constraint(model, maximum_fields, sum(beam_open) <= problem.maximum_open_beams)
     @constraint(
-        model, underdose_hinge[i in target], dose[i] + underdose[i] >= problem.desired_dose[i]
-    )
-    @constraint(
-        model, overdose_hinge[i in 1:n_voxels], dose[i] - overdose[i] <= problem.desired_dose[i]
-    )
-    @constraint(
         model,
         variation_positive[e in 1:n_edges],
         variation[e] >= fluence[case.beamlet_edges[e][1]] - fluence[case.beamlet_edges[e][2]]
@@ -173,7 +165,11 @@ function build_model(problem::BeamAngleSelectionIMRTProblem)
         variation_negative[e in 1:n_edges],
         variation[e] >= fluence[case.beamlet_edges[e][2]] - fluence[case.beamlet_edges[e][1]]
     )
-    _rt_add_hard_constraints!(model, problem, dose)
+    target_rows, organ_rows = _rt_add_dose_rows!(
+        model, problem, dose, i -> underdose[i], i -> overdose[i]
+    )
+    model[:target_dose_deviation] = target_rows
+    model[:organ_overdose] = organ_rows
     @objective(
         model,
         Min,
@@ -183,9 +179,6 @@ function build_model(problem::BeamAngleSelectionIMRTProblem)
             problem.fluence_penalty * sum(fluence) +
             problem.smoothness_penalty * sum(variation),
     )
-    for beam in 1:n_beams
-        set_start_value(beam_open[beam], beam in problem.reference_open_beams ? 1.0 : 0.0)
-    end
     model[:dose] = dose
     return model
 end
