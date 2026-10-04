@@ -361,12 +361,15 @@ function BlendingProblem(target_variables::Int, feasibility_status::FeasibilityS
         end
         lots_at = [count(==(p), mats.site) for p in 1:n_plants]
         total = sum(demand_min)
+        # One market tightness per instance scales scrap and primary metal
+        # against the contracted output, so the book may or may not fit.
+        tightness = rand(rng, Uniform(0.6, 1.4))
         for i in 1:n_materials
             if mats.kind[i] == :scrap
                 p = mats.site[i]
-                availability[i] = plant_demand[p] * rand(rng, Uniform(0.3, 1.4)) / lots_at[p]
+                availability[i] = plant_demand[p] * tightness * rand(rng, Uniform(0.3, 0.8)) / lots_at[p]
             elseif mats.kind[i] == :primary
-                availability[i] = total * rand(rng, Uniform(0.3, 0.9))
+                availability[i] = total * tightness * rand(rng, Uniform(0.15, 0.35))
             else
                 e = _BLEND_HARDENERS[mats.source[i]].element
                 need = sum(demand_min[o] * _BLEND_GRADES[order_grade[o]].hi[e] for o in 1:n_orders) / mats.comp[e, i]

@@ -497,9 +497,13 @@ function CropPlanningProblem(target_variables::Int, feasibility_status::Feasibil
         for r in 1:R, t in 1:T, (m, _) in _CROP_WATER_SEASONS
             water_allocation[r, m, t] = max(water[r, m, t], 1000.0) * tightness * rand(rng, Uniform(0.8, 1.25))
         end
+        # Food-security / processing mandates: one instance-wide ambition
+        # level applied to every crop's nominal production (with crop noise),
+        # so the region may or may not be able to grow all of it.
+        ambition = rand(rng, Uniform(0.5, 1.3))
         for c in 1:C, r in 1:R, t in 1:T
-            production[c, r, t] > 0 && rand(rng) < 0.5 || continue
-            contract[c, r, t] = production[c, r, t] * rand(rng, Uniform(0.4, 1.1))
+            production[c, r, t] > 0 && rand(rng) < 0.8 || continue
+            contract[c, r, t] = production[c, r, t] * ambition * rand(rng, Uniform(0.85, 1.15))
         end
     else
         hired = zeros(Fm, S, T)

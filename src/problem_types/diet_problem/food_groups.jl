@@ -337,10 +337,10 @@ function FoodGroupsDietProblem(
         end
         # Planners calibrate the variety rule to the size of each food group's
         # list: a group's foods share its weekly minimum servings with a
-        # 0.9-2.5x allowance, so a short list under a strict rule may not cover it.
+        # 0.75-2.0x allowance, so a short list under a strict rule may not cover it.
         for g in eachindex(members), f in members[g]
             share = 7.0 * group_band[1, g, 1] / length(members[g])
-            variety_cap[f] = share * rand(rng, Uniform(0.9, 2.5))
+            variety_cap[f] = share * rand(rng, Uniform(0.75, 2.0))
         end
         # Storage sized against the average stock of a weekly delivery cycle.
         for c in eachindex(MENU_STORAGE_CLASSES)

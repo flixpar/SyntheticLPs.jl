@@ -52,12 +52,12 @@ const _BLEND_PRIMARIES = (
 # Master alloys / hardeners: the element they carry (index into BLEND_ELEMENTS),
 # composition, cost and melt yield (magnesium burns off).
 const _BLEND_HARDENERS = (
-    (name=:silicon_metal, element=1, comp=(98.5, 0.4, 0.02, 0.01, 0.0, 0.01, 0.0, 0.03), cost=2400.0, yield=0.97),
+    (name=:AlSi50, element=1, comp=(50.0, 0.3, 0.02, 0.01, 0.0, 0.01, 0.0, 0.02), cost=2600.0, yield=0.98),
     (name=:Al50Cu, element=3, comp=(0.1, 0.15, 50.0, 0.01, 0.01, 0.02, 0.0, 0.0), cost=5500.0, yield=0.99),
-    (name=:Mn75_briquette, element=4, comp=(0.2, 0.3, 0.02, 75.0, 0.0, 0.0, 0.0, 0.0), cost=3000.0, yield=0.97),
+    (name=:AlMn20, element=4, comp=(0.15, 0.25, 0.02, 20.0, 0.0, 0.0, 0.0, 0.0), cost=2900.0, yield=0.98),
     (name=:magnesium_ingot, element=5, comp=(0.01, 0.01, 0.005, 0.01, 99.8, 0.005, 0.0, 0.0), cost=3600.0, yield=0.93),
     (name=:zinc_ingot, element=6, comp=(0.0, 0.002, 0.002, 0.0, 0.0, 99.99, 0.0, 0.0), cost=3100.0, yield=0.98),
-    (name=:Cr75_briquette, element=7, comp=(0.2, 0.3, 0.02, 0.01, 0.0, 0.0, 75.0, 0.0), cost=11000.0, yield=0.95),
+    (name=:AlCr10, element=7, comp=(0.15, 0.25, 0.02, 0.01, 0.0, 0.0, 10.0, 0.0), cost=4500.0, yield=0.98),
     (name=:Al10Ti, element=8, comp=(0.1, 0.2, 0.01, 0.0, 0.0, 0.0, 0.0, 10.0), cost=4200.0, yield=0.99),
 )
 
