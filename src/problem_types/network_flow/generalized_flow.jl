@@ -1,342 +1,406 @@
 using JuMP
 using Random
+using Distributions
+using StatsBase
+
+"""
+Planted lossy routing: a genuine feasible point of the built model. Every demand
+node is served from a supply node along a shortest-path tree of near-most-
+efficient routes; the flow SENT on each tree arc is what must arrive at its head divided
+by the arc gain, so generalized conservation holds exactly at every transit and
+demand node, `source_outflow[i]` is what supply node `supply_nodes[i]` ships
+(at most its supply), and every arc carries at most its capacity.
+"""
+struct GeneralizedFlowWitness
+    arc_flows::Vector{Float64}
+    source_outflow::Vector{Float64}
+end
+
+"""
+Loss-adjusted supply-adequacy certificate (a Farkas certificate built from node
+potentials). `efficiency[v]` is the best achievable delivery efficiency from any
+supply node to `v`: the largest product of arc gains over a path, computed by
+Dijkstra on `-log(gain)` lengths, so `efficiency[s] = 1` at supply nodes and
+`efficiency[j] >= efficiency[i] * gain[a]` for every arc `a = (i, j)`.
+
+Multiply node `v`'s balance row by `1 / efficiency[v]` and add: every arc's
+column gets coefficient `gain[a] / efficiency[j] - 1 / efficiency[i] <= 0`, so
+the weighted sum of all node rows says
+
+    sum_v demand[v] / efficiency[v]  <=  sum_s supply[s]
+
+for any feasible flow, whatever the capacities. The certificate stores both
+sides, with `total_supply` 3%-8% below `required_supply` (and, whenever the
+losses allow, above the lossless total demand): the network loses more in transit than the supply surplus can cover.
+No single row or bound shows this, so presolve cannot detect it.
+"""
+struct GeneralizedFlowLossCertificate
+    efficiency::Vector{Float64}
+    required_supply::Float64
+    total_supply::Float64
+end
 
 """
     GeneralizedFlowProblem <: ProblemGenerator
 
-Generator for generalized (lossy) network-flow problems with per-arc gain
-multipliers.
+Generator for generalized (lossy) minimum-cost flow problems on sparse
+geographic networks.
 
 # Overview
 
-Models single-commodity flow on a connected directed network in which each arc
-`(i, j)` has a multiplicative *gain* `g[i,j] ∈ (0, 1]`. Flow *sent* on an arc is
-`f[i,j]`, but only `g[i,j] * f[i,j]` *arrives* at the head node — capturing
-transmission/line losses, evaporation, spoilage, or conversion yield. This makes
-conservation multiplicative rather than the pure 1:1 balance of the standard
-network-flow variant.
+Each arc `a = (i, j)` has a gain `gain[a] in (0, 1)`: of `flow[a]` units sent,
+only `gain[a] * flow[a]` arrive at `j` (transmission/line losses, pipeline
+leakage, evaporation, spoilage). Balance rows:
 
-Node 1 is the source and node `n_nodes` is the sink. The model must DELIVER a
-required amount `demand` at the sink, where delivered flow is the post-gain inflow
-on the sink's in-arcs. Subject to per-arc capacities and a source-supply cap, the
-objective MINIMIZES total routing cost `sum cost[arc] * f[arc]`. (We deliberately
-do not maximize source outflow: with gains that objective is degenerate.)
+    supply node v:   sum_out flow - sum_in gain*flow <= supply[v]
+    other node v:    sum_in gain*flow - sum_out flow  = demand[v]   (0 at transit)
 
-Generalized conservation at each intermediate node `v` (not source, not sink):
+with `0 <= flow[a] <= capacity[a]` as variable bounds and minimum total routing
+cost. Gains below one destroy total unimodularity, so vertices are genuinely
+fractional and simplex must do real work (the classic generalized-flow family).
+Antiparallel arc pairs never form gain-amplifying cycles (every gain is < 1).
 
-    sum over in-arcs (u,v) of g[u,v] * f[u,v]  ==  sum over out-arcs (v,w) of f[v,w]
+# Data grounding
+
+The same sparse, strongly connected geographic networks as `network_flow/standard`
+(`_geo_network`, about 3-5 arcs per node, three geography shapes). Gains decay
+exponentially with arc length times a lognormal per-arc factor (line quality),
+calibrated per instance so the median best-route delivery efficiency to demand
+nodes is 72%-90%; gains are stored to 4 digits and capped at 0.9995. Costs are
+distance-proportional with lognormal route noise (so cheap routes and
+efficient routes disagree); capacities are sized from the planted lossy routing
+with a provisioning factor of 1.05-1.55 plus a tiered lognormal floor.
+
+# Feasibility control
+
+The planted routing (a shortest-path tree from all supply nodes on loss lengths
+`-log(gain)` with mild lognormal noise, `_geo_tree_flows` with gains) is a
+concrete lossy flow; capacities always cover it, and its per-site supply draw
+is close to the loss-adjusted minimum.
+
+  - `feasible`: each supply node gets at least 1.05-1.6x what the planted routing
+    draws from it; the planted routing is stored as the witness.
+  - `infeasible`: total supply is 3%-8% below the loss-adjusted requirement
+    `sum demand/efficiency` (and above the lossless total demand whenever the
+    losses allow, so the naive supply >= demand check passes): every site
+    starts at its planted draw and the shortfall is taken in proportion to
+    draw x out-degree^2 (the best-connected hubs run short, not a district's
+    only source), then locally repaired (`_generalized_flow_local_repair!`:
+    no demand node refutable by one step of bound propagation, total
+    unchanged); the efficiency potentials are the certificate.
+  - `unknown`: every site holds a common reserve factor in [0.9, 1.1] of its
+    planted draw (4% site noise), starved sites topped up by the same local
+    check: below 1 the routing must beat the planted (near-efficient, noisy)
+    paths, above 1 it has slack — a natural instance on either side.
 
 # Fields
 
-  - `n_nodes::Int`: Number of nodes (node 1 = source, node `n_nodes` = sink)
-  - `source_node::Int`: Source node index (always 1)
-  - `sink_node::Int`: Sink node index (always `n_nodes`)
-  - `arcs::Vector{Tuple{Int,Int}}`: Directed arcs
-  - `backbone::Vector{Tuple{Int,Int}}`: The source→…→sink backbone path arcs
-  - `capacities::Dict{Tuple{Int,Int},Float64}`: Per-arc flow (sent) capacity
-  - `costs::Dict{Tuple{Int,Int},Float64}`: Per-unit-sent routing cost
-  - `gains::Dict{Tuple{Int,Int},Float64}`: Per-arc gain multiplier in (0, 1]
-  - `source_supply::Float64`: Cap on total flow sent out of the source
-  - `demand::Float64`: Required delivered (post-gain) amount at the sink
+  - `n_nodes`, `arcs` (sorted), `trunk`, `positions`, `geography`
+  - `capacities`, `costs`, `gains`: aligned with `arcs`
+  - `supplies`, `demands`: per node; `supply_nodes`, `demand_nodes`
+  - `feasible_witness`, `infeasibility_certificate`, `feasibility_status`
 """
 struct GeneralizedFlowProblem <: ProblemGenerator
     n_nodes::Int
-    source_node::Int
-    sink_node::Int
     arcs::Vector{Tuple{Int, Int}}
-    backbone::Vector{Tuple{Int, Int}}
-    capacities::Dict{Tuple{Int, Int}, Float64}
-    costs::Dict{Tuple{Int, Int}, Float64}
-    gains::Dict{Tuple{Int, Int}, Float64}
-    source_supply::Float64
-    demand::Float64
+    trunk::Vector{Bool}
+    capacities::Vector{Float64}
+    costs::Vector{Float64}
+    gains::Vector{Float64}
+    supplies::Vector{Float64}
+    demands::Vector{Float64}
+    supply_nodes::Vector{Int}
+    demand_nodes::Vector{Int}
+    positions::Vector{Tuple{Float64, Float64}}
+    geography::Symbol
+    feasible_witness::Union{Nothing, GeneralizedFlowWitness}
+    infeasibility_certificate::Union{Nothing, GeneralizedFlowLossCertificate}
+    feasibility_status::FeasibilityStatus
 end
 
 """
-    _generalized_flow_topology(rng::AbstractRNG, n_nodes::Int, n_arcs::Int)
+    _generalized_flow_efficiency(n, arcs, out_adj, gains, supply_nodes) -> Vector{Float64}
 
-Build a connected directed network on `1:n_nodes` with the source→…→sink backbone
-path `1→2→…→n_nodes` always present, plus extra random arcs until roughly `n_arcs`
-arcs exist. Returns `(arcs, backbone)` where `backbone` is the ordered list of
-backbone arcs. Named distinctly so it does not clash with `standard.jl`'s
-`generate_connected_network`.
+Best delivery efficiency from any supply node to every node: the maximum
+product of gains over a path, via Dijkstra on `-log(gain)`.
 """
-function _generalized_flow_topology(rng::AbstractRNG, n_nodes::Int, n_arcs::Int)
-    arcs = Set{Tuple{Int, Int}}()
-    backbone = Tuple{Int, Int}[]
+function _generalized_flow_efficiency(
+    n::Int,
+    arcs::Vector{Tuple{Int, Int}},
+    out_adj::Vector{Vector{Int}},
+    gains::Vector{Float64},
+    supply_nodes::Vector{Int},
+)
+    d, _ = _geo_dijkstra(n, arcs, out_adj, [-log(g) for g in gains], supply_nodes)
+    return exp.(-d)
+end
 
-    # Backbone path 1 -> 2 -> ... -> n_nodes (guarantees source->sink connectivity)
-    for i in 1:(n_nodes - 1)
-        a = (i, i + 1)
-        push!(arcs, a)
-        push!(backbone, a)
-    end
+"""
+    _generalized_flow_local_repair!(supplies, n, arcs, capacities, gains, demands, supply_nodes;
+                                    keep_total=true)
 
-    source = 1
-    sink = n_nodes
-
-    # Forward "shortcut" arcs (i -> j with i < j) for realism; keep DAG-like to
-    # avoid trivial gain cycles (gains <= 1 already preclude unbounded cycles).
-    for i in 2:(n_nodes - 1)
-        if rand(rng) < 0.35
-            push!(arcs, (source, i))
+Keep every demand node deliverable under ONE step of bound propagation, the
+reasoning presolve applies: an arc can carry at most its capacity and at most
+what its tail can pass on (a supply site: its supply plus its lossy inflow
+capacity; a transit node: its inflow capacity; a demand node: that minus its
+own demand). Where a demand node's post-gain intake under these bounds falls
+below 1.3x its demand (slack for sites feeding several neighbours) because a
+supplying site is short, that site's supply is
+raised and (with `keep_total`) the same total is taken back proportionally
+from the sites not involved (at most 20 rounds), so the total — and hence the
+loss-adjusted certificate — is unchanged while no local pair of rows refutes
+the model.
+"""
+function _generalized_flow_local_repair!(
+    supplies::Vector{Float64},
+    n::Int,
+    arcs::Vector{Tuple{Int, Int}},
+    capacities::Vector{Float64},
+    gains::Vector{Float64},
+    demands::Vector{Float64},
+    supply_nodes::Vector{Int};
+    keep_total::Bool=true,
+)
+    out_adj, in_adj = _geo_adjacency(n, arcs)
+    is_supply = falses(n)
+    is_supply[supply_nodes] .= true
+    total = sum(supplies)
+    inflow_cap = [sum(gains[a] * capacities[a] for a in in_adj[v]; init=0.0) for v in 1:n]
+    for _ in 1:20
+        touched = falses(n)
+        for v in 1:n
+            demands[v] > 0 || continue
+            avail(u) = is_supply[u] ? supplies[u] + inflow_cap[u] :
+                (demands[u] > 0 ? max(inflow_cap[u] - demands[u], 0.0) : inflow_cap[u])
+            intake = sum(gains[a] * min(capacities[a], avail(arcs[a][1])) for a in in_adj[v]; init=0.0)
+            deficit = 1.3 * demands[v] - intake
+            deficit > 0 || continue
+            for a in in_adj[v]
+                u = arcs[a][1]
+                is_supply[u] || continue
+                room = capacities[a] - avail(u)
+                room > 0 || continue
+                raise = min(room, deficit / gains[a])
+                supplies[u] = ceil(supplies[u] + raise; digits=2)
+                touched[u] = true
+                deficit -= gains[a] * raise
+                deficit <= 0 && break
+            end
         end
-        if rand(rng) < 0.35
-            push!(arcs, (i, sink))
+        any(touched) || break
+        keep_total || continue
+        # Give the total back from the untouched sites.
+        free = [u for u in supply_nodes if !touched[u]]
+        isempty(free) && break
+        excess = sum(supplies) - total
+        pool = sum(supplies[free])
+        excess >= pool && break
+        for u in free
+            supplies[u] = max(floor(supplies[u] * (1 - excess / pool); digits=2), 0.01)
         end
     end
-
-    # Fill in additional forward arcs until we reach the target arc count.
-    forward_candidates = [(i, j) for i in 1:n_nodes for j in 1:n_nodes if i < j]
-    shuffle!(rng, forward_candidates)
-    for arc in forward_candidates
-        length(arcs) >= n_arcs && break
-        push!(arcs, arc)
-    end
-
-    return collect(arcs), backbone
+    return supplies
 end
 
 """
     GeneralizedFlowProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
-Construct a generalized (lossy) network-flow instance.
-
-Variable-count formula (decision variables created by `build_model`):
-
-    total = length(arcs)        # one nonnegative flow variable f[arc] per arc
-
-The constructor sizes `n_nodes` and the arc density so `length(arcs)` lands near
-`target_variables`. There is exactly one variable block (per-arc flow), so the
-arc count IS the variable count.
-
-# Feasibility
-
-  - `feasible`: the backbone path 1→…→n is guaranteed to deliver `demand`. Let
-    `P = prod(g over backbone)`. Sending `s = demand / P` at the source arrives as
-    `demand` at the sink. Every backbone arc capacity is set `>= s * slack` and
-    `source_supply >= s * slack`, so the backbone alone is an admissible delivery —
-    finite optimum in the LP relaxation.
-  - `infeasible`: the post-gain inflow capacity into the sink is capped strictly
-    below `demand`: `sum over sink in-arcs of g[u,sink] * cap[u,sink] = demand * α`
-    with `α ∈ [0.7, 0.9] < 1`. Since delivered ≤ that aggregate bound regardless of
-    the rest of the network, `delivered >= demand` is unsatisfiable. This pigeonhole
-    bound holds in the LP relaxation (no integrality used).
-  - `unknown`: a natural instance biased toward feasible (backbone sized to deliver
-    a modest `demand`, no infeasibility forcing).
-
-# Arguments
-
-  - `target_variables`: Target number of decision variables (= number of arcs)
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
+Construct a generalized-flow instance with exactly `target_variables` arcs
+(= variables; targets below 2 round up to 2 and a target of 3 to 4). Values
+above `NETWORK_FLOW_MAX_ARCS` raise an `ArgumentError`. Rows: one balance row
+per node (about a quarter of the arcs).
 """
 function GeneralizedFlowProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
+    target_variables >= 1 ||
+        throw(ArgumentError("target_variables must be >= 1 (got $target_variables)."))
+    target_variables <= NETWORK_FLOW_MAX_ARCS || throw(
+        ArgumentError(
+            "network_flow/generalized_flow supports at most $NETWORK_FLOW_MAX_ARCS arcs; " *
+            "requested $target_variables.",
+        ),
+    )
     rng = MersenneTwister(seed)
 
-    # --- Scale-tiered parameter ranges ---
-    if target_variables <= 100
-        min_nodes, max_nodes = 5, 16
-        target_density = 0.4
-        cap_range = (20.0, 150.0)
-        cost_range = (1.0, 12.0)
-    elseif target_variables <= 500
-        min_nodes, max_nodes = 12, 40
-        target_density = 0.2
-        cap_range = (40.0, 600.0)
-        cost_range = (1.0, 30.0)
+    n, n_arcs = _network_flow_dimensions(rng, target_variables)
+    geography = let r = rand(rng)
+        r < 0.4 ? :clustered : (r < 0.75 ? :uniform : :corridor)
+    end
+    positions, weights = _geo_positions(rng, n, geography; span=12.0 * sqrt(n))
+    arcs, trunk = _geo_network(rng, positions, n_arcs)
+    m = length(arcs)
+    dist = [_geo_dist(positions, u, v) for (u, v) in arcs]
+    out_adj, _ = _geo_adjacency(n, arcs)
+
+    n_supply = clamp(round(Int, n * (0.04 + 0.08 * rand(rng))), 1, n - 1)
+    supply_nodes = sort(sample(rng, 1:n, n_supply; replace=false))
+    rest = setdiff(1:n, supply_nodes)
+    n_demand = clamp(round(Int, n * (0.25 + 0.25 * rand(rng))), 1, length(rest))
+    demand_nodes = sort(sample(rng, rest, Weights(weights[rest]), n_demand; replace=false))
+    wd = weights[demand_nodes]
+    demand_vals = round.(50.0 .* wd ./ (sum(wd) / length(wd)); digits=2)
+    demand_vals = max.(demand_vals, 0.01)
+    demands = zeros(n)
+    demands[demand_nodes] .= demand_vals
+    supply_weight = [rand(rng, LogNormal(0.0, 0.6)) for _ in supply_nodes]
+
+    # Gains: exponential decay in length x line-quality factor, calibrated so
+    # the median best-route efficiency to the demand nodes hits a target.
+    loss_length = [max(dist[k], 1e-3) * rand(rng, LogNormal(0.0, 0.35)) for k in 1:m]
+    raw_dist, _ = _geo_dijkstra(n, arcs, out_adj, loss_length, supply_nodes)
+    target_eff = 0.72 + 0.18 * rand(rng)
+    ref = median(raw_dist[demand_nodes])
+    alpha = ref > 0 ? -log(target_eff) / ref : 0.01
+    gains = [clamp(round(exp(-alpha * loss_length[k]); digits=4), 0.5, 0.9995) for k in 1:m]
+
+    route_spread = 0.2 + 0.25 * rand(rng)
+    costs = [
+        round(
+            max(dist[k], 0.05) * (trunk[k] ? 0.8 : 1.0) * rand(rng, LogNormal(0.0, route_spread)) +
+            0.05;
+            digits=3,
+        ) for k in 1:m
+    ]
+
+    # Historical lossy routing over noisy lengths: the planted plan.
+    # Operators route along near-most-efficient paths (loss length with mild
+    # noise), so the plan's supply draw is close to the loss-adjusted minimum.
+    hist_len = [-log(gains[k]) * rand(rng, LogNormal(0.0, 0.15)) + 1e-9 for k in 1:m]
+    hdist, hpred = _geo_dijkstra(n, arcs, out_adj, hist_len, supply_nodes)
+    plan = _geo_tree_flows(n, arcs, hdist, hpred, demands; gains=gains)
+    source_draw = zeros(length(supply_nodes))
+    supply_index = Dict(s => i for (i, s) in enumerate(supply_nodes))
+    for (k, (u, _)) in enumerate(arcs)
+        haskey(supply_index, u) && (source_draw[supply_index[u]] += plan[k])
+    end
+
+    used = filter(>(0.0), plan)
+    floor_scale = (0.3 + 0.5 * rand(rng)) * (isempty(used) ? 50.0 : median(used))
+    capacities = Vector{Float64}(undef, m)
+    for k in 1:m
+        floor_cap = floor_scale * rand(rng, LogNormal(0.0, 0.6)) * (trunk[k] ? 1.6 : 1.0)
+        # ceil to 2 digits keeps capacity >= provision * plan exactly.
+        capacities[k] = ceil(max(floor_cap, (1.05 + 0.5 * rand(rng)) * plan[k], 0.01); digits=2)
+    end
+
+    efficiency = _generalized_flow_efficiency(n, arcs, out_adj, gains, supply_nodes)
+    required = sum(demands[v] / efficiency[v] for v in demand_nodes)
+    lossless = sum(demand_vals)
+
+    feasible_witness = nothing
+    infeasibility_certificate = nothing
+    supply_caps = if feasibility_status == feasible
+        caps = [
+            ceil(max(source_draw[i] * (1.05 + 0.55 * rand(rng)), 0.01); digits=2) for
+            i in eachindex(supply_nodes)
+        ]
+        feasible_witness = GeneralizedFlowWitness(plan, source_draw)
+        caps
     else
-        min_nodes, max_nodes = 25, 110
-        target_density = 0.1
-        cap_range = (100.0, 2500.0)
-        cost_range = (1.0, 60.0)
-    end
-
-    # --- Choose node count so #arcs ≈ target_variables ---
-    # A network on n nodes restricted to forward arcs has n*(n-1)/2 candidates.
-    n_nodes = min_nodes
-    for n in min_nodes:max_nodes
-        possible_arcs = n * (n - 1) ÷ 2
-        if round(Int, possible_arcs * target_density) >= round(Int, target_variables * 0.95)
-            n_nodes = n
-            break
+        total = if feasibility_status == infeasible
+            # 3%-8% below the loss-adjusted requirement, and when possible
+            # above the lossless demand (the naive check passes).
+            t = required * (0.92 + 0.05 * rand(rng))
+            t < 1.005 * lossless < 0.99 * required ? 1.005 * lossless : t
+        else
+            0.0  # unused: unknown supplies are set per site below
         end
-        n_nodes = n
-    end
-    n_nodes = max(n_nodes, 4)
-
-    source_node = 1
-    sink_node = n_nodes
-
-    # --- Topology (backbone path is known explicitly) ---
-    arcs, backbone = _generalized_flow_topology(rng, n_nodes, target_variables)
-
-    # --- Gains in (0.85, 1.0]: lossy arcs, never amplifying (no unbounded cycles) ---
-    gains = Dict{Tuple{Int, Int}, Float64}()
-    for arc in arcs
-        gains[arc] = round(0.85 + 0.15 * rand(rng); digits=4)
-    end
-
-    # --- Costs ---
-    cmin, cmax = cost_range
-    costs = Dict{Tuple{Int, Int}, Float64}()
-    for arc in arcs
-        costs[arc] = round(cmin + (cmax - cmin) * rand(rng); digits=3)
-    end
-
-    # --- Baseline capacities (sampled; refined below per feasibility intent) ---
-    capmin, capmax = cap_range
-    capacities = Dict{Tuple{Int, Int}, Float64}()
-    for arc in arcs
-        capacities[arc] = round(capmin + (capmax - capmin) * rand(rng); digits=2)
-    end
-
-    # Product of gains along the backbone (always > 0, <= 1).
-    backbone_gain_product = prod(gains[a] for a in backbone)
-
-    sink_in_arcs = [arc for arc in arcs if arc[2] == sink_node]
-
-    # A natural demand scale: roughly what the backbone can comfortably deliver.
-    # The smallest backbone capacity bounds how much can be pushed end-to-end.
-    min_backbone_cap = minimum(capacities[a] for a in backbone)
-    nominal_deliverable = min_backbone_cap * backbone_gain_product
-
-    # Resolve feasibility intent.
-    status = feasibility_status
-
-    if status == feasible
-        # Pick a modest demand, then guarantee the backbone can deliver it.
-        demand = round(nominal_deliverable * (0.4 + 0.4 * rand(rng)); digits=2)
-        demand = max(demand, capmin)  # keep it meaningfully positive
-
-        # Sent amount on the backbone to deliver `demand`: s = demand / P.
-        slack = 1.25
-        send_amount = demand / backbone_gain_product * slack
-        for a in backbone
-            if capacities[a] < send_amount
-                capacities[a] = round(send_amount; digits=2)
+        if feasibility_status == infeasible
+            # Every site starts at its planted draw; the shortfall is taken
+            # from sites in proportion to draw x out-degree^2, so the
+            # best-connected hubs (whose customers have alternatives) run
+            # short rather than a site that is some district's only source.
+            deg = [length(out_adj[u]) for u in supply_nodes]
+            w = [source_draw[i] * deg[i]^2 * supply_weight[i]^(0.1 / 0.6) for i in eachindex(supply_nodes)]
+            shortfall = sum(source_draw) - total
+            caps = [source_draw[i] - shortfall * w[i] / sum(w) for i in eachindex(supply_nodes)]
+            if minimum(caps) < 0.05 * maximum(source_draw)
+                # Rare: fall back to a plain proportional cut.
+                caps = total .* source_draw ./ sum(source_draw)
             end
+            max.(floor.(caps; digits=2), 0.01)
+        else
+            # Each site sized at a common reserve factor of its planted draw
+            # (with 4% site noise): below 1 the routing must find more
+            # efficient paths than the planted ones, above 1 it has slack.
+            phi = 0.9 + 0.2 * rand(rng)
+            [max(floor(source_draw[i] * phi * rand(rng, LogNormal(0.0, 0.04)); digits=2), 0.01) for i in eachindex(supply_nodes)]
         end
-        source_supply = round(send_amount * 1.5; digits=2)
+    end
+    supplies = zeros(n)
+    supplies[supply_nodes] .= supply_caps
+    if feasibility_status != feasible
+        # Infeasible: keep the total (the certificate depends on it). Unknown:
+        # just top up starved sites (a natural instance).
+        _generalized_flow_local_repair!(
+            supplies, n, arcs, capacities, gains, demands, supply_nodes;
+            keep_total=feasibility_status == infeasible,
+        )
+    end
 
-    elseif status == infeasible
-        # Cap the post-gain inflow into the sink strictly below demand.
-        # Choose demand first (any positive scale), then set sink in-arc caps so
-        # sum(g * cap) = demand * alpha with alpha < 1.
-        demand = round(max(nominal_deliverable, capmin) * (0.5 + 0.5 * rand(rng)); digits=2)
-        alpha = 0.7 + 0.2 * rand(rng)  # 0.7 .. 0.9
-        target_inflow_cap = demand * alpha
-
-        if isempty(sink_in_arcs)
-            # Backbone always provides at least one sink in-arc, so this should not
-            # happen; guard defensively by forcing a single tiny in-arc cap.
-            sink_in_arcs = [backbone[end]]
-        end
-
-        # Distribute the allowed post-gain inflow budget across sink in-arcs.
-        weights = [rand(rng) for _ in sink_in_arcs]
-        wsum = sum(weights)
-        for (k, arc) in enumerate(sink_in_arcs)
-            share = (weights[k] / wsum) * target_inflow_cap
-            # cap chosen so g * cap == share  =>  cap = share / g
-            capacities[arc] = round(share / gains[arc]; digits=4)
-        end
-        # Source supply is generous; the binding constraint is the sink inflow cap.
-        source_supply = round(demand / backbone_gain_product * 2.0; digits=2)
-
-    else  # unknown: natural instance, biased feasible (backbone sized to deliver).
-        demand = round(nominal_deliverable * (0.3 + 0.3 * rand(rng)); digits=2)
-        demand = max(demand, capmin)
-        send_amount = demand / backbone_gain_product * 1.1
-        for a in backbone
-            if capacities[a] < send_amount
-                capacities[a] = round(send_amount; digits=2)
-            end
-        end
-        source_supply = round(send_amount * 1.4; digits=2)
+    if feasibility_status == infeasible
+        total_supply = sum(supply_caps)
+        total_supply < required ||
+            error("generalized_flow: loss certificate failed to separate (seed $seed)")
+        infeasibility_certificate = GeneralizedFlowLossCertificate(efficiency, required, total_supply)
     end
 
     return GeneralizedFlowProblem(
-        n_nodes,
-        source_node,
-        sink_node,
+        n,
         arcs,
-        backbone,
+        trunk,
         capacities,
         costs,
         gains,
-        source_supply,
-        demand,
+        supplies,
+        demands,
+        supply_nodes,
+        demand_nodes,
+        positions,
+        geography,
+        feasible_witness,
+        infeasibility_certificate,
+        feasibility_status,
     )
 end
 
 """
     build_model(prob::GeneralizedFlowProblem)
 
-Build the JuMP model for the generalized (lossy) network-flow problem.
-Deterministic — uses only data from the struct fields.
+Build the generalized min-cost flow LP. Deterministic — uses only the struct
+fields.
 
-Decision variables:
-
-  - `f[arc] >= 0`: flow *sent* on each arc (post-gain arrival at the head is
-    `g[arc] * f[arc]`).
-
-# Returns
-
-  - `model`: The JuMP model
+  - `flow[k] in [0, capacities[k]]`: flow SENT on arc `k` (variables == arcs);
+    `gains[k] * flow[k]` arrives at the head
+  - one balance row per node (supply rows `<=`, all others `==`)
 """
 function build_model(prob::GeneralizedFlowProblem)
     model = Model()
+    m = length(prob.arcs)
+    n = prob.n_nodes
 
-    arcs = prob.arcs
-    src = prob.source_node
-    snk = prob.sink_node
+    @variable(model, 0 <= flow[k = 1:m] <= prob.capacities[k])
+    @objective(model, Min, sum(prob.costs[k] * flow[k] for k in 1:m))
 
-    # One nonnegative flow variable per arc (total = length(arcs)).
-    @variable(model, f[arc in arcs] >= 0)
-
-    # Per-arc capacities (also keep the LP bounded).
-    for arc in arcs
-        @constraint(model, f[arc] <= prob.capacities[arc])
+    out_adj, in_adj = _geo_adjacency(n, prob.arcs)
+    is_supply = falses(n)
+    is_supply[prob.supply_nodes] .= true
+    for v in 1:n
+        net_in = sum(prob.gains[k] * flow[k] for k in in_adj[v]; init=AffExpr(0.0)) -
+            sum(flow[k] for k in out_adj[v]; init=AffExpr(0.0))
+        if is_supply[v]
+            @constraint(model, -net_in <= prob.supplies[v])
+        else
+            @constraint(model, net_in == prob.demands[v])
+        end
     end
-
-    # Source supply cap on total sent flow out of the source.
-    src_out = [arc for arc in arcs if arc[1] == src]
-    if !isempty(src_out)
-        @constraint(model, sum(f[arc] for arc in src_out) <= prob.source_supply)
-    end
-
-    # Generalized (multiplicative) conservation at intermediate nodes:
-    #   sum_in g*f  ==  sum_out f
-    for v in 1:prob.n_nodes
-        v == src && continue
-        v == snk && continue
-        in_arcs = [arc for arc in arcs if arc[2] == v]
-        out_arcs = [arc for arc in arcs if arc[1] == v]
-        (isempty(in_arcs) && isempty(out_arcs)) && continue
-        inflow = isempty(in_arcs) ? 0.0 : sum(prob.gains[arc] * f[arc] for arc in in_arcs)
-        outflow = isempty(out_arcs) ? 0.0 : sum(f[arc] for arc in out_arcs)
-        @constraint(model, inflow == outflow)
-    end
-
-    # Delivered at sink = post-gain inflow on sink in-arcs; must meet demand.
-    sink_in = [arc for arc in arcs if arc[2] == snk]
-    if !isempty(sink_in)
-        @constraint(model, sum(prob.gains[arc] * f[arc] for arc in sink_in) >= prob.demand)
-    end
-
-    # Objective: minimize total routing cost over sent flow.
-    @objective(model, Min, sum(prob.costs[arc] * f[arc] for arc in arcs))
-
     return model
 end
 
-# Register the variant
 register_variant(
     :network_flow,
     :generalized_flow,
     GeneralizedFlowProblem,
-    "Generalized (lossy) min-cost network flow with per-arc gain multipliers in (0,1] delivering a required amount at the sink under multiplicative conservation",
+    "Generalized (lossy) min-cost flow on a sparse geographic network: distance-decaying arc gains below one, supply/demand/transit balance rows, a planted lossy routing as witness, and a loss-adjusted supply-adequacy (node-potential Farkas) certificate",
 )

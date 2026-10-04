@@ -276,7 +276,7 @@ end
 
         # Listing variants of a category (returned sorted by variant name).
         @test issubset(
-            Set([:standard, :balanced, :capacitated, :transshipment, :emission_constrained]),
+            Set([:standard, :transshipment, :emission_constrained, :fixed_charge]),
             Set(list_variants(:transportation)),
         )
         @test list_variants(:portfolio) == [:cvar, :tracking_error]
