@@ -63,20 +63,26 @@ planned output.
 
 - `feasible`: `ProductMixPlanWitness(production, machine_hours, labor_hours,
   material_use)` — strict slack on every capacity row.
-- `infeasible`: the department whose committed products weigh most on it raises
-  its multi-routing products' floors to 60–95% of plan and loses machine
-  capacity until the floors need 10–35% more hours than it has.
-  `ProductMixDepartmentCertificate(department, machines, products, min_hours,
-  required_hours, available_hours)`: each listed product's market row times the
-  minimum hours any of its routings spends in the department, summed with the
-  department's machine rows. Only multi-routing products' floors are raised
-  (single-routing floors are variable bounds), and the cut never takes a
-  machine below 1.3× what single-routing floors force onto it plus 1.3× the
-  largest single commitment through it, so no single row or single product is
-  contradicted. HiGHS presolve's bound propagation (machine slack → implied
-  column bounds → market rows, cascading through a small department) still
-  refutes roughly half of the instances at 10k; the rest need simplex work.
-- `unknown`: the same mechanism with ratio `1 ± U(0.03, 0.30)`.
+- `infeasible`: a supply shortage on a shared material at plant-area (or
+  plant) level. The material whose multi-routing users can carry the largest
+  commitment relative to its protection is chosen; those users' floors rise to
+  60–95% of plan and the material's allocation is cut until the floors need
+  10–35% more of it than is available, even at the most material-efficient
+  routing mix. `ProductMixMaterialCertificate(material, scope, products,
+  min_use, required, available)`: each listed product's market row times its
+  minimum per-unit use (`qty × min routing yield`), summed with the material
+  row. The allocation never drops below 1.3× what single-routing floors
+  (column bounds) force through the row plus 1.3× the largest single
+  multi-routing commitment, and multi-routing floors are ranged market rows
+  rather than column bounds, so HiGHS presolve's bound propagation cannot
+  assemble the contradiction — it takes the material row plus every committed
+  market row. (The earlier department-level machine-capacity certificate was
+  refuted by presolve propagation in about half the instances at 1k–10k and
+  all at 100k; machine capacities are no longer cut.) `scope` is `:area` or
+  `:plant`; `:department` only in tiny shops without plant areas.
+- `unknown`: the same mechanism with ratio `1 ± U(0.03, 0.30)`, measured at the
+  plan's own routing mix (the minimum-yield mix is usually blocked by machine
+  capacity, which would make nearly every draw infeasible).
 
 ## Sizing
 
