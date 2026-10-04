@@ -63,15 +63,19 @@ planned output.
 
 - `feasible`: `ProductMixPlanWitness(production, machine_hours, labor_hours,
   material_use)` — strict slack on every capacity row.
-- `infeasible`: the department whose committed products weigh most on it puts
-  its whole portfolio under contract (floors 60–95% of plan) and loses machine
+- `infeasible`: the department whose committed products weigh most on it raises
+  its multi-routing products' floors to 60–95% of plan and loses machine
   capacity until the floors need 10–35% more hours than it has.
   `ProductMixDepartmentCertificate(department, machines, products, min_hours,
   required_hours, available_hours)`: each listed product's market row times the
   minimum hours any of its routings spends in the department, summed with the
-  department's machine rows. The cut never takes a machine below 1.05× what
-  single-routing floors (variable bounds) force onto it, so no single row is
-  contradicted and presolve does not decide the instance.
+  department's machine rows. Only multi-routing products' floors are raised
+  (single-routing floors are variable bounds), and the cut never takes a
+  machine below 1.3× what single-routing floors force onto it plus 1.3× the
+  largest single commitment through it, so no single row or single product is
+  contradicted. HiGHS presolve's bound propagation (machine slack → implied
+  column bounds → market rows, cascading through a small department) still
+  refutes roughly half of the instances at 10k; the rest need simplex work.
 - `unknown`: the same mechanism with ratio `1 ± U(0.03, 0.30)`.
 
 ## Sizing

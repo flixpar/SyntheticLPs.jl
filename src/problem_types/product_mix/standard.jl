@@ -380,13 +380,23 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
         need_d = [
             sum((floor[p] * min_hours(p, d) for p in dept_products[d]); init=0.0) for d in 1:n_departments
         ]
-        dstar = argmax(need_d ./ cap_d)
+        dstar = argmax(d -> isempty(dept_products[d]) ? -1.0 : need_d[d] / cap_d[d], 1:n_departments)
         prods = dept_products[dstar]
         # The department's whole portfolio goes under contract: floors rise to
         # 60-95% of the plan (never above the market ceiling).
+        # Single-routing floors are variable bounds; they are left alone so
+        # bound propagation has little to work with.
         for p in prods
+            length(prod_routings[p]) > 1 || continue
             floor[p] = max(floor[p], planned[p] * rand(rng, Uniform(0.6, 0.95)))
         end
+        if !any(floor[p] > 0 for p in prods)
+            # Tiny shops: no multi-routing commitment to lean on.
+            for p in prods
+                floor[p] = planned[p] * rand(rng, Uniform(0.6, 0.95))
+            end
+        end
+        filter!(p -> floor[p] > 0, prods)
         hours = [min_hours(p, dstar) for p in prods]
         required = sum(floor[p] * h for (p, h) in zip(prods, hours))
         ratio = if feasibility_status == infeasible
@@ -396,10 +406,11 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
             rand(rng) < 0.5 ? 1.0 - m : 1.0 + m
         end
         # Cut the department's machines to `required / ratio` hours in total,
-        # but never below 1.05x what single-routing floors alone force onto a
-        # machine (those floors are variable bounds, so a machine cut below
-        # them would be refuted by its own row — a presolve-visible knife
-        # edge). The aggregate contradiction then needs the whole department.
+        # but never below 1.6x what single-routing floors alone force onto a
+        # machine (those floors are variable bounds; a machine cut close to
+        # them lets bound propagation through the market rows refute the
+        # instance in presolve). The aggregate contradiction then needs the
+        # whole department.
         forced = zeros(n_machines)
         for p in 1:n_products
             length(prod_routings[p]) == 1 && floor[p] > 0 || continue
@@ -408,8 +419,18 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
                 forced[m] += t * floor[p]
             end
         end
+        # Room each machine must keep for the largest single multi-routing
+        # commitment through it: otherwise bound propagation (machine row ->
+        # implied column bounds -> market row) refutes that product alone.
+        biggest = zeros(n_machines)
+        for p in 1:n_products
+            length(prod_routings[p]) > 1 && floor[p] > 0 || continue
+            for r in prod_routings[p], (m, t) in zip(routing_machines[r], routing_times[r])
+                biggest[m] = max(biggest[m], t * floor[p])
+            end
+        end
         machines = dept_machines[dstar]
-        cut(s) = [max(1.05 * forced[m], machine_capacity[m] * s) for m in machines]
+        cut(s) = [max(1.3 * forced[m] + 1.3 * biggest[m], machine_capacity[m] * s) for m in machines]
         goal = required / ratio
         lo, hi = 0.0, 1.0 / ratio
         for _ in 1:60
@@ -417,9 +438,10 @@ function ProductMixProblem(target_variables::Int, feasibility_status::Feasibilit
             sum(cut(mid)) > goal ? (hi = mid) : (lo = mid)
         end
         new_caps = cut(lo)
-        if feasibility_status == infeasible && sum(new_caps) >= required / 1.05
-            # Single-routing floors dominate the department: fall back to a
-            # uniform cut (still certified, only less hidden from presolve).
+        if sum(new_caps) > 1.02 * goal
+            # The protected caps cannot reach the drawn ratio (single-routing
+            # floors dominate the department): fall back to a uniform cut
+            # (still certified, only less hidden from presolve).
             new_caps = [machine_capacity[m] * goal / cap_d[dstar] for m in machines]
         end
         for (m, c) in zip(machines, new_caps)
