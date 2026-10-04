@@ -4,13 +4,41 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-10-04 (CLAUDE.md rewrite)
+
+**Previous Commit**: `41eb299`
+
+**Commits**: the commit following `41eb299` (CLAUDE.md and this entry)
+
+**Datetime**: 2026-10-04 UTC
+
+**Summary**: `CLAUDE.md` cut from ~390 to ~130 lines. It now covers project
+orientation, generator and working conventions, pointers to `README.md`,
+`docs/` and the changelog, and the things a quick scan of the repo misses.
+The API and architecture walkthroughs it used to repeat are left to
+`README.md`, which already covers them.
+
+**Details**:
+
+- Kept: the determinism, planted-outcome, presolve-resistance and
+  size-fidelity rules; test-running gotchas (`-O1`, focused runs, which files
+  need the full suite, `HAS_HIGHS` guards in per-category test files); the
+  steps for adding a category (including the explainer `META` entry); the
+  worktree trick for scripts; the HiGHS simplex-then-IPM escalation chain.
+- Added: the downstream presolve-once consumer (SimplexRL) as the reason for
+  the presolve-survival bar.
+- Removed: the stale `_UNTAGGED_CATEGORIES_PENDING` exemption (the test no
+  longer has it), hardcoded category and variant counts, and the detailed
+  descriptions of the transform pipeline, dataset internals and registry
+  API (all in `README.md`).
+
 ## 2026-10-04 (PR #56 second review: broken infeasible labels, sizing, transforms)
 
 **Previous Commit**: `1b0944c`
 
-**Commits**: uncommitted working-tree changes on top of `1b0944c`
+**Commits**: `41eb299`
 
-**Datetime**: 2026-10-04 UTC
+**Datetime**: 2026-10-04 07:45 UTC
 
 **Summary**: A many-seed sweep (every variant, targets 20-8,000, seeds 0-40,
 HiGHS simplex then IPM) found two generators whose `infeasible` instances were
