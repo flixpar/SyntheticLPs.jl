@@ -12,7 +12,7 @@ application.
 | Variant | Evidence | Identification and loss |
 | --- | --- | --- |
 | `standard` (default) | One exact solution of a sparse covering LP | Box-bounded costs; weighted L1 distance from a prior |
-| `classical_normalized` | One exact solution of a sparse packing LP | `sum(c) = 1`; weighted L1 distance |
+| `classical_normalized` | One exact solution of a sparse packing LP | `sum(c) = n` (unit mean cost); weighted L1 distance |
 | `linf` | One exact covering-LP solution | Box-bounded costs; weighted L-infinity distance |
 | `noisy_observations` | Multiple feasible, imperfect packing decisions | Normalized mean duality gap plus weighted L1 regularization |
 | `restricted_optimal_value` | An exact plan and a target value | Keep the plan optimal while attaining the target |
@@ -22,6 +22,12 @@ application.
 
 All constructors own a local `MersenneTwister`, store every sampled datum, and
 leave `build_model` deterministic. Requests are capped at 250,000 variables.
+Every variant hits its target exactly (within a few variables), keeps rows
+growing with columns (roughly 0.5–1.9 rows per variable), stays sparse (2–8
+nonzeros per variable), and builds a 100k-variable model in well under ten
+seconds. HiGHS presolve keeps essentially the whole model (≥ 85% of columns
+and rows) for every variant and status except where an infeasible instance is
+refuted outright.
 
 ## Exact inverse LPs
 
@@ -48,7 +54,11 @@ and a corrupted prior create diverse normal cones.
 \max_{x \ge 0} c^T x \quad\text{s.t.}\quad Ax \le b,
 ```
 
-with `sum(c) = 1`. Its exact observation is positive, so the stationarity
+with `sum(c) = n` — the simplex normalization rescaled to unit *mean* cost,
+which `noisy_observations` shares. (A unit-sum normalization makes every cost
+`O(1/n)` and every deviation weight `O(n)`; at 10k variables that put column
+bounds near `1e-6` against objective weights near `1e4`, and HiGHS dual
+simplex aborted on some instances.) Its exact observation is positive, so the stationarity
 equalities `A' y = c` are valid. The two variants make the important modeling
 choice between prior-centered interval identification and scale normalization
 explicit.
@@ -72,7 +82,8 @@ A^T y_k \ge c,
 g_k = b_k^T y_k - c^T x_k \ge 0.
 ```
 
-The objective combines dimensionless mean gap with a sampled weighted-L1
+The objective combines the mean gap, normalized by the mean observed plan
+value per activity (so both terms scale linearly with size), with a sampled weighted-L1
 regularizer. This is the tractable absolute-suboptimality model; it should not
 be interpreted as the nonconvex statistically consistent estimator for general
 measurement noise.
@@ -97,6 +108,20 @@ The general inverse optimal-value problem is NP-hard. The
 specified plan must remain optimal while its value reaches a target. Separate
 rows pin both the primal and dual value to that target.
 
+Its infeasible profile is a target the forward model cannot certify: the
+forward rows admit a perturbed *alternative plan* `x_bar` that, even with
+every cost at its upper bound, is cheaper than the target (by 4–10%). Weak
+duality then refutes every candidate,
+
+```math
+\tau = b^T y \le (A \bar x)^T y \le \bar x^T c \le \bar x^T u < \tau .
+```
+
+The target deliberately stays well inside the observed plan's pricing range
+`[l' x_hat, u' x_hat]` and below the dual-row activity bound, so no single row
+is out of range: HiGHS presolve cannot detect the contradiction and simplex
+has to aggregate the dual-feasibility rows (`CheaperPlanCertificate`).
+
 `market_clearing` infers time-invariant generator offer costs from a
 multi-period merit-order dispatch with capacity and ramp constraints. It is a
 copper-plate economic-dispatch benchmark, not a network-constrained LMP model.
@@ -117,7 +142,8 @@ contradictory rows.
 - `infeasible` stores a certificate tied to the observation:
   - a strictly interior positive decision under positive normalized costs;
   - a panel fit tolerance below a lower bound implied by feasible improvements;
-  - an unattainable target value;
+  - a target value above the cost of a feasible alternative plan priced at the
+    upper cost bounds (weak duality);
   - an alternative route cheaper under every admissible arc-cost vector;
   - or a dispatch that reverses every admissible merit order.
 - `unknown` stores neither witness nor certificate. It samples exact, near
@@ -127,7 +153,11 @@ contradictory rows.
 Because noisy absolute-suboptimality is feasible without a fit requirement,
 its infeasible profile includes a meaningful maximum mean-gap tolerance. The
 certificate derives a lower bound from the known feasible latent plans and the
-componentwise cost floors.
+componentwise cost floors. Whenever a tolerance row is present, the model also
+states the shadow-price upper bounds it implies (each gap is at most `K` times
+the tolerance, so `y_ki <= (K * tol + x_k' u) / b_ki`); they cut nothing but
+let HiGHS certify the infeasible profile reliably instead of stalling with an
+unknown status on an unbounded dual block.
 
 ## Validation
 
