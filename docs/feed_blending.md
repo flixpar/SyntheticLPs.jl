@@ -1,177 +1,84 @@
 # Feed Blending
 
-`feed_blending/standard` generates a continuous least-cost feed formulation with
-a fixed batch mass, role-correlated ingredient data, nutrient floors and caps,
-ingredient availability, and typed average-content constraints.
+Least-cost feed formulation for a network of feed mills. Every mill produces a
+book of formulas — species and growth phase (broiler starter/grower/finisher,
+layer, swine starter/grower/finisher, dairy concentrate, beef finisher,
+aquaculture grower) — in fixed batch tonnages from the ingredients it stocks,
+and mills draw on shared supplier contracts. The model is a pure continuous
+LP; generation uses a constructor-local `MersenneTwister(seed)` and
+`build_model` is deterministic.
 
-## Application and data model
+A commercial mill makes hundreds of formulas from a few dozen ingredients, so
+large instances come from many formulas and mills, not from thousands of
+ingredients in one recipe (the previous generator: one recipe with
+`target` ingredients, ~10–20 nutrient rows and singleton availability rows,
+which presolve reduced to 0% of its rows and solved in 6–14 iterations).
 
-The decision is how much of each ingredient to include in one production batch.
-The generated ingredient catalog is synthetic, but its four roles create useful
-economic and nutritional correlations:
+## Data
 
-- `feed_energy_source`: inexpensive commodity ingredients, moderate major-nutrient
-  concentration, and comparatively broad availability;
-- `feed_protein_source`: higher major-nutrient concentration and moderately higher
-  cost;
-- `feed_mineral_supplement`: concentrated mineral and trace content, higher unit
-  cost, and tighter inclusion availability;
-- `feed_specialty_additive`: the highest and most dispersed unit cost, frequent
-  trace content, and tight availability.
-
-Every instance with at least four ingredients contains all four roles; larger
-instances draw additional roles randomly. Unit costs are positive lognormal draws
-whose medians increase from commodity energy sources through specialty additives.
-Availability limits are more frequent and tighter for supplements and additives.
-
-Nutrient rows likewise have typed semantics:
-
-- `feed_major_nutrient`: dense concentrations, with protein sources typically
-  richer than energy sources;
-- `feed_mineral`: concentrated in mineral supplements;
-- `feed_trace_nutrient`: sparse in commodity ingredients and concentrated in
-  supplements/additives;
-- `feed_restricted_compound`: usually upper-limited and more prevalent in specialty
-  additives.
-
-`nutrient_content[j, i]` is the concentration of nutrient or quality metric `j`
-in ingredient `i`. Different nutrient rows may use different domain units; totals
-and limits for a row always use that row's unit consistently. Empty nutrient rows
-and ingredient columns are repaired with role-aware positive content.
-
-## Sizing and reproducibility
-
-The decision-variable count is exact except for the smallest requests:
-
-```text
-num_ingredients = max(3, target_variables)
-```
-
-The remaining dimensions scale as follows:
-
-| Requested variables | Nutrients | Batch-size distribution |
-| ---: | ---: | --- |
-| `<= 250` | `4:8` | `Normal(500, 200)`, truncated to `[100, 2,000]` |
-| `251:1,000` | `6:12` | `Normal(2,000, 800)`, truncated to `[500, 10,000]` |
-| `> 1,000` | `8:20` | `Normal(10,000, 5,000)`, truncated to `[2,000, 50,000]` |
-
-All random operations receive a constructor-local `MersenneTwister`. Generating a
-feed blend therefore does not seed or advance Julia's global RNG.
-
-The stored fields are:
-
-- dimensions: `num_ingredients`, `num_nutrients`, and `batch_size`;
-- ingredient data: `ingredient_types`, `costs`, and `availabilities`;
-- nutrient data: `nutrient_content`, `nutrient_types`, `min_requirements`, and
-  `max_limits`;
-- `ratio_constraints::Vector{FeedRatioConstraint}`;
-- status metadata: `feasible_witness`, `infeasibility_certificate`, and
-  `requested_status`.
+- **Ingredients** (32, NRC-style feed-table means, as fed): grains (corn,
+  wheat, barley, sorghum), protein meals (soybean 48/44, canola, sunflower,
+  peas, cottonseed, corn gluten), animal proteins (fish meal, meat & bone
+  meal), by-products (DDGS, middlings, bran, rice bran, palm kernel), alfalfa,
+  molasses, fats (soybean oil, tallow), minerals (limestone, di/monocalcium
+  phosphate, salt, bicarbonate), synthetic amino acids (lysine, methionine,
+  threonine), urea and premix.
+- **Nutrients** (12): metabolizable energy, crude protein, fat, fiber,
+  calcium, available phosphorus, sodium, digestible lysine, methionine,
+  methionine+cysteine, threonine, NDF.
+- **Lots**: each ingredient is offered by 1–3 suppliers with their own quality
+  scatter (±4%) and price; each mill stocks the staples (corn, soybean meal 48,
+  soybean oil, limestone, dicalcium phosphate, salt, premix) and most other
+  ingredients from one supplier.
+- **Species rules**: maximum inclusion fraction by species group and
+  ingredient class with ingredient overrides (gossypol, glucosinolates,
+  palatability); 0 excludes the pair — no animal protein for ruminants, urea
+  only for ruminants, no synthetic amino acids for ruminants. Premix has a
+  0.2% minimum inclusion.
 
 ## Formulation
 
-For ingredients `i in I`, let `x_i >= 0` be the ingredient mass, `c_i` its unit
-cost, `A_i` a finite availability when one applies, and `B` the batch mass.
+Variables `x[k] ∈ [lower[k], upper[k]]`, tonnes of lot `i` in formula `f` for
+every allowed pair (`upper = inclusion cap × batch`). Minimize ingredient
+cost. Rows per formula with batch `D_f`:
 
-```math
-\min \sum_{i \in I} c_i x_i
+```text
+Σ_i x[i,f] = D_f                                          (batch)
+Σ_i a[j,i] x[i,f] ≥ lo[j,f] · D_f                         (nutrient minimum, sparse)
+Σ_i a[j,i] x[i,f] ≤ hi[j,f] · D_f                         (only if some lot exceeds hi)
+Σ_i (Ca_i − r_hi·P_i) x[i,f] ≤ 0,  Σ_i (Ca_i − r_lo·P_i) x[i,f] ≥ 0   (Ca : avP band)
 ```
 
-```math
-\sum_{i \in I} x_i = B
-```
+Coupling rows: mill stock `Σ_{f at mill} x[i,f] ≤ stock[i]` per lot, and
+supplier contracts `Σ_{lots of s} Σ_f x ≤ contract[s]` shared by the mills
+buying from `s` (a contract covering a single lot is folded into its stock).
+Nutrient specifications use the sparse absolute form because the batch is
+fixed — the deliberate contrast with `blending`, whose production is variable.
 
-For nutrient `j`, coefficient `a_{ji}`, total minimum `L_j`, and total maximum
-`U_j`, active nutrient rows are:
+## Sizing
 
-```math
-\sum_{i \in I} a_{ji}x_i \ge L_j,
-\qquad
-\sum_{i \in I} a_{ji}x_i \le U_j.
-```
+Mills `≈ target / 2500` (1–40); formulas are added round-robin over mills
+until the number of allowed pairs reaches the target, and the last formula
+drops optional (non-staple) lots so the count lands within a few pairs of it.
+About 16 nonzeros per column; rows ≈ 85% of columns.
 
-Finite ingredient availability is enforced by:
+## Feasibility
 
-```math
-x_i \le A_i.
-```
-
-Each `FeedRatioConstraint` stores a nutrient index, concentration target `p`, and
-a `FeedRatioSense`. Because total mass is fixed, an average-content minimum is the
-linear row
-
-```math
-\sum_{i \in I}(a_{ji} - p)x_i \ge 0,
-```
-
-while an average-content maximum is
-
-```math
-\sum_{i \in I}(a_{ji} - p)x_i \le 0.
-```
-
-The model branches explicitly on `feed_ratio_minimum` versus
-`feed_ratio_maximum`. Constraint direction is not inferred from a diagnostic
-string. In particular, a certificate described as a “maximum below achievable
-minimum” remains a maximum row.
-
-## Feasible requests and their witness
-
-For `feasible` and `infeasible` requests, generation first constructs a complete
-baseline recipe. A Dirichlet composition is clipped to finite availability and
-then filled in a cost-biased randomized order. If sampled availability cannot fill
-the batch, one commodity ingredient is made sufficiently available before the
-recipe is built.
-
-Nutrient and ratio bounds are placed around this recipe with positive randomized
-slack. A requested-feasible instance stores the recipe in `feasible_witness`.
-`feed_recipe_satisfies(problem)` checks, without a solver:
-
-- nonnegativity and the batch equality;
-- every finite ingredient availability;
-- every active nutrient floor and cap;
-- every typed ratio minimum and maximum.
-
-Requested-feasible instances have no infeasibility certificate.
-
-## Infeasible requests and certificates
-
-A requested-infeasible instance begins from the same feasible baseline and then
-applies exactly one certified contradiction. Its
-`FeedInfeasibilityCertificate` records the certificate kind, relevant nutrient and
-ratio-row index, the exact achievable bound, and the conflicting required bound.
-
-The four mechanisms are:
-
-1. `feed_minimum_ratio_above_achievable_maximum`: a minimum average target is
-   strictly above the availability-aware maximum concentration.
-2. `feed_maximum_ratio_below_achievable_minimum`: a maximum average target is
-   strictly below the availability-aware minimum concentration.
-3. `feed_minimum_nutrient_above_achievable_maximum`: a total nutrient minimum is
-   strictly above the maximum possible total contribution.
-4. `feed_insufficient_ingredient_capacity`: the sum of every ingredient's usable
-   availability is strictly below the fixed batch mass.
-
-The availability-aware nutrient extrema are exact for this model: sorting one
-nutrient row and greedily filling ingredient capacities solves the corresponding
-one-row continuous knapsack. `feed_infeasibility_certificate_holds(problem)`
-recomputes the bound from stored model data, verifies that metadata matches it,
-checks that the referenced row has the correct typed sense, and confirms a strict
-contradiction. It does not call a solver.
-
-Requested-infeasible instances have no feasible witness.
-
-## Unknown requests
-
-For `unknown`, each active nutrient or ratio target is drawn inside its own
-availability-aware attainable interval, but no common recipe is planted. Multiple
-individually attainable rows can still conflict, so joint feasibility is genuinely
-unspecified. Unknown instances store neither a witness nor a certificate.
-
-## Model characteristics
-
-The generator produces a continuous LP. Ingredient amounts are divisible; it does
-not model package sizes, discrete mixer batches, or integer purchase lots. The
-batch equality and availability rows are sparse, while nutrient and ratio rows can
-be dense. Trace-nutrient sparsity and role-correlated concentrations create a mix
-of row densities and coefficient scales suitable for LP benchmarking.
+- `feasible`: each formula gets its species' reference recipe (grain, protein,
+  by-product, fat, mineral, amino-acid and premix shares) mapped onto its
+  allowed lots and clipped to the inclusion caps; specifications are the
+  reference ones, relaxed only where the recipe falls outside; stock and
+  contracts are 1.02–1.30× its use. Stored as `feasible_witness`;
+  `feed_formulation_satisfies` checks every bound and row.
+- `infeasible` (`FeedInfeasibilityCertificate`):
+  - `feed_nutrient_unreachable` (60%): a customer specification set 5–12% above
+    the exact fractional-knapsack maximum of one nutrient over a batch within
+    the inclusion caps, stock and contracts — chosen only where that maximum is
+    limited by the batch equality, not by the carriers' caps (so the nutrient
+    row alone is not contradicted by column bounds and presolve cannot see it);
+  - `feed_mill_short`: one mill's stock cut below its whole batch book.
+  `feed_certificate_holds` recomputes either from the data.
+- `unknown`: the same reference specifications (every formula is makeable on
+  its own); stock and contracts drawn around the reference use with an
+  instance-wide tightness, so a mill may or may not make its whole book
+  (about a third of the instances are infeasible, at every size).

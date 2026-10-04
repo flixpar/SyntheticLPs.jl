@@ -1,174 +1,89 @@
-using Test
-using Random
-using JuMP
-using SyntheticLPs
+# Focused quality contracts for feed_blending/standard (a network of feed mills
+# with formula books): exact sizing, species exclusions and inclusion caps,
+# the planted formulation checked row by row without a solver, the
+# fractional-knapsack and mill-stock certificates recomputed from the data,
+# reproducibility / global-RNG isolation, and HiGHS-backed status contracts.
+@testset "Feed Blending" begin
+    @test Set(list_variants(:feed_blending)) == Set([:standard])
+    S = SyntheticLPs
+    ref = "feed_blending/standard"
 
-@testset "Feed blending / standard" begin
-    @testset "typed data and exact sizing" begin
-        for target in (1, 3, 50, 250, 251, 1_000, 1_001), seed in 0:3
-            model, problem = generate_problem("feed_blending/standard", target, unknown, seed)
-            @test num_variables(model) == max(3, target)
-            @test problem.num_ingredients == max(3, target)
-            @test problem.requested_status == unknown
-            @test problem.feasible_witness === nothing
-            @test problem.infeasibility_certificate === nothing
-            @test size(problem.nutrient_content) == (problem.num_nutrients, problem.num_ingredients)
-            @test length(problem.ingredient_types) == problem.num_ingredients
-            @test length(problem.nutrient_types) == problem.num_nutrients
-            @test all(>(0.0), problem.costs)
-            @test all(>=(0.0), problem.nutrient_content)
-            @test all(sum(problem.nutrient_content[j, :]) > 0.0 for j in 1:problem.num_nutrients)
-            @test all(sum(problem.nutrient_content[:, i]) > 0.0 for i in 1:problem.num_ingredients)
-            @test Set(problem.nutrient_types) == Set((
-                SyntheticLPs.feed_major_nutrient,
-                SyntheticLPs.feed_mineral,
-                SyntheticLPs.feed_trace_nutrient,
-                SyntheticLPs.feed_restricted_compound,
-            ))
-            if problem.num_ingredients >= 4
-                @test Set(problem.ingredient_types) == Set((
-                    SyntheticLPs.feed_energy_source,
-                    SyntheticLPs.feed_protein_source,
-                    SyntheticLPs.feed_mineral_supplement,
-                    SyntheticLPs.feed_specialty_additive,
-                ))
-            end
-            @test problem.ratio_constraints isa Vector{SyntheticLPs.FeedRatioConstraint}
-            @test all(
-                1 <= constraint.nutrient <= problem.num_nutrients &&
-                    isfinite(constraint.target) &&
-                    constraint.target >= 0.0 &&
-                    constraint.sense in
-                    (SyntheticLPs.feed_ratio_minimum, SyntheticLPs.feed_ratio_maximum) for
-                constraint in problem.ratio_constraints
-            )
-        end
+    @testset "knapsack bound" begin
+        @test S._feed_knapsack_max([3.0, 1.0, 2.0], [1.0, 5.0, 1.0], 2.5) ≈ 3.0 + 2.0 + 0.5
+        @test S._feed_knapsack_max([1.0], [1.0], 2.0) == -Inf
     end
 
-    @testset "constructor-local RNG and reproducibility" begin
+    @testset "sizing, data, witness, certificates" begin
+        for target in (10, 50, 300, 2_000, 12_000), status in (feasible, infeasible, unknown), seed in 0:2
+            model, p = generate_problem(ref, target, status, seed)
+            @test num_variables(model) == length(p.pairs)
+            @test abs(length(p.pairs) - target) <= max(0.05 * target, 8) || length(p.pairs) <= 30
+            # Species rules: no animal protein for ruminants, urea only for them.
+            class(l) = S._FEED_INGREDIENTS[p.lot_ingredient[l]].class
+            group(f) = S._FEED_FORMULAS[p.formula_type[f]].group
+            @test all(!(group(f) == :ruminant && class(l) == :animal) for (l, f) in p.pairs)
+            @test all(class(l) != :npn || group(f) == :ruminant for (l, f) in p.pairs)
+            @test all(p.lot_mill[l] == p.formula_mill[f] for (l, f) in p.pairs)
+            @test all(0 <= p.lower[k] <= p.upper[k] <= p.batch[f] + 1e-9 for (k, (_, f)) in enumerate(p.pairs))
+            @test all(p.ratio_band[1, :] .< p.ratio_band[2, :])
+            # Contracts left in the model couple at least two lots.
+            for s in eachindex(p.contract)
+                isfinite(p.contract[s]) && @test count(==(s), p.lot_supplier) >= 2
+            end
+            if status == feasible
+                @test S.feed_formulation_satisfies(p)
+            elseif status == infeasible
+                @test S.feed_certificate_holds(p)
+                c = p.infeasibility_certificate
+                @test c.achievable <= c.required / 1.05
+            else
+                @test p.feasible_witness === nothing && p.infeasibility_certificate === nothing
+            end
+        end
+        _, p = generate_problem(ref, 700, feasible, 5)
+        bad = copy(p.feasible_witness)
+        bad[first(p.formula_pairs[1])] += 1.0
+        @test !S.feed_formulation_satisfies(p, bad)
+        big = S.FeedBlendingProblem(100_000, unknown, 0)
+        @test abs(length(big.pairs) - 100_000) <= 10
+    end
+
+    @testset "reproducibility and global-RNG isolation" begin
+        _, p1 = generate_problem(ref, 500, infeasible, 1234)
+        _, p2 = generate_problem(ref, 500, infeasible, 1234)
+        for f in fieldnames(typeof(p1))
+            a, b = getfield(p1, f), getfield(p2, f)
+            if a isa S.FeedInfeasibilityCertificate
+                @test all(isequal(getfield(a, g), getfield(b, g)) for g in fieldnames(typeof(a)))
+            else
+                @test isequal(a, b)
+            end
+        end
         Random.seed!(91_733)
-        expected_first = rand()
-        expected_second = rand()
+        expected = rand()
         Random.seed!(91_733)
-        actual_first = rand()
-        generate_problem("feed_blending/standard", 80, feasible, 17)
-        actual_second = rand()
-        @test actual_first == expected_first
-        @test actual_second == expected_second
-
-        _, first = generate_problem("feed_blending/standard", 80, infeasible, 1_234)
-        _, second = generate_problem("feed_blending/standard", 80, infeasible, 1_234)
-        @test first.batch_size == second.batch_size
-        @test first.ingredient_types == second.ingredient_types
-        @test first.costs == second.costs
-        @test first.nutrient_content == second.nutrient_content
-        @test first.nutrient_types == second.nutrient_types
-        @test first.min_requirements == second.min_requirements
-        @test first.max_limits == second.max_limits
-        @test first.availabilities == second.availabilities
-        @test first.ratio_constraints == second.ratio_constraints
-        @test first.infeasibility_certificate == second.infeasibility_certificate
+        generate_problem(ref, 80, feasible, 17)
+        @test rand() == expected
     end
 
-    @testset "feasible recipe witness" begin
-        for target in (3, 25, 120, 500, 1_200), seed in 0:12
-            _, problem = generate_problem("feed_blending/standard", target, feasible, seed)
-            @test problem.requested_status == feasible
-            @test problem.feasible_witness !== nothing
-            @test problem.infeasibility_certificate === nothing
-            @test SyntheticLPs.feed_recipe_satisfies(problem)
-
-            recipe = problem.feasible_witness
-            @test sum(recipe) ≈ problem.batch_size
-            @test all(>=(0.0), recipe)
-            @test all(
-                !isfinite(problem.availabilities[i]) ||
-                    recipe[i] <= problem.availabilities[i] + 1e-8 * problem.batch_size for
-                i in 1:problem.num_ingredients
-            )
-        end
-    end
-
-    @testset "checkable infeasibility certificates" begin
-        observed_kinds = Set{SyntheticLPs.FeedInfeasibilityKind}()
-        maximum_below_minimum_case = nothing
-
-        for target in (25, 120, 500), seed in 0:79
-            model, problem = generate_problem("feed_blending/standard", target, infeasible, seed)
-            certificate = problem.infeasibility_certificate
-            @test problem.requested_status == infeasible
-            @test problem.feasible_witness === nothing
-            @test certificate !== nothing
-            @test SyntheticLPs.feed_infeasibility_certificate_holds(problem)
-            push!(observed_kinds, certificate.kind)
-
-            if certificate.kind == SyntheticLPs.feed_maximum_ratio_below_achievable_minimum
-                ratio = problem.ratio_constraints[certificate.ratio_constraint]
-                @test ratio.sense == SyntheticLPs.feed_ratio_maximum
-                @test ratio.target == certificate.required_bound < certificate.achievable_bound
-
-                # Regression for the old string parser: the phrase "below
-                # achievable minimum" must create a <= row, not a >= row.
-                row = model[:ratio_max][certificate.ratio_constraint]
-                row_object = constraint_object(row)
-                @test row_object.set isa JuMP.MOI.LessThan{Float64}
-                @test row_object.set.upper == 0.0
-                maximum_below_minimum_case = certificate.kind
+    @testset "HiGHS feasibility contracts" begin
+        if HAS_HIGHS
+            for target in (60, 800), seed in 0:4, status in (feasible, infeasible)
+                model, _ = generate_problem(ref, target, status, seed)
+                set_optimizer(model, HiGHS.Optimizer)
+                set_silent(model)
+                optimize!(model)
+                @test termination_status(model) == (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
             end
-        end
-
-        @test observed_kinds == Set((
-            SyntheticLPs.feed_minimum_ratio_above_achievable_maximum,
-            SyntheticLPs.feed_maximum_ratio_below_achievable_minimum,
-            SyntheticLPs.feed_minimum_nutrient_above_achievable_maximum,
-            SyntheticLPs.feed_insufficient_ingredient_capacity,
-        ))
-        @test maximum_below_minimum_case !== nothing
-    end
-
-    @testset "ratio formulation directions" begin
-        for seed in 0:40
-            model, problem = generate_problem("feed_blending/standard", 80, feasible, seed)
-            for (index, ratio) in enumerate(problem.ratio_constraints)
-                if ratio.sense == SyntheticLPs.feed_ratio_minimum
-                    object = constraint_object(model[:ratio_min][index])
-                    @test object.set isa JuMP.MOI.GreaterThan{Float64}
-                    @test object.set.lower == 0.0
-                    row = model[:ratio_min][index]
-                else
-                    object = constraint_object(model[:ratio_max][index])
-                    @test object.set isa JuMP.MOI.LessThan{Float64}
-                    @test object.set.upper == 0.0
-                    row = model[:ratio_max][index]
-                end
-                for ingredient in 1:problem.num_ingredients
-                    @test normalized_coefficient(row, model[:x][ingredient]) ≈
-                        problem.nutrient_content[ratio.nutrient, ingredient] - ratio.target
-                end
+            outcomes = Set{MOI.TerminationStatusCode}()
+            for seed in 0:19
+                model, _ = generate_problem(ref, 400, unknown, seed)
+                set_optimizer(model, HiGHS.Optimizer)
+                set_silent(model)
+                optimize!(model)
+                push!(outcomes, termination_status(model))
             end
-        end
-    end
-end
-
-# HiGHS is a test-only dependency of the package. Keep this file runnable in a
-# plain development environment while exercising the status contract under
-# `Pkg.test()`, where HiGHS is available.
-const FEED_BLENDING_TEST_HAS_HIGHS = try
-    @eval using HiGHS
-    true
-catch
-    false
-end
-
-if FEED_BLENDING_TEST_HAS_HIGHS
-    @testset "Feed blending / standard solver status" begin
-        for target in (25, 120, 500), status in (feasible, infeasible), seed in 0:9
-            model, _ = generate_problem("feed_blending/standard", target, status, seed)
-            set_optimizer(model, HiGHS.Optimizer)
-            set_silent(model)
-            optimize!(model)
-            expected = status == feasible ? JuMP.MOI.OPTIMAL : JuMP.MOI.INFEASIBLE
-            @test termination_status(model) == expected
+            @test MOI.OPTIMAL in outcomes && MOI.INFEASIBLE in outcomes
         end
     end
 end

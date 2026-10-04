@@ -1,123 +1,141 @@
 # Diet Problem
 
-The diet problem generator creates continuous minimum-cost food selection LPs with nutrient requirements, supply limits, budget limits, and optional food-specific consumption bounds.
+Least-cost diet planning on a role-correlated food-composition table with
+Dietary Reference Intake (DRI) requirements. The three variants are
+structurally different LPs built on one shared catalog (`common.jl`): a
+multi-cohort population diet, a multi-week menu plan with a perishable
+inventory, and a humanitarian ration-and-sourcing network. All are pure
+continuous LPs; every generator draws from a constructor-local
+`MersenneTwister(seed)` — it neither reseeds nor consumes Julia's global RNG —
+and `build_model` does no sampling.
 
-## Overview
+## Variants
 
-This generator represents nutrition planning under market and dietary restrictions. Foods have costs and nutrient contents; the model chooses nonnegative consumption quantities that meet nutrient minimums while minimizing total cost. Generated instances may also include food supply ceilings, an overall cost budget, minimum consumption requirements for preferred foods, and maximum consumption limits for restricted foods.
+| Variant | Key structure | Scale comes from | Domain grounding |
+|---|---|---|---|
+| `standard` (default) | per-cohort DRI rows, energy band, guideline share rows; shared supply rows | cohorts (`≈ target / 4√target`) | institutional / regional population diets |
+| `food_groups` | daily food-group bands, weekly nutrient targets, variety caps, perishable inventory with weekly delivery and spot top-ups | days (up to a year) × foods | school / hospital / care-home menu planning |
+| `food_aid` | NutVal ration rows per distribution site + source → hub → site procurement network | distribution sites | WFP Optimus-style food-basket design |
 
-## Generator Data and Sizing
+The former `nutrient_bounds` variant (an 85% verbatim copy of `standard` with a
+same-row max < min contradiction) was removed: upper limits (sodium, saturated
+fat, added sugar, total fat band) are now part of every variant.
 
-`target_variables` maps directly to the number of foods:
+## Shared catalog
 
-```text
-target_variables = n_foods
-```
+- **Nutrients** (18): energy, protein, fat, saturated fat, carbohydrate,
+  fiber, added sugar, sodium, calcium, iron, potassium, magnesium, zinc,
+  vitamins A, C, D, B12 and folate. Energy is computed from the
+  macronutrients with Atwater factors (4/9/4 kcal/g), saturated fat is a
+  fraction of fat and added sugar a fraction of carbohydrate, so columns are
+  correlated exactly as in real composition data.
+- **Foods** belong to 13 categories (grains, vegetables, fruits, dairy,
+  meat & poultry, fish & seafood, eggs, legumes, nuts & seeds, fats & oils,
+  sweets & snacks, beverages, mixed dishes) with category median profiles and
+  per-nutrient presence probabilities rounded from USDA FoodData Central; a
+  per-food portion factor scales all nutrients and the price together.
+  Vitamin D, B12, vitamin C are carried by few categories, which is what makes
+  them bind.
+- **Demographics** (11 DRI groups, children to lactating women) give the EER,
+  protein, fiber, micronutrient minimums and the sodium limit.
+- **Guideline limits**: energy within 90–110% of EER, saturated fat and added
+  sugar ≤ 10% of energy, total fat 20–35% of energy — written as
+  homogeneous rows with mixed signs, e.g. `Σ_f (9·satfat_f − 0.1·kcal_f) x_f ≤ 0`.
 
-The constructor seeds Julia's global RNG with `Random.seed!(seed)`, so foods, nutrients, constraints, and infeasibility scenarios are reproducible for the same inputs.
+## `standard`: population diet
 
-The number of nutrients and data ranges scale with target size:
+Decision `x[f, g] ∈ [0, upper[f, g]]`, servings per person per day of food `f`
+for cohort `g` (portion limit × cohort appetite). Minimize
+`Σ_g headcount[g] Σ_f cost[f] x[f, g]` subject to, per cohort, a ranged energy
+row, minimum rows for protein, fiber and 6–10 tracked micronutrients, a sodium
+ceiling and the share rows; and, for foods with limited regional supply,
+`Σ_g headcount[g] x[f, g] ≤ supply[f]`.
 
-| Target variables | Nutrients | Cost endpoint ranges | Nutrient endpoint ranges |
-| --- | --- | --- | --- |
-| `<= 100` | `5:min(25, max(5, target_variables / 4))` | low from `0.5:0.1:2.0`, high from `3.0:0.5:8.0` | low from `0.05:0.01:0.15`, high from `1.5:0.1:3.0` |
-| `<= 1000` | `15:min(75, max(15, target_variables / 8))` | low from `0.1:0.05:1.0`, high from `2.0:0.5:10.0` | low from `0.01:0.005:0.1`, high from `1.0:0.2:4.0` |
-| `> 1000` | `25:min(150, max(25, target_variables / 15))` | low from `0.05:0.01:0.5`, high from `1.0:0.2:15.0` | low from `0.005:0.001:0.05`, high from `0.5:0.1:5.0` |
+Sizing: `n_foods * n_cohorts` variables, foods `≈ 4√target` (8–200),
+`n_cohorts = round(target / n_foods_nominal)`, so the count is within
+`n_cohorts / 2` of the target. Rows `= n_cohorts · (3 + |min_nutrients| +
+sugar + 2·fat_band) + |limited foods|` (≈ 8% of columns); ≈ 14 nonzeros per
+column.
 
-Costs are sampled as `rand(min_cost:0.1:max_cost, n_foods)`. Nutrient contents are sampled as `rand(min_nutrient:0.1:max_nutrient, n_foods, n_nutrients)`. Requirements start at zero, supply limits and cost budget start at `Inf`, and food-specific min/max dictionaries start empty before feasibility logic fills them.
+Feasibility:
 
-The struct stores:
+- `feasible`: each cohort gets a guideline-pattern diet (1–3 foods per
+  category, ±25%); requirements are the DRIs lowered only where that diet falls
+  short, limits are raised only where it exceeds them, and supplies of the foods
+  it uses are 1.02–1.30× its consumption. The servings matrix is stored as
+  `feasible_witness` (`diet_plan_satisfies` checks it row by row).
+- `infeasible` (`DietInfeasibilityCertificate`): **supply shortage** (60%) —
+  the carriers of one scarce micronutrient are cut so that, even used up to
+  `min(supply, Σ headcount·portion limit)`, they deliver ≤ 1/1.08 of the summed
+  cohort requirement; or **energy squeeze** — one cohort's minimum for a
+  nutrient exceeds the exact fractional-knapsack maximum under its energy
+  ceiling and portion limits. Both aggregate several rows; presolve does not
+  see them. `diet_certificate_holds` recomputes them.
+- `unknown`: DRI requirements and supplies drawn around a nominal consumption
+  with an instance-wide market tightness and per-category supply shocks
+  (≈ 10–25% of instances are infeasible).
 
-- `n_foods::Int`
-- `n_nutrients::Int`
-- `costs::Vector{Float64}`
-- `nutrient_content::Matrix{Float64}`
-- `requirements::Vector{Float64}`
-- `food_supply_limits::Vector{Float64}`
-- `cost_budget::Float64`
-- `min_food_amounts::Dict{Int, Float64}`
-- `max_food_amounts::Dict{Int, Float64}`
+## `food_groups`: menu planning with inventory
 
-## LP Formulation
+Per food `f`, day `d`, week `w` (deliveries at the start of each week):
+servings `s[f,d] ∈ [0, upper[f]]`, weekly purchases `b[f,w] ≥ 0`, spot top-ups
+`spot[f,d] ≥ 0` on non-delivery days at a 30–80% retail markup, and end-of-day
+stock `I[f,d] ∈ [0, shelf_limit[f]]`, all per person. Minimize
+`headcount · (purchases at seasonal prices + spot purchases + holding)`.
 
-Sets:
+Rows: daily energy band, protein minimum, sodium ceiling, saturated-fat share
+and a servings band per present food group (grains, vegetables, fruits, dairy,
+protein foods); weekly fiber/micronutrient minimums on the week's intake and a
+variety cap per food and week; the inventory balance
+`I[f,d] = (1 − decay[f]) I[f,d−1] + delivery/spot − s[f,d]` (perishables lose
+1–15% a day); storage capacity per class (dry, refrigerated, frozen) and day.
 
-- `F = {1, ..., n_foods}` for foods
-- `N = {1, ..., n_nutrients}` for nutrients
+Spot purchases and per-item shelf limits are what keep the inventory columns
+from being aggregated away by presolve (without them the balance chain is
+eliminated and only ~35% of rows survive).
 
-Decision variable:
+Sizing: `3 · n_foods · n_days` variables; foods `≈ 3√target` (13–250),
+`n_days = round(target / 3 n_foods)` (1–364).
 
-```text
-x[i] >= 0 = amount of food i consumed
-```
+Feasibility: `feasible` plants a day-by-day pattern menu bought weekly to cover
+consumption after spoilage (`MenuPlan`, checked by `menu_plan_satisfies`);
+`infeasible` either tightens one food group's variety caps below a week's group
+minimum (60%) or raises one day's protein minimum above the energy-capped
+knapsack maximum (`MenuInfeasibilityCertificate`); `unknown` uses DRI weekly
+targets, group-calibrated variety caps and nominal storage.
 
-Objective:
+## `food_aid`: ration design with sourcing
 
-```text
-minimize sum_{i in F} costs[i] * x[i]
-```
+Distribution sites belong to a programme (general distribution, school meals,
+child supplementary feeding, pregnant/lactating women) with NutVal targets,
+allowed commodities (20-commodity catalog: cereals, pulses, oil,
+SuperCereal/SuperCereal Plus, LNS, sugar, milk powder, canned fish, dates,
+biscuits) and ration limits. Variables: rations `r[c, j]` (g/person/day),
+delivery arcs `y[c, h, j]` for sites served by two hubs, procurement arcs
+`q[c, s, h]` from international, regional and local sources.
 
-Nutrient requirements:
+Rows: per site an energy band and minimums for protein, fat, calcium, iron,
+zinc, vitamins A and C plus a minimum fat share of energy; per two-hub ration
+pair `Σ_h y = 30·10⁻⁶·beneficiaries·r`; per (commodity, hub) the balance
+`Σ_s q ≥ Σ y + direct single-hub demand`; per (commodity, source) capacity; per
+hub throughput. A single-hub site's delivery is fixed by its ration, so it has
+no delivery variable (otherwise presolve aggregates the doubleton away).
 
-```text
-sum_{i in F} nutrient_content[i,j] * x[i] >= requirements[j]
-    for each nutrient j
-```
+Sizing: hubs `≈ √target / 6`, sources and commodities by scale, then sites are
+added until the variable count reaches the target (within one site).
 
-Supply limits, when finite:
+Feasibility: `feasible` plants each programme's reference basket and splits it
+over hubs and sources (`AidPlan`, `aid_plan_satisfies`); `infeasible` cuts a
+hub's throughput below what its single-hub sites need to reach their energy
+minimum at the most energy-dense ration (65%, when such sites exist) or makes
+the whole pipeline short of a micronutrient (`AidInfeasibilityCertificate`);
+`unknown` keeps NutVal targets (micronutrients at 60–95%) and draws market and
+logistics capacity around last cycle's flows (two-sided, ≈ 30% infeasible).
 
-```text
-x[i] <= food_supply_limits[i]
-```
+## Presolve and difficulty (HiGHS, seed 0)
 
-Budget limit, when finite:
-
-```text
-sum_{i in F} costs[i] * x[i] <= cost_budget
-```
-
-Food-specific consumption restrictions:
-
-```text
-x[i] >= min_food_amounts[i]    for listed foods
-x[i] <= max_food_amounts[i]    for listed foods
-```
-
-All variables are continuous and nonnegative.
-
-## Feasibility Controls
-
-`unknown` is first mapped randomly to `feasible` with probability 0.75 or `infeasible` with probability 0.25. The selected actual status controls the rest of generation.
-
-### Feasible
-
-The feasible path constructs a baseline diet rather than solving a verification LP.
-
-1. It scores foods by average nutrient content divided by cost.
-2. It allocates 75% of a 100-unit baseline diet across the top 60% of foods by cost-effectiveness, weighted by effectiveness, and spreads the remaining 25% across the rest.
-3. It computes achieved nutrient levels from that baseline diet.
-4. It sets each nutrient requirement below the baseline achievement using a tolerance scenario: 2% to 5%, 5% to 10%, or 8% to 12%.
-5. It creates finite supply limits under one of three scenarios: seasonal availability, market supply, or normal supply. Limits are multiples of baseline amounts, so the baseline remains intended to fit.
-6. It sets a finite cost budget based on baseline cost: tight 105% to 115%, moderate 110% to 125%, or generous 150% to 200%.
-7. With probability 0.7, it adds minimum amounts for about one-sixth of foods and maximum amounts for about one-fifth of foods, both derived from baseline amounts.
-
-### Infeasible
-
-The infeasible path chooses one of four scenarios and then performs a final verification-style strengthening step.
-
-- Nutrient impossibility: gives foods finite supplies, computes maximum achievable nutrients under those supplies, and sets one nutrient requirement above its maximum.
-- Budget impossibility: sets broad food supplies, creates nutrient requirements, estimates a lower bound on cost required to satisfy them, and sets the budget below that estimate.
-- Supply shortage: sets requirements and supplies, then reduces supplies for foods contributing to a target nutrient until that nutrient cannot be met.
-- Over-constrained system: builds a baseline diet, tightens requirements, supply, budget, minimum consumption of expensive foods, and maximum consumption of nutritious foods, then forces one nutrient above its achievable maximum under the resulting bounds.
-
-After any infeasible scenario, the constructor computes, for each nutrient, the maximum possible amount under food supply and food-specific maximum constraints. It then forces one target nutrient requirement to 200% to 300% of that maximum, or to `100.0` to `200.0` if the maximum is zero. This final step is the strongest infeasibility guarantee in the implementation.
-
-## Model Characteristics
-
-The model has `n_foods` continuous nonnegative variables. It always has `n_nutrients` nutrient constraints. Additional constraints are added for each finite supply limit, for a finite budget, for each minimum food amount, and for each maximum food amount.
-
-Nutrient rows and the budget row are dense across foods. Supply and food-specific bound constraints are one-variable rows. The formulation is a continuous LP; it does not model integer servings or discrete package counts.
-
-## Practical Notes
-
-These instances are useful for testing dense covering-style constraints combined with simple bound rows and an optional budget cap. Feasible instances are constructed around a baseline diet and are meant to be challenging but feasible; infeasible instances include explicit maximum-achievable nutrient checks. One implementation detail to note is that generated nutrient contents use a `0.1` step even for small endpoint ranges, so some scale settings may produce coarser nutrient values than the endpoint precision suggests.
+| Variant | 10k: rows, presolve kept (cols/rows), iterations | 100k: rows, kept, iterations |
+|---|---|---|
+| `standard` | 924, 1.00/1.00, ~1k | 7.6k, 1.00/1.00, ~10k |
+| `food_groups` | 4.0k, 0.97/0.94, ~6k | 40k, 1.00/0.99, ~120k |
+| `food_aid` | 5.9k, 1.00/0.96, ~9k | 54k, 1.00/0.96, ~105k |

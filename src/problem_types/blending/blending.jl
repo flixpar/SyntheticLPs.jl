@@ -1,11 +1,17 @@
 # blending category
 #
-# Entry point for the `blending` problem category. A category groups one or
-# more variant formulations; the category is registered lazily from its
-# first variant's `register_variant` call (or call `register_category`
-# explicitly to give the category its own description). Add a variant by
-# creating a file in this folder and including it below.
+# Entry point for the `blending` problem category: secondary-aluminium alloy
+# blending (scrap, primary metal and master alloys charged into composition
+# windows). `common.jl` holds the alloy/material catalog and helpers; each
+# variant file is a structurally different blending LP on top of it.
 
+register_category(
+    :blending,
+    "Alloy blending: scrap, primary metal and master alloys charged so every melt meets " *
+    "its composition window",
+)
+
+include("common.jl")
 include("standard.jl")
-include("equipment_batches.jl")
-include("multi_product.jl")
+include("multi_period.jl")
+include("robust.jl")
