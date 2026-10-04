@@ -356,12 +356,14 @@ lexicographically:
 
   1. a geometric spanning tree (`_geo_spanning_edges`) in both directions, so
      the network is strongly connected (`trunk[k] = true` on these arcs);
-  2. extra local links drawn from the `k_cand`-nearest-neighbour candidate
+  2. one extra two-way link for every leaf of the tree (to its nearest
+     non-adjacent candidate), so dead ends are rare;
+  3. extra local links drawn from the `k_cand`-nearest-neighbour candidate
      edges in order of noisy length (short links first, lognormal noise so the
      pattern is not purely metric), each two-way with probability
      `bidirectional` and one-way otherwise — the last odd unit of budget is a
      one-way arc;
-  3. only if the candidate pool is exhausted, random long-range express links.
+  4. only if the candidate pool is exhausted, random long-range express links.
 
 Requires `2 * (n - 1) <= n_arcs <= n * (n - 1)`; callers size `n` from the
 arc budget (typically 3-5 arcs per node, like road and pipeline networks).
@@ -392,8 +394,33 @@ function _geo_network(
         end
     end
 
-    # Candidate extra links: kNN edges not in the tree, short-first with noise.
+    # Close dead ends first: every leaf of the tree gets a second (two-way)
+    # link to its nearest non-adjacent candidate, budget permitting. Real
+    # networks have few dead ends, and a dangling node behind a single link
+    # turns into presolve-reducible doubleton rows.
     undirected = Set{Tuple{Int, Int}}(tree)
+    tree_degree = zeros(Int, n)
+    for (i, j) in tree
+        tree_degree[i] += 1
+        tree_degree[j] += 1
+    end
+    for v in 1:n
+        tree_degree[v] == 1 || continue
+        n_arcs - length(arcs) >= 2 || break
+        for w in knn[v]
+            e = (min(v, w), max(v, w))
+            e in undirected && continue
+            push!(undirected, e)
+            for a in ((v, w), (w, v))
+                push!(present, a)
+                push!(arcs, a)
+            end
+            tree_degree[w] += 1
+            break
+        end
+    end
+
+    # Candidate extra links: kNN edges not yet used, short-first with noise.
     pool = Tuple{Float64, Int, Int}[]
     for i in 1:n, j in knn[i]
         e = (min(i, j), max(i, j))

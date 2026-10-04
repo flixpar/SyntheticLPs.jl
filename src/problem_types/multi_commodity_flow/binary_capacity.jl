@@ -1,197 +1,239 @@
 using JuMP
 using Random
+using Distributions
+using Statistics
+
+"""
+Planted design: every origin-destination commodity routed along a noisy
+shortest path, with exactly one module — the smallest whose capacity covers
+the aggregate load — installed on every used arc (`install[a, m]` in {0, 1}).
+Feasible for the MIP itself: bundle, module-choice and strong-linking rows all
+hold.
+"""
+struct BinaryCapacityMCFWitness
+    flows::Matrix{Float64}
+    install::Matrix{Float64}
+end
 
 """
     BinaryCapacityMultiCommodityFlowProblem <: ProblemGenerator
 
-Discrete-capacity multicommodity network design. Each directed arc offers two
-mutually exclusive capacity modules, represented by binary installation
-variables, while commodity routing remains continuous. The objective combines
-fixed module costs and per-unit routing costs.
+Multicommodity capacitated network design with capacity modules, on sparse
+geographic networks (the strong MCND formulation).
+
+# Overview
+
+Commodities are origin-destination pairs with demand `demand[k]`. On every arc
+at most one of three capacity modules (e.g. 1x, 2.5x and 6x a base unit) can be
+installed at a fixed cost with economies of scale; routing is continuous.
+
+    minimize    sum_{a,k} routing_cost[a,k] x[a,k] + sum_{a,m} module_cost[a,m] y[a,m]
+    subject to  flow conservation per (node, commodity)
+                sum_k x[a,k] <= sum_m module_capacity[a,m] y[a,m]      every arc
+                sum_m y[a,m] <= 1                                      every arc
+                x[a,k] <= min(demand[k], max_m module_capacity[a,m]) * sum_m y[a,m]
+                                                                       every arc, commodity
+                x >= 0, y in {0,1}
+
+The last family is the classic STRONG linking inequality: without it the LP
+relaxation installs a sliver of a module per unit of flow (the weak
+relaxation the previous version had); with it every commodity using an arc
+must pay for a proportional share of a module, so the relaxation keeps genuine
+design structure.
+
+# Data grounding
+
+Network, origins and gravity destinations as in `multi_commodity_flow/standard`
+(one destination per commodity). Module capacities are a lognormal base unit
+(trunk arcs 1.6x) times (1, 2.5, 6); module cost = arc length x capacity^0.7
+(economies of scale) plus a fixed installation charge. Routing cost =
+arc length x commodity value factor.
+
+# Feasibility control
+
+Planted routing along commodity-specific noisy shortest paths; on every used
+arc the base unit is raised if needed so the largest module covers
+`rho * load`:
+
+  - `feasible`: `rho` in [1.05, 1.5]; the planted design is the witness.
+  - `infeasible`: a metric certificate (`MultiCommodityFlowMetricCertificate`)
+    on the LARGEST module capacities — valid in the relaxation because
+    `sum_m y <= 1` caps every arc at its largest module. Module capacities are
+    scaled down (all arcs in `:length` mode, the region's exit arcs in
+    `:regional_cut` mode) until it separates.
+  - `unknown`: modules as `feasible`, then every demand grows by a common
+    factor in [1.0, 1.8] (`_mcf_unknown_growth!`; the largest modules leave
+    more headroom than continuous capacities); natural, either side.
+
+# Sizing
+
+Variables `n_arcs * (n_commodities + 3)` with `n_commodities =
+clamp(round(0.5 * target^0.3), 3, 40)` and `n_arcs ~ target / (n_commodities +
+3)`. Rows `n_nodes * n_commodities + 2 n_arcs + n_arcs * n_commodities`.
 """
 struct BinaryCapacityMultiCommodityFlowProblem <: ProblemGenerator
     n_nodes::Int
-    n_arcs::Int
-    n_commodities::Int
-    n_modules::Int
     arcs::Vector{Tuple{Int, Int}}
-    sources::Vector{Int}
-    sinks::Vector{Int}
-    demands::Vector{Int}
-    routing_cost::Vector{Float64}
-    module_capacity::Matrix{Int}
+    trunk::Vector{Bool}
+    routing_cost::Matrix{Float64}
+    module_capacity::Matrix{Float64}
     module_cost::Matrix{Float64}
+    origins::Vector{Int}
+    destinations::Vector{Int}
+    demands::Vector{Float64}
+    positions::Vector{Tuple{Float64, Float64}}
+    geography::Symbol
+    feasible_witness::Union{Nothing, BinaryCapacityMCFWitness}
+    infeasibility_certificate::Union{Nothing, MultiCommodityFlowMetricCertificate}
+    feasibility_status::FeasibilityStatus
 end
 
-function _binary_mcf_path(arcs::Vector{Tuple{Int, Int}}, n_nodes::Int, source::Int, sink::Int)
-    outgoing = [Int[] for _ in 1:n_nodes]
-    for (a, (i, _)) in enumerate(arcs)
-        push!(outgoing[i], a)
-    end
-    parent_node = zeros(Int, n_nodes)
-    parent_arc = zeros(Int, n_nodes)
-    visited = falses(n_nodes)
-    queue = Int[source]
-    visited[source] = true
-    head = 1
-    while head <= length(queue) && !visited[sink]
-        node = queue[head]
-        head += 1
-        for a in outgoing[node]
-            next = arcs[a][2]
-            visited[next] && continue
-            visited[next] = true
-            parent_node[next] = node
-            parent_arc[next] = a
-            push!(queue, next)
-        end
-    end
-    visited[sink] || error("binary-capacity MCF topology is not strongly connected")
-    path = Int[]
-    node = sink
-    while node != source
-        push!(path, parent_arc[node])
-        node = parent_node[node]
-    end
-    reverse!(path)
-    return path
-end
+const _MCND_MODULE_SIZES = (1.0, 2.5, 6.0)
 
-"""
-    BinaryCapacityMultiCommodityFlowProblem(target_variables, feasibility_status, seed)
-
-The variable count is `n_arcs * (n_commodities + 2)`: one flow per
-commodity-arc pair and two binary module choices per arc. Feasible instances
-plant a path routing and make one module on every used arc large enough for its
-aggregate load. Infeasible instances make commodity 1's demand exceed the sum
-of the largest capacity modules entering its sink; this remains a certificate
-after the binary variables are relaxed.
-"""
 function BinaryCapacityMultiCommodityFlowProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
+    target_variables >= 1 ||
+        throw(ArgumentError("target_variables must be >= 1 (got $target_variables)."))
+    target_variables <= MCF_MAX_VARIABLES || throw(
+        ArgumentError(
+            "multi_commodity_flow/binary_capacity supports at most $MCF_MAX_VARIABLES variables; " *
+            "requested $target_variables.",
+        ),
+    )
     rng = MersenneTwister(seed)
-
-    target = max(target_variables, 1)
-    n_modules = 2
-    n_commodities = clamp(round(Int, sqrt(target) / 2), 2, 24)
-    n_arcs = max(4, round(Int, target / (n_commodities + n_modules)))
-    n_nodes = max(4, min(n_arcs, round(Int, n_arcs / 2)))
-    while n_nodes * (n_nodes - 1) < n_arcs
-        n_nodes += 1
+    M = length(_MCND_MODULE_SIZES)
+    K = clamp(round(Int, 0.5 * target_variables^0.3), 3, 40)
+    # OD commodities: one destination each; origins may repeat across pairs,
+    # so draw them with replacement after the network exists.
+    inst = _mcf_instance(rng, max(round(Int, target_variables / (K + M)), 2), 1; dest_share=(0.0, 0.0))
+    n, arcs, trunk, positions, dist = inst.n, inst.arcs, inst.trunk, inst.positions, inst.dist
+    A = length(arcs)
+    out_adj, _ = _geo_adjacency(n, arcs)
+    length_scale = 5.0 * median(dist)
+    act = inst.weights
+    origins = sample(rng, 1:n, Weights(act), K; replace=true)
+    destinations = Vector{Int}(undef, K)
+    raw = Vector{Float64}(undef, K)
+    for k in 1:K
+        d, r = _mcf_gravity_destinations(rng, n, origins[k], positions, act, 1, length_scale)
+        destinations[k], raw[k] = d[1], r[1]
     end
+    demands = max.(round.(50.0 .* raw ./ (sum(raw) / K); digits=2), 0.01)
 
-    arcs = _discrete_mcf_topology(rng, n_nodes, n_arcs)
-    n_arcs = length(arcs)
+    value_factor = [rand(rng, LogNormal(0.0, 0.35)) for _ in 1:K]
+    arc_noise = [rand(rng, LogNormal(0.0, 0.2)) for _ in 1:A]
+    routing_cost = [round((dist[a] * arc_noise[a] + 0.1) * value_factor[k]; digits=3) for a in 1:A, k in 1:K]
 
-    sources = Vector{Int}(undef, n_commodities)
-    sinks = Vector{Int}(undef, n_commodities)
-    for k in 1:n_commodities
-        sources[k] = rand(rng, 1:n_nodes)
-        sink = rand(rng, 1:(n_nodes - 1))
-        sinks[k] = sink >= sources[k] ? sink + 1 : sink
+    dests = [[destinations[k]] for k in 1:K]
+    dems = [[demands[k]] for k in 1:K]
+    flows, load = _mcf_planted_loads(rng, n, arcs, out_adj, dist, origins, dests, dems)
+    used = filter(>(0.0), load)
+    unit_scale = (0.3 + 0.4 * rand(rng)) * (isempty(used) ? 50.0 : median(used))
+    rho_range = (1.05, 1.5)
+    base = Vector{Float64}(undef, A)
+    for a in 1:A
+        b = unit_scale * rand(rng, LogNormal(0.0, 0.5)) * (trunk[a] ? 1.6 : 1.0)
+        if load[a] > 0
+            need = (rho_range[1] + (rho_range[2] - rho_range[1]) * rand(rng)) * load[a]
+            b = max(b, need / _MCND_MODULE_SIZES[end])
+        end
+        base[a] = b
     end
-    demands = rand(rng, 2:12, n_commodities)
-    routing_cost = [round(0.5 + 8.0 * rand(rng); digits=3) for _ in 1:n_arcs]
+    module_capacity = [ceil(base[a] * _MCND_MODULE_SIZES[m]; digits=2) for a in 1:A, m in 1:M]
+    install_charge = 20.0 * rand(rng, LogNormal(0.0, 0.3))
+    module_cost = [
+        round((dist[a] + 1.0) * module_capacity[a, m]^0.7 * 0.5 + install_charge; digits=2) for
+        a in 1:A, m in 1:M
+    ]
 
-    module_capacity = Matrix{Int}(undef, n_arcs, n_modules)
-    module_cost = Matrix{Float64}(undef, n_arcs, n_modules)
-    for a in 1:n_arcs
-        small = rand(rng, 5:18)
-        large = small + rand(rng, 12:45)
-        module_capacity[a, 1] = small
-        module_capacity[a, 2] = large
-        base_cost = 8.0 + 30.0 * rand(rng)
-        module_cost[a, 1] = round(base_cost; digits=2)
-        module_cost[a, 2] = round(base_cost * rand(rng, 1.35:0.05:1.90); digits=2)
-    end
-
+    feasible_witness = nothing
+    infeasibility_certificate = nothing
     if feasibility_status == feasible
-        planted_load = zeros(Int, n_arcs)
-        for k in 1:n_commodities
-            for a in _binary_mcf_path(arcs, n_nodes, sources[k], sinks[k])
-                planted_load[a] += demands[k]
+        install = zeros(A, M)
+        for a in 1:A
+            load[a] > 0 || continue
+            m = findfirst(m -> module_capacity[a, m] >= load[a], 1:M)
+            install[a, m] = 1.0
+        end
+        feasible_witness = BinaryCapacityMCFWitness(flows, install)
+    else
+        maxcap = module_capacity[:, M]
+        squeezed = copy(maxcap)
+        if feasibility_status == infeasible
+            infeasibility_certificate = _mcf_enforce_metric!(
+                rng, squeezed, n, arcs, out_adj, positions, origins, dests, dems
+            )
+        else
+            _mcf_unknown_growth!(rng, squeezed, n, arcs, origins, dests, dems; max_growth=1.8)
+            demands .= [d[1] for d in dems]
+        end
+        # Rescale every module of an arc with its largest one (the squeeze
+        # may also enlarge an arc to keep a node open).
+        for a in 1:A
+            squeezed[a] == maxcap[a] && continue
+            f = squeezed[a] / maxcap[a]
+            for m in 1:(M - 1)
+                module_capacity[a, m] = max(round(module_capacity[a, m] * f; digits=2), 0.01)
             end
+            module_capacity[a, M] = squeezed[a]
         end
-        for a in 1:n_arcs
-            planted_load[a] == 0 && continue
-            required = ceil(Int, 1.15 * planted_load[a]) + 1
-            module_capacity[a, 2] = max(module_capacity[a, 2], required)
-            module_cost[a, 2] = max(module_cost[a, 2], 1.25 * module_cost[a, 1])
-        end
-    elseif feasibility_status == infeasible
-        # Even fractional module selection with sum(y) <= 1 supplies at most the
-        # largest module on each incoming arc.
-        sink = sinks[1]
-        incoming = [a for (a, (_, j)) in enumerate(arcs) if j == sink]
-        maximum_sink_inflow = sum(maximum(module_capacity[a, :]) for a in incoming)
-        demands[1] = maximum_sink_inflow + rand(rng, 2:8)
     end
 
     return BinaryCapacityMultiCommodityFlowProblem(
-        n_nodes,
-        n_arcs,
-        n_commodities,
-        n_modules,
+        n,
         arcs,
-        sources,
-        sinks,
-        demands,
+        trunk,
         routing_cost,
         module_capacity,
         module_cost,
+        origins,
+        destinations,
+        demands,
+        positions,
+        inst.geography,
+        feasible_witness,
+        infeasibility_certificate,
+        feasibility_status,
     )
 end
 
 """
-Build the deterministic binary-capacity multicommodity-flow formulation.
+    build_model(prob::BinaryCapacityMultiCommodityFlowProblem)
+
+Build the strong MCND formulation. Deterministic — uses only the struct fields.
 """
 function build_model(prob::BinaryCapacityMultiCommodityFlowProblem)
     model = Model()
-    K = prob.n_commodities
-    A = prob.n_arcs
-    M = prob.n_modules
-
-    @variable(model, flow[1:K, 1:A] >= 0)
-    @variable(model, install[1:A, 1:M], Bin)
-
+    A = length(prob.arcs)
+    K = length(prob.origins)
+    M = size(prob.module_capacity, 2)
+    n = prob.n_nodes
+    @variable(model, x[1:A, 1:K] >= 0)
+    @variable(model, y[1:A, 1:M], Bin)
     @objective(
         model,
         Min,
-        sum(prob.routing_cost[a] * flow[k, a] for k in 1:K, a in 1:A) +
-            sum(prob.module_cost[a, m] * install[a, m] for a in 1:A, m in 1:M)
+        sum(prob.routing_cost[a, k] * x[a, k] for a in 1:A, k in 1:K) +
+            sum(prob.module_cost[a, m] * y[a, m] for a in 1:A, m in 1:M)
     )
-
     for a in 1:A
-        @constraint(model, sum(install[a, m] for m in 1:M) <= 1)
-        @constraint(
-            model,
-            sum(flow[k, a] for k in 1:K) <=
-                sum(prob.module_capacity[a, m] * install[a, m] for m in 1:M)
-        )
-    end
-
-    outgoing = [Int[] for _ in 1:prob.n_nodes]
-    incoming = [Int[] for _ in 1:prob.n_nodes]
-    for (a, (i, j)) in enumerate(prob.arcs)
-        push!(outgoing[i], a)
-        push!(incoming[j], a)
-    end
-    for k in 1:K, node in 1:prob.n_nodes
-        rhs = if node == prob.sources[k]
-            prob.demands[k]
-        elseif node == prob.sinks[k]
-            -prob.demands[k]
-        else
-            0
+        @constraint(model, sum(x[a, k] for k in 1:K) <= sum(prob.module_capacity[a, m] * y[a, m] for m in 1:M))
+        @constraint(model, sum(y[a, m] for m in 1:M) <= 1)
+        cap = prob.module_capacity[a, M]
+        for k in 1:K
+            @constraint(model, x[a, k] <= min(prob.demands[k], cap) * sum(y[a, m] for m in 1:M))
         end
+    end
+    out_adj, in_adj = _geo_adjacency(n, prob.arcs)
+    for k in 1:K, v in 1:n
+        rhs = (v == prob.origins[k] ? prob.demands[k] : 0.0) - (v == prob.destinations[k] ? prob.demands[k] : 0.0)
         @constraint(
             model,
-            sum(flow[k, a] for a in outgoing[node]) - sum(flow[k, a] for a in incoming[node]) ==
-                rhs
+            sum(x[a, k] for a in out_adj[v]; init=AffExpr(0.0)) -
+            sum(x[a, k] for a in in_adj[v]; init=AffExpr(0.0)) == rhs
         )
     end
-
     return model
 end
 
@@ -199,5 +241,5 @@ register_variant(
     :multi_commodity_flow,
     :binary_capacity,
     BinaryCapacityMultiCommodityFlowProblem,
-    "Multicommodity network design with continuous routing and mutually exclusive binary capacity modules",
+    "Multicommodity capacitated network design on a sparse geographic network: origin-destination commodities, three capacity modules per arc with economies of scale, and the strong linking inequalities that keep the LP relaxation meaningful; planted design witness and metric-inequality certificate",
 )

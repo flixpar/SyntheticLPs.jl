@@ -1,104 +1,136 @@
 # Multi-Commodity Flow
 
-The multi-commodity flow generator creates continuous minimum-cost routing LPs in which several commodities share capacities on the same directed network.
+Commodities competing for shared arc capacity on sparse geographic networks.
+The bundle (shared-capacity) rows couple every commodity, so — unlike a
+single-commodity network LP — the constraint matrix is not totally unimodular
+and simplex has to trade capacity between commodities. Both variants build on
+the shared network machinery of `network_flow` (`geo_network.jl`) and use a
+constructor-local RNG (`build_model` does no sampling).
 
-## Overview
+## Variants
 
-This generator represents shared infrastructure planning: different freight classes, products, or traffic demands each need to move from their own source to their own sink, while all commodities compete for capacity on common arcs. The model minimizes total routing cost subject to arc capacity limits and per-commodity flow conservation.
+| Variant | Model class | Commodities | Key structure |
+|---|---|---|---|
+| `standard` (default) | LP | origin-aggregated (one origin, many gravity destinations) | min-cost routing, bundle rows `sum_k x[a,k] <= u[a]` |
+| `binary_capacity` | MIP (strong LP relaxation) | origin-destination pairs | 3 capacity modules per arc, module choice rows, strong linking `x[a,k] <= min(d_k, U_a) sum_m y[a,m]` |
 
-## Generator Data and Sizing
+`integer_flow` was removed: its general-integer arc flows disappear under the
+default `relax_integer=true`, leaving an LP structurally identical to
+`standard`.
 
-`target_variables` maps to the product of commodities and arcs:
+## Shared data model
 
-```text
-target_variables ~= n_commodities * n_arcs
-```
+- **Network**: `_geo_network` — strongly connected, 3.2-4.6 arcs per node, an
+  exact arc budget, dead ends closed by a second link, region side
+  `12 sqrt(n)`, geography `:clustered` / `:uniform` / `:corridor`.
+- **Commodities**: origins (ports, plants, hubs) drawn by heavy-tailed activity
+  weight; destinations drawn without replacement with gravity weights
+  `w_v / (1 + dist / L)^1.5` (`L` = 5x the median arc length); demands
+  `w_o^0.5 w_v / (1 + dist / L)^1.5`, scaled to a mean of 50 units.
+- **Costs**: arc length x arc noise (15% cheaper on trunk arcs for
+  `standard`) x a lognormal commodity value factor, plus a small handling
+  charge — commodities differ, so the LP is not symmetric across them.
+- **Planted routing**: every commodity is routed along a shortest-path tree on
+  its own noisy lengths (`_geo_dijkstra` + `_geo_tree_flows`); the aggregate
+  per-arc load sizes the capacities.
 
-The constructor seeds Julia's global RNG with `Random.seed!(seed)`. `sample_parameters_mcf` also calls `Random.seed!(seed)`, so parameter selection and subsequent data generation are reproducible for a given input.
+### Metric-inequality certificates
 
-Parameter selection searches for a realistic combination of commodity count, node count, and arc count. If no combination gets within 10% relative error, it falls back to a heuristic using a random commodity count and target density.
-
-| Target variables | Commodities | Nodes | Density band | Capacity range | Demand range | Cost range | Utilization |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `<= 100` | `2:5` | `5:15` | `0.2` to `0.6` | `20.0` to `200.0` | `5.0` to `50.0` | `1.0` to `15.0` | `0.6` to `0.8` |
-| `<= 500` | `3:15` | `10:30` | `0.15` to `0.5` | `50.0` to `500.0` | `10.0` to `100.0` | `1.0` to `25.0` | `0.5` to `0.7` |
-| `> 500` | `8:50` | `15:100` | `0.1` to `0.4` | `100.0` to `2000.0` | `20.0` to `500.0` | `1.0` to `50.0` | `0.4` to `0.6` |
-
-The generated network starts with a directed cycle through all nodes, which gives every node reachability around the cycle. It then adds a limited number of reverse cycle arcs, shortcut arcs, and finally shuffled random directed arcs without self-loops until the target arc count is reached. `n_arcs` is capped by `n_nodes * (n_nodes - 1)`, but if the requested arc count is below `n_nodes`, the initial cycle can still produce more actual arcs than `n_arcs`.
-
-Arc capacities are sampled from a log-normal distribution centered on the geometric mean of the capacity range, clamped to the range, and rounded to 2 digits. Demands are similarly log-normal over the demand range and rounded to 2 digits. Costs are sampled uniformly from the cost range and multiplied by a congestion factor from 1.0 to about 1.3, where lower-capacity arcs become more expensive.
-
-Commodity pairs are generated as source-sink pairs with a 40% short-haul and 60% long-haul pattern, avoiding duplicate pairs during the first 100 attempts per commodity. If uniqueness attempts fail, additional non-identical source and sink pairs are added without checking duplication.
-
-The struct stores:
-
-- `n_nodes::Int`
-- `n_arcs::Int`
-- `n_commodities::Int`
-- `arcs::Vector{Tuple{Int,Int}}`
-- `capacities::Dict{Tuple{Int,Int},Float64}`
-- `demands::Dict{Int,Float64}`
-- `costs::Dict{Tuple{Int,Int},Float64}`
-- `commodities::Vector{Tuple{Int,Int}}`
-
-## LP Formulation
-
-Sets:
-
-- `V = {1, ..., n_nodes}`
-- `A = arcs`
-- `K = {1, ..., n_commodities}`
-- commodity `k` has source `s_k`, sink `t_k`, and demand `d_k`
-
-Decision variable:
+For any arc lengths `l >= 0`, a feasible routing satisfies (Onaga-Kakusho,
+the "Japanese theorem")
 
 ```text
-flow[k,a] >= 0 = flow of commodity k on arc a
+sum_a capacity[a] * l[a]  >=  sum_k sum_v demand[k][v] * dist_l(origin[k], v)
 ```
 
-Objective:
+because each commodity's flow decomposes into paths no shorter than the
+shortest one. An infeasible instance stores
+`MultiCommodityFlowMetricCertificate(mode, lengths, region, capacity_length,
+required)` with `capacity_length < required`:
+
+- `:length` (default, ~60%): `l` = geographic arc length — a network-wide
+  capacity shortage that only shows when all commodities' path lengths are
+  weighed together;
+- `:regional_cut` (~40%): `l = 1` on the arcs leaving a region of 5%-25% of
+  the nodes around the largest origin — the region's exit capacity is below
+  the demand that must leave it.
+
+Capacities are squeezed to 80%-93% of the requirement (`_mcf_squeeze!`),
+while `_mcf_local_repair!` keeps every node open (its in-arcs carry 1.15x the
+demand ending there, an origin's out-arcs 1.15x the demand leaving it).
+Together with `_geo_network` closing dead ends, this keeps infeasibility out of
+presolve's single-row / doubleton reach: the HiGHS presolve keeps the whole
+model and simplex has to prove infeasibility. (On tiny networks, where
+destinations sit a hop or two from their origins, the repair slack is relaxed
+so the certificate can separate at all.)
+
+## `standard`
 
 ```text
-minimize sum_{a in A} costs[a] * sum_{k in K} flow[k,a]
+minimize    sum_{a,k} cost[a,k] x[a,k]
+subject to  sum_k x[a,k] <= capacity[a]                       every arc
+            sum_out x[.,k] - sum_in x[.,k] = b[v,k]           every node, commodity
+            x >= 0
 ```
 
-Shared arc capacities:
+`b[origin_k, k]` = commodity k's total demand, `-demand` at its destinations,
+0 elsewhere. Each commodity serves 10%-35% of the nodes. Capacities are
+`max(floor, rho * load)` with a tiered lognormal floor (trunk arcs 1.6x).
+
+- `feasible`: `rho` in [1.05, 1.5]; witness = the planted routing.
+- `infeasible`: as `feasible`, then a metric certificate is enforced.
+- `unknown`: capacities as `feasible`, then every demand grows by a common
+  factor in [1.0, 1.15] (traffic growth since provisioning): whether the
+  commodities can reroute through the remaining spare capacity is left open.
+
+Sizing: `n_commodities = clamp(round(0.4 * target^0.35), 2, 60)` (about 4 at
+1k, 10 at 10k, 22 at 100k), `n_arcs ~ target / n_commodities`; variables
+`n_arcs * n_commodities` (within half a commodity of the target); rows
+`n_nodes * n_commodities + n_arcs`.
+
+## `binary_capacity`
+
+Multicommodity capacitated network design with modules (the strong MCND
+formulation):
 
 ```text
-sum_{k in K} flow[k,a] <= capacities[a]    for each a in A
+minimize    sum routing_cost[a,k] x[a,k] + sum module_cost[a,m] y[a,m]
+subject to  conservation per (node, OD commodity)
+            sum_k x[a,k] <= sum_m module_capacity[a,m] y[a,m]          every arc
+            sum_m y[a,m] <= 1                                          every arc
+            x[a,k] <= min(demand[k], max_m module_capacity[a,m]) * sum_m y[a,m]
+            x >= 0, y in {0,1}
 ```
 
-Flow conservation and demand satisfaction:
+Modules are 1x, 2.5x and 6x a lognormal base unit (trunk arcs 1.6x); module
+cost = (length + 1) x capacity^0.7 / 2 + an installation charge (economies of
+scale). The strong linking rows are what keep the LP relaxation meaningful:
+without them a relaxed design installs a sliver of a module per unit of flow.
 
-```text
-outflow(k,s_k) - inflow(k,s_k) = d_k
-inflow(k,t_k) - outflow(k,t_k) = d_k
-inflow(k,v) = outflow(k,v)                 for v not in {s_k,t_k}
-```
+- `feasible`: on every loaded arc the base unit is raised so the largest module
+  covers 1.05-1.5x the planted load; witness = planted routing plus the
+  smallest adequate module per used arc (MIP-feasible).
+- `infeasible`: metric certificate on the LARGEST module capacities (valid in
+  the relaxation because `sum_m y <= 1`); all modules of a squeezed arc are
+  rescaled together.
+- `unknown`: modules as `feasible`, demands grown by a common factor in
+  [1.0, 1.8] (the largest modules leave more headroom).
 
-All variables are continuous and nonnegative. There are no commodity-specific arc eligibility restrictions; every commodity can use every generated arc.
+Sizing: `n_commodities = clamp(round(0.5 * target^0.3), 3, 40)`,
+`n_arcs ~ target / (n_commodities + 3)`; variables
+`n_arcs * (n_commodities + 3)`; rows
+`n_nodes * n_commodities + 2 n_arcs + n_arcs * n_commodities`.
 
-## Feasibility Controls
+Both variants reject targets above `MCF_MAX_VARIABLES = 1_000_000` with an
+`ArgumentError`.
 
-The constructor maps statuses to internal symbols: `feasible` becomes `:feasible`, `infeasible` becomes `:infeasible`, and `unknown` becomes `:all`.
+## References
 
-- `feasible`: computes total demand and total capacity. If total capacity is below `total_demand / capacity_utilization`, all capacities are scaled up proportionally. It then checks reachability for each commodity and adds a direct or two-hop path if needed, assigning new arcs random capacities and costs.
-- `infeasible`: first either scales all capacities down to 30% to 70% of their current values or scales all demands up to 150% to 250%. It then calls `enforce_infeasibility_mcf!`, which selects up to three commodities and reduces either total outgoing capacity at the commodity source or total incoming capacity at the commodity sink below that commodity's demand. If targeted bottlenecks fail, it inflates one demand beyond total network capacity.
-- `unknown`: leaves the sampled data in its natural random state, except for the base strongly connected topology.
-
-The feasible path is based on aggregate capacity scaling plus reachability checks. It is intended to improve feasibility but does not solve a multi-commodity feasibility LP. The infeasible path is stronger because a source or sink cut with total capacity below a commodity's demand is a direct certificate of infeasibility.
-
-## Model Characteristics
-
-The intended variable count is `n_commodities * length(arcs)`. The struct's `n_arcs` field records the target/capped arc count, while `length(arcs)` is the actual number of arcs used by the model. The actual count can differ when the initial connectivity construction adds more arcs or feasible repair adds paths.
-
-Constraint counts are driven by:
-
-- one shared capacity constraint per actual arc
-- one flow-balance constraint for every commodity-node pair
-
-The resulting matrix is sparse but larger than single-commodity flow: each commodity-arc variable appears in one shared capacity row and in two node-balance rows for that commodity. The model is a continuous LP relaxation of a routing problem; it does not enforce unsplittable flows or integer path choices.
-
-## Practical Notes
-
-These instances are useful for testing large sparse LPs with coupling constraints, because arc capacities couple otherwise separate commodity flows. They also exercise denser conservation structure than single-commodity flow. The main caveat is that the feasible generator uses sufficient-looking heuristics rather than optimization-based verification, so generated `feasible` data should be interpreted as constructed-to-be-feasible rather than formally certified by the constructor.
+- Ahuja, R.K., Magnanti, T.L., Orlin, J.B. (1993). Network Flows, ch. 17.
+- Onaga, K., Kakusho, O. (1971). On feasibility conditions of multicommodity
+  flows in networks. IEEE Transactions on Circuit Theory 18(4).
+- Iri, M. (1971). On an extension of the maximum-flow minimum-cut theorem to
+  multicommodity flows. Journal of the Operations Research Society of Japan
+  13(3).
+- Gendron, B., Crainic, T.G., Frangioni, A. (1999). Multicommodity capacitated
+  network design. In Telecommunications Network Planning, Springer.
