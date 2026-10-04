@@ -81,4 +81,4 @@ About 16 nonzeros per column; rows ≈ 85% of columns.
 - `unknown`: the same reference specifications (every formula is makeable on
   its own); stock and contracts drawn around the reference use with an
   instance-wide tightness, so a mill may or may not make its whole book
-  (about half of the instances are infeasible).
+  (about a third of the instances are infeasible, at every size).

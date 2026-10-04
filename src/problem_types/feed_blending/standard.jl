@@ -540,9 +540,9 @@ function FeedBlendingProblem(target_variables::Int, feasibility_status::Feasibil
         # Supply is this season's draw around the reference recipes' use: one
         # instance-wide tightness with per-lot and per-contract scatter, so the
         # mills may or may not be able to make their whole book.
-        tightness = rand(rng, Uniform(0.75, 1.4))
+        tightness = rand(rng, Uniform(0.85, 1.4))
         for l in 1:n_lots
-            stock[l] = max(used[l], 0.5) * tightness * rand(rng, Uniform(0.8, 1.25))
+            stock[l] = max(used[l], 0.5) * tightness * rand(rng, Uniform(0.85, 1.2))
         end
         for s in 1:n_suppliers
             by_supplier[s] > 0 && (contract[s] = by_supplier[s] * rand(rng, Uniform(0.85, 1.5)))
