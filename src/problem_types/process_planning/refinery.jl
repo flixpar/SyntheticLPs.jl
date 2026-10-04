@@ -71,13 +71,13 @@ one a cracking or full conversion refinery with parallel trains and many grades.
   capacity, tank, availability, purchase limit, contract and blend window is
   placed around it, so `feasible_witness` is a feasible point that
   [`refinery_plan_satisfies`](@ref) re-checks row by row.
-- `infeasible`: the plan-sized data is broken by (default) a crude-supply
+- `infeasible`: the plan-sized data is broken by (default, 80%) a crude-supply
   curtailment that leaves the potential-weighted supply below the contracted
-  volume — an aggregate argument presolve cannot see — or by contracts above
-  everything the crude menu, the crude unit and the purchased blendstocks could
-  be converted into, or by one grade's specification tightened past every
-  component that may enter it. Each is recorded in `infeasibility_certificate`
-  and proved from the model's own linear rows.
+  volume, or by contracts above everything the crude menu, the crude unit and
+  the purchased blendstocks could be converted into. Both are aggregate
+  arguments over every stream balance and period that presolve cannot see; each
+  is recorded in `infeasibility_certificate` and proved from the model's own
+  linear rows.
 - `unknown`: assets are sized from engineering design rules rather than from the
   plan, and each quality window is stated at the edge of what the configuration
   supports rather than where the plan happens to land, so whether the slate, the
