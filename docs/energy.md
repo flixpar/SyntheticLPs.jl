@@ -161,9 +161,11 @@ contingency set. `:reserve_scarcity` raises the stressed hour's operating
 requirement so that load plus requirement exceeds total available capacity by
 4–10 %, while load alone fits and the requirement row alone is satisfiable;
 exposing it needs every zone's balance, every headroom row and the requirement
-together. `unknown` uses natural requirements, a planning margin of 0.98–1.25,
-and as contingencies the largest units the fleet's spinning capability could
-cover.
+together. Hours with zero available capacity are excluded from reserve-scarcity
+planting, and the certificate requires a strictly positive deficit computed from
+the final demand and reserve requirement. `unknown` uses natural requirements,
+a planning margin of 0.98–1.25, and as contingencies the largest units the fleet's
+spinning capability could cover.
 
 ### `storage`: batteries and pumped hydro
 

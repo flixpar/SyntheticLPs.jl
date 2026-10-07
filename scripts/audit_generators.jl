@@ -56,8 +56,8 @@
 #     feasible/unknown and for infeasible requests;
 #   - `contract`: a feasibility-contract violation (feasible → INFEASIBLE/UNBOUNDED/
 #     UNBOUNDED_OR_INFEASIBLE, infeasible → OPTIMAL/UNBOUNDED);
-#   - `error` / `timeout` / `skipped`: failed builds, solves at the time limit, and
-#     models skipped for exceeding `--max-nnz`.
+#   - `error` / `timeout` / `skipped`: build/solve errors or inconclusive solve
+#     statuses, solves at the time limit, and models skipped for exceeding `--max-nnz`.
 #
 # Report mode does not load SyntheticLPs, JuMP, or HiGHS.
 
@@ -325,6 +325,23 @@ end
 
 presolve_solved(r) = haskey(r, "presolved_cols") && r["presolved_cols"] == 0
 
+# Only completed LP outcomes count as successful solves. TIME_LIMIT has its own
+# flag; absent statuses mean solving was skipped. Unrecognized future statuses
+# must also be visible instead of silently appearing healthy.
+function solve_unsuccessful(r)
+    st = get(r, "solve_status", nothing)
+    return st !== nothing && !(
+        st in (
+            "MODEL_EMPTY",
+            "OPTIMAL",
+            "INFEASIBLE",
+            "UNBOUNDED_OR_INFEASIBLE",
+            "UNBOUNDED",
+            "TIME_LIMIT",
+        )
+    )
+end
+
 function contract_violated(r)
     st = get(r, "solve_status", nothing)
     st === nothing && return false
@@ -355,7 +372,7 @@ function variant_summary(recs, args)
     ps_feas = count(r -> r["status"] != "infeasible" && presolve_solved(r), built)
     ps_inf = count(r -> r["status"] == "infeasible" && presolve_solved(r), built)
     violations = filter(contract_violated, built)
-    errors = count(r -> haskey(r, "error"), recs)
+    errors = count(r -> haskey(r, "error") || solve_unsuccessful(r), recs)
     timeouts = count(r -> get(r, "solve_status", "") == "TIME_LIMIT", recs)
     skipped = count(r -> haskey(r, "skipped"), recs)
 
@@ -447,4 +464,6 @@ function main()
     end
 end
 
-main()
+if abspath(PROGRAM_FILE) == @__FILE__
+    main()
+end

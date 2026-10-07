@@ -19,6 +19,13 @@ catch
     false
 end
 
+# Audit CLI dependencies are test-only too; direct package-environment runs
+# still run the framework and generator tests without them.
+const HAS_ARGPARSE = Base.find_package("ArgParse") !== nothing
+if HAS_ARGPARSE
+    include("audit_generators.jl")
+end
+
 # Optional focus filter, taken from the command line. Naming one or more
 # categories limits the per-variant sweeps and the per-category include loop to
 # them, for iterating on one generator without paying for all of them:
@@ -109,6 +116,14 @@ function FrameworkHalfFlaky(target::Int, ::FeasibilityStatus, seed::Int)
     return FrameworkHalfFlaky(target)
 end
 SyntheticLPs.build_model(p::FrameworkHalfFlaky) = SyntheticLPs.build_model(FrameworkMIP(p.n))
+
+# Calibration makes this discontinuous generator worse, so the closest build
+# can precede the final attempt.
+struct FrameworkSizing <: ProblemGenerator
+    n::Int
+end
+FrameworkSizing(target::Int, ::FeasibilityStatus, ::Int) = FrameworkSizing(target <= 100 ? 80 : 60)
+SyntheticLPs.build_model(p::FrameworkSizing) = SyntheticLPs.build_model(FrameworkLP(p.n))
 
 function with_framework_variants(f)
     register_variant(
@@ -311,6 +326,9 @@ end
 
     # Practitioner-style model transforms (framework-level: always runs).
     include("transforms.jl")
+    if HAS_ARGPARSE
+        AuditGeneratorTests.runtests()
+    end
 
     # Focused per-category quality contracts live in separate files so a
     # generator's source, documentation, and regression coverage can evolve as
@@ -727,6 +745,52 @@ end
                 match_size_distribution=false,
             )
             @test all(i -> i.attempts == 1 && i.requested_variables == i.target_variables, raw)
+
+            @testset "Size matching at the build limit" begin
+                register_variant(
+                    FW, :sizing, FrameworkSizing, "Discontinuous sizing"; model_class=:lp
+                )
+                kw = (;
+                    num_problems=1,
+                    seed=44,
+                    problem_types="__framework_test/sizing",
+                    var_mean=100,
+                    var_std=0,
+                    var_min=100,
+                    var_max=100,
+                    size_match_attempts=5,
+                )
+                for budget in 1:3
+                    retained = generate_dataset(; kw..., max_retries=budget)
+                    @test isempty(retained.failures)
+                    inst = only(retained)
+                    @test inst.num_variables == 80
+                    @test inst.requested_variables == 100
+                    @test inst.attempts == budget
+                    @test retained.manifest["size_match"]["fraction_within_tolerance"] == 0.0
+
+                    strict = generate_dataset(;
+                        kw..., max_retries=budget, strict_size_match=true, on_failure=:skip
+                    )
+                    @test isempty(strict)
+                    @test only(strict.failures).reason == "size_mismatch"
+                    @test only(strict.failures).attempts == budget
+                end
+                if HAS_HIGHS
+                    # Retaining the closest build must still run quality checks.
+                    rejected = generate_dataset(;
+                        kw...,
+                        max_retries=1,
+                        quality_filter=true,
+                        optimizer=HiGHS.Optimizer,
+                        quality_criteria=QualityCriteria(min_constraints=2),
+                        on_failure=:skip,
+                    )
+                    @test isempty(rejected)
+                    @test only(rejected.failures).reason == "too_few_constraints"
+                end
+                delete!(SyntheticLPs.LP_REGISTRY[FW].variants, :sizing)
+            end
 
             # Per-instance metadata.
             mip_ds = generate_dataset(;

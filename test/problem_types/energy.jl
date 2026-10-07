@@ -418,6 +418,45 @@ end
         end
     end
 
+    @testset "Reserve scarcity with a full-fleet outage" begin
+        m, p = generate_problem("energy/reserves", 20, infeasible, 44)
+        c = p.core
+        @test any(t -> SyntheticLPs._ed_system_upper(c, t) == 0, 1:c.n_periods)
+        cert = p.infeasibility_certificate
+        @test cert.kind == :reserve_scarcity
+        t = only(cert.periods)
+        @test cert.supply_bound > 0
+        @test cert.requirement > 1.03 * cert.supply_bound
+        @test cert.supply_bound ≈ SyntheticLPs._ed_system_upper(c, t)
+        @test cert.requirement ≈ sum(c.demand[:, t]) + p.operating_requirement[t]
+        @test sum(c.demand[:, t]) <= cert.supply_bound
+        @test p.operating_requirement[t] <=
+            SyntheticLPs._reserve_offer(c, p.spin_max, p.nonspin_max, t)
+        if HAS_HIGHS
+            set_optimizer(m, HiGHS.Optimizer)
+            set_silent(m)
+            optimize!(m)
+            @test termination_status(m) == MOI.INFEASIBLE
+        end
+
+        kw = (;
+            num_problems=1,
+            problem_types="energy/reserves",
+            seed=44,
+            var_mean=20,
+            var_std=0,
+            var_min=20,
+            var_max=20,
+            max_retries=1,
+        )
+        calibrated = generate_dataset(; kw...)
+        uncalibrated = generate_dataset(; kw..., size_match_attempts=0)
+        @test isempty(calibrated.failures)
+        @test only(calibrated).num_variables == only(uncalibrated).num_variables
+        @test only(calibrated).seed == only(uncalibrated).seed
+        @test only(calibrated).attempts == 1
+    end
+
     @testset "Reproducibility" begin
         for v in (ENERGY_DISPATCH_VARIANTS..., ENERGY_DC_VARIANTS...),
             status in (feasible, infeasible, unknown)

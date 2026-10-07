@@ -702,11 +702,14 @@ function _generate_entry(entry::PlannedInstance, cfg)
 
         # Size calibration: rescale the request by target/actual (keeping the seed)
         # until the actual size is within tolerance or the calibration budget is
-        # spent, then settle for the closest build seen.
+        # spent (including the overall build budget), then settle for the closest
+        # build seen and apply the usual strict-size and quality checks.
         if cfg.match && abs(cand.err) > cfg.tolerance
             (best === nothing || abs(cand.err) < abs(best.err)) && (best = cand)
             next_request = clamp(round(Int, request * target / max(nvar, 1)), lo, hi)
-            if calibrations < cfg.size_match_attempts && next_request != request
+            if attempt < cfg.max_retries &&
+                calibrations < cfg.size_match_attempts &&
+                next_request != request
                 calibrations += 1
                 request = next_request
                 fresh_draw = false
@@ -1033,7 +1036,8 @@ index) carrying `failures` and the `manifest`.
   - `match_size_distribution::Bool = true`: plan stratified quantile targets and
     calibrate each build (rescaling the request by target/actual, same seed) until
     `|log(actual/target)| ≤ size_match_tolerance` or `size_match_attempts`
-    recalibrations are spent (then the closest build is kept). `false` draws iid
+    recalibrations or the `max_retries` build budget are spent (then the closest
+    build is checked against the strict-size and quality policies). `false` draws iid
     targets and builds once.
   - `match_size_by_category::Bool = false`: stratify target quantiles within each
     category (each category spans the whole distribution) instead of globally.

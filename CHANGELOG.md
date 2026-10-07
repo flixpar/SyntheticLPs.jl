@@ -4,6 +4,42 @@ All notable changes to SyntheticLPs.jl will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## 2026-10-07
+
+**Previous Commit**: `5f5a062`
+
+**Commits**: the commit following `5f5a062` (review fixes and this entry)
+
+**Datetime**: 2026-10-07 14:44 UTC
+
+**Summary**: Fix reserve infeasibility certificates for full-fleet outages, retain
+the closest dataset build at the retry limit, and flag unsuccessful audit solves.
+
+**Details**:
+
+- `energy/reserves` excludes zero-capacity periods from scarcity planting and
+  checks the final load-plus-reserve deficit before accepting a certificate.
+  Target 20, seed 44 previously produced a zero-deficit certificate and an optimal
+  solve for an `infeasible` request; regression coverage checks both the
+  certificate arithmetic and HiGHS infeasibility.
+- Dataset calibration schedules a new build only while the overall retry budget
+  permits it. At the limit it evaluates the closest candidate, including an
+  earlier build, under the existing strict-size and quality policies. Tests cover
+  one to three allowed builds, strict rejection, quality rejection, and the
+  reported reserves dataset with master seed 44.
+- Audit summaries count records with inconclusive or error solve statuses as
+  errors even when the solver did not throw. Time limits retain their separate
+  timeout flag; completed LP outcomes, skipped solves and contract violations
+  retain their existing classifications. Unrecognized future statuses are flagged.
+- The audit script can be included without invoking its CLI. ArgParse and Printf
+  are test-only dependencies so the suite checks status classification and JSONL
+  report rendering, including `--flagged-only` visibility for `UNKNOWN`.
+- Measurement: seed-44 reserve audits at 20/1k/10k/100k satisfy the planted solve
+  contracts; the 1k/10k/100k builds contain 1,008/10,008/99,960 variables. A sweep
+  of 404 tiny reserve instances (targets 1/20/40/60, seeds 0–100) finds only positive
+  certificate deficits. The reported blending case still solves to `UNKNOWN`
+  and now appears in the flagged-only report with one error.
+
 ## 2026-10-04 (CLAUDE.md rewrite)
 
 **Previous Commit**: `41eb299`

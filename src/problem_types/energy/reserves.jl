@@ -220,11 +220,16 @@ function ReservesDispatchProblem(
         if feasibility_status == infeasible
             witness = nothing
             m = _e_unif(rng, (0.04, 0.10))
+            # A full outage has zero demand and capacity; it cannot certify a
+            # deficit and its 0/0 stress would otherwise sort ahead of real hours.
+            capacity = [_ed_system_upper(core, t) for t in 1:T]
             stress = [
-                (_ed_system_demand(core, t) + op_req[t]) / _ed_system_upper(core, t) for t in 1:T
+                capacity[t] > 0 ? (_ed_system_demand(core, t) + op_req[t]) / capacity[t] : -Inf for
+                t in 1:T
             ]
             for t in sortperm(stress; rev=true)
-                cap_t = _ed_system_upper(core, t)
+                cap_t = capacity[t]
+                cap_t > 0 || continue
                 offer = _reserve_offer(core, spin_max, nonspin_max, t)
                 # Requirement at most 90 % of all offers (its row alone stays
                 # satisfiable); load makes up the rest, raised (if needed) by
@@ -234,9 +239,11 @@ function ReservesDispatchProblem(
                 load = (1 + m) * cap_t - req
                 load <= 0.97 * cap_t || continue
                 _ed_raise_system_demand!(core, t, load) || continue
+                requirement = _ed_system_demand(core, t) + req
+                requirement > cap_t || continue
                 op_req[t] = req
                 certificate = EnergyAggregateCertificate(
-                    :reserve_scarcity, collect(1:Z), [t], cap_t, _ed_system_demand(core, t) + req
+                    :reserve_scarcity, collect(1:Z), [t], cap_t, requirement
                 )
                 break
             end

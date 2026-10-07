@@ -500,8 +500,9 @@ expected count, even in small datasets.
   quantiles of the distribution, and each build is **calibrated**: the generator is
   re-run on the same seed with the request rescaled by target/actual until
   `|log(actual/target)| ≤ size_match_tolerance` (default 0.05) or
-  `size_match_attempts` (default 3) recalibrations are spent, keeping the closest
-  build. `strict_size_match=true` turns a build still out of tolerance into a
+  `size_match_attempts` (default 3) recalibrations or the `max_retries` build budget
+  are spent, keeping the closest build subject to the quality filter.
+  `strict_size_match=true` turns a build still out of tolerance into a
   failed attempt. `match_size_by_category=true` stratifies targets within each
   category, so every category spans the whole distribution. The manifest's
   `size_match` block reports the achieved mean and maximum log error and the
@@ -687,8 +688,10 @@ The report flags size ratios outside `1 ± --size-tol` (0.1), build times above
 `--max-build-time` (30 s) at the largest target, presolve ratios below
 `--min-presolve-ratio` (0.6) for feasible/unknown instances, instances presolve
 solves outright, feasibility-contract violations, errors, solve timeouts, and
-models skipped for exceeding `--max-nnz` (20M nonzeros). Report mode loads neither
-the package nor HiGHS.
+models skipped for exceeding `--max-nnz` (20M nonzeros). Errors include unsuccessful
+solver statuses such as `UNKNOWN`, solver errors, and non-time termination limits,
+even without a thrown exception; `TIME_LIMIT` is counted separately as a timeout.
+Report mode loads neither the package nor HiGHS.
 
 ## Scale and quality
 
