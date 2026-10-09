@@ -119,7 +119,7 @@ function TSPFlowProblem(target_variables::Int, feasibility_status::FeasibilitySt
     dist = _tsp_distance(rng, locations)
 
     # --- Resolve feasibility intent ---
-    arc_ok, S, T = _tsp_arc_support(rng, n, k, feasibility_status)
+    arc_ok, S, T = _tsp_arc_support(rng, n, k, feasibility_status, locations)
 
     return TSPFlowProblem(n, locations, dist, arc_ok, S, T)
 end
@@ -198,5 +198,6 @@ register_variant(
     :tsp,
     :flow,
     TSPFlowProblem,
-    "Symmetric travelling-salesman problem with single-commodity-flow subtour elimination; a MIP whose continuous relaxation is a genuine depot-anchored tour relaxation",
+    "Symmetric travelling-salesman problem with single-commodity-flow subtour elimination; a MIP whose continuous relaxation is a genuine depot-anchored tour relaxation";
+    tags=[:routing, :network, :big_m],
 )

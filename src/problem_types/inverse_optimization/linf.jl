@@ -109,7 +109,10 @@ function build_model(prob::InverseLPMaxErrorProblem)
     m, n = prob.num_rows, prob.num_cols
     A = prob.forward_matrix
 
-    @variable(model, 0 <= y[i = 1:m] <= _implied_dual_upper(A, prob.cost_upper)[i])
+    # Computed once: evaluating it inside the macro would redo the O(nnz)
+    # transpose for every dual and make the build quadratic.
+    dual_upper = _implied_dual_upper(A, prob.cost_upper)
+    @variable(model, 0 <= y[i = 1:m] <= dual_upper[i])
     @variable(model, prob.cost_lower[j] <= c[j = 1:n] <= prob.cost_upper[j])
     @variable(model, max_dev >= 0)
 
@@ -137,5 +140,8 @@ register_variant(
     :inverse_optimization,
     :linf,
     InverseLPMaxErrorProblem,
-    "Min-max (weighted L-infinity) inverse linear program: minimize the largest weighted cost deviation that makes an observed plan optimal for a forward LP",
+    "Min-max (weighted L-infinity) inverse linear program: minimize the largest weighted cost deviation that makes an observed plan optimal for a forward LP";
+    tags=[:production],
+    min_target_variables=2,
+    max_target_variables=250_000,
 )

@@ -41,6 +41,14 @@ const INVERSE_VARIANTS = (
             @test sprint(print, model1) == sprint(print, rebuilt)
         end
 
+        # Large requests build quickly and hit the target exactly (the dual
+        # bounds used to be recomputed per dual, a quadratic build).
+        for ref in INVERSE_VARIANTS
+            model, _ = generate_problem(ref, 100_000, feasible, 2)
+            @test abs(num_variables(model) - 100_000) <= 5
+            @test num_constraints(model; count_variable_in_set_constraints=false) >= 40_000
+        end
+
         # The resource formulations have closed-form variable counts.
         classical_model, classical = generate_problem(
             "inverse_optimization/classical_normalized", 301, feasible, 3
@@ -91,7 +99,7 @@ const INVERSE_VARIANTS = (
             @test nnz(data.consumption) / length(data.consumption) <= 0.75
             @test all(prob.observed_decision .> 0)
             @test data.consumption * prob.observed_decision ≈ prob.capacity
-            @test sum(data.true_cost) ≈ 1.0
+            @test sum(data.true_cost) ≈ prob.n_activities == data.cost_total
             @test data.true_cost != data.prior_cost
             @test SyntheticLPs._classical_inverse_witness_is_valid(prob)
 
@@ -103,6 +111,42 @@ const INVERSE_VARIANTS = (
                 coefficient
             @test normalized_coefficient(model[:stationarity][j], model[:inferred_cost][j]) == -1.0
             @test objective_sense(model) == MOI.MIN_SENSE
+        end
+    end
+
+    # Unit-mean cost normalization keeps bounds and weights O(1) at any size
+    # (a unit-sum normalization drove 10k instances to 1e-6 bounds against
+    # 1e4 weights and broke HiGHS dual simplex).
+    @testset "packing cost scaling" begin
+        for ref in (
+                "inverse_optimization/classical_normalized",
+                "inverse_optimization/noisy_observations",
+            ),
+            target in (200, 20_000)
+
+            _, prob = generate_problem(ref, target, unknown, 1)
+            data = prob.data
+            @test data.cost_total == prob.n_activities
+            @test minimum(data.cost_lower) > 1.0e-3
+            @test maximum(data.cost_upper) < 1.0e3
+            @test maximum(data.deviation_weight) / minimum(data.deviation_weight) < 2.0e3
+        end
+    end
+
+    # A fit tolerance implies finite shadow-price bounds; they are stated
+    # explicitly (and only then) so HiGHS can certify infeasible panels.
+    @testset "noisy implied shadow-price bounds" begin
+        for (status, seed) in ((feasible, 2), (infeasible, 2))
+            model, prob = generate_problem(
+                "inverse_optimization/noisy_observations", 400, status, seed
+            )
+            bounded = has_upper_bound.(model[:shadow_price])
+            @test all(bounded) == (prob.gap_tolerance !== nothing)
+            @test any(bounded) == (prob.gap_tolerance !== nothing)
+            if prob.gap_tolerance !== nothing
+                @test all(isfinite, upper_bound.(model[:shadow_price]))
+                @test all(>(0.0), upper_bound.(model[:shadow_price]))
+            end
         end
     end
 
@@ -295,8 +339,31 @@ const INVERSE_VARIANTS = (
             :inverse_optimization, 180, infeasible, 4; variant=:restricted_optimal_value
         )
         value_certificate = value_problem.infeasibility_certificate
-        @test value_certificate.target_value < value_certificate.value_floor ||
-            value_certificate.target_value > value_certificate.value_ceiling
+        @test value_certificate isa SyntheticLPs.CheaperPlanCertificate
+
+        # Cheaper-plan certificate arithmetic, checked without a solver: the
+        # alternative is forward-feasible and, even at the upper cost bounds,
+        # cheaper than the target by a real margin. The target stays inside
+        # the observed plan's pricing range and below the dual-row activity
+        # bound, so no single row refutes it (presolve cannot).
+        for target in (180, 2_000), seed in 0:8
+            _, prob = generate_problem(
+                :inverse_optimization, target, infeasible, seed; variant=:restricted_optimal_value
+            )
+            cert = prob.infeasibility_certificate
+            @test cert isa SyntheticLPs.CheaperPlanCertificate
+            @test cert.target_value == prob.target_value
+            @test all(>=(0.0), cert.alternative_plan)
+            @test all(prob.forward_matrix * cert.alternative_plan .>= prob.forward_rhs)
+            @test all(prob.forward_matrix * prob.reference_point .>= prob.forward_rhs)
+            @test dot(prob.cost_upper, cert.alternative_plan) ≈ cert.alternative_value
+            @test cert.margin ≈ cert.target_value - cert.alternative_value
+            @test cert.margin >= 0.03 * cert.target_value
+            @test dot(prob.cost_lower, prob.reference_point) < 0.9 * prob.target_value
+            @test dot(prob.cost_upper, prob.reference_point) > 1.05 * prob.target_value
+            dual_upper = SyntheticLPs._implied_dual_upper(prob.forward_matrix, prob.cost_upper)
+            @test dot(prob.forward_rhs, dual_upper) > prob.target_value
+        end
 
         _, market = generate_problem(
             :inverse_optimization, 180, infeasible, 4; variant=:market_clearing

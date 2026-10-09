@@ -34,6 +34,93 @@ struct HeterogeneousBinPackingProblem <: ProblemGenerator
     infeasibility_certificate::Union{Nothing, BinPackingCapacityCertificate}
 end
 
+# Balanced slot counts make every advertised type genuinely available; the
+# remainder goes to the first types, so the fleet (and hence the exact
+# variable count) is a deterministic function of the dimensions.
+function _heterogeneous_availability(n_bins::Int, n_bin_types::Int)
+    availability = fill(div(n_bins, n_bin_types), n_bin_types)
+    for index in 1:rem(n_bins, n_bin_types)
+        availability[index] += 1
+    end
+    return availability
+end
+
+# Handling eligibility of item categories by bin type.
+function _heterogeneous_compatibility(n_bin_types::Int, n_categories::Int)
+    compatibility = falses(n_bin_types, n_categories)
+    if n_bin_types == 2
+        # General freight versus temperature-controlled / regulated freight.
+        for category in 1:n_categories
+            compatibility[1, category] = category in (1, 3, 4, 7, 8)
+            compatibility[2, category] = true
+        end
+    else
+        for category in 1:n_categories
+            compatibility[1, category] = category in (1, 3, 4, 7, 8)
+            compatibility[2, category] = category in (1, 3, 5, 6, 7, 8)
+            compatibility[3, category] = category in (2, 4, 7, 8)
+            if n_bin_types >= 4
+                compatibility[4, category] = category in (1, 3, 4, 7, 8)
+            end
+        end
+    end
+    return compatibility
+end
+
+"""
+    _heterogeneous_variable_count(n_items, n_bins, n_categories)
+
+Exact column count of the sparse typed-fleet model: one assignment variable per
+*eligible* (item, slot) pair, one use indicator per slot, and one presence
+indicator per eligible (category, slot) pair. Items are spread round-robin over
+categories, so the per-category counts — and the count — are deterministic.
+"""
+function _heterogeneous_variable_count(n_items::Int, n_bins::Int, n_categories::Int)
+    n_bin_types = clamp(n_bins, 2, 4)
+    availability = _heterogeneous_availability(n_bins, n_bin_types)
+    compatibility = _heterogeneous_compatibility(n_bin_types, n_categories)
+    total = n_bins
+    for category in 1:n_categories
+        items = div(n_items, n_categories) + (category <= rem(n_items, n_categories) ? 1 : 0)
+        slots = sum(availability[t] for t in 1:n_bin_types if compatibility[t, category]; init=0)
+        total += (items + 1) * slots
+    end
+    return total
+end
+
+function _heterogeneous_dimensions(target_variables::Int)
+    target = max(target_variables, 12)
+    maximum_items = max(12, ceil(Int, sqrt(16 * target)) + 12)
+    best_key = (typemax(Int), Inf, Inf)
+    best_dimensions = (3, 2, 2)
+    for n_items in 3:maximum_items
+        minimum_bins = max(2, ceil(Int, n_items / 6))
+        maximum_bins = max(minimum_bins, min(n_items, ceil(Int, n_items / 2)))
+        desired_categories = clamp(
+            round(Int, sqrt(n_items) / 1.8), 2, length(_PACKING_CATEGORY_PROFILES)
+        )
+        for n_bins in minimum_bins:maximum_bins
+            maximum_categories = min(
+                length(_PACKING_CATEGORY_PROFILES), n_items, max(2, 2 * n_bins - 2)
+            )
+            for n_categories in 2:maximum_categories
+                # Cheap lower bound: at least one slot per item and category.
+                n_bins + n_items + n_categories - target > best_key[1] && continue
+                actual = _heterogeneous_variable_count(n_items, n_bins, n_categories)
+                realism_penalty =
+                    abs(n_items / n_bins - 3.5) + 0.2 * abs(n_categories - desired_categories)
+                shape_penalty = abs(n_bins - n_items / 3.5)
+                key = (abs(actual - target), realism_penalty, shape_penalty)
+                if key < best_key
+                    best_key = key
+                    best_dimensions = (n_items, n_bins, n_categories)
+                end
+            end
+        end
+    end
+    return best_dimensions
+end
+
 function _heterogeneous_type_data(
     rng::AbstractRNG, n_bins::Int, n_categories::Int, base_capacity::Float64
 )
@@ -58,31 +145,9 @@ function _heterogeneous_type_data(
     base_cost = rand(rng, Uniform(90.0, 210.0))
     costs = base_cost .* cost_factors
 
-    # Balanced slot counts make every advertised type genuinely available.
-    availability = fill(div(n_bins, n_bin_types), n_bin_types)
-    extra_order = randperm(rng, n_bin_types)
-    for index in 1:rem(n_bins, n_bin_types)
-        availability[extra_order[index]] += 1
-    end
+    availability = _heterogeneous_availability(n_bins, n_bin_types)
     bin_types = reduce(vcat, [fill(bin_type, availability[bin_type]) for bin_type in 1:n_bin_types])
-
-    compatibility = falses(n_bin_types, n_categories)
-    if n_bin_types == 2
-        # General freight versus temperature-controlled / regulated freight.
-        for category in 1:n_categories
-            compatibility[1, category] = category in (1, 3, 4, 7, 8)
-            compatibility[2, category] = true
-        end
-    else
-        for category in 1:n_categories
-            compatibility[1, category] = category in (1, 3, 4, 7, 8)
-            compatibility[2, category] = category in (1, 3, 5, 6, 7, 8)
-            compatibility[3, category] = category in (2, 4, 7, 8)
-            if n_bin_types >= 4
-                compatibility[4, category] = category in (1, 3, 4, 7, 8)
-            end
-        end
-    end
+    compatibility = _heterogeneous_compatibility(n_bin_types, n_categories)
     all(any(view(compatibility, :, category)) for category in 1:n_categories) ||
         error("Every item category must have an eligible bin type")
     return names, capacities, costs, availability, bin_types, compatibility
@@ -315,8 +380,8 @@ function HeterogeneousBinPackingProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
     rng = MersenneTwister(seed)
-    n_items, n_bins, n_categories = _bin_packing_dimensions(target_variables)
-    actual_variables = _bin_packing_variable_count(n_items, n_bins, n_categories)
+    n_items, n_bins, n_categories = _heterogeneous_dimensions(target_variables)
+    actual_variables = _heterogeneous_variable_count(n_items, n_bins, n_categories)
     base_capacity = if n_items <= 25
         rand(rng, Uniform(85.0, 145.0))
     elseif n_items <= 100
@@ -418,53 +483,85 @@ function HeterogeneousBinPackingProblem(
     return problem
 end
 
+function _set_heterogeneous_starts!(model::Model, prob::HeterogeneousBinPackingProblem)
+    witness = prob.feasible_witness
+    witness === nothing && return model
+    used = falses(prob.n_bins)
+    present = falses(prob.n_categories, prob.n_bins)
+    for item in 1:prob.n_items
+        used[witness[item]] = true
+        present[prob.item_categories[item], witness[item]] = true
+    end
+    for key in eachindex(model[:x])
+        item, bin = Tuple(key)
+        set_start_value(model[:x][item, bin], witness[item] == bin ? 1.0 : 0.0)
+    end
+    for bin in 1:prob.n_bins
+        set_start_value(model[:y][bin], used[bin] ? 1.0 : 0.0)
+    end
+    for key in eachindex(model[:category_present])
+        category, bin = Tuple(key)
+        set_start_value(model[:category_present][category, bin], present[category, bin] ? 1.0 : 0.0)
+    end
+    return model
+end
+
+"""
+    build_model(prob::HeterogeneousBinPackingProblem)
+
+Sparse typed-fleet MILP: assignment and category-presence variables exist only
+for eligible (item, slot) and (category, slot) pairs, so no `x == 0` rows or
+forced-zero columns are emitted for presolve to strip.
+"""
 function build_model(prob::HeterogeneousBinPackingProblem)
     model = Model()
     I = 1:prob.n_items
     B = 1:prob.n_bins
     C = 1:prob.n_categories
+    compat(category, bin) = prob.type_category_compatibility[prob.bin_types[bin], category]
+    eligible(item, bin) = compat(prob.item_categories[item], bin)
     category_items = [findall(==(category), prob.item_categories) for category in C]
 
-    @variable(model, x[I, B], Bin)
+    @variable(model, x[item in I, bin in B; eligible(item, bin)], Bin)
     @variable(model, y[B], Bin)
-    @variable(model, category_present[C, B], Bin)
+    @variable(model, category_present[category in C, bin in B; compat(category, bin)], Bin)
 
     @objective(model, Min, sum(prob.type_costs[prob.bin_types[bin]] * y[bin] for bin in B))
 
-    @constraint(model, item_assignment[item in I], sum(x[item, bin] for bin in B) == 1)
+    @constraint(
+        model,
+        item_assignment[item in I],
+        sum(x[item, bin] for bin in B if eligible(item, bin)) == 1
+    )
     @constraint(
         model,
         bin_capacity[bin in B],
-        sum(prob.item_sizes[item] * x[item, bin] for item in I) <=
+        sum(prob.item_sizes[item] * x[item, bin] for item in I if eligible(item, bin)) <=
             prob.type_capacities[prob.bin_types[bin]] * y[bin]
     )
-
     @constraint(
         model,
-        category_eligibility[
-            item in I,
-            bin in B;
-            !prob.type_category_compatibility[prob.bin_types[bin], prob.item_categories[item]],
-        ],
-        x[item, bin] == 0
-    )
-
-    @constraint(
-        model,
-        presence_lower[item in I, bin in B],
+        presence_lower[item in I, bin in B; eligible(item, bin)],
         x[item, bin] <= category_present[prob.item_categories[item], bin]
     )
     @constraint(
         model,
-        presence_upper[category in C, bin in B],
+        presence_upper[category in C, bin in B; compat(category, bin)],
         category_present[category, bin] <= sum(x[item, bin] for item in category_items[category])
     )
     @constraint(
-        model, presence_used[category in C, bin in B], category_present[category, bin] <= y[bin]
+        model,
+        presence_used[category in C, bin in B; compat(category, bin)],
+        category_present[category, bin] <= y[bin]
     )
     @constraint(
         model,
-        category_conflict[pair in eachindex(prob.incompatible_pairs), bin in B],
+        category_conflict[
+            pair in eachindex(prob.incompatible_pairs),
+            bin in B;
+            compat(prob.incompatible_pairs[pair][1], bin) &&
+                compat(prob.incompatible_pairs[pair][2], bin),
+        ],
         category_present[prob.incompatible_pairs[pair][1], bin] +
         category_present[prob.incompatible_pairs[pair][2], bin] <= 1
     )
@@ -485,7 +582,7 @@ function build_model(prob::HeterogeneousBinPackingProblem)
         y[type_prefix_pairs[index][1]] >= y[type_prefix_pairs[index][2]]
     )
 
-    _set_bin_packing_starts!(model, prob)
+    _set_heterogeneous_starts!(model, prob)
     return model
 end
 
@@ -493,5 +590,6 @@ register_variant(
     :bin_packing,
     :heterogeneous,
     HeterogeneousBinPackingProblem,
-    "Typed-fleet bin packing with type-specific capacity, fixed cost, availability, and handling eligibility",
+    "Typed-fleet bin packing with type-specific capacity, fixed cost, availability, and handling eligibility";
+    tags=[:logistics, :partitioning, :big_m],
 )

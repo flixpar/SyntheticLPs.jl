@@ -1,6 +1,6 @@
 name = "SyntheticLPs"
 uuid = "6c18d9e4-3017-4cc6-8f05-9e4aefa327ea"
-version = "0.1.0"
+version = "0.5.0"
 authors = ["Felix Parker <flixpar@gmail.com>"]
 
 [deps]
@@ -15,12 +15,14 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 
 [compat]
+ArgParse = "1"
 Distributions = "0.25"
 Dualization = "0.7"
 HiGHS = "1.7"
 JSON = "0.21"
 JuMP = "1.0"
 LinearAlgebra = "1.11.0"
+Printf = "1.11"
 Random = "1.11"
 SparseArrays = "1.11.0"
 Statistics = "1.11.1"
@@ -29,8 +31,10 @@ Test = "1.11"
 julia = "1.11"
 
 [extras]
+ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
 HiGHS = "87dc4568-4c63-4d18-b0c0-bb2238e4078b"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["HiGHS", "Test"]
+test = ["ArgParse", "HiGHS", "Printf", "Test"]

@@ -19,9 +19,16 @@ catch
     false
 end
 
+# Audit CLI dependencies are test-only too; direct package-environment runs
+# still run the framework and generator tests without them.
+const HAS_ARGPARSE = Base.find_package("ArgParse") !== nothing
+if HAS_ARGPARSE
+    include("audit_generators.jl")
+end
+
 # Optional focus filter, taken from the command line. Naming one or more
 # categories limits the per-variant sweeps and the per-category include loop to
-# them, for iterating on one generator without paying for all 127:
+# them, for iterating on one generator without paying for all of them:
 #
 #     julia --project=@. -O1 test/runtests.jl transportation
 #     julia --project=@. -O1 test/runtests.jl tsp,knapsack
@@ -65,6 +72,74 @@ function SyntheticLPs.build_model(::ContractViolationTestProblem)
     return model
 end
 
+# Framework-test generators. They are registered under `:__framework_test` only
+# inside `with_framework_variants` and removed afterwards, so the per-variant
+# sweeps and the global listings never see them.
+const FW = :__framework_test
+
+# Undersizes by 20%, so dataset size calibration has real work to do.
+struct FrameworkLP <: ProblemGenerator
+    n::Int
+end
+FrameworkLP(target::Int, ::FeasibilityStatus, ::Int) = FrameworkLP(max(1, round(Int, 0.8 * target)))
+function SyntheticLPs.build_model(p::FrameworkLP)
+    model = Model()
+    @variable(model, 0 <= x[1:(p.n)] <= 1)
+    @constraint(model, sum(x) >= 1)
+    @objective(model, Min, sum(x))
+    return model
+end
+
+struct FrameworkMIP <: ProblemGenerator
+    n::Int
+end
+FrameworkMIP(target::Int, ::FeasibilityStatus, ::Int) = FrameworkMIP(target)
+function SyntheticLPs.build_model(p::FrameworkMIP)
+    model = Model()
+    @variable(model, x[1:(p.n)], Bin)
+    @constraint(model, sum(x) >= 1)
+    @objective(model, Min, sum(x))
+    return model
+end
+
+# Always throws: exercises `on_failure`.
+struct FrameworkFlaky <: ProblemGenerator end
+FrameworkFlaky(::Int, ::FeasibilityStatus, ::Int) = error("planted generator failure")
+SyntheticLPs.build_model(::FrameworkFlaky) = Model()
+
+# Throws on even seeds: exercises per-index retries with fresh seeds.
+struct FrameworkHalfFlaky <: ProblemGenerator
+    n::Int
+end
+function FrameworkHalfFlaky(target::Int, ::FeasibilityStatus, seed::Int)
+    iseven(seed) && error("planted even-seed failure")
+    return FrameworkHalfFlaky(target)
+end
+SyntheticLPs.build_model(p::FrameworkHalfFlaky) = SyntheticLPs.build_model(FrameworkMIP(p.n))
+
+# Calibration makes this discontinuous generator worse, so the closest build
+# can precede the final attempt.
+struct FrameworkSizing <: ProblemGenerator
+    n::Int
+end
+FrameworkSizing(target::Int, ::FeasibilityStatus, ::Int) = FrameworkSizing(target <= 100 ? 80 : 60)
+SyntheticLPs.build_model(p::FrameworkSizing) = SyntheticLPs.build_model(FrameworkLP(p.n))
+
+function with_framework_variants(f)
+    register_variant(
+        FW, :lp, FrameworkLP, "Framework test LP"; tags=[:network, :dense], max_target_variables=500
+    )
+    register_variant(FW, :mip, FrameworkMIP, "Framework test MIP"; tags=[:network])
+    register_variant(FW, :flaky, FrameworkFlaky, "Always fails"; tags=[:big_m], model_class=:lp)
+    register_variant(FW, :half_flaky, FrameworkHalfFlaky, "Fails on even seeds"; model_class=:mip)
+    try
+        f()
+    finally
+        delete!(SyntheticLPs.LP_REGISTRY, FW)
+        filter!(p -> first(p).category != FW, SyntheticLPs._MODEL_CLASS_CACHE)
+    end
+end
+
 """
     test_problem_generator(ref)
 
@@ -74,9 +149,9 @@ or anything else accepted by `generate_problem`).
 function test_problem_generator(ref)
     @testset "$(ref) Problem Generator" begin
         # Test with different target variable counts
-        for target_vars in [50, 100, 500]
+        for target_vars in [50, 100, 500], seed in (0, 1)
             @test_nowarn begin
-                model, problem = generate_problem(ref, target_vars, unknown, 0)
+                model, problem = generate_problem(ref, target_vars, unknown, seed)
                 @test model isa JuMP.Model
                 @test problem isa ProblemGenerator
 
@@ -196,7 +271,7 @@ end
 
         # Listing variants of a category (returned sorted by variant name).
         @test issubset(
-            Set([:standard, :balanced, :capacitated, :transshipment, :emission_constrained]),
+            Set([:standard, :transshipment, :emission_constrained, :fixed_charge]),
             Set(list_variants(:transportation)),
         )
         @test list_variants(:portfolio) == [:cvar, :tracking_error]
@@ -249,6 +324,12 @@ end
         end
     end
 
+    # Practitioner-style model transforms (framework-level: always runs).
+    include("transforms.jl")
+    if HAS_ARGPARSE
+        AuditGeneratorTests.runtests()
+    end
+
     # Focused per-category quality contracts live in separate files so a
     # generator's source, documentation, and regression coverage can evolve as
     # one reviewable unit.
@@ -268,6 +349,33 @@ end
         test_problem_generator(ref)
     end
 
+    # Every registered variant must generate at the smallest targets it
+    # accepts, for every seed and status: tiny requests clamp the internal
+    # dimensions up (or the variant registers a larger `min_target_variables`)
+    # rather than throwing from an index, assertion or planting step. It runs
+    # after the per-variant sweep, which has already compiled every generator:
+    # cold, this testset alone takes ~2 min of JIT; warm, ~6 s. Like that sweep
+    # it honours the focus filter.
+    @testset "Tiny Target Robustness" begin
+        for ref in list_problems()
+            in_scope(ref) || continue
+            lo = SyntheticLPs.get_variant(ref).min_target_variables
+            targets = unique(filter(>=(lo), [max(lo, 1), 2, 3, 5, 8, 13, 21, 34, 55]))
+            failures = String[]
+            for target in targets, seed in (0, 1), status in (feasible, infeasible, unknown)
+                try
+                    generate_problem(ref, target, status, seed)
+                catch err
+                    push!(
+                        failures,
+                        "$ref t=$target seed=$seed $status: $(first(sprint(showerror, err), 160))",
+                    )
+                end
+            end
+            @test isempty(failures)
+        end
+    end
+
     # Test batch dataset generation
     @testset "Dataset Generation" begin
         # Basic in-memory generation (no solver required)
@@ -279,9 +387,10 @@ end
             var_max=150,
             seed=123,
             problem_types=[:transportation, :knapsack],
-            max_candidate_multiplier=2,
         )
-        @test instances isa Vector{GeneratedInstance}
+        @test instances isa GeneratedDataset
+        @test instances isa AbstractVector{GeneratedInstance}
+        @test isempty(instances.failures)
         @test length(instances) == 6
         @test all(inst -> inst.num_variables > 0, instances)
         @test all(inst -> inst.num_constraints >= 0, instances)
@@ -299,7 +408,6 @@ end
             var_max=150,
             seed=123,
             problem_types=[:transportation, :knapsack],
-            max_candidate_multiplier=2,
         )
         @test [i.problem_type for i in instances] == [i.problem_type for i in instances2]
         @test [i.num_variables for i in instances] == [i.num_variables for i in instances2]
@@ -314,7 +422,6 @@ end
             var_max=150,
             seed=1,
             problem_types=[:transportation, :knapsack],
-            max_candidate_multiplier=2,
         )
         @test all(inst -> inst.problem_type in (:transportation, :knapsack), subset)
 
@@ -324,37 +431,31 @@ end
             size_distribution=Uniform(30, 150),
             problem_types=[:transportation, :knapsack],
             seed=2,
-            max_candidate_multiplier=2,
         )
         @test length(uniform_subset) == 6
         @test all(inst -> inst.num_variables > 0, uniform_subset)
 
         # Distributions without a finite lower support are truncated at n = 2.
         normal_subset = generate_dataset(
-            num_problems=100,
-            size_distribution=Normal(500, 200),
-            problem_types=[:knapsack],
-            seed=5,
-            candidate_multiplier=1,
-            max_candidate_multiplier=1,
+            num_problems=100, size_distribution=Normal(500, 200), problem_types=[:knapsack], seed=5
         )
         @test length(normal_subset) == 100
         @test minimum(inst -> inst.target_variables, normal_subset) >= 2
 
-        # Per-type matching allocates an even quota to each selected type.
-        by_type = generate_dataset(
+        # Category weighting (the default) splits the dataset evenly across the
+        # selected categories, whatever their variant counts; per-category matching
+        # stratifies sizes within each of them.
+        by_category = generate_dataset(
             num_problems=6,
             size_distribution=Uniform(30, 150),
             problem_types=[:transportation, :knapsack],
-            match_size_by_type=true,
+            match_size_by_category=true,
             seed=3,
-            max_candidate_multiplier=2,
         )
-        @test count(inst -> inst.problem_type == :transportation, by_type) == 3
-        @test count(inst -> inst.problem_type == :knapsack, by_type) == 3
-
+        @test count(inst -> inst.problem_type == :transportation, by_category) == 3
+        @test count(inst -> inst.problem_type == :knapsack, by_category) == 3
         @test_throws ErrorException generate_dataset(
-            num_problems=1, problem_types=[:transportation, :knapsack], match_size_by_type=true
+            num_problems=1, match_size_by_category=true, match_size_distribution=false
         )
 
         @test_throws ErrorException generate_dataset(
@@ -392,7 +493,6 @@ end
             var_max=150,
             seed=7,
             problem_types=[:transportation, :knapsack],
-            max_candidate_multiplier=2,
             output_dir=tmp,
         )
         @test length(written) == 4
@@ -401,9 +501,9 @@ end
         @test all(inst -> occursin("_$(inst.variant)_", inst.filename), written)  # variant in filename
         @test isfile(joinpath(tmp, "manifest.json"))
         manifest = JSON.parsefile(joinpath(tmp, "manifest.json"))
-        @test manifest["config"]["size_match"]["enabled"] == true
-        @test manifest["config"]["size_match"]["candidate_multiplier"] == 2
-        @test length(manifest["config"]["size_match"]["groups"]) == 1
+        @test manifest["size_match"]["enabled"] == true
+        @test manifest["config"]["seed"] == 7
+        @test manifest["num_instances"] == 4
         @test all(inst -> haskey(inst, "variant"), manifest["instances"])
 
         # Manifest can be disabled
@@ -416,7 +516,6 @@ end
             var_max=150,
             seed=7,
             problem_types=[:transportation, :knapsack],
-            max_candidate_multiplier=2,
             output_dir=tmp2,
             write_manifest=false,
         )
@@ -426,6 +525,425 @@ end
         crit = QualityCriteria(min_constraints=10, min_iterations=5)
         @test crit.min_constraints == 10
         @test crit.min_iterations == 5
+    end
+
+    # Registry metadata: tags, documented size ranges, the derived model class, and
+    # the filters/weights built on them.
+    @testset "Registry Metadata" begin
+        @test !isempty(list_tags())
+        @test all(p -> p isa Pair{Symbol, String}, list_tags())
+
+        with_framework_variants() do
+            lp = ProblemVariant(FW, :lp)
+            mip = ProblemVariant(FW, :mip)
+            flaky = ProblemVariant(FW, :flaky)
+            half = ProblemVariant(FW, :half_flaky)
+
+            info = problem_info(FW, :lp)
+            @test info[:tags] == [:dense, :network]
+            @test info[:min_target_variables] == 1
+            @test info[:max_target_variables] == 500
+            @test info[:model_class] === :lp
+            @test info[:default] == true
+            @test info[:ref] == lp
+            @test problem_info(mip)[:model_class] === :mip
+            @test problem_info(mip)[:max_target_variables] === nothing
+            @test haskey(SyntheticLPs._MODEL_CLASS_CACHE, mip)  # derived once, cached
+            @test !haskey(SyntheticLPs._MODEL_CLASS_CACHE, flaky)  # declared, never probed
+            @test model_class(flaky) === :lp
+            @test problem_info(FW)[:tags] == [:big_m, :dense, :network]
+            @test problem_info(FW)[:num_variants] == 4
+            @test variant_tags("__framework_test/lp") == [:dense, :network]
+            @test supports_target(lp, 500) && !supports_target(lp, 501)
+
+            @test list_problems(; problem_types=FW) == [flaky, half, lp, mip]
+            @test list_problems(; problem_types=FW, model_class=:mip) == [half, mip]
+            @test list_problems(; problem_types=FW, tags=[:network, :dense]) == [lp]
+            @test list_problems(; problem_types=FW, any_tags=[:dense, :big_m]) == [flaky, lp]
+            @test list_problems(; problem_types=FW, exclude_tags=:network) == [flaky, half]
+            @test list_problems(;
+                problem_types=FW, exclude=["__framework_test/flaky", half, mip]
+            ) == [lp]
+            @test list_problems(; problem_types=FW, target_variables=600) == [flaky, half, mip]
+            @test !(lp in list_problems(; problem_types=FW, target_variables=(100, 1000)))
+            @test lp in list_problems(; problem_types=FW, target_variables=(100, 500))
+            @test_throws ErrorException list_problems(; tags=:not_a_tag)
+            @test_throws ErrorException list_problems(; model_class=:qp)
+
+            @test_throws ErrorException register_variant(
+                FW, :bad, FrameworkLP, "x"; tags=[:not_a_tag]
+            )
+            @test_throws ErrorException register_variant(
+                FW, :bad, FrameworkLP, "x"; model_class=:qp
+            )
+            @test_throws ErrorException register_variant(
+                FW, :bad, FrameworkLP, "x"; min_target_variables=10, max_target_variables=5
+            )
+            @test !haskey(SyntheticLPs.LP_REGISTRY[FW].variants, :bad)
+        end
+        @test !(FW in list_categories())  # cleaned up
+
+        # The derived class agrees with what an unrelaxed build actually contains.
+        for ref in ("tsp/standard", "transportation/standard")
+            m, _ = generate_problem(ref, 200, unknown, 1; relax_integer=false)
+            has_int = any(x -> is_integer(x) || is_binary(x), all_variables(m))
+            @test model_class(ref) === (has_int ? :mip : :lp)
+        end
+
+        # Weighting schemes.
+        refs = list_problems(; problem_types=[:tsp, :transportation])
+        share(w, cat) = sum(wi for (r, wi) in zip(refs, w) if r.category == cat)
+        w_cat = SyntheticLPs.variant_weights(refs, :category)
+        @test share(w_cat, :tsp) ≈ 0.5
+        @test sum(w_cat) ≈ 1
+        @test SyntheticLPs.variant_weights(refs, :variant) ≈ fill(1 / length(refs), length(refs))
+        w_dict = SyntheticLPs.variant_weights(
+            refs, Dict(:tsp => 3.0, "transportation/standard" => 1.0)
+        )
+        @test share(w_dict, :tsp) ≈ 0.75
+        @test w_dict[findfirst(==(ProblemVariant("transportation/standard")), refs)] ≈ 0.25
+        @test_throws ErrorException SyntheticLPs.variant_weights(refs, Dict(:tsp => -1.0))
+        @test_throws ErrorException SyntheticLPs.variant_weights(refs, :bogus)
+
+        # Random generation honours the selection.
+        _, ref_k, _ = generate_random_problem(60; problem_types=[:knapsack], seed=3)
+        @test ref_k.category == :knapsack
+    end
+
+    # Every registered variant declares exactly one domain tag (plus any structure
+    # tags), so tag filters and per-domain summaries cover the whole corpus.
+    @testset "Registry Tag Coverage" begin
+        @test DOMAIN_TAGS ⊆ keys(SyntheticLPs.VARIANT_TAGS)
+        for ref in list_problems()
+            tags = variant_tags(ref)
+            n_domain = count(in(DOMAIN_TAGS), tags)
+            n_domain == 1 || @info "$ref carries $n_domain domain tags" tags
+            @test !isempty(tags)
+            @test n_domain == 1
+        end
+    end
+
+    # Dataset plans are cheap (no model is built), so the mix guarantees are tested
+    # exactly here rather than statistically through generation.
+    @testset "Dataset Planning" begin
+        cats = list_categories()
+        plan = plan_dataset(; num_problems=10 * length(cats), seed=11)
+        @test plan isa Vector{PlannedInstance}
+        @test [p.index for p in plan] == 1:(10 * length(cats))
+        # Category weighting (the default): every category exactly 10 times.
+        @test all(c -> count(p -> p.ref.category == c, plan) == 10, cats)
+        @test plan == plan_dataset(; num_problems=10 * length(cats), seed=11)
+
+        # Variant weighting: each variant floor or ceil of its expected count.
+        nv = length(list_problems())
+        plan_v = plan_dataset(; num_problems=500, seed=11, variant_weighting=:variant)
+        counts_v = [count(p -> p.ref == r, plan_v) for r in list_problems()]
+        @test all(c -> fld(500, nv) <= c <= cld(500, nv), counts_v)
+
+        # Explicit weights.
+        plan_d = plan_dataset(;
+            num_problems=400,
+            seed=2,
+            problem_types=[:tsp, :knapsack],
+            variant_weighting=Dict(:tsp => 3, :knapsack => 1),
+        )
+        @test count(p -> p.ref.category == :tsp, plan_d) == 300
+        @test_throws ErrorException plan_dataset(;
+            problem_types=:tsp, variant_weighting=Dict(:knapsack => 1)
+        )
+
+        # Exclusion.
+        plan_x = plan_dataset(; num_problems=50, seed=2, exclude=[:tsp, "knapsack/bounded"])
+        @test !any(
+            p -> p.ref.category == :tsp || p.ref == ProblemVariant("knapsack/bounded"), plan_x
+        )
+
+        # Feasibility mixes are stratified within each variant.
+        nt = length(list_variants(:transportation))
+        plan_s = plan_dataset(;
+            num_problems=200,
+            seed=5,
+            problem_types=:transportation,
+            feasibility_status=Dict(feasible => 0.5, :infeasible => 0.5),
+        )
+        @test abs(count(p -> p.feasibility_status == feasible, plan_s) - 100) <= nt
+        @test !any(p -> p.feasibility_status == unknown, plan_s)
+        @test all(
+            p -> p.feasibility_status == feasible,
+            plan_dataset(; num_problems=5, seed=1, feasible_only=true),
+        )
+        @test_throws ErrorException plan_dataset(;
+            feasible_only=true, feasibility_status=infeasible
+        )
+
+        # Size targets are stratified quantiles: the k-th smallest lies in stratum k.
+        n = 50
+        plan_q = plan_dataset(; num_problems=n, seed=4, size_distribution=Uniform(100, 1100))
+        q = sort([p.size_quantile for p in plan_q])
+        @test all(k -> (k - 1) / n < q[k] <= k / n, 1:n)
+        @test all(p -> 100 <= p.target_variables <= 1100, plan_q)
+        # ... and per category when requested.
+        plan_c = plan_dataset(;
+            num_problems=40,
+            seed=4,
+            problem_types=[:tsp, :knapsack],
+            size_distribution=Uniform(100, 1100),
+            match_size_by_category=true,
+        )
+        for c in (:tsp, :knapsack)
+            qc = sort([p.size_quantile for p in plan_c if p.ref.category == c])
+            @test all(k -> (k - 1) / length(qc) < qc[k] <= k / length(qc), eachindex(qc))
+        end
+
+        # Log-uniform shortcut for datasets spanning orders of magnitude.
+        plan_l = plan_dataset(;
+            num_problems=40, seed=3, size_distribution=:loguniform, var_min=1000, var_max=100_000
+        )
+        t = sort([p.target_variables for p in plan_l])
+        @test 1000 <= t[1] && t[end] <= 100_000
+        @test 6000 <= t[20] <= 16_000  # median near the geometric mean, 10k
+        @test_throws ErrorException plan_dataset(; size_distribution=:bogus)
+
+        # Shards are disjoint and union to exactly the unsharded plan.
+        full = plan_dataset(; num_problems=37, seed=9)
+        shards = [plan_dataset(; num_problems=37, seed=9, shard_index=k, num_shards=4) for k in 1:4]
+        @test sum(length, shards) == 37
+        @test sort(reduce(vcat, shards); by=p -> p.index) == full
+        @test_throws ErrorException plan_dataset(; num_shards=2)  # needs a fixed seed
+        @test_throws ErrorException plan_dataset(; seed=1, num_shards=2, shard_index=3)
+
+        # Variants whose documented cap cannot cover the size distribution are dropped.
+        with_framework_variants() do
+            sel = ["__framework_test/lp", "__framework_test/mip"]
+            capped = plan_dataset(; num_problems=10, seed=1, problem_types=sel, var_max=2000)
+            @test all(p -> p.ref.variant == :mip, capped)
+            fits = plan_dataset(; num_problems=10, seed=1, problem_types=sel, var_max=400)
+            @test count(p -> p.ref.variant == :lp, fits) == 5
+        end
+    end
+
+    # End-to-end dataset controls on the cheap framework generators.
+    @testset "Dataset Generation Controls" begin
+        with_framework_variants() do
+            lp_sel = "__framework_test/lp"
+            sizes = Uniform(50, 400)
+
+            # Size calibration rescales the request until the actual size matches.
+            ds = generate_dataset(;
+                num_problems=8, seed=3, problem_types=lp_sel, size_distribution=sizes
+            )
+            @test length(ds) == 8
+            @test all(i -> abs(log(i.num_variables / i.target_variables)) <= 0.05, ds)
+            @test all(i -> i.requested_variables > i.target_variables && i.attempts >= 2, ds)
+            @test ds.manifest["size_match"]["fraction_within_tolerance"] == 1.0
+            # Without matching every index is built once, as requested.
+            raw = generate_dataset(;
+                num_problems=8,
+                seed=3,
+                problem_types=lp_sel,
+                size_distribution=sizes,
+                match_size_distribution=false,
+            )
+            @test all(i -> i.attempts == 1 && i.requested_variables == i.target_variables, raw)
+
+            @testset "Size matching at the build limit" begin
+                register_variant(
+                    FW, :sizing, FrameworkSizing, "Discontinuous sizing"; model_class=:lp
+                )
+                kw = (;
+                    num_problems=1,
+                    seed=44,
+                    problem_types="__framework_test/sizing",
+                    var_mean=100,
+                    var_std=0,
+                    var_min=100,
+                    var_max=100,
+                    size_match_attempts=5,
+                )
+                for budget in 1:3
+                    retained = generate_dataset(; kw..., max_retries=budget)
+                    @test isempty(retained.failures)
+                    inst = only(retained)
+                    @test inst.num_variables == 80
+                    @test inst.requested_variables == 100
+                    @test inst.attempts == budget
+                    @test retained.manifest["size_match"]["fraction_within_tolerance"] == 0.0
+
+                    strict = generate_dataset(;
+                        kw..., max_retries=budget, strict_size_match=true, on_failure=:skip
+                    )
+                    @test isempty(strict)
+                    @test only(strict.failures).reason == "size_mismatch"
+                    @test only(strict.failures).attempts == budget
+                end
+                if HAS_HIGHS
+                    # Retaining the closest build must still run quality checks.
+                    rejected = generate_dataset(;
+                        kw...,
+                        max_retries=1,
+                        quality_filter=true,
+                        optimizer=HiGHS.Optimizer,
+                        quality_criteria=QualityCriteria(min_constraints=2),
+                        on_failure=:skip,
+                    )
+                    @test isempty(rejected)
+                    @test only(rejected.failures).reason == "too_few_constraints"
+                end
+                delete!(SyntheticLPs.LP_REGISTRY[FW].variants, :sizing)
+            end
+
+            # Per-instance metadata.
+            mip_ds = generate_dataset(;
+                num_problems=3,
+                seed=2,
+                problem_types="__framework_test/mip",
+                size_distribution=sizes,
+            )
+            @test all(i -> i.num_integer == i.num_variables, mip_ds)  # counted before relaxation
+            @test all(i -> i.num_nonzeros == i.num_variables, mip_ds)  # one row: sum(x) >= 1
+            @test all(i -> i.transforms == ["relax_integer"], mip_ds)
+            @test all(i -> 0 <= i.build_time <= i.generation_time, mip_ds)
+            @test all(i -> i.verified_status === nothing && i.solve_status === nothing, mip_ds)
+            unrelaxed = generate_dataset(;
+                num_problems=2,
+                seed=2,
+                problem_types="__framework_test/mip",
+                size_distribution=sizes,
+                relax_integer=false,
+                bounds_to_constraints=true,
+            )
+            @test all(i -> i.transforms == ["bounds_to_constraints"], unrelaxed)
+
+            # Registry filters reach dataset selection.
+            mc = generate_dataset(;
+                num_problems=4,
+                seed=1,
+                problem_types=FW,
+                exclude="__framework_test/flaky",
+                model_class=:mip,
+                size_distribution=sizes,
+            )
+            @test all(i -> i.variant in (:mip, :half_flaky), mc)
+            tagged = generate_dataset(;
+                num_problems=4, seed=1, problem_types=FW, tags=:dense, size_distribution=sizes
+            )
+            @test all(i -> i.variant == :lp, tagged)
+
+            # Retries walk fresh seeds, so a seed-dependent failure is recovered.
+            half = generate_dataset(;
+                num_problems=6,
+                seed=8,
+                problem_types="__framework_test/half_flaky",
+                size_distribution=sizes,
+            )
+            @test length(half) == 6
+            @test all(i -> isodd(i.seed), half)
+
+            # on_failure=:error aborts; :skip yields a short batch with recorded reasons.
+            sel = [lp_sel, "__framework_test/flaky"]
+            @test_throws ErrorException generate_dataset(;
+                num_problems=2,
+                seed=1,
+                problem_types="__framework_test/flaky",
+                size_distribution=sizes,
+                max_retries=2,
+            )
+            tmp = mktempdir()
+            skipped = generate_dataset(;
+                num_problems=6,
+                seed=5,
+                problem_types=sel,
+                variant_weighting=:variant,
+                size_distribution=sizes,
+                on_failure=:skip,
+                max_retries=2,
+                output_dir=tmp,
+            )
+            @test length(skipped) == 3
+            @test length(skipped.failures) == 3
+            @test all(
+                f -> f isa DatasetFailure && f.variant == :flaky && f.reason == "error",
+                skipped.failures,
+            )
+            @test all(
+                f -> length(f.reasons) == 2 && occursin("planted", f.reasons[1]), skipped.failures
+            )
+            @test sort([[i.index for i in skipped]; [f.index for f in skipped.failures]]) == 1:6
+            manifest = JSON.parsefile(joinpath(tmp, "manifest.json"))
+            @test manifest["num_failures"] == 3
+            @test manifest["stats"]["failure_reasons"]["error"] == 6
+            @test [f["index"] for f in manifest["failures"]] == [f.index for f in skipped.failures]
+            @test count(endswith(".mps"), readdir(tmp)) == 3
+
+            # Sharding: disjoint shards reproduce the unsharded dataset, share an
+            # output directory without filename collisions, and merge back.
+            kw = (;
+                num_problems=7,
+                seed=21,
+                problem_types=[lp_sel, "__framework_test/mip"],
+                size_distribution=sizes,
+            )
+            full = generate_dataset(; kw...)
+            tmp2 = mktempdir()
+            shards = [
+                generate_dataset(; kw..., shard_index=k, num_shards=3, output_dir=tmp2) for k in 1:3
+            ]
+            merged_insts = sort(reduce(vcat, collect.(shards)); by=i -> i.index)
+            key(i) = (
+                i.index,
+                i.variant,
+                i.seed,
+                i.requested_variables,
+                i.num_variables,
+                i.num_constraints,
+            )
+            @test key.(merged_insts) == key.(collect(full))
+            @test count(endswith(".mps"), readdir(tmp2)) == 7
+            @test !isfile(joinpath(tmp2, "manifest.json"))
+            @test isfile(joinpath(tmp2, "manifest_shard_0002_of_0003.json"))
+            merged = merge_manifests(tmp2)
+            @test isfile(joinpath(tmp2, "manifest.json"))
+            @test merged["num_instances"] == 7
+            @test [i["index"] for i in merged["instances"]] == 1:7
+            @test [i["seed"] for i in merged["instances"]] == [i.seed for i in full]
+            rm(joinpath(tmp2, "manifest_shard_0003_of_0003.json"))
+            @test_throws ErrorException merge_manifests(tmp2)
+
+            # Manifest contents (also returned in memory without an output_dir).
+            m = full.manifest
+            @test m["format_version"] == 2
+            @test m["config"]["master_seed"] == 21
+            @test m["config"]["variant_weighting"] == "category"
+            @test m["provenance"]["julia_version"] == string(VERSION)
+            @test haskey(m["provenance"], "git_commit")
+            @test m["selection"]["variants"] == [lp_sel, "__framework_test/mip"]
+            @test sum(values(m["selection"]["weights"])) ≈ 1
+            for field in (
+                "num_nonzeros",
+                "num_integer",
+                "requested_variables",
+                "build_time",
+                "generation_time",
+                "transforms",
+                "verified_status",
+                "solve_status",
+                "attempts",
+                "seed",
+            )
+                @test all(i -> haskey(i, field), m["instances"])
+            end
+
+            # seed=0 still records the master seed it drew, so the run is reproducible.
+            r0 = generate_dataset(; num_problems=2, problem_types=lp_sel, size_distribution=sizes)
+            again = generate_dataset(;
+                num_problems=2,
+                seed=r0.manifest["config"]["master_seed"],
+                problem_types=lp_sel,
+                size_distribution=sizes,
+            )
+            @test [i.seed for i in r0] == [i.seed for i in again]
+            @test_throws ErrorException generate_dataset(; num_problems=1, on_failure=:ignore)
+        end
     end
 
     # Test the bounds-to-constraints reformulation
@@ -478,7 +996,6 @@ end
             var_max=150,
             seed=21,
             problem_types=["knapsack/bounded"],
-            max_candidate_multiplier=2,
         )
         converted = generate_dataset(
             num_problems=4,
@@ -488,7 +1005,6 @@ end
             var_max=150,
             seed=21,
             problem_types=["knapsack/bounded"],
-            max_candidate_multiplier=2,
             bounds_to_constraints=true,
             output_dir=tmp,
         )
@@ -743,6 +1259,31 @@ end
                     bounded, HiGHS.Optimizer, infeasible
                 )[1] === :violated
             end
+
+            # An optimizer vector is an escalation chain: an inconclusive solve (here an
+            # iteration limit of 0) falls through to the next optimizer, a conclusive one
+            # stops the chain, and an all-inconclusive chain still raises.
+            stalled = optimizer_with_attributes(
+                HiGHS.Optimizer, "simplex_iteration_limit" => 0, "presolve" => "off"
+            )
+            let lp = first(generate_problem("transportation/standard", 80, feasible, 5))
+                @test SyntheticLPs._check_feasibility_contract(lp, stalled, feasible)[1] ===
+                    :inconclusive
+                verdict, ts = SyntheticLPs._check_feasibility_contract(
+                    lp, [stalled, HiGHS.Optimizer], feasible
+                )
+                @test verdict === :holds && ts == MOI.OPTIMAL
+                @test_throws ErrorException SyntheticLPs._check_feasibility_contract(
+                    lp, [], feasible
+                )
+            end
+            m3, _ = generate_problem(
+                "transportation/standard", 80, feasible, 5; optimizer=[stalled, HiGHS.Optimizer]
+            )
+            @test num_variables(m3) == num_variables(m2)
+            @test_throws ErrorException generate_problem(
+                "transportation/standard", 80, feasible, 5; optimizer=[stalled]
+            )
         end
 
         # Dataset generation honors the contract when an optimizer is supplied.
@@ -759,22 +1300,38 @@ end
                 feasible_only=true,
                 quality_filter=false,
                 optimizer=HiGHS.Optimizer,
-                max_candidate_multiplier=3,
             )
             @test length(insts) == 8
             for inst in insts
                 # Rebuild with the recorded (resolved) seed and confirm feasibility.
+                @test inst.verified_status == feasible
+                @test inst.solve_status == "OPTIMAL"
                 m, _ = generate_problem(
-                    ProblemVariant(inst.problem_type, inst.variant),
-                    inst.target_variables,
-                    feasible,
-                    inst.seed,
+                    ProblemVariant(inst), inst.requested_variables, feasible, inst.seed
                 )
                 set_optimizer(m, HiGHS.Optimizer)
                 set_silent(m)
                 optimize!(m)
                 @test termination_status(m) == MOI.OPTIMAL
             end
+
+            # With the quality filter, its solve doubles as verification for feasible
+            # requests, and infeasible requests are verified on the source primal: a
+            # status mix comes back labelled with proven statuses.
+            mixed = generate_dataset(;
+                num_problems=6,
+                size_distribution=Uniform(80, 200),
+                seed=13,
+                problem_types=:transportation,
+                feasibility_status=Dict(feasible => 0.5, infeasible => 0.5),
+                quality_filter=true,
+                quality_criteria=QualityCriteria(; min_iterations=0, min_constraints=1),
+                optimizer=HiGHS.Optimizer,
+                on_failure=:skip,
+            )
+            @test !isempty(mixed)
+            @test all(i -> i.verified_status == i.feasibility_status, mixed)
+            @test all(i -> i.solve_status in ("OPTIMAL", "INFEASIBLE") && i.iterations >= 0, mixed)
         end
 
     else

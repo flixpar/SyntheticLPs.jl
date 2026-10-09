@@ -11,7 +11,8 @@ An auxiliary threshold is introduced per structure and one positive-part
 variable per voxel. The objective minimizes structure-weighted mean normal
 tissue dose, monitor-unit-like total fluence, and adjacent-beamlet total
 variation, subject to hard safety floors and ceilings as well as the tail-dose
-goals.
+goals. Voxel doses are explicit variables defined by one influence row each
+(`dose = D * fluence`), and the hard safety limits are their bounds.
 """
 struct MeanTailDoseIMRTProblem <: ProblemGenerator
     case_data::RadiotherapyCaseData
@@ -155,11 +156,27 @@ function build_model(problem::MeanTailDoseIMRTProblem)
     n_structures = length(case.structure_names)
     n_edges = length(case.beamlet_edges)
 
-    @variable(model, fluence[1:n_beamlets] >= 0)
+    target = case.structure_voxels[:ptv]
+
+    @variable(model, 0 <= fluence[1:n_beamlets] <= case.fluence_max)
+    # Explicit voxel dose variables: the hard safety limits are their bounds,
+    # and each dose-influence row appears once (in `dose_definition`) instead
+    # of once per tail-excess and safety row.
+    @variable(model, dose[1:n_voxels] >= 0)
+    for i in target
+        set_lower_bound(dose[i], problem.target_floor)
+        set_upper_bound(dose[i], problem.target_ceiling)
+    end
+    for structure in case.structure_names[2:end]
+        for i in case.structure_voxels[structure]
+            set_upper_bound(dose[i], problem.structure_max[structure])
+        end
+    end
     @variable(model, tail_threshold[1:n_structures])
     @variable(model, tail_excess[1:n_voxels] >= 0)
     @variable(model, variation[1:n_edges] >= 0)
-    dose = _rt_dose_expressions(model, fluence, case.dose_matrix)
+    influence = _rt_dose_expressions(model, fluence, case.dose_matrix)
+    @constraint(model, dose_definition[i in 1:n_voxels], influence[i] - dose[i] == 0)
 
     tail_rows = Dict{Symbol, Any}()
     excess_rows = Dict{Symbol, Any}()
@@ -208,7 +225,6 @@ function build_model(problem::MeanTailDoseIMRTProblem)
         variation_negative[e in 1:n_edges],
         variation[e] >= fluence[case.beamlet_edges[e][2]] - fluence[case.beamlet_edges[e][1]]
     )
-    _rt_add_hard_constraints!(model, problem, dose)
 
     @objective(
         model,
@@ -222,17 +238,9 @@ function build_model(problem::MeanTailDoseIMRTProblem)
             problem.fluence_penalty * sum(fluence) +
             problem.smoothness_penalty * sum(variation),
     )
-    model[:dose] = dose
     model[:tail_goal] = tail_rows
     model[:tail_excess_rows] = excess_rows
 
-    for j in 1:n_beamlets
-        set_start_value(fluence[j], case.reference_fluence[j])
-    end
-    for e in 1:n_edges
-        a, b = case.beamlet_edges[e]
-        set_start_value(variation[e], abs(case.reference_fluence[a] - case.reference_fluence[b]))
-    end
     return model
 end
 
@@ -240,5 +248,6 @@ register_variant(
     :radiotherapy,
     :mean_tail_dose,
     MeanTailDoseIMRTProblem,
-    "Convex IMRT fluence-map LP with target cold-tail and organ hot-tail dose constraints",
+    "Convex IMRT fluence-map LP with target cold-tail and organ hot-tail dose constraints";
+    tags=[:healthcare],
 )

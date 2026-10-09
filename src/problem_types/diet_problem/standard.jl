@@ -1,591 +1,486 @@
 using JuMP
 using Random
+using Distributions
+using StatsBase
+
+"""
+Reason a requested-infeasible diet instance has no feasible plan.
+
+  - `diet_supply_shortage`: population-wide. Summing nutrient `k`'s minimum row
+    over every cohort (weighted by headcount) needs more of `k` than the foods
+    carrying it can deliver, even if every one of them is used up to the smaller
+    of its supply limit and the cohorts' combined portion limits.
+  - `diet_energy_squeeze`: one cohort. Its minimum for nutrient `k` exceeds the
+    most of `k` any diet can contain without breaking the cohort's energy
+    ceiling and portion limits (an exact one-row fractional knapsack).
+"""
+@enum DietInfeasibilityKind begin
+    diet_supply_shortage
+    diet_energy_squeeze
+end
+
+"""
+    DietInfeasibilityCertificate
+
+Solver-free proof of infeasibility built from LP rows alone (it survives any
+relaxation). `nutrient` indexes `DIET_NUTRIENTS`; `cohort` is the squeezed cohort
+(`0` for a population-wide supply shortage). `achievable < required` with a
+margin of at least 5%; `diet_certificate_holds` recomputes both from the data.
+"""
+struct DietInfeasibilityCertificate
+    kind::DietInfeasibilityKind
+    nutrient::Int
+    cohort::Int
+    achievable::Float64
+    required::Float64
+end
 
 """
     DietProblem <: ProblemGenerator
 
-Generator for diet problems that minimize the cost of food while meeting nutritional requirements.
+Population diet planning: the least-cost daily diet for many population cohorts
+(age/sex/life-stage groups at institutions — schools, hospitals, care homes,
+barracks) who share the food supply of one procurement region.
 
-This problem models realistic diet optimization with:
+# Formulation
 
-  - Multiple foods with varying costs and nutrient content
-  - Nutrient minimum requirements
-  - Food supply availability limits
-  - Total cost budget constraint
-  - Minimum and maximum consumption constraints for specific foods
+Decision `x[f, g] ∈ [0, upper[f, g]]` is the daily servings of food `f` per
+person of cohort `g`; `upper` is the food's portion limit scaled by the cohort's
+appetite. The objective minimizes `Σ_g headcount[g] Σ_f cost[f] x[f, g]`. Per
+cohort (every row is a full diet row over the food list):
 
-# Overview
+  - energy band `energy_band[1,g] ≤ Σ_f kcal_f x ≤ energy_band[2,g]` (ranged row);
+  - nutrient minimums for protein, fiber and the tracked micronutrients;
+  - a sodium ceiling;
+  - dietary-guideline share rows, homogeneous with mixed signs:
+    `Σ_f (9·satfat_f − s·kcal_f) x ≤ 0` (saturated fat ≤ s of energy), the same
+    for added sugar (`4·sugar_f`), and a total-fat share band (two rows).
 
-Models minimum-cost diet planning. The decisions are continuous quantities of
-each food. The objective minimizes food cost while meeting nutrient minimum
-requirements. Additional constraints can impose finite food supplies, an
-overall cost budget, and food-specific minimum or maximum consumption amounts.
-The generator can build a baseline diet for feasible data or tighten nutrient,
-budget, and supply limits to create infeasible data.
+Shared supply couples the cohorts: `Σ_g headcount[g] x[f, g] ≤ supply[f]` for the
+foods with limited regional availability. The food table is role-correlated
+(`_diet_sample_food_table`): nutrient profiles cluster by food category, energy
+follows the macronutrients, and requirements come from the Dietary Reference
+Intakes of each cohort's demographic, so many rows bind at the optimum.
 
-# Fields
+# Sizing
 
-All data generated in constructor based on target_variables and feasibility_status:
+`n_foods * n_cohorts` variables. The food list has `≈ 4√target` items (8–200);
+`n_cohorts = round(target / n_foods_nominal)`, then `n_foods = round(target /
+n_cohorts)`, so the count is within `n_cohorts / 2` of the target. Rows:
+`n_cohorts * (3 + |min_nutrients| + has_sugar_limit + 2 has_fat_band) +
+count(isfinite, supply)`.
 
-  - `n_foods::Int`: Number of different foods
-  - `n_nutrients::Int`: Number of different nutrients
-  - `costs::Vector{Float64}`: Cost per unit of each food
-  - `nutrient_content::Matrix{Float64}`: Nutrient content per unit of food
-  - `requirements::Vector{Float64}`: Minimum nutrient requirements
-  - `food_supply_limits::Vector{Float64}`: Supply limit for each food
-  - `cost_budget::Float64`: Total cost budget
-  - `min_food_amounts::Dict{Int, Float64}`: Minimum consumption requirements
-  - `max_food_amounts::Dict{Int, Float64}`: Maximum consumption limits
+# Feasibility
+
+  - `feasible`: each cohort gets a guideline-pattern diet (a plausible menu, not
+    the optimum). Requirements are the DRIs, lowered only where that diet falls
+    short; limits are the guideline limits, raised only where it exceeds them;
+    supplies of the foods it uses are 1.02–1.30× its consumption, so they bind
+    near the optimum. The plan is stored as `feasible_witness`.
+  - `infeasible`: the feasible construction plus one mutation with a typed
+    `DietInfeasibilityCertificate` (supply shortage by default, energy squeeze
+    otherwise). Neither is a single-row contradiction a presolve can see.
+  - `unknown`: DRI requirements, guideline limits and supplies drawn around a
+    nominal consumption estimate with no planted point.
 """
 struct DietProblem <: ProblemGenerator
     n_foods::Int
-    n_nutrients::Int
-    costs::Vector{Float64}
-    nutrient_content::Matrix{Float64}
-    requirements::Vector{Float64}
-    food_supply_limits::Vector{Float64}
-    cost_budget::Float64
-    min_food_amounts::Dict{Int, Float64}
-    max_food_amounts::Dict{Int, Float64}
+    n_cohorts::Int
+    food_category::Vector{Int}
+    content::Matrix{Float64}
+    cost::Vector{Float64}
+    upper::Matrix{Float64}
+    demographic::Vector{Symbol}
+    headcount::Vector{Float64}
+    min_nutrients::Vector{Int}
+    min_requirement::Matrix{Float64}
+    energy_band::Matrix{Float64}
+    sodium_limit::Vector{Float64}
+    satfat_share::Vector{Float64}
+    sugar_share::Vector{Float64}
+    fat_share_band::Matrix{Float64}
+    has_sugar_limit::Bool
+    has_fat_band::Bool
+    supply::Vector{Float64}
+    feasible_witness::Union{Nothing, Matrix{Float64}}
+    infeasibility_certificate::Union{Nothing, DietInfeasibilityCertificate}
+    feasibility_status::FeasibilityStatus
+end
+
+"""
+    diet_dimensions(target_variables, rng) -> (n_foods, n_cohorts)
+
+Food-list length and cohort count for a target (see `DietProblem`).
+"""
+function _diet_standard_dimensions(rng::AbstractRNG, target_variables::Int)
+    target = max(target_variables, 1)
+    nominal = clamp(round(Int, 4.0 * sqrt(target) * rand(rng, Uniform(0.8, 1.25))), 8, 200)
+    n_cohorts = max(1, round(Int, target / nominal))
+    n_foods = max(8, round(Int, target / n_cohorts))
+    return n_foods, n_cohorts
+end
+
+"""
+    _diet_intake(content, servings)
+
+Daily nutrient intake vector of a servings vector.
+"""
+_diet_intake(content::AbstractMatrix, servings::AbstractVector) = content * servings
+
+"""
+    _diet_repair_pattern!(servings, table, upper, nutrients, appetite_targets)
+
+Top up a pattern diet that is very poor in a tracked nutrient with the food
+richest in it (within portion limits), so no planted requirement collapses to a
+token value.
+"""
+function _diet_repair_pattern!(
+    servings::Vector{Float64},
+    content::Matrix{Float64},
+    upper::AbstractVector{Float64},
+    nutrients::Vector{Int},
+    references::Vector{Float64},
+)
+    for (r, k) in enumerate(nutrients)
+        intake = sum(content[k, f] * servings[f] for f in eachindex(servings))
+        intake >= 0.5 * references[r] && continue
+        best = argmax(view(content, k, :))
+        content[k, best] > 0.0 || continue
+        headroom = max(0.0, 0.9 * upper[best] - servings[best])
+        servings[best] += min(headroom, (0.5 * references[r] - intake) / content[k, best])
+    end
+    return servings
+end
+
+"""
+    diet_plan_satisfies(prob::DietProblem, servings=prob.feasible_witness; atol=1e-7)
+
+Check a per-person servings matrix (`n_foods × n_cohorts`) against every row and
+bound of the model, without a solver.
+"""
+function diet_plan_satisfies(
+    prob::DietProblem,
+    servings::Union{Nothing, AbstractMatrix{<:Real}}=prob.feasible_witness;
+    atol::Float64=1e-7,
+)
+    servings === nothing && return false
+    size(servings) == (prob.n_foods, prob.n_cohorts) || return false
+    tol(v) = atol * max(1.0, abs(v))
+    for g in 1:prob.n_cohorts, f in 1:prob.n_foods
+        -atol <= servings[f, g] <= prob.upper[f, g] + tol(prob.upper[f, g]) || return false
+    end
+    for g in 1:prob.n_cohorts
+        intake = prob.content * view(servings, :, g)
+        energy = intake[DIET_ENERGY]
+        prob.energy_band[1, g] - tol(energy) <= energy <= prob.energy_band[2, g] + tol(energy) ||
+            return false
+        for (r, k) in enumerate(prob.min_nutrients)
+            intake[k] + tol(intake[k]) >= prob.min_requirement[r, g] || return false
+        end
+        intake[DIET_SODIUM] <= prob.sodium_limit[g] + tol(intake[DIET_SODIUM]) || return false
+        9.0 * intake[DIET_SATFAT] <= prob.satfat_share[g] * energy + tol(energy) || return false
+        if prob.has_sugar_limit
+            4.0 * intake[DIET_SUGAR] <= prob.sugar_share[g] * energy + tol(energy) || return false
+        end
+        if prob.has_fat_band
+            9.0 * intake[DIET_FAT] + tol(energy) >= prob.fat_share_band[1, g] * energy ||
+                return false
+            9.0 * intake[DIET_FAT] <= prob.fat_share_band[2, g] * energy + tol(energy) ||
+                return false
+        end
+    end
+    for f in 1:prob.n_foods
+        isfinite(prob.supply[f]) || continue
+        used = sum(prob.headcount[g] * servings[f, g] for g in 1:prob.n_cohorts)
+        used <= prob.supply[f] + tol(prob.supply[f]) || return false
+    end
+    return true
+end
+
+function _diet_population_caps(prob_supply, headcount, upper)
+    n_foods = size(upper, 1)
+    return [
+        min(prob_supply[f], sum(headcount[g] * upper[f, g] for g in eachindex(headcount))) for
+        f in 1:n_foods
+    ]
+end
+
+"""
+    diet_certificate_holds(prob::DietProblem; rtol=1e-9)
+
+Recompute the stored infeasibility certificate from the instance data and check
+that it proves infeasibility (`achievable < required`).
+"""
+function diet_certificate_holds(prob::DietProblem; rtol::Float64=1e-9)
+    cert = prob.infeasibility_certificate
+    cert === nothing && return false
+    r = findfirst(==(cert.nutrient), prob.min_nutrients)
+    r === nothing && return false
+    if cert.kind == diet_supply_shortage
+        cert.cohort == 0 || return false
+        caps = _diet_population_caps(prob.supply, prob.headcount, prob.upper)
+        achievable = sum(prob.content[cert.nutrient, f] * caps[f] for f in 1:prob.n_foods)
+        required = sum(prob.headcount[g] * prob.min_requirement[r, g] for g in 1:prob.n_cohorts)
+    else
+        1 <= cert.cohort <= prob.n_cohorts || return false
+        g = cert.cohort
+        achievable = _diet_max_under_energy_cap(
+            prob.content, view(prob.upper, :, g), cert.nutrient, prob.energy_band[2, g]
+        )
+        required = prob.min_requirement[r, g]
+    end
+    isapprox(achievable, cert.achievable; rtol=1e-8, atol=1e-9) || return false
+    isapprox(required, cert.required; rtol=1e-8, atol=1e-9) || return false
+    return achievable < required * (1 - rtol)
 end
 
 """
     DietProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
-Construct a diet problem instance with sophisticated verified impossibility scenarios.
-
-# Sophisticated Feasibility Logic Preserved:
-
-For FEASIBLE instances:
-
-  - **Baseline diet construction**: Uses cost-effectiveness optimization to find realistic diet
-  - **Nutrition-cost optimization**: Ranks foods by nutrition per unit cost
-  - **Challenging constraints**: Sets tight tolerances (2-12%) around baseline achievement
-  - **Supply pressure**: Creates realistic market constraints (seasonal, market, normal)
-  - **Budget pressure**: Tight (105-115%), moderate (110-125%), or generous budgets
-
-For INFEASIBLE instances (4 verified impossibility scenarios):
-
- 1. **Verified nutrient impossibility**: Calculates true maximum achievable nutrient, sets requirement above it
- 2. **Verified budget impossibility**: Calculates proven minimum cost needed, sets budget below it
- 3. **Verified supply shortage**: Strategically reduces supply until target nutrient becomes impossible
- 4. **Verified over-constrained system**: Multiple individually-reasonable constraints that together are impossible
-
-FINAL VERIFICATION: For all infeasible instances, calculates absolute maximum achievable and forces
-requirement to 200-300% of maximum with large margin to avoid numerical issues.
-
-# Arguments
-
-  - `target_variables`: Target number of variables (n_foods)
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
+Construct a population diet-planning instance (see `DietProblem`).
 """
 function DietProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
+    n_foods, n_cohorts = _diet_standard_dimensions(rng, target_variables)
 
-    n_foods = target_variables
+    table = _diet_sample_food_table(rng, n_foods)
+    content = table.content
+    by_category = _diet_foods_by_category(table.category)
 
-    # Scale nutrients based on problem size
-    if target_variables <= 100
-        n_nutrients = rand(rng, 5:min(25, max(5, Int(target_variables ÷ 4))))
-        cost_range = (rand(rng, 0.5:0.1:2.0), rand(rng, 3.0:0.5:8.0))
-        nutrient_range = (rand(rng, 0.05:0.01:0.15), rand(rng, 1.5:0.1:3.0))
-    elseif target_variables <= 1000
-        n_nutrients = rand(rng, 15:min(75, max(15, Int(target_variables ÷ 8))))
-        cost_range = (rand(rng, 0.1:0.05:1.0), rand(rng, 2.0:0.5:10.0))
-        nutrient_range = (rand(rng, 0.01:0.005:0.1), rand(rng, 1.0:0.2:4.0))
-    else
-        n_nutrients = rand(rng, 25:min(150, max(25, Int(target_variables ÷ 15))))
-        cost_range = (rand(rng, 0.05:0.01:0.5), rand(rng, 1.0:0.2:15.0))
-        nutrient_range = (rand(rng, 0.005:0.001:0.05), rand(rng, 0.5:0.1:5.0))
-    end
+    # Cohorts: a demographic (life-stage weights favour adults and children),
+    # a headcount (institution sizes are heavy-tailed) and an activity factor.
+    demo_weights = [1.2, 1.0, 1.0, 0.9, 0.9, 1.6, 1.6, 1.1, 1.1, 0.3, 0.3]
+    demo_dist = Categorical(demo_weights ./ sum(demo_weights))
+    demographic_index = [rand(rng, demo_dist) for _ in 1:n_cohorts]
+    demographic = [DIET_DEMOGRAPHICS[d].name for d in demographic_index]
+    headcount = [
+        Float64(max(10, round(Int, rand(rng, LogNormal(log(120.0), 0.8))))) for _ in 1:n_cohorts
+    ]
+    activity = rand(rng, Uniform(0.92, 1.10), n_cohorts)
+    appetite = [
+        DIET_DEMOGRAPHICS[demographic_index[g]].eer * activity[g] / 2000.0 for g in 1:n_cohorts
+    ]
+    upper = [table.max_servings[f] * appetite[g] for f in 1:n_foods, g in 1:n_cohorts]
 
-    # Generate basic food data
-    min_cost, max_cost = cost_range
-    c = rand(rng, min_cost:0.1:max_cost, n_foods)
+    # Tracked minimum nutrients: protein, fiber and 6-10 micronutrients.
+    n_micro = rand(rng, 6:length(DIET_MICRONUTRIENTS))
+    micros = sort(sample(rng, collect(DIET_MICRONUTRIENTS), n_micro; replace=false))
+    min_nutrients = vcat([DIET_PROTEIN, DIET_FIBER], micros)
+    has_sugar_limit = rand(rng) < 0.85
+    has_fat_band = rand(rng) < 0.8
 
-    min_nutrient, max_nutrient = nutrient_range
-    a = rand(rng, min_nutrient:0.1:max_nutrient, n_foods, n_nutrients)
+    reference = [
+        diet_reference_minimum(DIET_DEMOGRAPHICS[demographic_index[g]], k) *
+        (k == DIET_PROTEIN ? 1.0 : activity[g]^0.5) for k in min_nutrients, g in 1:n_cohorts
+    ]
+    eer = [DIET_DEMOGRAPHICS[demographic_index[g]].eer * activity[g] for g in 1:n_cohorts]
+    cdrr = [DIET_DEMOGRAPHICS[demographic_index[g]].sodium for g in 1:n_cohorts]
 
-    # Initialize constraint variables
-    b = zeros(n_nutrients)
-    food_supply_limits = fill(Inf, n_foods)
-    cost_budget = Inf
-    min_food_amounts = Dict{Int, Float64}()
-    max_food_amounts = Dict{Int, Float64}()
+    n_min = length(min_nutrients)
+    min_requirement = zeros(Float64, n_min, n_cohorts)
+    energy_band = zeros(Float64, 2, n_cohorts)
+    sodium_limit = zeros(Float64, n_cohorts)
+    satfat_share = fill(DIET_SATFAT_SHARE, n_cohorts)
+    sugar_share = fill(DIET_SUGAR_SHARE, n_cohorts)
+    fat_share_band = repeat([DIET_FAT_SHARE_BAND[1], DIET_FAT_SHARE_BAND[2]], 1, n_cohorts)
+    supply = fill(Inf, n_foods)
+    witness = nothing
 
-    # Determine actual feasibility status
-    actual_status = feasibility_status
     if feasibility_status == unknown
-        actual_status = rand(rng) < 0.75 ? feasible : infeasible
-    end
-
-    if actual_status == feasible
-        # SOPHISTICATED FEASIBLE APPROACH: Create challenging but feasible constraints
-
-        # Step 1: Calculate nutrition efficiency
-        nutrition_scores = zeros(n_foods)
-        for i in 1:n_foods
-            nutrition_scores[i] = sum(a[i, :]) / n_nutrients
-        end
-
-        cost_effectiveness = nutrition_scores ./ c
-        effectiveness_order = sortperm(cost_effectiveness; rev=true)
-
-        # Step 2: Generate realistic baseline diet
-        baseline_diet = zeros(n_foods)
-
-        primary_count = max(3, round(Int, n_foods * 0.6))
-        primary_foods = effectiveness_order[1:primary_count]
-
-        base_consumption = 100.0
-        primary_total = base_consumption * 0.75
-
-        for i in primary_foods
-            effectiveness_weight = cost_effectiveness[i] / sum(cost_effectiveness[primary_foods])
-            baseline_amount = primary_total * effectiveness_weight
-            baseline_diet[i] = baseline_amount * (0.7 + rand(rng) * 0.6)
-        end
-
-        secondary_foods = effectiveness_order[(primary_count + 1):end]
-        if !isempty(secondary_foods)
-            secondary_total = base_consumption * 0.25
-            for i in secondary_foods
-                baseline_diet[i] = secondary_total / length(secondary_foods) * (0.5 + rand(rng))
+        for g in 1:n_cohorts
+            for r in 1:n_min
+                min_requirement[r, g] = reference[r, g] * rand(rng, Uniform(0.97, 1.03))
             end
+            energy_band[1, g] = DIET_ENERGY_BAND[1] * eer[g]
+            energy_band[2, g] = DIET_ENERGY_BAND[2] * eer[g]
+            sodium_limit[g] = cdrr[g]
         end
-
-        total_baseline = sum(baseline_diet)
-        baseline_diet .*= base_consumption / total_baseline
-
-        # Step 3: Calculate achieved nutrient levels
-        achieved_nutrients = zeros(n_nutrients)
-        for j in 1:n_nutrients
-            achieved_nutrients[j] = sum(a[i, j] * baseline_diet[i] for i in 1:n_foods)
+        # Supplies around a nominal regional consumption estimate (each food's
+        # equal share of its category's pattern servings), scaled by an
+        # instance-wide market tightness and a per-category supply shock (a
+        # poor fishing season, a dairy shortage). A shock to the few categories
+        # carrying a nutrient can leave the whole region short of it, so the
+        # instance may be feasible or not.
+        limited_fraction = rand(rng, Uniform(0.8, 1.0))
+        tightness = rand(rng, Uniform(0.5, 1.4))
+        shock = rand(rng, LogNormal(0.0, 0.7), length(DIET_FOOD_CATEGORIES))
+        population = sum(headcount[g] * appetite[g] for g in 1:n_cohorts)
+        for f in 1:n_foods
+            rand(rng) < limited_fraction || continue
+            c = table.category[f]
+            share = _DIET_PATTERN_SERVINGS[c] / length(by_category[c])
+            supply[f] = population * share * tightness * shock[c] * rand(rng, LogNormal(0.0, 0.3))
         end
-
-        # Step 4: Set challenging nutrient requirements
-        tolerance_scenario = rand(rng, 1:3)
-        tolerance_level = if tolerance_scenario == 1
-            0.02 + rand(rng) * 0.03  # 2-5% tolerance
-        elseif tolerance_scenario == 2
-            0.05 + rand(rng) * 0.05  # 5-10% tolerance
-        else
-            0.08 + rand(rng) * 0.04  # 8-12% tolerance
-        end
-
-        for j in 1:n_nutrients
-            tolerance = tolerance_level
-            position_in_band = 0.7 + rand(rng) * 0.15
-
-            total_range =
-                2 * tolerance * achieved_nutrients[j] /
-                (1 - 2 * tolerance + 2 * tolerance * position_in_band)
-            lower_bound = achieved_nutrients[j] - total_range * position_in_band
-
-            b[j] = max(0.0, lower_bound)
-        end
-
-        # Step 5: Add realistic supply constraints
-        supply_scenario = rand(rng, 1:3)
-        if supply_scenario == 1
-            # Seasonal availability
-            critical_foods = primary_foods[1:max(2, div(length(primary_foods), 3))]
-            for i in 1:n_foods
-                if i in critical_foods
-                    food_supply_limits[i] = baseline_diet[i] * (1.1 + rand(rng) * 0.3)
-                else
-                    food_supply_limits[i] = baseline_diet[i] * (1.5 + rand(rng))
-                end
-            end
-        elseif supply_scenario == 2
-            # Market supply
-            expensive_foods = sortperm(c; rev=true)[1:max(2, div(n_foods, 4))]
-            for i in 1:n_foods
-                if i in expensive_foods
-                    food_supply_limits[i] = baseline_diet[i] * (1.2 + rand(rng) * 0.4)
-                else
-                    food_supply_limits[i] = baseline_diet[i] * (2.0 + rand(rng) * 2.0)
-                end
-            end
-        else
-            # Normal supply
-            for i in 1:n_foods
-                food_supply_limits[i] = baseline_diet[i] * (3.0 + rand(rng) * 2.0)
-            end
-        end
-
-        # Step 6: Set challenging cost budget
-        baseline_cost = sum(c[i] * baseline_diet[i] for i in 1:n_foods)
-        cost_pressure = rand(rng, 1:3)
-        if cost_pressure == 1
-            cost_budget = baseline_cost * (1.05 + rand(rng) * 0.10)
-        elseif cost_pressure == 2
-            cost_budget = baseline_cost * (1.10 + rand(rng) * 0.15)
-        else
-            cost_budget = baseline_cost * (1.5 + rand(rng) * 0.5)
-        end
-
-        # Step 7: Add realistic consumption preferences
-        if rand(rng) < 0.7
-            preferred_foods = randperm(rng, n_foods)[1:max(1, div(n_foods, 6))]
-            for i in preferred_foods
-                min_food_amounts[i] = baseline_diet[i] * (0.6 + rand(rng) * 0.3)
-            end
-
-            limited_foods = randperm(rng, n_foods)[1:max(1, div(n_foods, 5))]
-            for i in limited_foods
-                max_food_amounts[i] = baseline_diet[i] * (1.3 + rand(rng) * 0.4)
-            end
-        end
-
-    else  # :infeasible - Create verified mathematical impossibilities
-        scenario = rand(rng, 1:4)
-
-        if scenario == 1
-            # SCENARIO 1: Verified nutrient impossibility conflict
-            base_supply = 100.0
-            for i in 1:n_foods
-                food_supply_limits[i] = base_supply * (0.5 + rand(rng) * 1.5)
-            end
-
-            max_achievable_nutrients = zeros(n_nutrients)
-            for j in 1:n_nutrients
-                max_achievable_nutrients[j] = sum(
-                    a[i, j] * food_supply_limits[i] for i in 1:n_foods
+    else
+        servings = zeros(Float64, n_foods, n_cohorts)
+        for g in 1:n_cohorts
+            plan = _diet_pattern_diet(rng, table, appetite[g], by_category)
+            plan .= min.(plan, 0.95 .* view(upper, :, g))
+            _diet_repair_pattern!(plan, content, view(upper, :, g), min_nutrients, reference[:, g])
+            servings[:, g] .= plan
+            intake = _diet_intake(content, plan)
+            for (r, k) in enumerate(min_nutrients)
+                min_requirement[r, g] = min(
+                    reference[r, g], intake[k] * rand(rng, Uniform(0.90, 0.98))
                 )
             end
-
-            target_nutrient = rand(rng, 1:n_nutrients)
-            b[target_nutrient] = max_achievable_nutrients[target_nutrient] * (1.2 + rand(rng) * 0.3)
-
-            for j in 1:n_nutrients
-                if j != target_nutrient
-                    b[j] = max_achievable_nutrients[j] * (0.3 + rand(rng) * 0.4)
-                end
-            end
-
-            final_max_achievable = sum(
-                a[i, target_nutrient] * food_supply_limits[i] for i in 1:n_foods
+            energy = intake[DIET_ENERGY]
+            energy_band[1, g] = min(DIET_ENERGY_BAND[1] * eer[g], 0.97 * energy)
+            energy_band[2, g] = max(DIET_ENERGY_BAND[2] * eer[g], 1.03 * energy)
+            sodium_limit[g] = max(cdrr[g], intake[DIET_SODIUM] * rand(rng, Uniform(1.02, 1.08)))
+            satfat_share[g] = max(
+                DIET_SATFAT_SHARE,
+                9.0 * intake[DIET_SATFAT] / energy + rand(rng, Uniform(0.005, 0.02)),
             )
-            if final_max_achievable >= b[target_nutrient]
-                b[target_nutrient] = final_max_achievable * 1.15
-            end
-
-            cost_budget = sum(c[i] * food_supply_limits[i] for i in 1:n_foods)
-
-        elseif scenario == 2
-            # SCENARIO 2: Verified budget impossibility conflict
-            for i in 1:n_foods
-                food_supply_limits[i] = 500.0
-            end
-
-            for j in 1:n_nutrients
-                best_content = maximum(a[:, j])
-                target_units = 20.0 + rand(rng) * 30.0
-                b[j] = best_content * target_units
-            end
-
-            proven_min_cost = 0.0
-            for j in 1:n_nutrients
-                best_cost_efficiency = Inf
-                for i in 1:n_foods
-                    if a[i, j] > 0
-                        cost_per_nutrient_unit = c[i] / a[i, j]
-                        best_cost_efficiency = min(best_cost_efficiency, cost_per_nutrient_unit)
-                    end
-                end
-
-                if best_cost_efficiency < Inf
-                    proven_min_cost += b[j] * best_cost_efficiency
-                end
-            end
-
-            if proven_min_cost > 0
-                cost_budget = proven_min_cost * (0.7 + rand(rng) * 0.2)
-            else
-                avg_cost = sum(c) / n_foods
-                cost_budget = avg_cost * 5.0
-            end
-
-            verification_min_cost = 0.0
-            for j in 1:n_nutrients
-                cheapest_cost_for_nutrient = Inf
-                for i in 1:n_foods
-                    if a[i, j] > 0
-                        cost_for_requirement = (b[j] / a[i, j]) * c[i]
-                        cheapest_cost_for_nutrient = min(
-                            cheapest_cost_for_nutrient, cost_for_requirement
-                        )
-                    end
-                end
-                if cheapest_cost_for_nutrient < Inf
-                    verification_min_cost += cheapest_cost_for_nutrient
-                end
-            end
-
-            if verification_min_cost > 0 && cost_budget >= verification_min_cost * 0.95
-                cost_budget = verification_min_cost * 0.8
-            end
-
-        elseif scenario == 3
-            # SCENARIO 3: Verified supply shortage conflict
-            for j in 1:n_nutrients
-                best_content = maximum(a[:, j])
-                target_units = 30.0 + rand(rng) * 30.0
-                b[j] = best_content * target_units
-            end
-
-            base_supply = 200.0
-            for i in 1:n_foods
-                food_supply_limits[i] = base_supply * (0.8 + rand(rng) * 0.4)
-            end
-
-            target_nutrient = rand(rng, 1:n_nutrients)
-            current_max = sum(a[i, target_nutrient] * food_supply_limits[i] for i in 1:n_foods)
-
-            nutrient_contributions = [
-                (a[i, target_nutrient] * food_supply_limits[i], i) for i in 1:n_foods
-            ]
-            sort!(nutrient_contributions; rev=true)
-
-            reduction_needed = current_max - b[target_nutrient] * 0.95
-            remaining_reduction = reduction_needed
-
-            for (contribution, food_idx) in nutrient_contributions
-                if remaining_reduction > 0
-                    max_reduction = food_supply_limits[food_idx] * 0.9
-                    actual_reduction = min(
-                        remaining_reduction / a[food_idx, target_nutrient], max_reduction
-                    )
-
-                    new_supply = max(10.0, food_supply_limits[food_idx] - actual_reduction)
-                    reduction_achieved =
-                        (food_supply_limits[food_idx] - new_supply) * a[food_idx, target_nutrient]
-
-                    food_supply_limits[food_idx] = new_supply
-                    remaining_reduction -= reduction_achieved
-
-                    if remaining_reduction <= 0
-                        break
-                    end
-                end
-            end
-
-            final_max = sum(a[i, target_nutrient] * food_supply_limits[i] for i in 1:n_foods)
-            if final_max >= b[target_nutrient] * 0.99
-                b[target_nutrient] = final_max * (1.1 + rand(rng) * 0.1)
-            end
-
-            cost_budget = sum(c[i] * food_supply_limits[i] for i in 1:n_foods) * 1.5
-
-        else  # scenario == 4
-            # SCENARIO 4: Verified over-constrained system
-            baseline_consumption = 100.0
-            baseline_diet = zeros(n_foods)
-
-            nutrition_scores = [sum(a[i, :]) for i in 1:n_foods]
-            cost_effectiveness = nutrition_scores ./ c
-            total_effectiveness = sum(cost_effectiveness)
-
-            for i in 1:n_foods
-                base_share = cost_effectiveness[i] / total_effectiveness
-                baseline_diet[i] = baseline_consumption * base_share * (0.5 + rand(rng))
-            end
-
-            total_baseline = sum(baseline_diet)
-            baseline_diet .*= baseline_consumption / total_baseline
-
-            for j in 1:n_nutrients
-                baseline_achievement = sum(a[i, j] * baseline_diet[i] for i in 1:n_foods)
-                b[j] = baseline_achievement * (1.1 + rand(rng) * 0.2)
-            end
-
-            for i in 1:n_foods
-                food_supply_limits[i] = baseline_diet[i] * (1.2 + rand(rng) * 0.6)
-            end
-
-            baseline_cost = sum(c[i] * baseline_diet[i] for i in 1:n_foods)
-            cost_budget = baseline_cost * (1.1 + rand(rng) * 0.2)
-
-            expensive_foods = sortperm(c; rev=true)[1:max(2, div(n_foods, 5))]
-            num_required = max(1, div(length(expensive_foods), 2))
-            required_foods = expensive_foods[1:num_required]
-
-            for i in required_foods
-                min_food_amounts[i] = baseline_diet[i] * (1.3 + rand(rng) * 0.4)
-            end
-
-            nutritious_foods = []
-            avg_nutrition = sum(nutrition_scores) / n_foods
-            for i in 1:n_foods
-                if nutrition_scores[i] > avg_nutrition * 1.2
-                    push!(nutritious_foods, i)
-                end
-            end
-
-            if !isempty(nutritious_foods)
-                num_restricted = max(1, div(length(nutritious_foods), 3))
-                restricted_foods = nutritious_foods[1:min(num_restricted, length(nutritious_foods))]
-
-                for i in restricted_foods
-                    max_food_amounts[i] = baseline_diet[i] * (0.8 + rand(rng) * 0.3)
-                end
-            end
-
-            # Force mathematical impossibility
-            target_nutrient = rand(rng, 1:n_nutrients)
-
-            max_achievable_target = 0.0
-            for i in 1:n_foods
-                min_usage = get(min_food_amounts, i, 0.0)
-                max_usage = food_supply_limits[i]
-
-                if haskey(max_food_amounts, i)
-                    max_usage = min(max_usage, max_food_amounts[i])
-                end
-
-                feasible_max = max(0.0, min(max_usage, max(min_usage, max_usage)))
-                max_achievable_target += a[i, target_nutrient] * feasible_max
-            end
-
-            b[target_nutrient] = max_achievable_target * (1.2 + rand(rng) * 0.2)
-
-            for j in 1:n_nutrients
-                if j != target_nutrient
-                    max_achievable_j = 0.0
-                    for i in 1:n_foods
-                        min_usage = get(min_food_amounts, i, 0.0)
-                        max_usage = min(
-                            food_supply_limits[i], get(max_food_amounts, i, food_supply_limits[i])
-                        )
-                        feasible_max = max(0.0, min(max_usage, max(min_usage, max_usage)))
-                        max_achievable_j += a[i, j] * feasible_max
-                    end
-                    b[j] = max_achievable_j * (0.7 + rand(rng) * 0.2)
-                end
-            end
+            sugar_share[g] = max(
+                DIET_SUGAR_SHARE,
+                4.0 * intake[DIET_SUGAR] / energy + rand(rng, Uniform(0.005, 0.02)),
+            )
+            fat_share = 9.0 * intake[DIET_FAT] / energy
+            fat_share_band[1, g] = min(
+                DIET_FAT_SHARE_BAND[1], fat_share - rand(rng, Uniform(0.005, 0.02))
+            )
+            fat_share_band[2, g] = max(
+                DIET_FAT_SHARE_BAND[2], fat_share + rand(rng, Uniform(0.005, 0.02))
+            )
         end
+        usage = servings * headcount
+        for f in 1:n_foods
+            usage[f] > 0.0 && rand(rng) < 0.6 || continue
+            supply[f] = usage[f] * rand(rng, Uniform(1.02, 1.30))
+        end
+        witness = servings
     end
 
-    # FINAL VERIFICATION: Guarantee infeasibility for infeasible instances
-    if actual_status == infeasible
-        verified_max_achievable = zeros(n_nutrients)
-
-        for j in 1:n_nutrients
-            max_possible_j = 0.0
-
-            for i in 1:n_foods
-                min_usage_i = get(min_food_amounts, i, 0.0)
-                max_usage_i = food_supply_limits[i]
-
-                if haskey(max_food_amounts, i)
-                    max_usage_i = min(max_usage_i, max_food_amounts[i])
-                end
-
-                if min_usage_i > max_usage_i
-                    feasible_usage = 0.0
-                else
-                    feasible_usage = max_usage_i
-                end
-
-                max_possible_j += a[i, j] * feasible_usage
+    certificate = nothing
+    if feasibility_status == infeasible
+        if rand(rng) < 0.6
+            # Population-wide shortage of the sources of a scarce nutrient: pick
+            # one of the three tracked minimum nutrients with fewest carriers and
+            # cut every carrier's supply proportionally.
+            candidates = collect(3:n_min)
+            carriers = [count(>(0.0), view(content, min_nutrients[r], :)) for r in candidates]
+            pool = candidates[sortperm(carriers)][1:min(3, length(candidates))]
+            r = rand(rng, pool)
+            k = min_nutrients[r]
+            required = sum(headcount[g] * min_requirement[r, g] for g in 1:n_cohorts)
+            caps = _diet_population_caps(supply, headcount, upper)
+            available = sum(content[k, f] * caps[f] for f in 1:n_foods)
+            theta = required / rand(rng, Uniform(1.08, 1.25)) / available
+            for f in 1:n_foods
+                content[k, f] > 0.0 || continue
+                supply[f] = theta * caps[f]
             end
-
-            verified_max_achievable[j] = max_possible_j
-        end
-
-        worst_violation_ratio = 0.0
-        target_nutrient_final = 1
-
-        for j in 1:n_nutrients
-            if verified_max_achievable[j] > 0
-                violation_ratio = b[j] / verified_max_achievable[j]
-                if violation_ratio > worst_violation_ratio
-                    worst_violation_ratio = violation_ratio
-                    target_nutrient_final = j
-                end
-            end
-        end
-
-        if verified_max_achievable[target_nutrient_final] > 0
-            b[target_nutrient_final] =
-                verified_max_achievable[target_nutrient_final] * (2.0 + rand(rng))
+            caps = _diet_population_caps(supply, headcount, upper)
+            achievable = sum(content[k, f] * caps[f] for f in 1:n_foods)
+            certificate = DietInfeasibilityCertificate(
+                diet_supply_shortage, k, 0, achievable, required
+            )
         else
-            b[target_nutrient_final] = 100.0 + rand(rng) * 100.0
+            # One cohort's requirement for a nutrient is raised above the most a
+            # diet within its energy ceiling can provide.
+            g = rand(rng, 1:n_cohorts)
+            r = rand(rng, 1:n_min)
+            k = min_nutrients[r]
+            achievable = _diet_max_under_energy_cap(
+                content, view(upper, :, g), k, energy_band[2, g]
+            )
+            min_requirement[r, g] = achievable * rand(rng, Uniform(1.06, 1.15))
+            certificate = DietInfeasibilityCertificate(
+                diet_energy_squeeze, k, g, achievable, min_requirement[r, g]
+            )
         end
+        witness = nothing
     end
 
-    return DietProblem(
+    prob = DietProblem(
         n_foods,
-        n_nutrients,
-        c,
-        a,
-        b,
-        food_supply_limits,
-        cost_budget,
-        min_food_amounts,
-        max_food_amounts,
+        n_cohorts,
+        table.category,
+        content,
+        table.cost,
+        upper,
+        demographic,
+        headcount,
+        min_nutrients,
+        min_requirement,
+        energy_band,
+        sodium_limit,
+        satfat_share,
+        sugar_share,
+        fat_share_band,
+        has_sugar_limit,
+        has_fat_band,
+        supply,
+        witness,
+        certificate,
+        feasibility_status,
     )
+    feasibility_status == feasible && @assert diet_plan_satisfies(prob)
+    feasibility_status == infeasible && @assert diet_certificate_holds(prob)
+    return prob
 end
 
 """
     build_model(prob::DietProblem)
 
-Build a JuMP model for the diet problem (deterministic).
-
-# Arguments
-
-  - `prob`: DietProblem instance
-
-# Returns
-
-  - `model`: The JuMP model
+Build the population diet LP (deterministic; see `DietProblem`).
 """
 function build_model(prob::DietProblem)
     model = Model()
+    F, G = prob.n_foods, prob.n_cohorts
+    C = prob.content
+    @variable(model, 0 <= x[f = 1:F, g = 1:G] <= prob.upper[f, g])
+    @objective(model, Min, sum(prob.headcount[g] * prob.cost[f] * x[f, g] for f in 1:F, g in 1:G))
 
-    @variable(model, x[1:prob.n_foods] >= 0)
+    carriers = [findall(>(0.0), view(C, k, :)) for k in eachindex(DIET_NUTRIENTS)]
+    satfat_coef(g) =
+        [9.0 * C[DIET_SATFAT, f] - prob.satfat_share[g] * C[DIET_ENERGY, f] for f in 1:F]
+    sugar_coef(g) = [4.0 * C[DIET_SUGAR, f] - prob.sugar_share[g] * C[DIET_ENERGY, f] for f in 1:F]
+    fat_coef(g, s) = [9.0 * C[DIET_FAT, f] - s * C[DIET_ENERGY, f] for f in 1:F]
 
-    @objective(model, Min, sum(prob.costs[i] * x[i] for i in 1:prob.n_foods))
-
-    # Nutrient requirements
-    for j in 1:prob.n_nutrients
+    for g in 1:G
         @constraint(
             model,
-            sum(prob.nutrient_content[i, j] * x[i] for i in 1:prob.n_foods) >= prob.requirements[j]
+            prob.energy_band[1, g] <=
+                sum(C[DIET_ENERGY, f] * x[f, g] for f in 1:F) <=
+                prob.energy_band[2, g]
         )
-    end
-
-    # Food supply limits
-    for i in 1:prob.n_foods
-        if prob.food_supply_limits[i] < Inf
-            @constraint(model, x[i] <= prob.food_supply_limits[i])
+        for (r, k) in enumerate(prob.min_nutrients)
+            @constraint(
+                model, sum(C[k, f] * x[f, g] for f in carriers[k]) >= prob.min_requirement[r, g]
+            )
+        end
+        @constraint(
+            model,
+            sum(C[DIET_SODIUM, f] * x[f, g] for f in carriers[DIET_SODIUM]) <= prob.sodium_limit[g]
+        )
+        a = satfat_coef(g)
+        @constraint(model, sum(a[f] * x[f, g] for f in 1:F) <= 0)
+        if prob.has_sugar_limit
+            a = sugar_coef(g)
+            @constraint(model, sum(a[f] * x[f, g] for f in 1:F) <= 0)
+        end
+        if prob.has_fat_band
+            a = fat_coef(g, prob.fat_share_band[1, g])
+            @constraint(model, sum(a[f] * x[f, g] for f in 1:F) >= 0)
+            a = fat_coef(g, prob.fat_share_band[2, g])
+            @constraint(model, sum(a[f] * x[f, g] for f in 1:F) <= 0)
         end
     end
-
-    # Cost budget constraint
-    if prob.cost_budget < Inf
-        @constraint(model, sum(prob.costs[i] * x[i] for i in 1:prob.n_foods) <= prob.cost_budget)
+    for f in 1:F
+        isfinite(prob.supply[f]) || continue
+        @constraint(model, sum(prob.headcount[g] * x[f, g] for g in 1:G) <= prob.supply[f])
     end
-
-    # Minimum consumption requirements
-    for (i, min_amount) in prob.min_food_amounts
-        @constraint(model, x[i] >= min_amount)
-    end
-
-    # Maximum consumption limits
-    for (i, max_amount) in prob.max_food_amounts
-        @constraint(model, x[i] <= max_amount)
-    end
-
     return model
 end
 
-# Register the variant
 register_variant(
     :diet_problem,
     :standard,
     DietProblem,
-    "Diet problem that minimizes the cost of food while meeting nutritional requirements",
+    "Least-cost population diet: DRI-based nutrient rows, energy band and guideline share " *
+    "limits for many cohorts sharing limited regional food supplies";
+    default=true,
+    tags=[:agriculture, :block_angular, :blending, :covering],
 )

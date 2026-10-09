@@ -1,406 +1,560 @@
 using JuMP
 using Random
 using Distributions
-using Statistics
+
+"""
+Planted schedule: an integral start slot for every operation (a genuine 0/1
+point of the time-indexed model — `x[o, start[o]] = 1`) built by a serial
+list-scheduling heuristic that respects releases, job routings, and
+work-center capacities. `completion[j]` is the last slot job `j` occupies.
+"""
+struct JobShopScheduleWitness
+    start::Vector{Int}
+    completion::Vector{Int}
+end
+
+"""
+Energetic (interval-load) infeasibility certificate. Every operation in
+`operations` runs on work center `work_center` and its whole start window lies
+in `[interval_start, interval_end - p_o + 1]`, so wherever it starts it occupies
+`p_o` slots of the interval. Summing the work center's capacity rows over the
+interval gives `Σ_o p_o Σ_s x[o,s] <= capacity * (interval_end - interval_start + 1)`
+for those operations, and their assignment rows force `Σ_s x[o,s] = 1`, so the
+interval must absorb `required_load = Σ p_o` slot-units of work while only
+`available_capacity` exist. The argument uses LP rows only — it refutes the
+LP relaxation, not just the integer program — and needs
+`interval length + |operations|` rows at once, so presolve does not see it.
+"""
+struct JobShopEnergyCertificate
+    work_center::Int
+    interval_start::Int
+    interval_end::Int
+    operations::Vector{Int}
+    required_load::Int
+    available_capacity::Int
+end
 
 """
     JobShopSchedulingProblem <: ProblemGenerator
 
-Generator for realistic job shop scheduling problems with sequential job routings,
-machine no-overlap (disjunctive) constraints, release dates, and soft due dates.
+Time-indexed job shop scheduling with parallel-machine work centers, release
+dates, hard deadlines, and weighted tardiness.
 
 # Overview
 
-Each job consists of an ordered chain of operations, each requiring a specific
-machine for a given processing time. Operations of the same job must run in
-sequence; operations sharing a machine must not overlap (modeled with big-M
-disjunctive constraints and a binary ordering variable per machine-operation
-pair). Each job has a release date (its first operation cannot start earlier)
-and a soft due date: lateness is penalized rather than forbidden through a
-non-negative tardiness variable `T[j]` with `completion[j] - T[j] <= due_date[j]`.
-The objective minimizes weighted tardiness `sum(weights[j] * T[j])` plus a small
-makespan term (the textbook weighted-tardiness objective). Because tardiness is
-unbounded above, a sequential schedule always exists, so `feasible`/`unknown`
-instances are genuinely solvable. `infeasible` instances instead impose a HARD
-deadline tighter than the unavoidable `release + total job processing time`,
-creating a deterministic contradiction.
+Jobs arrive over time (a dynamic shop) and each follows a routing through a
+subset of work centers — flow-dominant, with occasional out-of-order visits.
+Work center `w` holds `capacity[w]` identical machines (mostly 1). Time is
+discretised into slots; operation `o` needs `proc[o]` consecutive slots.
+
+The formulation is the classical time-indexed (Pritsker–Watters–Wolfe)
+model:
+
+  - `x[o, s] ∈ {0,1}` — operation `o` starts in slot `s`, for every slot of its
+    start window `[earliest[o], latest[o]]` (release plus routing head; job
+    deadline minus routing tail);
+  - assignment rows `Σ_s x[o,s] = 1`;
+  - work-center capacity rows, one per work center and slot `t`:
+    `Σ_{o at w} Σ_{s = t - proc[o] + 1}^{t} x[o,s] <= capacity[w]` (rows that
+    can never bind — at most `capacity[w]` operations could be running — are
+    omitted);
+  - routing precedence between consecutive operations of a job:
+    `Σ_s s·x[o',s] - Σ_s s·x[o,s] >= proc[o]`.
+
+Objective: weighted tardiness of each job's completion against its due date
+(a piecewise-linear cost placed directly on the last operation's start
+columns) plus a small work-in-process cost on every operation's start time.
+
+Unlike the big-M disjunctive formulation this replaces — whose LP relaxation
+collapses to the no-contention closed form — the time-indexed relaxation keeps
+machine contention: the capacity rows bind wherever several operations compete
+for a slot, so the relaxed optimum sits strictly above the no-contention bound.
+
+# Data grounding
+
+Releases follow a Poisson arrival stream whose rate puts the bottleneck work
+center at 75–92% utilisation; processing times are lognormal around
+work-center-specific means (a few slow bottleneck centers); due dates use the
+total-work-content rule `release + F × total processing` with `F ∈ [1.3, 3.5]`;
+job weights come from priority classes. Start windows come from a planted
+list schedule (queueing delays) plus deadline slack, so window widths vary
+across jobs the way real flow allowances do.
+
+# Feasibility control
+
+  - `feasible`: job deadlines are at or beyond the planted schedule's
+    completions, so the planted schedule (a [`JobShopScheduleWitness`](@ref))
+    is a 0/1 point of the model.
+  - `infeasible`: a batch of expedited orders (3–8 jobs) that all visit the
+    bottleneck work center gets releases and hard deadlines confining their
+    bottleneck operations to one interval whose capacity is 10–35% short of
+    their total processing time — certified by a
+    [`JobShopEnergyCertificate`](@ref).
+  - `unknown`: the same expedited batch with its load-to-capacity ratio drawn
+    from `1 ± U(0.03, 0.30)`: above 1 provably infeasible, below 1 decided by
+    how the batch interacts with the rest of the shop.
 
 # Fields
 
-  - `n_jobs::Int`: Number of jobs
-  - `n_machines::Int`: Number of machines
-  - `n_ops::Int`: Total number of operations across all jobs
-  - `job_operation_indices::Vector{Vector{Int}}`: Global operation indices, in order, per job
-  - `operation_duration::Vector{Float64}`: Processing time of each operation
-  - `operation_machine::Vector{Int}`: Machine assigned to each operation
-  - `release_times::Vector{Float64}`: Earliest start time for each job's first operation
-  - `due_dates::Vector{Float64}`: Soft (or, for infeasible instances, hard) due date per job
-  - `weights::Vector{Float64}`: Tardiness penalty weight per job
-  - `job_total_processing::Vector{Float64}`: Sum of operation durations per job
-  - `machine_pairs::Vector{Tuple{Int,Int,Int}}`: `(machine, op_a, op_b)` pairs sharing a machine
-  - `horizon::Float64`: Big-M value (scheduling horizon) for disjunctive constraints
-  - `feasibility_status::FeasibilityStatus`: Resolved feasibility status of the instance
+  - `n_jobs::Int`, `n_work_centers::Int`, `n_ops::Int`
+  - `capacity::Vector{Int}`: machines per work center
+  - `job_ops::Vector{Vector{Int}}`: operations of each job, in routing order
+  - `op_job::Vector{Int}`, `op_work_center::Vector{Int}`, `proc::Vector{Int}`
+  - `release::Vector{Int}`, `deadline::Vector{Int}`, `due::Vector{Int}`: per job (slots)
+  - `weight::Vector{Float64}`: tardiness weight per job
+  - `wip_cost::Float64`: per-slot work-in-process cost factor
+  - `earliest::Vector{Int}`, `latest::Vector{Int}`: start window per operation
+  - `horizon::Int`: last slot any operation can occupy
+  - `expedited_jobs::Vector{Int}`: the expedited batch (`infeasible`/`unknown`)
+  - `feasible_witness`, `infeasibility_certificate`, `feasibility_status`
 """
 struct JobShopSchedulingProblem <: ProblemGenerator
     n_jobs::Int
-    n_machines::Int
+    n_work_centers::Int
     n_ops::Int
-    job_operation_indices::Vector{Vector{Int}}
-    operation_duration::Vector{Float64}
-    operation_machine::Vector{Int}
-    release_times::Vector{Float64}
-    due_dates::Vector{Float64}
-    weights::Vector{Float64}
-    job_total_processing::Vector{Float64}
-    machine_pairs::Vector{Tuple{Int, Int, Int}}
-    horizon::Float64
+    capacity::Vector{Int}
+    job_ops::Vector{Vector{Int}}
+    op_job::Vector{Int}
+    op_work_center::Vector{Int}
+    proc::Vector{Int}
+    release::Vector{Int}
+    deadline::Vector{Int}
+    due::Vector{Int}
+    weight::Vector{Float64}
+    wip_cost::Float64
+    earliest::Vector{Int}
+    latest::Vector{Int}
+    horizon::Int
+    expedited_jobs::Vector{Int}
+    feasible_witness::Union{Nothing, JobShopScheduleWitness}
+    infeasibility_certificate::Union{Nothing, JobShopEnergyCertificate}
     feasibility_status::FeasibilityStatus
 end
 
 """
-    sample_operations_per_job(rng, n_jobs, mean_ops, max_ops, n_machines)
+    _job_shop_place!(usage, w, cap, earliest, p) -> Int
 
-Sample the number of operations for each of `n_jobs` jobs from a Normal centered at
-`mean_ops`, clamped to `[2, min(max_ops, n_machines + 2)]`. Returns a `Vector{Int}`.
+Earliest slot `s >= earliest` such that work center `w` has a free machine in
+every slot `s:(s + p - 1)`, booking it. `usage[w]` grows as needed.
 """
-function sample_operations_per_job(
-    rng::AbstractRNG, n_jobs::Int, mean_ops::Float64, max_ops::Int, n_machines::Int
-)
-    min_ops = 2
-    cap = min(max_ops, n_machines + 2)
-    ops = Vector{Int}(undef, n_jobs)
-    for j in 1:n_jobs
-        candidate = round(Int, rand(rng, Normal(mean_ops, max(1.0, 0.35 * mean_ops))))
-        ops[j] = clamp(candidate, min_ops, cap)
+function _job_shop_place!(usage::Vector{Vector{Int}}, w::Int, cap::Int, earliest::Int, p::Int)
+    u = usage[w]
+    s = earliest
+    while true
+        need = s + p - 1
+        length(u) < need && append!(u, zeros(Int, need - length(u) + 64))
+        blocked = 0
+        for t in s:need
+            if u[t] >= cap
+                blocked = t
+            end
+        end
+        if blocked == 0
+            for t in s:need
+                u[t] += 1
+            end
+            return s
+        end
+        s = blocked + 1
     end
-    return ops
 end
 
 """
-    build_routings(rng, operations_per_job, n_machines)
+    _job_shop_route(rng, n_wc, n_ops, order) -> Vector{Int}
 
-Build a random machine routing and processing-time vector for each job. Consecutive
-operations within a job are forced onto distinct machines. Returns
-`(machine_sequences, processing_times)`.
+A routing of `n_ops` distinct work centers: a random subset visited in the
+shop's dominant flow `order`, with one adjacent swap 30% of the time.
 """
-function build_routings(rng::AbstractRNG, operations_per_job::Vector{Int}, n_machines::Int)
-    n_jobs = length(operations_per_job)
-    machine_sequences = Vector{Vector{Int}}(undef, n_jobs)
-    processing_times = Vector{Vector{Float64}}(undef, n_jobs)
-    base_scales = collect(range(1.3, 0.6; length=n_machines))
-
-    for (j, job_ops) in enumerate(operations_per_job)
-        machines = Vector{Int}(undef, job_ops)
-        perm = randperm(rng, n_machines)
-        idx = 1
-        for op in 1:job_ops
-            if idx > length(perm)
-                perm = randperm(rng, n_machines)
-                idx = 1
-            end
-            machines[op] = perm[idx]
-            if op > 1 && machines[op] == machines[op - 1]
-                machines[op] = machines[op] % n_machines + 1
-            end
-            idx += 1
-        end
-        machine_sequences[j] = machines
-
-        times = Float64[]
-        for mach in machines
-            scale = base_scales[mach] * rand(rng, Uniform(0.8, 1.2))
-            push!(times, rand(rng, Gamma(2.5, 0.8 * scale)) + rand(rng, Uniform(0.1, 0.6)))
-        end
-        processing_times[j] = times
+function _job_shop_route(rng::AbstractRNG, n_wc::Int, n_ops::Int, rank::Vector{Int})
+    chosen = shuffle(rng, 1:n_wc)[1:n_ops]
+    sort!(chosen; by=w -> rank[w])
+    if n_ops >= 2 && rand(rng) < 0.3
+        i = rand(rng, 1:(n_ops - 1))
+        chosen[i], chosen[i + 1] = chosen[i + 1], chosen[i]
     end
-
-    return machine_sequences, processing_times
-end
-
-"""
-    count_machine_pairs(machine_sequences, n_machines)
-
-Count the number of unordered machine-operation pairs (= number of binary ordering
-variables in the model): the sum over machines of C(ops_on_machine, 2).
-"""
-function count_machine_pairs(machine_sequences::Vector{Vector{Int}}, n_machines::Int)
-    counts = zeros(Int, n_machines)
-    for seq in machine_sequences
-        for m in seq
-            counts[m] += 1
-        end
-    end
-    return sum(c * (c - 1) ÷ 2 for c in counts)
+    return chosen
 end
 
 """
     JobShopSchedulingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
-Construct a job shop scheduling instance whose decision-variable count lands near
-`target_variables`.
-
-# Variable-count formula
-
-`build_model` creates: `n_ops` start-time vars + `n_jobs` completion vars +
-`n_jobs` tardiness vars + 1 makespan var + `pair_count` binary ordering vars,
-i.e. total = `n_ops + 2*n_jobs + 1 + pair_count`, where
-`pair_count = sum_m C(ops_on_machine_m, 2)`. The constructor iterates over the
-number of jobs, computing this exact total for each candidate routing, and keeps
-the candidate closest to the target.
-
-# Arguments
-
-  - `target_variables`: Target number of decision variables
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
+Construct a time-indexed job shop instance whose start-variable count is within
+a few columns of `target_variables` (targets below ~60 round up to a minimal
+three-job shop).
 """
 function JobShopSchedulingProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
+    target_variables >= 1 ||
+        throw(ArgumentError("target_variables must be >= 1 (got $target_variables)."))
     rng = MersenneTwister(seed)
+    target = target_variables
 
-    # Resolve status: 'unknown' produces a natural (non-forced) instance, so we
-    # treat it like 'feasible' for data generation (no forced infeasibility).
-    desired_status = feasibility_status
-    target = max(target_variables, 20)
-
-    # Scale-dependent structural ranges.
-    if target <= 200
-        mach_range = 4:7
-        mean_ops_range = (3.0, 4.5)
-        max_ops = 7
-    elseif target <= 1000
-        mach_range = 6:10
-        mean_ops_range = (4.0, 6.0)
-        max_ops = 10
+    # --- Shop layout --------------------------------------------------------
+    n_wc = if target <= 2_000
+        rand(rng, 4:7)
+    elseif target <= 20_000
+        rand(rng, 6:12)
     else
-        mach_range = 9:16
-        mean_ops_range = (5.0, 8.0)
-        max_ops = 14
+        rand(rng, 10:20)
     end
-
-    n_machines = rand(rng, mach_range)
-    mean_ops = rand(rng, Uniform(mean_ops_range...))
-
-    # Each job contributes ~mean_ops start vars + 2 (completion + tardiness), and the
-    # machine pairs grow ~quadratically. Start with a rough estimate from the
-    # approximation total ≈ n_jobs*(mean_ops + 2) + (n_jobs*mean_ops)^2 / (2*n_machines).
-    function total_vars_for(machine_sequences::Vector{Vector{Int}})
-        n_jobs = length(machine_sequences)
-        n_ops = sum(length, machine_sequences)
-        pair_count = count_machine_pairs(machine_sequences, n_machines)
-        return n_ops + 2 * n_jobs + 1 + pair_count
+    capacity = [rand(rng) < 0.75 ? 1 : rand(rng, 2:3) for _ in 1:n_wc]
+    mean_proc = [rand(rng, LogNormal(log(3.0), 0.35)) for _ in 1:n_wc]
+    for w in shuffle(rng, 1:n_wc)[1:max(1, n_wc ÷ 5)]
+        mean_proc[w] *= 1.6                   # slow bottleneck centers
     end
+    rank = randperm(rng, n_wc)                # dominant flow order
+    ops_lo = min(2, n_wc)
+    ops_hi = min(n_wc, target <= 2_000 ? 5 : 8)
+    # Mean start-window width (slots) at this scale.
+    mean_window = target <= 2_000 ? rand(rng, 8.0:1.0:16.0) : rand(rng, 14.0:1.0:30.0)
 
-    # Initial guess for n_jobs solving the quadratic approximation for total = target.
-    a = (mean_ops^2) / (2 * n_machines)
-    b = mean_ops + 2.0
-    # a*n_jobs^2 + b*n_jobs + 1 ≈ target
-    disc = b^2 + 4 * a * (target - 1)
-    n_jobs_guess = disc > 0 ? (-b + sqrt(disc)) / (2 * a) : sqrt(target)
-    n_jobs = max(2, round(Int, n_jobs_guess))
+    # Arrival rate: bottleneck utilisation rho. Expected load per job on w is
+    # P(visit w) * E[proc at w]; visits are uniform over work centers.
+    mean_ops = (ops_lo + ops_hi) / 2
+    rho = 0.75 + 0.17 * rand(rng)
+    load_per_job = [mean_ops / n_wc * mean_proc[w] / capacity[w] for w in 1:n_wc]
+    rate = rho / maximum(load_per_job)
 
-    best_seqs = nothing
-    best_times = nothing
-    best_gap = Inf
-
-    for _ in 1:80
-        n_jobs = max(2, n_jobs)
-        ops_per_job = sample_operations_per_job(rng, n_jobs, mean_ops, max_ops, n_machines)
-        machine_sequences, processing_times = build_routings(rng, ops_per_job, n_machines)
-        vc = total_vars_for(machine_sequences)
-        gap = abs(vc - target) / target
-        if gap < best_gap
-            best_gap = gap
-            best_seqs = machine_sequences
-            best_times = processing_times
+    # --- Jobs, generated and list-scheduled in arrival order ------------------
+    usage = [zeros(Int, 256) for _ in 1:n_wc]
+    job_ops = Vector{Int}[]
+    op_job, op_wc, proc, plant_start = Int[], Int[], Int[], Int[]
+    release, completion = Int[], Int[]
+    clock = 1.0
+    base = 0                                  # Σ_ops (planted wait + 1)
+    n_target_ops = max(6, round(Int, target / mean_window))
+    # At least n_wc jobs: with >= 2 distinct operations each, some work center
+    # is visited twice (needed by the expedited batch below).
+    while (length(proc) < n_target_ops && base < 0.85 * target) || length(job_ops) < max(3, n_wc)
+        clock += rand(rng, Exponential(1 / rate))
+        r = floor(Int, clock)
+        k = rand(rng, ops_lo:ops_hi)
+        route = _job_shop_route(rng, n_wc, k, rank)
+        ops = Int[]
+        t = r
+        for w in route
+            p = clamp(round(Int, rand(rng, LogNormal(log(mean_proc[w]), 0.4))), 1, 12)
+            s = _job_shop_place!(usage, w, capacity[w], t, p)
+            push!(op_job, length(job_ops) + 1)
+            push!(op_wc, w)
+            push!(proc, p)
+            push!(plant_start, s)
+            push!(ops, length(proc))
+            t = s + p
         end
-        if gap <= 0.10
-            break
+        push!(job_ops, ops)
+        push!(release, r)
+        push!(completion, t - 1)
+        total_p = sum(proc[o] for o in ops)
+        base += k * (t - r - total_p + 1)
+    end
+    n_jobs = length(job_ops)
+    n_ops = length(proc)
+    total_proc = [sum(proc[o] for o in job_ops[j]) for j in 1:n_jobs]
+
+    # Due dates (total-work-content rule) and priority weights.
+    due = [release[j] + round(Int, total_proc[j] * (1.3 + 2.2 * rand(rng))) for j in 1:n_jobs]
+    weight = [rand(rng) < 0.15 ? 4.0 : (rand(rng) < 0.35 ? 2.0 : 1.0) for _ in 1:n_jobs]
+    weight .*= 1.0 .+ 0.1 .* rand(rng, n_jobs)
+    wip_cost = 0.02 + 0.03 * rand(rng)
+
+    # Deadlines start at the planted completions (float = planted waiting).
+    deadline = copy(completion)
+
+    # --- Expedited batch (infeasible / unknown) ------------------------------
+    expedited = Int[]
+    certificate = nothing
+    cert_parts = nothing
+    if feasibility_status != feasible
+        ratio = if feasibility_status == infeasible
+            1.1 + 0.25 * rand(rng)
+        else
+            m = 0.03 + 0.27 * rand(rng)
+            rand(rng) < 0.5 ? 1.0 - m : 1.0 + m
         end
-        # Adjust n_jobs toward the target (vc scales super-linearly in n_jobs).
-        scale = sqrt(target / max(vc, 1))
-        new_n_jobs = clamp(round(Int, n_jobs * scale), 2, max(2, n_jobs * 3))
-        if new_n_jobs == n_jobs
-            new_n_jobs = vc < target ? n_jobs + 1 : max(2, n_jobs - 1)
+        # Bottleneck: the most loaded work center visited by >= 2 jobs (one
+        # exists: there are at least n_wc jobs of >= 2 distinct operations).
+        visitors_of(w) = [j for j in 1:n_jobs if any(op_wc[o] == w for o in job_ops[j])]
+        util = [
+            sum(proc[o] for o in 1:n_ops if op_wc[o] == w; init=0) / capacity[w] for w in 1:n_wc
+        ]
+        wstar = argmax(w -> length(visitors_of(w)) >= 2 ? util[w] : -1.0, 1:n_wc)
+        visitors = visitors_of(wstar)
+        # Batch size: 3-8 orders per machine, fewer on tiny instances so the
+        # batch's windows do not swamp the column budget.
+        k_batch = min(rand(rng, 3:8) * capacity[wstar], length(visitors), max(2, target ÷ 150))
+        first_idx = rand(rng, 1:(length(visitors) - k_batch + 1))
+        # A contiguous run of arrivals: expedited orders arrive together. The
+        # batch grows while the interval cannot reach the drawn ratio (a long
+        # operation must still fit), and a multi-machine center that still
+        # cannot be over-booked loses machines to a breakdown.
+        bottleneck_op(j) = first(o for o in job_ops[j] if op_wc[o] == wstar)
+        batch_len(batch) = max(
+            floor(Int, sum(proc[bottleneck_op(j)] for j in batch) / (capacity[wstar] * ratio)),
+            maximum(proc[bottleneck_op(j)] for j in batch),
+        )
+        batch_ratio(batch) =
+            sum(proc[bottleneck_op(j)] for j in batch) / (capacity[wstar] * batch_len(batch))
+        expedited = visitors[first_idx:(first_idx + k_batch - 1)]
+        target_ratio = feasibility_status == infeasible ? 1.08 : 0.0
+        while batch_ratio(expedited) < target_ratio
+            rest = setdiff(visitors, expedited)
+            if !isempty(rest)
+                push!(expedited, rest[1])
+            elseif capacity[wstar] > 1
+                capacity[wstar] -= 1
+            else
+                break  # unreachable: two unit-capacity visitors always over-book
+            end
         end
-        n_jobs = new_n_jobs
+        sort!(expedited)
+        batch_ops = [bottleneck_op(j) for j in expedited]
+        load = sum(proc[o] for o in batch_ops)
+        len = batch_len(expedited)
+        heads = Int[]
+        tails = Int[]
+        for (j, o) in zip(expedited, batch_ops)
+            pos = findfirst(==(o), job_ops[j])
+            push!(heads, sum(proc[q] for q in job_ops[j][1:(pos - 1)]; init=0))
+            push!(tails, sum(proc[q] for q in job_ops[j][pos:end]))
+        end
+        # The interval opens when the batch's operations could first reach
+        # the bottleneck.
+        a = max(release[expedited[1]] + maximum(heads), maximum(heads) + 1)
+        if feasibility_status == unknown
+            # Size the interval against the bottleneck's *total* planted load
+            # in it — the batch plus the ordinary jobs already booked there —
+            # so the drawn ratio straddles the real boundary instead of being
+            # swamped by background traffic.
+            bg = copy(usage[wstar])
+            for o in batch_ops, t in plant_start[o]:(plant_start[o] + proc[o] - 1)
+                bg[t] -= 1
+            end
+            need(l) =
+                (load + sum(bg[t] for t in a:(a + l - 1) if t <= length(bg); init=0)) /
+                (capacity[wstar] * l)
+            # Cap: the batch's windows may use at most half the column budget.
+            batch_cols(l) =
+                sum(length(job_ops[j]) * (l - proc[o] + 1) for (j, o) in zip(expedited, batch_ops))
+            len = maximum(proc[o] for o in batch_ops)
+            while need(len) > ratio && batch_cols(len + 1) <= target ÷ 2
+                len += 1
+            end
+        end
+        b = a + len - 1
+        for (i, (j, o)) in enumerate(zip(expedited, batch_ops))
+            release[j] = a - heads[i]
+            deadline[j] = b + tails[i] - proc[o]
+            due[j] = deadline[j]          # expedited orders are due at their deadline
+        end
+        cert_parts = (wstar, a, b, batch_ops, load, capacity[wstar] * len)
     end
 
-    machine_sequences = best_seqs
-    processing_times = best_times
-    n_jobs = length(machine_sequences)
-
-    # Flatten operations into a global indexing.
-    job_operation_indices = Vector{Vector{Int}}(undef, n_jobs)
-    operation_machine = Int[]
-    operation_duration = Float64[]
-    op_counter = 0
-    for j in 1:n_jobs
-        job_indices = Int[]
-        for (mach, dur) in zip(machine_sequences[j], processing_times[j])
-            op_counter += 1
-            push!(job_indices, op_counter)
-            push!(operation_machine, mach)
-            push!(operation_duration, dur)
+    # --- Fit the column budget ------------------------------------------------
+    # Columns of job j: one per operation and slot of its common start-window
+    # width (deadline - release - total processing + 2).
+    window(j) = deadline[j] - release[j] - total_proc[j] + 2
+    cols_now = sum(length(job_ops[j]) * window(j) for j in 1:n_jobs)
+    # Already over budget (queueing delays or the expedited batch's interval):
+    # drop the latest-arriving ordinary jobs. Removing a job only frees
+    # capacity, so the planted schedule of the others stays valid.
+    keep = trues(n_jobs)
+    for j in n_jobs:-1:1
+        cols_now <= target && break
+        (j in expedited || count(keep) <= 3) && continue
+        keep[j] = false
+        cols_now -= length(job_ops[j]) * window(j)
+    end
+    if !all(keep)
+        jobs = findall(keep)
+        jmap = zeros(Int, n_jobs)
+        jmap[jobs] = 1:length(jobs)
+        old_ops = reduce(vcat, job_ops[jobs])
+        omap = zeros(Int, n_ops)
+        omap[old_ops] = 1:length(old_ops)
+        job_ops = [omap[job_ops[j]] for j in jobs]
+        op_job = jmap[op_job[old_ops]]
+        op_wc = op_wc[old_ops]
+        proc = proc[old_ops]
+        plant_start = plant_start[old_ops]
+        release = release[jobs]
+        completion = completion[jobs]
+        deadline = deadline[jobs]
+        due = due[jobs]
+        weight = weight[jobs]
+        total_proc = total_proc[jobs]
+        expedited = jmap[expedited]
+        if cert_parts !== nothing
+            cert_parts = (cert_parts[1:3]..., omap[cert_parts[4]], cert_parts[5:6]...)
         end
-        job_operation_indices[j] = job_indices
+        n_jobs = length(jobs)
+        n_ops = length(old_ops)
     end
-    n_ops = op_counter
+    if feasibility_status == infeasible
+        certificate = JobShopEnergyCertificate(cert_parts...)
+    end
 
-    # Per-machine operation lists -> disjunctive pairs.
-    machine_operation_indices = [Int[] for _ in 1:n_machines]
-    for (idx, mach) in enumerate(operation_machine)
-        push!(machine_operation_indices[mach], idx)
-    end
-    machine_pairs = Tuple{Int, Int, Int}[]
-    for m in 1:n_machines
-        ops = machine_operation_indices[m]
-        for i in 1:(length(ops) - 1)
-            for k in (i + 1):length(ops)
-                push!(machine_pairs, (m, ops[i], ops[k]))
+    # Deadline slack fills the remaining budget.
+    remaining = target - cols_now
+    free_jobs = [j for j in 1:n_jobs if !(j in expedited)]
+    if remaining > 0 && !isempty(free_jobs)
+        u = rand(rng, Exponential(1.0), length(free_jobs))
+        mass = sum(u[i] * length(job_ops[j]) for (i, j) in enumerate(free_jobs))
+        for (i, j) in enumerate(free_jobs)
+            extra = floor(Int, remaining * u[i] / mass)
+            deadline[j] += extra
+            remaining -= extra * length(job_ops[j])
+        end
+        # Spend the remainder on the jobs that still fit, smallest first.
+        for j in sort(free_jobs; by=j -> length(job_ops[j]))
+            while remaining >= length(job_ops[j])
+                deadline[j] += 1
+                remaining -= length(job_ops[j])
             end
         end
     end
 
-    # Per-job totals and time data.
-    job_total_processing = [sum(processing_times[j]) for j in 1:n_jobs]
-    total_processing = sum(job_total_processing)
-    release_span = max(total_processing * 0.15, 5.0)
-
-    release_times = zeros(Float64, n_jobs)
-    due_dates = zeros(Float64, n_jobs)
-    weights = zeros(Float64, n_jobs)
-
-    # Horizon (big-M) must dominate any feasible schedule: total processing plus
-    # all release times is a safe, loose upper bound on every completion time.
-    horizon = total_processing + release_span + 1.0
-
+    # Start windows from the routing heads and tails.
+    earliest = zeros(Int, n_ops)
+    latest = zeros(Int, n_ops)
     for j in 1:n_jobs
-        release_times[j] = rand(rng, Uniform(0, release_span))
-        jtot = job_total_processing[j]
-        # Soft due date: a natural (possibly tight) target. Lateness is penalized,
-        # not forbidden, so this never makes the model infeasible.
-        tight_factor = rand(rng, Uniform(0.9, 1.6))
-        due_dates[j] = release_times[j] + jtot * tight_factor
-        # Tardiness weight in [1, 5], lightly scaled by job size (longer jobs
-        # matter slightly more). Clear, simple multiplier.
-        weights[j] = rand(rng, Uniform(1.0, 5.0)) * (1.0 + jtot / total_processing)
-        horizon = max(horizon, due_dates[j] + jtot)
+        head = 0
+        tail = total_proc[j]
+        for o in job_ops[j]
+            earliest[o] = release[j] + head
+            latest[o] = deadline[j] - tail + 1
+            head += proc[o]
+            tail -= proc[o]
+        end
     end
+    horizon = maximum(deadline)
 
-    if desired_status == infeasible
-        # Force a deterministic contradiction: pick one job and make its due date a
-        # HARD deadline strictly tighter than its unavoidable minimum completion
-        # (release + total processing on its own operations). The build_model
-        # infeasible branch enforces completion[j] <= due_dates[j] WITHOUT a
-        # tardiness escape, so the model is provably infeasible with clear margin.
-        j = 1
-        # Minimum possible completion of job j ignoring machine contention.
-        min_completion = release_times[j] + job_total_processing[j]
-        due_dates[j] = release_times[j] + job_total_processing[j] * 0.5  # well below min_completion
-        @assert due_dates[j] < min_completion
+    witness = if feasibility_status == feasible
+        JobShopScheduleWitness(copy(plant_start), copy(completion))
+    else
+        nothing
     end
 
     return JobShopSchedulingProblem(
         n_jobs,
-        n_machines,
+        n_wc,
         n_ops,
-        job_operation_indices,
-        operation_duration,
-        operation_machine,
-        release_times,
-        due_dates,
-        weights,
-        job_total_processing,
-        machine_pairs,
+        capacity,
+        job_ops,
+        op_job,
+        op_wc,
+        proc,
+        release,
+        deadline,
+        due,
+        weight,
+        wip_cost,
+        earliest,
+        latest,
         horizon,
-        desired_status,
+        expedited,
+        witness,
+        certificate,
+        feasibility_status,
     )
+end
+
+"""
+    _job_shop_columns(prob) -> (op, slot, first_col)
+
+Column order: operations in index order, start slots ascending within each
+window. `first_col[o]` is the index of `x[o, earliest[o]]`.
+"""
+function _job_shop_columns(prob::JobShopSchedulingProblem)
+    first_col = zeros(Int, prob.n_ops + 1)
+    n = 0
+    for o in 1:prob.n_ops
+        first_col[o] = n + 1
+        n += prob.latest[o] - prob.earliest[o] + 1
+    end
+    first_col[end] = n + 1
+    op = Vector{Int}(undef, n)
+    slot = Vector{Int}(undef, n)
+    for o in 1:prob.n_ops, (i, s) in enumerate(prob.earliest[o]:prob.latest[o])
+        op[first_col[o] + i - 1] = o
+        slot[first_col[o] + i - 1] = s
+    end
+    return op, slot, first_col
 end
 
 """
     build_model(prob::JobShopSchedulingProblem)
 
-Build a JuMP model for the job shop scheduling problem. Deterministic — uses only
-data from the struct fields (no RNG).
-
-For `feasible`/`unknown` instances, due dates are soft: each job has a tardiness
-variable `T[j] >= 0` with `completion[j] - T[j] <= due_dates[j]`, and the objective
-minimizes weighted tardiness. For `infeasible` instances, job 1's due date is a hard
-deadline (`completion[1] <= due_dates[1]`) tighter than its minimum completion time,
-producing a deterministic infeasibility.
-
-# Returns
-
-  - `model`: The JuMP model
+Build the time-indexed job shop model (binary start variables). Deterministic.
 """
 function build_model(prob::JobShopSchedulingProblem)
     model = Model()
+    op, slot, first_col = _job_shop_columns(prob)
+    n = length(op)
+    @variable(model, x[1:n], Bin)
 
-    n_ops = prob.n_ops
-    n_jobs = prob.n_jobs
-
-    @variable(model, start_time[1:n_ops] >= 0)
-    @variable(model, completion[1:n_jobs] >= 0)
-    @variable(model, tardiness[1:n_jobs] >= 0)
-    @variable(model, makespan >= 0)
-    @variable(model, order_var[1:length(prob.machine_pairs)], Bin)
-
-    infeas = prob.feasibility_status == infeasible
-
-    # Job sequencing, release, completion and (soft/hard) due-date constraints.
-    for (j, op_indices) in enumerate(prob.job_operation_indices)
-        for idx in 1:(length(op_indices) - 1)
-            cur = op_indices[idx]
-            nxt = op_indices[idx + 1]
-            @constraint(model, start_time[nxt] >= start_time[cur] + prob.operation_duration[cur])
-        end
-        first_idx = op_indices[1]
-        @constraint(model, start_time[first_idx] >= prob.release_times[j])
-        for op_idx in op_indices
-            @constraint(
-                model, completion[j] >= start_time[op_idx] + prob.operation_duration[op_idx]
-            )
-        end
-        if infeas && j == 1
-            # HARD deadline (no tardiness escape): deterministic infeasibility.
-            @constraint(model, completion[j] <= prob.due_dates[j])
-        else
-            # SOFT deadline: lateness absorbed by tardiness var.
-            @constraint(model, completion[j] - tardiness[j] <= prob.due_dates[j])
-        end
+    # Assignment rows.
+    for o in 1:prob.n_ops
+        @constraint(model, sum(x[c] for c in first_col[o]:(first_col[o + 1] - 1)) == 1)
     end
 
-    # Machine no-overlap via big-M disjunctions.
-    for (pair_idx, (_machine, op_a, op_b)) in enumerate(prob.machine_pairs)
-        bigM = prob.horizon
+    # Routing precedence (aggregated start times).
+    for ops in prob.job_ops, i in 1:(length(ops) - 1)
+        o, q = ops[i], ops[i + 1]
         @constraint(
             model,
-            start_time[op_b] >=
-                start_time[op_a] + prob.operation_duration[op_a] - bigM * (1 - order_var[pair_idx])
-        )
-        @constraint(
-            model,
-            start_time[op_a] >=
-                start_time[op_b] + prob.operation_duration[op_b] - bigM * order_var[pair_idx]
+            sum(slot[c] * x[c] for c in first_col[q]:(first_col[q + 1] - 1)) -
+            sum(slot[c] * x[c] for c in first_col[o]:(first_col[o + 1] - 1)) >= prob.proc[o]
         )
     end
 
-    for j in 1:n_jobs
-        @constraint(model, makespan >= completion[j])
+    # Work-center capacity rows: column c occupies slots slot[c]:(slot[c]+p-1).
+    for w in 1:prob.n_work_centers
+        ops_w = [o for o in 1:prob.n_ops if prob.op_work_center[o] == w]
+        isempty(ops_w) && continue
+        lo = minimum(prob.earliest[o] for o in ops_w)
+        hi = maximum(prob.latest[o] + prob.proc[o] - 1 for o in ops_w)
+        cols = [Int[] for _ in lo:hi]
+        nops = zeros(Int, hi - lo + 1)
+        for o in ops_w
+            for t in prob.earliest[o]:(prob.latest[o] + prob.proc[o] - 1)
+                nops[t - lo + 1] += 1
+            end
+            for c in first_col[o]:(first_col[o + 1] - 1), t in slot[c]:(slot[c] + prob.proc[o] - 1)
+                push!(cols[t - lo + 1], c)
+            end
+        end
+        for (i, cs) in enumerate(cols)
+            # At most nops[i] operations can run in this slot; skip rows that
+            # can never bind.
+            nops[i] > prob.capacity[w] || continue
+            @constraint(model, sum(x[c] for c in cs) <= prob.capacity[w])
+        end
     end
 
-    # Weighted-tardiness objective plus a small makespan regularizer.
-    @objective(model, Min, sum(prob.weights[j] * tardiness[j] for j in 1:n_jobs) + 0.05 * makespan)
-
+    # Objective: weighted tardiness on each job's last operation plus a small
+    # work-in-process cost on every start time.
+    obj = zeros(n)
+    for j in 1:prob.n_jobs
+        ops = prob.job_ops[j]
+        last = ops[end]
+        for o in ops, c in first_col[o]:(first_col[o + 1] - 1)
+            obj[c] += prob.wip_cost * prob.weight[j] * (slot[c] - prob.earliest[o])
+        end
+        for c in first_col[last]:(first_col[last + 1] - 1)
+            finish = slot[c] + prob.proc[last] - 1
+            obj[c] += prob.weight[j] * max(0, finish - prob.due[j])
+        end
+    end
+    @objective(model, Min, sum(obj[c] * x[c] for c in 1:n if obj[c] != 0.0))
     return model
 end
 
-# Register the variant
 register_variant(
     :job_shop_scheduling,
     :standard,
     JobShopSchedulingProblem,
-    "Job shop scheduling with disjunctive machine no-overlap and weighted tardiness (soft due dates)",
+    "Time-indexed job shop scheduling with parallel-machine work centers, release dates, hard deadlines, and weighted tardiness; LP relaxation keeps machine contention, with a planted list schedule and an energetic interval-load infeasibility certificate";
+    tags=[:scheduling, :time_indexed, :partitioning, :packing],
 )

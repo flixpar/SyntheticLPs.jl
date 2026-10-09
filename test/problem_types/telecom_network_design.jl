@@ -149,11 +149,45 @@
             @test cert.crossing_capacity < cert.crossing_demand
         else
             budget_mode += 1
-            @test cert.cost_per_capacity ≈
-                minimum(p.installation_costs[a] / p.link_capacities[a] for a in crossing)
-            @test cert.implied_minimum ≈ cert.crossing_demand * cert.cost_per_capacity
+            # Bridges: removing one splits the topology, and its forced
+            # install level carries the demand between the two sides.
+            level = Dict{Tuple{Int, Int}, Float64}()
+            for (b, flow) in zip(cert.bridge_links, cert.bridge_flows)
+                parent = collect(1:p.n_nodes)
+                find(x) = parent[x] == x ? x : (parent[x] = find(parent[x]))
+                for a in p.arcs
+                    a == b && continue
+                    parent[find(a[1])] = find(a[2])
+                end
+                comp = [find(v) for v in 1:p.n_nodes]
+                @test length(unique(comp)) == 2
+                @test flow ≈ sum(
+                    c[:demand] for c in p.commodities if comp[c[:source]] != comp[c[:sink]];
+                    init=0.0,
+                )
+                @test flow < p.link_capacities[b]   # routable on its own
+                level[b] = flow / p.link_capacities[b]
+            end
+            @test cert.forced_spend ≈
+                sum(p.installation_costs[b] * level[b] for b in cert.bridge_links; init=0.0)
+            # Fractional knapsack over the cut, above the bridges' forced levels.
+            required =
+                cert.crossing_demand -
+                sum(p.link_capacities[a] * get(level, a, 0.0) for a in crossing)
+            spend = 0.0
+            for a in sort(crossing; by=a -> p.installation_costs[a] / p.link_capacities[a])
+                required <= 0 && break
+                take = min(1.0 - get(level, a, 0.0), required / p.link_capacities[a])
+                spend += p.installation_costs[a] * take
+                required -= p.link_capacities[a] * take
+            end
+            @test cert.cut_spend ≈ spend rtol = 1e-9
+            @test cert.cut_spend > 0
+            @test cert.implied_minimum ≈ cert.forced_spend + cert.cut_spend
             @test cert.budget == p.budget
-            @test cert.budget < cert.implied_minimum
+            @test cert.implied_minimum - cert.budget >= 0.06 * cert.cut_spend
+            # The balanced cut keeps a quarter of the nodes on each side.
+            @test 4 * length(side) >= p.n_nodes && 4 * (p.n_nodes - length(side)) >= p.n_nodes
         end
     end
     @test capacity_mode > 0

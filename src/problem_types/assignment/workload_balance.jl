@@ -1,278 +1,308 @@
 using JuMP
 using Random
+using Distributions
+using StatsBase
+
+"""
+Planted balanced assignment: `edge_of_task[t]` serves task `t` (an integer
+point), built greedily (longest tasks first, each to the eligible worker whose
+availability-scaled load grows least); `makespan` is its availability-scaled
+makespan `max_w load[w] / availability[w]`, at most `max_makespan`.
+"""
+struct WorkloadBalanceWitness
+    edge_of_task::Vector{Int}
+    makespan::Float64
+end
+
+"""
+Skill-group pigeonhole certificate (relaxation-proof). The `tasks` (one skill
+group) can only be done by the `workers` (every eligible edge of a listed task
+goes to a listed worker). Every listed task needs at least its fastest eligible
+processing time, so
+
+    required = sum_{t in tasks} min_{e eligible for t} processing_time[e]
+            <= sum_{w in workers} availability[w] * max_makespan = available
+
+The certificate stores both sides with `available < required` (by 5%-15%):
+the group's workforce cannot absorb its workload within the overtime cap. It
+combines many task rows with many worker rows, so presolve cannot see it.
+"""
+struct WorkloadBalanceCertificate
+    tasks::Vector{Int}
+    workers::Vector{Int}
+    required::Float64
+    available::Float64
+end
 
 """
     WorkloadBalanceAssignmentProblem <: ProblemGenerator
 
-Generator for workload-balanced (min-makespan) task assignment problems.
+Workload-balanced assignment on unrelated workers (R||Cmax-style LP) over a
+sparse eligibility graph.
 
 # Overview
 
-Assigns each task to exactly one eligible worker so as to minimize the *makespan*
-— the maximum total workload carried by any single worker — subject to per-worker
-capacity limits. This is the classic minimax / load-balancing flavour of the
-assignment problem and is structurally distinct from the standard min-cost
-one-to-one assignment (no cost objective, no one-task-per-worker restriction): here
-a worker may take on many tasks, and what matters is keeping the busiest worker as
-lightly loaded as possible.
+Tasks (field jobs, tickets, deliveries) are assigned to eligible workers whose
+processing times differ by speed and skill fit; workers have different
+availabilities (part-time 0.5, 0.75, full-time 1.0). The model minimises a
+weighted makespan plus assignment cost:
 
-Each task `j` carries a processing load `load_j > 0`. Each worker `w` has a
-capacity `cap_w` (a shift-length style upper bound on total workload). Eligibility
-is governed by a skill mask: a worker is eligible for a task whose skill group it
-covers, plus a sprinkling of cross-trained pairs. A single continuous auxiliary
-variable `L` (the makespan) upper-bounds every worker's load and is the sole term
-in the objective.
+    minimize    makespan_weight * L + sum_e cost[e] x[e]
+    subject to  sum_{e serving t} x[e] = 1                         every task t
+                sum_{e of w} processing_time[e] x[e] <= availability[w] * L
+                                                                   every worker w
+                0 <= L <= max_makespan,  x binary
 
-Formulation:
+Processing times are worker-specific (`base[t] / speed[w]`, 25% slower for
+cross-skill work, small noise), so the relaxation is a genuine
+unrelated-machines LP — not the trivially fractional identical-machines one
+(`L = total / n_workers`) — and the cost term breaks the massive degeneracy of
+a pure makespan objective. Only eligible pairs are variables.
 
-    minimize    L
-    subject to  sum_w x[w,j] = 1                       for every task j   (assign once)
-                sum_j load_j * x[w,j] <= L             for every worker w (makespan)
-                sum_j load_j * x[w,j] <= cap_w         for every worker w (capacity)
-                x[w,j] = 0                             for ineligible (w,j)
-                x[w,j] in {0,1},  L >= 0
+# Data grounding
 
-In the LP relaxation `x[w,j] in [0,1]`.
+Geography and skills as in `assignment/standard` (`_asg_world`); each task is
+eligible for a lognormal number (mean 3-7) of its nearest workers holding its
+skill (per-skill grid kNN; only a skill nobody holds falls back to the nearest
+workers, 40% slower). Cross-trained holders work 15% slower than workers whose
+primary trade it is. Task base duration is
+lognormal (median 4 h, clipped to 0.5-10 h: one shift), worker speed lognormal
+(sd 0.2); cost = wage x time +
+travel.
 
-# Fields
+# Feasibility control
 
-  - `n_workers::Int`: Number of workers
-  - `n_tasks::Int`: Number of tasks
-  - `loads::Vector{Float64}`: Processing load of each task (length `n_tasks`)
-  - `capacities::Vector{Float64}`: Workload capacity of each worker (length `n_workers`)
-  - `eligible::Matrix{Bool}`: Eligibility mask (`n_workers` × `n_tasks`); `true` if worker may do task
+  - `feasible`: `max_makespan` (the overtime cap) is 1.05-1.3x the planted
+    greedy makespan; the planted assignment is the witness.
+  - `infeasible`: a skill group with at least 4 tasks (and at least 3% of
+    them), all served by holders only, has its task durations scaled up (a
+    demand surge) until its fastest-possible workload exceeds the group
+    workforce's capacity under the cap by 5%-15% (certificate above); the
+    group is chosen among those where this surge keeps every single task
+    doable within 90% of some eligible worker's cap, so no single row
+    refutes the model. Without such a group, all tasks and workers are used.
+  - `unknown`: `max_makespan` is 0.75-1.15x the planted greedy makespan — the
+    fractional optimum can sit below the greedy one, so it may or may not fit.
+
+# Sizing
+
+Variables = eligible edges + 1, exactly `max(target_variables, 3)`. Rows =
+`n_tasks + n_workers`.
 """
 struct WorkloadBalanceAssignmentProblem <: ProblemGenerator
     n_workers::Int
     n_tasks::Int
-    loads::Vector{Float64}
-    capacities::Vector{Float64}
-    eligible::Matrix{Bool}
+    edges::Vector{Tuple{Int, Int}}
+    processing_time::Vector{Float64}
+    costs::Vector{Float64}
+    availability::Vector{Float64}
+    max_makespan::Float64
+    makespan_weight::Float64
+    worker_skills::Vector{Vector{Int}}
+    task_skill::Vector{Int}
+    worker_positions::Vector{Tuple{Float64, Float64}}
+    task_positions::Vector{Tuple{Float64, Float64}}
+    geography::Symbol
+    feasible_witness::Union{Nothing, WorkloadBalanceWitness}
+    infeasibility_certificate::Union{Nothing, WorkloadBalanceCertificate}
+    feasibility_status::FeasibilityStatus
 end
 
-"""
-    WorkloadBalanceAssignmentProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
-
-Construct a workload-balanced assignment instance.
-
-Variable-count formula (decision variables created by `build_model`):
-
-    total = n_workers * n_tasks   (the assignment matrix x)
-          + 1                     (the makespan auxiliary L)
-
-The constructor picks `n_workers` and `n_tasks` so `n_workers*n_tasks + 1` lands
-near `target_variables`. Tasks comfortably outnumber workers (T > W) so that
-balancing is non-trivial.
-
-# Arguments
-
-  - `target_variables`: Target number of decision variables (`n_workers*n_tasks + 1`)
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
-
-# Feasibility
-
-  - `feasible`: eligibility is generous, every task fits on every worker
-    (`max load <= min cap`), and total capacity comfortably exceeds total load. A
-    greedy LPT assignment is constructed; capacities are raised if needed so a
-    concrete integer assignment exists, which makes the LP relaxation feasible.
-  - `infeasible`: capacities are scaled so `sum_w cap_w < total_load`. Summing the
-    capacity constraints gives `sum_w sum_j load_j x[w,j] <= sum_w cap_w < total_load`,
-    while the assignment constraints force the left side to equal `total_load`. The
-    contradiction survives the LP relaxation (it is independent of integrality,
-    eligibility, and the makespan variable).
-  - `unknown`: natural capacities, biased toward feasibility but not forced.
-"""
 function WorkloadBalanceAssignmentProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
+    _asg_check_target(target_variables, "workload_balance")
     rng = MersenneTwister(seed)
+    n_edges = max(target_variables, 3) - 1
+    mean_k = 3.0 + 4.0 * rand(rng)
+    T = max(2, round(Int, n_edges / mean_k))
+    W = max(2, round(Int, T / (3.0 + 5.0 * rand(rng))))
+    while W * T < n_edges
+        W += 1
+    end
+    G = clamp(round(Int, sqrt(W) / 2), 1, 20)
+    worker_pos, task_pos, worker_skills, task_skill, geography, primary = _asg_world(rng, W, T, G)
 
-    # --- Dimension sizing: total = W*T + 1, with T > W ---
-    # Pick a worker:task ratio r = T/W in (1.5, 3.0). Then W*T = r*W^2 ≈ target-1
-    # => W ≈ sqrt((target-1)/r), T ≈ r*W.
-    eff = max(4, target_variables - 1)
-    ratio = 1.5 + 1.5 * rand(rng)  # tasks are 1.5x .. 3.0x the worker count
-    n_workers = max(2, round(Int, sqrt(eff / ratio)))
-    n_tasks = max(n_workers + 1, round(Int, eff / n_workers))
+    # Every task is eligible for its nearest holders of the skill it needs
+    # (per-skill grid kNN); only a skill nobody holds falls back to the
+    # nearest workers at a cross-skill slowdown.
+    K = min(W, max(20, round(Int, 4 * mean_k)))
+    skilled = _asg_skill_candidates(worker_pos, worker_skills, task_pos, task_skill, G, K)
+    unskilled =
+        any(isempty, skilled) ? _geo_knn_query(worker_pos, task_pos, K) : Vector{Vector{Int}}()
+    candidates(t) = isempty(skilled[t]) ? copy(unskilled[t]) : copy(skilled[t])
+    cand = [candidates(t) for t in 1:T]
+    cap = [length(c) for c in cand]
+    k = _asg_edge_counts(rng, T, min(n_edges, sum(cap)), mean_k, cap)
+    edges = Tuple{Int, Int}[]
+    for t in 1:T, w in cand[t][1:k[t]]
+        push!(edges, (w, t))
+    end
+    sort!(edges)
+    E = length(edges)
 
-    # --- Scale-tiered parameter ranges (processing times / shift lengths) ---
-    total_vars = n_workers * n_tasks + 1
-    if total_vars <= 250
-        load_lo, load_hi = 1.0, 8.0
-    elseif total_vars <= 1000
-        load_lo, load_hi = 2.0, 20.0
+    speed = [rand(rng, LogNormal(0.0, 0.2)) for _ in 1:W]
+    availability = [rand(rng) < 0.6 ? 1.0 : (rand(rng) < 0.6 ? 0.75 : 0.5) for _ in 1:W]
+    wage = [30.0 * rand(rng, LogNormal(0.0, 0.2)) for _ in 1:W]
+    base = [clamp(4.0 * rand(rng, LogNormal(0.0, 0.6)), 0.5, 10.0) for _ in 1:T]
+    # Primary trade at full speed, cross-trained trades 15% slower, unskilled
+    # fallback 40% slower.
+    fit = [
+        task_skill[t] == primary[w] ? 1.0 : (task_skill[t] in worker_skills[w] ? 1.15 : 1.4) for
+        (w, t) in edges
+    ]
+    noise = [rand(rng, LogNormal(0.0, 0.08)) for _ in 1:E]
+    proc() = [
+        round(base[t] / speed[w] * fit[e] * noise[e]; digits=3) for (e, (w, t)) in enumerate(edges)
+    ]
+    processing_time = proc()
+    travel = [
+        0.5 * hypot(worker_pos[w][1] - task_pos[t][1], worker_pos[w][2] - task_pos[t][2]) for
+        (w, t) in edges
+    ]
+    of_task = [Int[] for _ in 1:T]
+    for (e, (_, t)) in enumerate(edges)
+        push!(of_task[t], e)
+    end
+
+    # Planted greedy (longest base first, least availability-scaled growth).
+    load = zeros(W)
+    edge_of_task = zeros(Int, T)
+    for t in sortperm(base; rev=true)
+        e = argmin(
+            e -> ((load[edges[e][1]] + processing_time[e]) / availability[edges[e][1]], e),
+            of_task[t],
+        )
+        edge_of_task[t] = e
+        load[edges[e][1]] += processing_time[e]
+    end
+    planted_makespan = maximum(load ./ availability)
+
+    feasible_witness = nothing
+    infeasibility_certificate = nothing
+    max_makespan = if feasibility_status == unknown
+        round(planted_makespan * (0.75 + 0.4 * rand(rng)); digits=2)
     else
-        load_lo, load_hi = 5.0, 60.0
+        ceil(planted_makespan * (1.05 + 0.25 * rand(rng)); digits=2)
     end
-
-    # --- Task loads (log-normal-ish spread within the tier for realism) ---
-    loads = Vector{Float64}(undef, n_tasks)
-    for j in 1:n_tasks
-        base = load_lo + (load_hi - load_lo) * rand(rng)
-        # Occasional heavy task to make balancing meaningful.
-        if rand(rng) < 0.15
-            base *= 1.3 + 0.7 * rand(rng)
-        end
-        loads[j] = round(base; digits=2)
-    end
-    total_load = sum(loads)
-    max_load = maximum(loads)
-
-    # --- Skill groups drive eligibility ---
-    n_groups = max(1, min(n_workers, rand(rng, 2:max(2, round(Int, sqrt(n_workers) + 1)))))
-    worker_group = [rand(rng, 1:n_groups) for _ in 1:n_workers]
-    task_group = [rand(rng, 1:n_groups) for _ in 1:n_tasks]
-
-    # In-group eligibility is high; cross-group eligibility is a smaller chance
-    # (cross-training). Generous in the feasible case so coverage is easy.
     if feasibility_status == feasible
-        p_in, p_out = 0.97, 0.45
-    else
-        p_in, p_out = 0.90, 0.25
-    end
-
-    eligible = falses(n_workers, n_tasks)
-    for w in 1:n_workers, j in 1:n_tasks
-        p = (worker_group[w] == task_group[j]) ? p_in : p_out
-        eligible[w, j] = rand(rng) < p
-    end
-
-    # Every task needs at least one eligible worker (always — even infeasible
-    # instances should fail via the capacity contradiction, not via empty columns,
-    # so the contradiction is the clean, intended reason).
-    for j in 1:n_tasks
-        if !any(@view eligible[:, j])
-            eligible[rand(rng, 1:n_workers), j] = true
+        feasible_witness = WorkloadBalanceWitness(edge_of_task, planted_makespan)
+    elseif feasibility_status == infeasible
+        # Pick a skill group (all its tasks served by holders only) whose
+        # durations can surge enough to overload its workforce without any
+        # single task becoming impossible on its own (which a single row
+        # would reveal to presolve); fall back to all tasks.
+        margin = 1.05 + 0.1 * rand(rng)
+        fastest(ts) = sum(minimum(processing_time[e] for e in of_task[t]) for t in ts)
+        workers_of(ts) = sort!(unique([edges[e][1] for t in ts for e in of_task[t]]))
+        function surge_plan(ts)
+            ws = workers_of(ts)
+            available = sum(availability[w] for w in ws) * max_makespan
+            need = margin * available / fastest(ts)
+            # Largest surge keeping every task doable by some eligible worker
+            # within 90% of that worker's cap.
+            room = minimum(
+                maximum(
+                    0.9 * availability[edges[e][1]] * max_makespan / processing_time[e] for
+                    e in of_task[t]
+                ) for t in ts
+            )
+            return need, room
         end
-    end
-
-    # --- Capacities by feasibility intent ---
-    capacities = Vector{Float64}(undef, n_workers)
-
-    if feasibility_status == infeasible
-        # Pigeonhole: total capacity strictly below total load.
-        # total_cap = frac * total_load with frac in [0.70, 0.90].
-        frac = 0.70 + 0.20 * rand(rng)
-        total_cap = frac * total_load
-        # Distribute total_cap across workers with mild heterogeneity, then rescale
-        # exactly so the sum equals total_cap (keeps the strict inequality intact).
-        raw = [0.7 + 0.6 * rand(rng) for _ in 1:n_workers]
-        s = sum(raw)
-        for w in 1:n_workers
-            capacities[w] = total_cap * raw[w] / s
+        counts = [count(==(g), task_skill) for g in 1:G]
+        options = Vector{Int}[]
+        for g in shuffle(rng, collect(1:G))
+            counts[g] >= max(4, ceil(Int, 0.03T)) || continue
+            ts = [t for t in 1:T if task_skill[t] == g]
+            any(t -> isempty(skilled[t]), ts) && continue
+            need, room = surge_plan(ts)
+            need <= room && push!(options, ts)
         end
-        # sum(capacities) == total_cap == frac * total_load < total_load by
-        # construction, and the floor() rounding below only widens the shortfall,
-        # so the strict pigeonhole infeasibility holds with no extra rescaling.
-
-    else
-        # feasible / unknown: build generous, heterogeneous capacities and then,
-        # for the `feasible` case, GUARANTEE a concrete assignment fits via LPT.
-
-        # Average load per worker if perfectly balanced.
-        avg = total_load / n_workers
-        # Capacity headroom factor; feasible gets more slack than unknown.
-        head_lo, head_hi = feasibility_status == feasible ? (1.6, 2.4) : (1.1, 1.8)
-        for w in 1:n_workers
-            head = head_lo + (head_hi - head_lo) * rand(rng)
-            capacities[w] = max(max_load, avg * head)
-        end
-
-        if feasibility_status == feasible
-            # Every task must fit on every worker: cap_w >= max_load.
-            for w in 1:n_workers
-                capacities[w] = max(capacities[w], max_load)
+        tasks = isempty(options) ? collect(1:T) : options[1]
+        workers = workers_of(tasks)
+        available = sum(availability[w] for w in workers) * max_makespan
+        if fastest(tasks) < margin * available
+            surge = margin * available / fastest(tasks)
+            for t in tasks
+                base[t] *= surge
             end
-
-            # Greedy LPT: assign heaviest tasks first to the least-loaded eligible
-            # worker. Compute resulting per-worker loads; if any exceeds its cap,
-            # raise that cap so the concrete integer assignment is admissible.
-            order = sortperm(loads; rev=true)
-            assigned_load = zeros(Float64, n_workers)
-            for j in order
-                cands = [w for w in 1:n_workers if eligible[w, j]]
-                # (Guaranteed non-empty by the coverage fix above.)
-                best = argmin(w -> assigned_load[w], cands)
-                assigned_load[best] += loads[j]
-            end
-            for w in 1:n_workers
-                if assigned_load[w] > capacities[w]
-                    # Raise with a small safety margin.
-                    capacities[w] = assigned_load[w] * 1.05
+            processing_time = proc()
+            # Rounding to 3 digits can shave a hair: top up until strict.
+            while fastest(tasks) <= available
+                for t in tasks
+                    base[t] *= 1.001
                 end
+                processing_time = proc()
             end
         end
+        infeasibility_certificate = WorkloadBalanceCertificate(
+            tasks, workers, fastest(tasks), available
+        )
     end
 
-    # Round capacities for tidy data without breaking the feasibility math:
-    # round feasible/unknown caps UP, infeasible caps DOWN (preserves shortfall).
-    if feasibility_status == infeasible
-        capacities = floor.(capacities; digits=2)
-    else
-        capacities = ceil.(capacities; digits=2)
-    end
+    costs = [
+        round(wage[w] * processing_time[e] + travel[e]; digits=2) for
+        (e, (w, _)) in enumerate(edges)
+    ]
+    typical_cost = sum(minimum(costs[e] for e in of_task[t]) for t in 1:T)
+    makespan_weight = round(typical_cost / planted_makespan * (0.5 + 1.5 * rand(rng)); sigdigits=4)
 
-    return WorkloadBalanceAssignmentProblem(n_workers, n_tasks, loads, capacities, eligible)
+    return WorkloadBalanceAssignmentProblem(
+        W,
+        T,
+        edges,
+        processing_time,
+        costs,
+        availability,
+        max_makespan,
+        makespan_weight,
+        worker_skills,
+        task_skill,
+        worker_pos,
+        task_pos,
+        geography,
+        feasible_witness,
+        infeasibility_certificate,
+        feasibility_status,
+    )
 end
 
 """
     build_model(prob::WorkloadBalanceAssignmentProblem)
 
-Build a JuMP model for the workload-balanced assignment problem. Deterministic —
-uses only the struct fields.
-
-Decision variables:
-
-  - `x[w, j]`: binary, worker `w` performs task `j`
-  - `L`: continuous makespan (maximum worker workload)
-
-# Returns
-
-  - `model`: The JuMP model
+Build the sparse unrelated-workers balancing model. Deterministic — uses only
+the struct fields.
 """
 function build_model(prob::WorkloadBalanceAssignmentProblem)
     model = Model()
-
-    W = prob.n_workers
-    T = prob.n_tasks
-
-    # Variables (total = W*T + 1)
-    @variable(model, x[1:W, 1:T], Bin)
-    @variable(model, L >= 0)
-
-    # Objective: minimize the makespan.
-    @objective(model, Min, L)
-
-    # Each task assigned to exactly one worker.
-    for j in 1:T
-        @constraint(model, sum(x[w, j] for w in 1:W) == 1)
+    E = length(prob.edges)
+    @variable(model, x[1:E], Bin)
+    @variable(model, 0 <= L <= prob.max_makespan)
+    @objective(model, Min, prob.makespan_weight * L + sum(prob.costs[e] * x[e] for e in 1:E))
+    of_task = [Int[] for _ in 1:(prob.n_tasks)]
+    of_worker = [Int[] for _ in 1:(prob.n_workers)]
+    for (e, (w, t)) in enumerate(prob.edges)
+        push!(of_task[t], e)
+        push!(of_worker[w], e)
     end
-
-    # Makespan: each worker's total load is bounded by L.
-    for w in 1:W
-        @constraint(model, sum(prob.loads[j] * x[w, j] for j in 1:T) <= L)
+    for t in 1:(prob.n_tasks)
+        @constraint(model, sum(x[e] for e in of_task[t]) == 1)
     end
-
-    # Per-worker capacity (the hard limit enabling the pigeonhole infeasibility).
-    for w in 1:W
-        @constraint(model, sum(prob.loads[j] * x[w, j] for j in 1:T) <= prob.capacities[w])
+    for w in 1:(prob.n_workers)
+        @constraint(
+            model,
+            sum(prob.processing_time[e] * x[e] for e in of_worker[w]; init=AffExpr(0.0)) -
+            prob.availability[w] * L <= 0
+        )
     end
-
-    # Eligibility: forbid ineligible (w, j) pairs.
-    for w in 1:W, j in 1:T
-        if !prob.eligible[w, j]
-            @constraint(model, x[w, j] == 0)
-        end
-    end
-
     return model
 end
 
-# Register the variant
 register_variant(
     :assignment,
     :workload_balance,
     WorkloadBalanceAssignmentProblem,
-    "Workload-balanced task assignment minimizing the makespan (maximum worker workload) over eligible task-worker pairs with per-worker capacities",
+    "Workload-balanced assignment on unrelated workers over a sparse eligibility graph: worker-specific processing times, availability-scaled makespan rows, an overtime cap, and a cost term; planted greedy witness and a skill-group pigeonhole certificate";
+    tags=[:scheduling, :bipartite, :partitioning],
+    max_target_variables=1_000_000,
 )

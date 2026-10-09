@@ -226,5 +226,6 @@ register_variant(
     :hub_location,
     :budgeted_backbone,
     BudgetedBackboneHubProblem,
-    "Exact-p single-allocation hub location with budgeted capacitated physical links over a complete candidate backbone",
+    "Exact-p single-allocation hub location with budgeted capacitated physical links over a complete candidate backbone";
+    tags=[:location, :network, :multicommodity, :big_m],
 )

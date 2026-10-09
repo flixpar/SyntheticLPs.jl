@@ -3,6 +3,33 @@ using Random
 using Distributions
 
 """
+    CVRPWitness
+
+Planted feasible routing for [`CVRPProblem`](@ref): exactly `K` non-empty routes,
+each a depot-to-depot sequence of customer indices (`1..N`, i.e. node `c + 1`)
+whose total demand is at most `Q`. Setting `x = 1` on consecutive arcs and the
+remaining load on each arc as `f` satisfies every row, so the MIP and its LP
+relaxation are feasible.
+"""
+struct CVRPWitness
+    routes::Vector{Vector{Int}}
+end
+
+"""
+    CVRPFleetCapacityCertificate
+
+LP-row infeasibility certificate for [`CVRPProblem`](@ref): the depot load row
+gives `total_demand = Σ_j f[depot,j] - Σ_i f[i,depot] ≤ Σ_j f[depot,j]`, the
+coupling rows bound that by `Q · Σ_j x[depot,j]`, and the depot degree row
+fixes `Σ_j x[depot,j] = K`; so `total_demand ≤ Q·K = fleet_capacity`. The
+generator keeps `total_demand ≥ 1.1 · fleet_capacity`.
+"""
+struct CVRPFleetCapacityCertificate
+    total_demand::Float64
+    fleet_capacity::Float64
+end
+
+"""
     CVRPProblem <: ProblemGenerator
 
 Generator for the Capacitated Vehicle Routing Problem (CVRP), formulated as a
@@ -31,9 +58,12 @@ Key structural couplings:
   - **Flow (load) conservation**: at each customer the inbound load minus outbound
     load equals that customer's demand; at the depot the net outflow of load equals
     total demand. This *anchors* all load to the depot.
-  - **Capacity coupling** `f[i,j] ≤ Q · x[i,j]` simultaneously (a) forbids load on
-    unused arcs and (b) limits the load on any depot-leaving arc to `Q`, which is
-    the per-route capacity bound.
+  - **Capacity coupling** `d_j · x[i,j] ≤ f[i,j] ≤ (Q - d_i) · x[i,j]` (with
+    `d_depot = 0`) simultaneously (a) forbids load on unused arcs, (b) limits the
+    load on any depot-leaving arc to `Q`, the per-route capacity bound, and
+    (c) uses the strengthened Gavish–Graves bounds — an arc entering `j` carries
+    at least `j`'s own demand, and an arc leaving customer `i` at most what is
+    left after serving `i` (Letchford & Salazar-González 2006).
 
 Because load must originate at the depot and flow only along used arcs, the
 continuous relaxation cannot manufacture free inter-customer cycles: the depot
@@ -56,6 +86,9 @@ test instance, but a fractional `x` is not a directly implementable set of tours
   - `demands::Vector{Float64}`: Demand at each customer (length `N`, all `> 0`)
   - `dist::Matrix{Float64}`: Arc cost matrix over nodes `1..N+1` (node 1 = depot,
     nodes `2..N+1` = customers); `dist[i,i] = 0`
+  - `feasible_witness::Union{Nothing,CVRPWitness}`: planted routes (`feasible` only)
+  - `infeasibility_certificate::Union{Nothing,CVRPFleetCapacityCertificate}`:
+    fleet-capacity shortfall (`infeasible` only)
 """
 struct CVRPProblem <: ProblemGenerator
     n_customers::Int
@@ -65,6 +98,49 @@ struct CVRPProblem <: ProblemGenerator
     customer_locations::Vector{Tuple{Float64, Float64}}
     demands::Vector{Float64}
     dist::Matrix{Float64}
+    feasible_witness::Union{Nothing, CVRPWitness}
+    infeasibility_certificate::Union{Nothing, CVRPFleetCapacityCertificate}
+end
+
+# First-fit-decreasing packing of customer indices into capacity-`Q` bins.
+function _cvrp_ffd_bins(demands::Vector{Float64}, Q::Float64)
+    bins = Vector{Int}[]
+    remaining = Float64[]
+    for c in sortperm(demands; rev=true)
+        b = findfirst(>=(demands[c]), remaining)
+        if b === nothing
+            push!(bins, [c])
+            push!(remaining, Q - demands[c])
+        else
+            push!(bins[b], c)
+            remaining[b] -= demands[c]
+        end
+    end
+    return bins
+end
+
+# Turn `bins` (<= K of them, N >= K customers) into exactly K routes by peeling
+# single customers off multi-customer bins, then order each route by a
+# nearest-neighbour walk from the depot (node 1; customer c is node c + 1).
+function _cvrp_routes_from_bins(bins::Vector{Vector{Int}}, K::Int, dist::Matrix{Float64})
+    routes = [copy(b) for b in bins]
+    while length(routes) < K
+        r = findfirst(r -> length(r) >= 2, routes)
+        push!(routes, [pop!(routes[r])])
+    end
+    for r in eachindex(routes)
+        left = Set(routes[r])
+        ordered = Int[]
+        at = 1
+        while !isempty(left)
+            nxt = argmin(c -> (dist[at, c + 1], c), collect(left))
+            push!(ordered, nxt)
+            delete!(left, nxt)
+            at = nxt + 1
+        end
+        routes[r] = ordered
+    end
+    return routes
 end
 
 # First-fit-decreasing bin count: the number of capacity-`Q` bins a
@@ -97,9 +173,10 @@ continuous `f` per arc:
 
     total = 2 * (N + 1) * N
 
-So `N ≈ round(sqrt(target_variables / 2))` (clamped to `N ≥ 3`). For
-`target = 100` this gives `N = 7` (112 vars); for `target = 500`, `N = 16`
-(544 vars).
+So `N = round((sqrt(1 + 2·target) - 1) / 2)`, the root of `2N(N+1) = target`
+(clamped to `N ≥ 3`): the count is within `2N` of the target. For
+`target = 100` this gives `N = 7` (112 vars); for `target = 500`, `N = 15`
+(480 vars).
 
 # Arguments
 
@@ -113,19 +190,25 @@ So `N ≈ round(sqrt(target_variables / 2))` (clamped to `N ≥ 3`). For
     demand `≤ Q`, and the demands are certified to pack into `≤ K` routes of capacity
     `Q` (Q is raised until a first-fit-decreasing packing fits). A concrete integer
     routing therefore exists, so both the MIP and its LP relaxation are feasible.
-  - `infeasible`: keep the structure but inflate demands so aggregate fleet
-    capacity is strictly insufficient: `total_demand = K*Q * (1.1..1.3)`. Since the
-    depot net-outflow `Σ_j f[depot,j]` must equal `total_demand` yet is bounded by
-    `Q * Σ_j x[depot,j] = Q*K` in the relaxation, `total_demand > Q*K` is infeasible
-    even relaxed.
+    The routes are stored as a [`CVRPWitness`](@ref).
+  - `infeasible`: vehicles are out of service: the fleet shrinks to
+    `K = floor(total_demand / (Q · overload))` with `overload ∈ [1.1, 1.3]` and
+    `Q` is then raised to `total_demand / (K · overload)`, so every demand still
+    fits a vehicle but `total_demand = overload · K·Q`. Since the depot
+    net-outflow must equal `total_demand` yet is bounded by
+    `Q · Σ_j x[depot,j] = Q·K`, the model is infeasible even relaxed
+    ([`CVRPFleetCapacityCertificate`](@ref)). The argument chains the depot load
+    row, `K` coupling rows and the depot degree row, so presolve does not see
+    it. (Tiny instances whose demand cannot fill even one overloaded vehicle
+    inflate demands instead.)
   - `unknown`: a natural instance, biased toward feasible but not forced.
 """
 function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
 
     # --- Dimension sizing ---
-    # total = 2 * (N + 1) * N  ≈ 2 * N^2  for large N  =>  N ≈ sqrt(target / 2).
-    N = max(3, round(Int, sqrt(target_variables / 2)))
+    # total = 2 * (N + 1) * N  =>  N is the rounded positive root.
+    N = max(3, round(Int, (sqrt(1 + 2 * target_variables) - 1) / 2))
 
     # --- Scale-tiered parameter ranges ---
     total_vars = 2 * (N + 1) * N
@@ -199,6 +282,8 @@ function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatu
     end
 
     # --- Resolve feasibility intent ---
+    witness = nothing
+    certificate = nothing
     if feasibility_status == feasible
         # Guarantee K*Q >= total_demand with margin, K <= N, max demand <= Q.
         # K is already <= N and sized from demand; widen Q if the margin is thin.
@@ -219,23 +304,38 @@ function CVRPProblem(target_variables::Int, feasibility_status::FeasibilityStatu
         while _ffd_bin_count(demands, vehicle_capacity) > n_vehicles
             vehicle_capacity = round(vehicle_capacity * 1.1; digits=2)
         end
+        witness = CVRPWitness(
+            _cvrp_routes_from_bins(_cvrp_ffd_bins(demands, vehicle_capacity), n_vehicles, dist)
+        )
 
     elseif feasibility_status == infeasible
         # Aggregate fleet capacity strictly insufficient: total_demand > K*Q.
-        # Inflate demands so total_demand = K*Q * (1.1..1.3). This survives the
-        # LP relaxation because depot net-outflow = total_demand but is bounded
-        # by Q * K. (Some individual demands may exceed Q, which only reinforces
-        # infeasibility.)
         overload = 1.1 + 0.2 * rand(rng)          # 1.10 .. 1.30
-        target_total = n_vehicles * vehicle_capacity * overload
-        scale = target_total / total_demand
-        demands = round.(demands .* scale; digits=2)
-        total_demand = sum(demands)
+        k_out = floor(Int, total_demand / (vehicle_capacity * overload))
+        if k_out >= 1
+            # Vehicles out of service; Q only grows, so every demand still fits.
+            n_vehicles = min(k_out, n_vehicles)
+            vehicle_capacity = floor(total_demand / (n_vehicles * overload); digits=2)
+        else
+            # Tiny instance: inflate demands instead (some may exceed Q).
+            scale = n_vehicles * vehicle_capacity * overload / total_demand
+            demands = round.(demands .* scale; digits=2)
+            total_demand = sum(demands)
+        end
+        certificate = CVRPFleetCapacityCertificate(total_demand, n_vehicles * vehicle_capacity)
     end
     # unknown: leave as sampled (biased feasible via the slack-based K sizing).
 
     return CVRPProblem(
-        N, n_vehicles, vehicle_capacity, depot_location, customer_locations, demands, dist
+        N,
+        n_vehicles,
+        vehicle_capacity,
+        depot_location,
+        customer_locations,
+        demands,
+        dist,
+        witness,
+        certificate,
     )
 end
 
@@ -303,10 +403,16 @@ function build_model(prob::CVRPProblem)
         sum(f[depot, j] for j in customers) - sum(f[i, depot] for i in customers) == total_demand
     )
 
-    # --- Capacity coupling: load only on used arcs, and bounded by Q ---
+    # --- Capacity coupling (strengthened Gavish–Graves bounds) ---
+    # Load on (i,j) is at most what remains after serving i, and at least j's
+    # own demand. A demand above Q (tiny infeasible fallback) keeps the plain
+    # Q bound so the upper coefficient never turns negative.
+    node_demand(i) = i == depot ? 0.0 : dem(i)
     for i in nodes, j in nodes
         i == j && continue
-        @constraint(model, f[i, j] <= Q * x[i, j])
+        upper = node_demand(i) < Q ? Q - node_demand(i) : Q
+        @constraint(model, f[i, j] <= upper * x[i, j])
+        j == depot || @constraint(model, f[i, j] >= dem(j) * x[i, j])
     end
 
     return model
@@ -317,5 +423,6 @@ register_variant(
     :vehicle_routing,
     :cvrp,
     CVRPProblem,
-    "Capacitated vehicle routing problem (CVRP) with single-commodity-flow subtour elimination; a MIP whose continuous relaxation is a genuine depot-anchored routing relaxation",
+    "Capacitated vehicle routing problem (CVRP) with single-commodity-flow subtour elimination; a MIP whose continuous relaxation is a genuine depot-anchored routing relaxation";
+    tags=[:routing, :network, :big_m],
 )

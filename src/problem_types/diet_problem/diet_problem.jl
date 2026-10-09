@@ -1,11 +1,16 @@
 # diet_problem category
 #
-# Entry point for the `diet_problem` problem category. A category groups one or
-# more variant formulations; the category is registered lazily from its
-# first variant's `register_variant` call (or call `register_category`
-# explicitly to give the category its own description). Add a variant by
-# creating a file in this folder and including it below.
+# Entry point for the `diet_problem` problem category. `common.jl` holds the
+# shared food-composition table, dietary reference intakes and helper bounds;
+# each variant file builds a structurally different diet LP on top of it.
 
+register_category(
+    :diet_problem,
+    "Least-cost diet planning on a role-correlated food-composition table with " *
+    "Dietary-Reference-Intake requirements",
+)
+
+include("common.jl")
 include("standard.jl")
-include("nutrient_bounds.jl")
 include("food_groups.jl")
+include("food_aid.jl")

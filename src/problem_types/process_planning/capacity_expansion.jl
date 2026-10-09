@@ -63,33 +63,60 @@ end
 
 """Structural reason a requested-infeasible expansion instance has no plan."""
 @enum ProcessExpansionInfeasibilityKind begin
-    expansion_demand_above_capacity_bound
-    expansion_demand_above_feedstock_bound
+    expansion_capital_below_requirement
 end
 
 """
     ProcessExpansionCertificate
 
-Solver-independent proof stored on a requested-infeasible instance.
+Solver-independent proof stored on a requested-infeasible instance:
+`expansion_capital_below_requirement`, the contracted sales of period `period`
+need more new capacity than the capital budget can buy.
 
-`expansion_demand_above_capacity_bound` names one chemical whose contracted
-sales exceed what every process that makes it could produce even if each were
-expanded by the largest permitted amount in every period: chaining
-`W <= Q`, `Q_t = Q_{t-1} + QE_t` and `QE_t <= QE_max` bounds the operating levels
-period by period, and the balance row for that chemical turns that into a bound
-on its sales.
+Give every process the least investment per unit of new capacity its expansions
+can cost in the LP relaxation, `gamma_i = variable_investment + fixed_investment
+/ max_expansion` (the window row `QE <= QE_max y` makes `y >= QE / QE_max`), and
+every chemical a capital potential `potential[j]` (see
+[`_pp_expansion_capital_potential`](@ref)): zero on raw materials and
+byproducts, and for a main product the cheapest maker's `gamma` plus its input
+potentials. Multiplying period `period`'s balance rows by the potentials and
+summing gives `sum_j potential[j] * sales[j]  = sum_i d_i * level_i` with
+`d_i = sum_out potential - sum_in potential <= gamma_i`; with `level <= capacity
+= existing + new capacity` and the sales floors this bounds the investment
+`sum_i gamma_i * new_capacity_i` - hence the budget row's left side - below by
 
-`expansion_demand_above_feedstock_bound` is the network-wide version. Each
-chemical is given a value `v >= 0` with `v >= 1` for anything saleable and, for
-every process, output value no greater than input value. Multiplying the balance
-rows by those values and summing cancels the operating levels, leaving total
-sales bounded by the value of the raw material the market can supply.
+    required = sum_j potential[j] * demand_min[j, period] - sum_i max(d_i, 0) * existing_i
+
+which exceeds the budget `achievable`. The argument chains every process layer,
+every contracted product, the capacity recursion over every earlier period and
+the budget row, so no single row or bound propagation exposes it.
 """
 struct ProcessExpansionCertificate
     kind::ProcessExpansionInfeasibilityKind
-    chemical::Int
+    period::Int
+    potential::Vector{Float64}
     achievable::Float64
     required::Float64
+end
+
+"""
+    ProcessExpansionBudgetScenario
+
+Capital envelope of an unknown-status instance. Every other row is placed
+around the reference plan exactly as for a requested-feasible instance; the
+capital budget is then placed relative to two anchors: `requirement`, the best
+certified lower bound on the investment the contracts need (the certificate's
+`required`), and the reference plan's own investment at its LP-relaxed cost
+(`gamma_i` per unit of new capacity). A negative `budget_share` puts the budget
+`|budget_share|` below the requirement (infeasible by the certificate's
+argument); a positive one moves it that fraction of the way up to the plan's
+relaxed cost, which the plan itself meets at one. In between, whether the
+contracts can be served within the envelope is genuinely open. `budget_share`
+follows the golden-ratio position of the seed.
+"""
+struct ProcessExpansionBudgetScenario
+    budget_share::Float64
+    position::Float64
 end
 
 """
@@ -107,19 +134,23 @@ and a maximum permitted size when it happens; the operating level never exceeds
 the installed capacity. Every chemical balances in every period: what the
 processes make, plus purchases of raw material, equals what they consume plus
 sales. Raw materials are limited by market availability, finished chemicals by a
-demand window with a contracted floor. The objective maximizes discounted net
+demand window with a contracted floor, and the whole investment programme by a
+capital budget over the horizon. The objective maximizes discounted net
 present value: sales revenue less feedstock, operating and investment cost.
 
 # Fields
 - `chemicals`, `technologies`: the process network
 - `purchase_cost`, `availability`, `sale_price`, `demand_min`, `demand_max`,
   `discount`: the market over the horizon
-- `feasible_witness`, `infeasibility_certificate`, `feasibility_status`
+- `capital_budget`: total investment (fixed charges plus linear cost) the
+  programme may spend over the horizon
+- `feasible_witness`, `infeasibility_certificate`, `budget_scenario`,
+  `feasibility_status`
 
 Expansion indicators are binary, so this is a genuine MILP; with the package
 default `relax_integer=true` it is returned as its LP relaxation, in which a
 fractional indicator buys a fractionally-sized expansion. The planted witness
-and both certificates are valid for the relaxation as well as for the MILP.
+and the certificate are valid for the relaxation as well as for the MILP.
 """
 struct ProcessCapacityExpansionProblem <: ProblemGenerator
     n_periods::Int
@@ -133,8 +164,10 @@ struct ProcessCapacityExpansionProblem <: ProblemGenerator
     demand_min::Matrix{Float64}
     demand_max::Matrix{Float64}
     discount::Vector{Float64}
+    capital_budget::Float64
     feasible_witness::Union{Nothing, ProcessExpansionPlan}
     infeasibility_certificate::Union{Nothing, ProcessExpansionCertificate}
+    budget_scenario::Union{Nothing, ProcessExpansionBudgetScenario}
     feasibility_status::FeasibilityStatus
 end
 
@@ -271,7 +304,7 @@ function _pp_expansion_network(rng::AbstractRNG, n_tech::Int, byproduct_rate::Fl
         chosen = shuffle(rng, lower)[1:n_inputs]
         yield = rand(rng, Uniform(0.60, 0.95))
         weights = rand(rng, Dirichlet(fill(2.0, n_inputs)))
-        inputs = [chosen[k] => round(weights[k] / yield; digits=4) for k in 1:n_inputs]
+        inputs = [chosen[k] => max(round(weights[k] / yield; digits=4), 0.02) for k in 1:n_inputs]
         outputs = [main => 1.0]
         if i in byproduct_set
             byproduct = ProcessChemical(
@@ -300,67 +333,108 @@ function _pp_expansion_network(rng::AbstractRNG, n_tech::Int, byproduct_rate::Fl
     return chemicals, technologies
 end
 
-"""
-    _pp_expansion_potential(chemicals, technologies) -> Vector{Float64}
+"""Least LP-relaxed investment per unit of new capacity of a process: `v + f / QE_max`."""
+_pp_expansion_unit_capital(technology::ProcessTechnology) =
+    technology.variable_investment + technology.fixed_investment / technology.max_expansion
 
-Value `v[j] >= 0` for every chemical with `v >= 1` on anything saleable and, for
-every process, output value no greater than input value. Computed in one pass
-from the top layer down, which is exact here because a byproduct is never an
-input, so no chemical's value can rise after the processes that consume it have
-been visited.
 """
-function _pp_expansion_potential(
+    _pp_expansion_capital_potential(chemicals, technologies) -> Vector{Float64}
+
+Capital potential of every chemical: the least new-capacity investment embodied
+in one unit of it. Zero on raw materials (bought, not built) and on byproducts;
+for a main product the minimum over the processes that make it of their unit
+capital (see [`_pp_expansion_unit_capital`](@ref)) plus the potentials of their
+inputs, per unit of main output. Processes only consume chemicals from strictly
+lower layers, so one pass up the layers is exact, and every process satisfies
+`sum_out c * potential - sum_in a * potential <= unit capital` — the dual
+condition behind [`ProcessExpansionCertificate`](@ref). A chemical nothing makes
+gets potential zero.
+"""
+function _pp_expansion_capital_potential(
     chemicals::Vector{ProcessChemical}, technologies::Vector{ProcessTechnology}
 )
-    value = [chemical.sellable ? 1.0 : 0.0 for chemical in chemicals]
-    isempty(technologies) && return value
-    for layer in maximum(t.layer for t in technologies):-1:2
+    J = length(chemicals)
+    potential = zeros(Float64, J)
+    isempty(technologies) && return potential
+    best = fill(Inf, J)
+    for layer in 2:maximum(t.layer for t in technologies)
         for technology in technologies
             technology.layer == layer || continue
-            produced = sum(coefficient * value[j] for (j, coefficient) in technology.outputs)
-            for (j, coefficient) in technology.inputs
-                coefficient <= 0 && continue
-                value[j] = max(value[j], produced / coefficient)
-            end
+            embodied =
+                _pp_expansion_unit_capital(technology) +
+                sum(coefficient * potential[j] for (j, coefficient) in technology.inputs)
+            j = technology.main_output
+            best[j] = min(best[j], embodied / technology.outputs[1].second)
+        end
+        for j in 1:J
+            chemicals[j].layer == layer &&
+                isfinite(best[j]) &&
+                !chemicals[j].purchasable &&
+                (potential[j] = best[j])
         end
     end
-    return value
+    return potential
 end
 
-"""
-    _pp_expansion_capacity_bound(prob, chemical) -> Float64
+"""Net capital potential a process creates per unit of operating level."""
+_pp_expansion_net_potential(technology::ProcessTechnology, potential::Vector{Float64}) =
+    sum(c * potential[j] for (j, c) in technology.outputs) -
+    sum(a * potential[j] for (j, a) in technology.inputs)
 
-Largest volume of `chemical` the network could ever sell over the horizon: every
-process that makes it running at the capacity it would have after expanding by
-the maximum permitted amount in every period.
 """
-function _pp_expansion_capacity_bound(prob::ProcessCapacityExpansionProblem, chemical::Int)
-    bound = 0.0
-    for t in 1:prob.n_periods
-        for technology in prob.technologies
-            index = findfirst(pair -> pair.first == chemical, technology.outputs)
-            index === nothing && continue
-            capacity = technology.existing_capacity + t * technology.max_expansion
-            bound += technology.outputs[index].second * capacity
-        end
-    end
-    return bound
-end
+    _pp_expansion_capital_requirement(technologies, demand_min, potential, t) -> Float64
 
-"""Largest total saleable volume the raw-material market can support (see the certificate)."""
-function _pp_expansion_feedstock_bound(prob::ProcessCapacityExpansionProblem)
-    value = _pp_expansion_potential(prob.chemicals, prob.technologies)
-    return sum(
-        value[j] * prob.availability[j, t] for j in prob.raw_chemicals, t in 1:prob.n_periods
+The certificate's lower bound on the investment needed to serve period `t`'s
+contracted sales: `sum_j potential[j] * demand_min[j, t]` less the potential the
+existing capacity already supplies, `sum_i max(d_i, 0) * existing_i`.
+"""
+function _pp_expansion_capital_requirement(
+    technologies::Vector{ProcessTechnology},
+    demand_min::Matrix{Float64},
+    potential::Vector{Float64},
+    t::Int,
+)
+    contracted = sum(potential[j] * demand_min[j, t] for j in axes(demand_min, 1); init=0.0)
+    existing = sum(
+        max(_pp_expansion_net_potential(technology, potential), 0.0) * technology.existing_capacity
+        for technology in technologies;
+        init=0.0,
     )
+    return contracted - existing
 end
+
+"""
+    _pp_expansion_best_requirement(chemicals, technologies, demand_min)
+        -> (requirement, period, potential)
+
+The largest certified capital requirement over the horizon and the period that
+attains it.
+"""
+function _pp_expansion_best_requirement(chemicals, technologies, demand_min::Matrix{Float64})
+    potential = _pp_expansion_capital_potential(chemicals, technologies)
+    best, period = -Inf, 1
+    for t in axes(demand_min, 2)
+        value = _pp_expansion_capital_requirement(technologies, demand_min, potential, t)
+        value > best && ((best, period) = (value, t))
+    end
+    return best, period, potential
+end
+
+"""Total investment of a plan: fixed charges on its expansions plus the linear cost."""
+_pp_expansion_capital_spend(technologies, expansion::Matrix{Float64}, expand::AbstractMatrix) = sum(
+    technologies[i].fixed_investment * expand[i, t] +
+    technologies[i].variable_investment * expansion[i, t] for
+    i in axes(expansion, 1), t in axes(expansion, 2);
+    init=0.0,
+)
 
 """
     process_expansion_plan_satisfies(prob, plan=prob.feasible_witness; atol=1e-6)
 
 Re-check a planted expansion plan against every row: the capacity recursion, the
 expansion window and its indicator, the operating-level bound, every chemical
-balance, raw-material availability and the demand window. Solver-independent.
+balance, raw-material availability, the demand window and the capital budget.
+Solver-independent.
 """
 function process_expansion_plan_satisfies(
     prob::ProcessCapacityExpansionProblem,
@@ -416,6 +490,8 @@ function process_expansion_plan_satisfies(
             plan.sales[j, t] <= prob.demand_max[j, t] + tol || return false
         end
     end
+    spend = _pp_expansion_capital_spend(prob.technologies, plan.expansion, plan.expand)
+    spend <= prob.capital_budget + atol * max(1.0, prob.capital_budget) || return false
     return true
 end
 
@@ -430,20 +506,29 @@ function process_expansion_certificate_holds(
 )
     certificate = prob.infeasibility_certificate
     certificate === nothing && return false
-    if certificate.kind == expansion_demand_above_capacity_bound
-        j = certificate.chemical
-        1 <= j <= n_chemicals(prob) || return false
-        achievable = _pp_expansion_capacity_bound(prob, j)
-        required = sum(view(prob.demand_min, j, :))
-    else
-        certificate.chemical == 0 || return false
-        achievable = _pp_expansion_feedstock_bound(prob)
-        required = sum(prob.demand_min)
+    certificate.kind == expansion_capital_below_requirement || return false
+    1 <= certificate.period <= prob.n_periods || return false
+    potential = certificate.potential
+    length(potential) == n_chemicals(prob) || return false
+    # Dual feasibility: nonnegative potentials, none on a purchasable chemical,
+    # and no process creating more potential than its unit capital.
+    all(>=(0.0), potential) || return false
+    for (j, chemical) in enumerate(prob.chemicals)
+        chemical.purchasable && potential[j] != 0.0 && return false
     end
-    scale = max(1.0, abs(achievable), abs(required))
-    isapprox(certificate.achievable, achievable; rtol=1e-9, atol=atol * scale) || return false
+    for technology in prob.technologies
+        net = _pp_expansion_net_potential(technology, potential)
+        unit = _pp_expansion_unit_capital(technology)
+        net <= unit + atol * max(1.0, unit) || return false
+    end
+    required = _pp_expansion_capital_requirement(
+        prob.technologies, prob.demand_min, potential, certificate.period
+    )
+    scale = max(1.0, abs(required), abs(prob.capital_budget))
     isapprox(certificate.required, required; rtol=1e-9, atol=atol * scale) || return false
-    return achievable + atol * scale < required
+    isapprox(certificate.achievable, prob.capital_budget; rtol=1e-9, atol=atol * scale) ||
+        return false
+    return prob.capital_budget + atol * scale < required
 end
 
 """
@@ -533,16 +618,23 @@ the target.
 
 # Feasibility
 - `feasible`: a sales plan is run backwards through the network into operating
-  levels and purchases, capacity is expanded to cover it, and availability and
-  the demand window are placed around it, so `feasible_witness` is a feasible
-  point of the integer model (its indicators are 0/1).
-- `infeasible`: either one chemical's contracted sales exceed everything the
-  processes that make it could produce under the largest permitted expansions, or
-  the contracted sales of the whole network exceed what the raw-material market
-  can support. Both are recorded in `infeasibility_certificate` and use only
-  linear rows, so they refute the relaxation too.
-- `unknown`: capacity, availability and contracts are drawn from a market view
-  around the reference operation without being reconciled with it.
+  levels and purchases, capacity is expanded to cover it, availability and the
+  demand window are placed around it, and the capital budget sits 10-50% above
+  the plan's spend, so `feasible_witness` is a feasible point of the integer
+  model (its indicators are 0/1).
+- `infeasible`: the same reference-planned data, with the capital budget cut
+  6-20% below the investment the contracts certifiably need (a capital squeeze;
+  see [`ProcessExpansionCertificate`](@ref)). The refutation chains every process
+  layer, the capacity recursion and the budget row, so presolve's bound
+  propagation cannot see it.
+- `unknown`: the reference-planned data with the capital budget placed between
+  that certified requirement and the plan's relaxed investment (see
+  [`ProcessExpansionBudgetScenario`](@ref)).
+
+Contracts cover 75-97% of the reference plan's finished sales; in the rare case
+that the existing fleet still covers them, the infeasible and unknown branches
+sell the finished chemicals forward at 99% of the plan's sales first (see
+[`_pp_expansion_capital_requirement_or_raise!`](@ref)).
 """
 function ProcessCapacityExpansionProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
@@ -587,14 +679,27 @@ function ProcessCapacityExpansionProblem(
     end
 
     # Capacity: part of the network already stands, the rest is expanded into
-    # place in the period it is first needed.
-    planned = feasibility_status == feasible
+    # place in the period it is first needed. Every status places the local data
+    # (expansion windows, demand windows) around this reference plan; the
+    # statuses differ only in the raw-material market (see below).
     capacity = zeros(Float64, I, T)
     expansion = zeros(Float64, I, T)
     expand = zeros(Int, I, T)
+    running_peaks = [maximum(view(level, i, :)) for i in 1:I]
+    typical_peak = let busy = filter(>(0.0), running_peaks)
+        isempty(busy) ? scale : sort(busy)[cld(length(busy), 2)]
+    end
     for i in 1:I
-        peak = maximum(view(level, i, :))
-        existing = peak * rand(rng, Uniform(0.0, 0.75))
+        peak = running_peaks[i]
+        if peak <= 0.0
+            # A process the reference plan never runs is still a real option:
+            # a greenfield project sized like a typical unit, with no existing
+            # capacity (rather than a degenerate, unbuildable window).
+            peak = typical_peak * rand(rng, Uniform(0.3, 0.8))
+            existing = 0.0
+        else
+            existing = peak * rand(rng, Uniform(0.0, 0.75))
+        end
         step = max(peak * rand(rng, Uniform(0.25, 0.60)), 1e-3)
         # The reference operation is always buildable: one expansion covers the
         # whole level, so the plan's balances close on the levels it really runs.
@@ -604,11 +709,7 @@ function ProcessCapacityExpansionProblem(
         # was supposed to admit.
         covering = round(max(peak * rand(rng, Uniform(1.05, 1.80)), step); digits=4)
         min_expansion = round(step * rand(rng, Uniform(0.10, 0.45)); digits=4)
-        # A requested-feasible instance publishes that window. Otherwise the
-        # window is an engineering rule — a plant is debottlenecked in steps of a
-        # given size — which may or may not stretch to the market being asked for.
-        stated_max =
-            planned ? covering : round(max(peak * rand(rng, Uniform(0.30, 1.40)), step); digits=4)
+        stated_max = covering
         technologies[i] = ProcessTechnology(
             technologies[i].name,
             technologies[i].layer,
@@ -651,8 +752,12 @@ function ProcessCapacityExpansionProblem(
             end
         end
         for j in 1:J
-            purchase[j, t] = chemicals[j].purchasable ? max(-residual[j], 0.0) : 0.0
-            sales[j, t] = chemicals[j].sellable ? max(residual[j], 0.0) : 0.0
+            # Round-off residue is not a trade: dropping it keeps the published
+            # market bounds clear of 1e-15 noise.
+            bought = max(-residual[j], 0.0)
+            sold = max(residual[j], 0.0)
+            purchase[j, t] = chemicals[j].purchasable && bought > 1e-9 ? bought : 0.0
+            sales[j, t] = chemicals[j].sellable && sold > 1e-9 ? sold : 0.0
         end
     end
 
@@ -668,42 +773,28 @@ function ProcessCapacityExpansionProblem(
             base = rand(rng, Uniform(280.0, 900.0))
             purchase_cost[j, :] .= _pp_market_path(rng, T, base; volatility=0.07)
             reference = maximum(view(purchase, j, :))
-            offered = if planned
+            offered =
                 reference * rand(rng, Uniform(1.2, 2.5)) + scale * rand(rng, Uniform(0.05, 0.5))
-            else
-                reference * rand(rng, Uniform(0.80, 1.70))
-            end
             for t in 1:T
-                availability[j, t] = if planned
-                    max(offered, purchase[j, t] * rand(rng, Uniform(1.05, 1.4)))
-                else
-                    offered * rand(rng, Uniform(0.90, 1.10))
-                end
+                availability[j, t] = max(offered, purchase[j, t] * rand(rng, Uniform(1.05, 1.4)))
             end
         end
         if chemical.sellable
             base = rand(rng, Uniform(700.0, 2_400.0)) * (1.0 + 0.12 * (chemical.layer - 1))
             sale_price[j, :] .= _pp_market_path(rng, T, base; volatility=0.06)
-            contract = rand(rng, Uniform(0.35, 0.85))
-            # Not every chemical is sold forward: some move only on the spot
-            # market, and carry no floor at all. Keeping the contracted share
-            # modest also keeps a large network from becoming an implausibly long
-            # conjunction of independent commitments, all of which would have to
-            # hold for the plan to exist.
-            contracted = planned || rand(rng) < 0.35
+            contract = rand(rng, Uniform(0.75, 0.97))
+            spot_floor = scale * rand(rng, Uniform(0.02, 0.10))
+            # Finished chemicals are sold forward under term contracts;
+            # intermediates and byproducts move on the spot market with no floor.
+            contracted = startswith(String(chemical.name), "product_")
             for t in 1:T
                 reference = sales[j, t]
-                if planned
-                    demand_min[j, t] = reference * contract
-                    demand_max[j, t] = max(
-                        reference * rand(rng, Uniform(1.05, 1.7)), demand_min[j, t] * 1.05
-                    )
-                else
-                    demand_min[j, t] = contracted ? reference * rand(rng, Uniform(0.50, 1.30)) : 0.0
-                    demand_max[j, t] = max(
-                        reference * rand(rng, Uniform(1.0, 1.8)), demand_min[j, t] * 1.05
-                    )
-                end
+                demand_min[j, t] = contracted ? reference * contract : 0.0
+                # A spot outlet exists even for chemicals the plan does not
+                # sell (a byproduct of an idle process, a surplus intermediate).
+                demand_max[j, t] = max(
+                    reference * rand(rng, Uniform(1.05, 1.7)), demand_min[j, t] * 1.05, spot_floor
+                )
             end
         end
     end
@@ -711,19 +802,44 @@ function ProcessCapacityExpansionProblem(
     discount = [1.0 / (1.0 + rate)^(t - 1) for t in 1:T]
 
     plan = ProcessExpansionPlan(level, capacity, expansion, expand, purchase, sales)
+    # Capital envelope. The plan's own spend (fixed charges on its 0/1
+    # expansions) bounds what a feasible request needs; its LP-relaxed cost
+    # (`gamma` per unit of new capacity) and the certified requirement bracket the
+    # threshold of the relaxation.
+    plan_spend = _pp_expansion_capital_spend(technologies, expansion, expand)
+    plan_relaxed = sum(
+        _pp_expansion_unit_capital(technologies[i]) * expansion[i, t] for i in 1:I, t in 1:T;
+        init=0.0,
+    )
     certificate = nothing
-    if feasibility_status == infeasible
-        certificate = _pp_expansion_break!(
-            rng,
-            chemicals,
-            technologies,
-            sellable_chemicals,
-            raw_chemicals,
-            demand_min,
-            demand_max,
-            availability,
-            T,
+    scenario = nothing
+    if feasibility_status == feasible
+        capital_budget = plan_spend * rand(rng, Uniform(1.10, 1.50))
+    else
+        requirement, period, potential = _pp_expansion_capital_requirement_or_raise!(
+            chemicals, technologies, demand_min, demand_max, sales, plan_relaxed
         )
+        requirement > 0 || error(
+            "capacity_expansion: the existing fleet covers every contract; no capital " *
+            "requirement to certify (seed $seed)",
+        )
+        if feasibility_status == unknown
+            position = _pp_seed_position(seed)
+            share = -0.15 + 1.10 * position
+            capital_budget = if share < 0
+                requirement * (1 + share)
+            else
+                requirement + share * max(plan_relaxed - requirement, 0.0)
+            end
+            scenario = ProcessExpansionBudgetScenario(share, position)
+        else
+            # A capital squeeze: the programme's envelope is cut 6-20% below the
+            # investment the contracts certifiably need.
+            capital_budget = requirement / rand(rng, Uniform(1.06, 1.20))
+            certificate = ProcessExpansionCertificate(
+                expansion_capital_below_requirement, period, potential, capital_budget, requirement
+            )
+        end
     end
 
     problem = ProcessCapacityExpansionProblem(
@@ -738,8 +854,10 @@ function ProcessCapacityExpansionProblem(
         demand_min,
         demand_max,
         discount,
+        capital_budget,
         feasibility_status == feasible ? plan : nothing,
         certificate,
+        scenario,
         feasibility_status,
     )
 
@@ -752,70 +870,39 @@ function ProcessCapacityExpansionProblem(
 end
 
 """
-    _pp_expansion_break!(rng, chemicals, technologies, sellable, raw,
-                         demand_min, demand_max, availability, T) -> certificate
+    _pp_expansion_capital_requirement_or_raise!(rng, chemicals, technologies,
+        demand_min, demand_max, sales, plan_relaxed) -> (requirement, period, potential)
 
-Over-commit the contracts in one of the two auditable ways and return the
-matching certificate: past what the processes making a single chemical could ever
-be expanded to produce, or past what the raw-material market can supply the whole
-network.
+The certified capital requirement of the contracts (see
+[`ProcessExpansionCertificate`](@ref)). Contracts cover 75-97% of the reference
+plan's finished sales, so the existing fleet rarely covers them; when it does
+(a requirement below 2% of the plan's relaxed investment) the finished
+chemicals are sold forward at 99% of the plan's sales instead - still within
+what the plan delivers, so availability and expansion windows stay consistent
+with it - before the requirement is recomputed.
 """
-function _pp_expansion_break!(
-    rng::AbstractRNG,
-    chemicals::Vector{ProcessChemical},
-    technologies::Vector{ProcessTechnology},
-    sellable::Vector{Int},
-    raw::Vector{Int},
+function _pp_expansion_capital_requirement_or_raise!(
+    chemicals,
+    technologies,
     demand_min::Matrix{Float64},
     demand_max::Matrix{Float64},
-    availability::Matrix{Float64},
-    T::Int,
+    sales::Matrix{Float64},
+    plan_relaxed::Float64,
 )
-    # A chemical nothing makes has a zero bound, which no positive contract can
-    # sit strictly above by the margin the certificate needs; only argue about
-    # chemicals some process actually produces.
-    made = [
-        j for j in sellable if
-        any(any(pair.first == j for pair in technology.outputs) for technology in technologies)
-    ]
-    if !isempty(made) && rand(rng) < 0.5
-        j = made[rand(rng, 1:length(made))]
-        bound = 0.0
-        for t in 1:T, technology in technologies
-            index = findfirst(pair -> pair.first == j, technology.outputs)
-            index === nothing && continue
-            bound +=
-                technology.outputs[index].second *
-                (technology.existing_capacity + t * technology.max_expansion)
+    requirement, period, potential = _pp_expansion_best_requirement(
+        chemicals, technologies, demand_min
+    )
+    if requirement < 0.02 * plan_relaxed
+        for j in axes(demand_min, 1), t in axes(demand_min, 2)
+            demand_min[j, t] > 0 || continue
+            demand_min[j, t] = max(demand_min[j, t], 0.99 * sales[j, t])
+            demand_max[j, t] = max(demand_max[j, t], 1.05 * demand_min[j, t])
         end
-        required = bound * rand(rng, Uniform(1.15, 1.60))
-        for t in 1:T
-            demand_min[j, t] = required / T
-            demand_max[j, t] = max(demand_max[j, t], demand_min[j, t] * 1.05)
-        end
-        return ProcessExpansionCertificate(
-            expansion_demand_above_capacity_bound, j, bound, sum(view(demand_min, j, :))
+        requirement, period, potential = _pp_expansion_best_requirement(
+            chemicals, technologies, demand_min
         )
     end
-
-    value = _pp_expansion_potential(chemicals, technologies)
-    bound = sum(value[j] * availability[j, t] for j in raw, t in 1:T)
-    wanted = bound * rand(rng, Uniform(1.15, 1.60))
-    committed = sum(demand_min)
-    if committed <= 0.0
-        share = wanted / max(length(sellable) * T, 1)
-        for j in sellable, t in 1:T
-            demand_min[j, t] = share
-        end
-    else
-        demand_min .*= wanted / committed
-    end
-    for j in 1:size(demand_min, 1), t in 1:T
-        demand_max[j, t] = max(demand_max[j, t], demand_min[j, t] * 1.05)
-    end
-    return ProcessExpansionCertificate(
-        expansion_demand_above_feedstock_bound, 0, bound, sum(demand_min)
-    )
+    return requirement, period, potential
 end
 
 """
@@ -831,7 +918,8 @@ raw material and a sale variable for every saleable chemical.
 
 Constraints: the capacity recursion `Q_t = Q_{t-1} + QE_t`, the expansion window
 `QE_min y <= QE <= QE_max y`, the operating bound `W <= Q`, one balance row per
-chemical and period, raw-material availability, and the demand window.
+chemical and period, raw-material availability, the demand window, and one
+capital-budget row over every expansion of the horizon.
 """
 function build_model(prob::ProcessCapacityExpansionProblem)
     I = n_technologies(prob)
@@ -881,6 +969,16 @@ function build_model(prob::ProcessCapacityExpansionProblem)
     end
     @constraint(model, chemical_balance[j in 1:J, t in 1:T], balance[j, t] == 0)
 
+    # Capital budget over the whole programme.
+    @constraint(
+        model,
+        capital_budget,
+        sum(
+            prob.technologies[i].fixed_investment * expand[i, t] +
+            prob.technologies[i].variable_investment * expansion[i, t] for i in 1:I, t in 1:T
+        ) <= prob.capital_budget
+    )
+
     @objective(
         model,
         Max,
@@ -911,5 +1009,6 @@ register_variant(
     ProcessCapacityExpansionProblem,
     "Long-range capacity expansion of a chemical process network: discrete " *
     "capacity additions, fixed-ratio conversion, feedstock availability and " *
-    "contracted demand, on a discounted net-present-value objective",
+    "contracted demand, on a discounted net-present-value objective";
+    tags=[:production, :staircase, :big_m],
 )

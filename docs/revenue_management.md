@@ -1,22 +1,90 @@
 # Revenue Management
 
 The `revenue_management` category generates continuous network
-revenue-management LPs. Both variants allocate perishable capacity on a coherent
-hub-and-spoke network, distinguish fare classes, and preserve the status requested
-through a constructive witness or a mathematical infeasibility certificate.
+revenue-management LPs. Both variants allocate perishable capacity on a
+hub-and-spoke network, distinguish fare classes, and preserve the requested
+`feasible`/`infeasible` status through a constructive witness or a mathematical
+infeasibility certificate.
 
 ## Variants
 
 | Variant | Planning setting | Main decisions |
 | --- | --- | --- |
-| `standard` (default) | Deterministic network revenue management | Accepted demand by itinerary |
+| `standard` (default) | Choice-based network RM (sales-based LP, MNL choice) over a multi-hub banked schedule | Expected sales per product and no-purchase volume per market-day |
 | `stochastic_overbooking` | Scenario-based show-ups with service recovery | Advance bookings, served customers, and denied customers in every scenario |
 
 Both constructors use their own `MersenneTwister`. A fixed seed reproduces all
 data without resetting or consuming Julia's process-global random stream.
 `build_model` uses only stored data and is deterministic.
 
-## Shared network and demand data
+## Choice-based network model (`standard`)
+
+The default variant is the **sales-based linear program (SBLP)** of Gallego,
+Ratliff & Shebalov (2015) for network revenue management under
+multinomial-logit (MNL) customer choice. It replaced an independent-demand
+deterministic LP whose fare-class columns on the same itinerary were parallel:
+HiGHS presolve merged them and kept only 5–32% of the columns at 10k–50k, with
+80 rows at any size.
+
+### Schedule and markets
+
+- Airports on a 2500 × 2500 km map: 1–3 hubs near the center and many spokes.
+  Each spoke is served from its nearest hub and, with probability 0.35, a second
+  hub; hubs are fully connected. Routes operate in daily departure **banks**
+  (2–4), more frequently from larger cities, over 1–14 days.
+- A **market** is an origin–destination pair on one day, with a gravity-model
+  size `Λ_m` (populations over distance, day-of-week factor, lognormal noise).
+  Its **products** are its nonstop flights and one-stop connections (same-bank
+  connection at a hub, at most four itineraries) in 3–5 fare classes
+  (`Y, B, M, Q, V`). Markets are taken in a gravity-weighted random order
+  (Efraimidis–Spirakis keys) until the variable target is reached.
+- MNL attraction `v_j = exp(quality_class − β_m · fare / base_fare − 0.7 · stops
+  − 0.8 · bank_gap + noise)`, with market-specific price sensitivity `β_m`;
+  the no-purchase attraction `v0_m` makes the full-offer purchase probability
+  35–75%.
+- Flight capacities are aircraft sizes (50–300 seats, or multiples of 50) just
+  above the planted plan's loads, so capacity binds and the LP must decide
+  which classes to close.
+
+### Formulation
+
+```text
+max   Σ_j fare_j sales_j
+s.t.  Σ_{j∈m} sales_j + no_purchase_m = Λ_m              (market balance)
+      sales_j − (v_j / v0_m) no_purchase_m ≤ 0            (one scale row per product)
+      Σ_{j uses f} sales_j ≤ capacity_f                    (flight capacity)
+      Σ_{j uses f} sales_j ≥ min_load_f, f contracted      (minimum-load contracts)
+      sales, no_purchase ≥ 0
+```
+
+Variables are exactly `n_products + n_markets` (the last market-day is trimmed
+so the count equals the target; targets below 2 give 2). Rows are
+`n_products + n_markets + n_flights + n_contracts`, so rows grow one-for-one
+with columns, and every product column has its own scale row. About 6% of the
+flights carry a minimum-load contract (charter or public-service guarantees).
+
+### Feasibility artifacts
+
+- `feasible`: every market offers all products and sells a fraction
+  `θ_m ∈ [0.45, 0.85]` of its full-offer MNL sales; with `θ ≤ 1` every scale row
+  holds. Capacities sit above, and contracts at 70–95% of, the plan's flight
+  loads. Stored as `RMChoiceWitness` (sales, no-purchase volumes, θ).
+- `infeasible`: on one contracted flight `f`, every feeding market `m` can sell at
+  most `Λ_m V_{m,f} / (V_{m,f} + v0_m)` of the flight's products (sum its scale rows
+  and use the balance row). The contract is set 5–12% above the sum of these
+  bounds (the aircraft is up-gauged if needed so the contract fits the cabin).
+  Stored as `RMChoiceCertificate`. The proof combines the contract row with the
+  balance and scale rows of every feeding market, so presolve does not see it.
+- `unknown`: all contracts at an instance-wide tightness `U(0.9, 2.0)` times the
+  plan's loads (up-gauging when needed): below one the plan meets them; above it,
+  whether all contracts can be met together under the choice model, the shared
+  connecting demand, and other flights' capacities is left to the instance
+  (about 50–70% feasible in a 16-seed sample at 2k and 10k).
+
+The variant does not use the shared hub-and-spoke helpers below; those now
+serve `stochastic_overbooking` only (`src/problem_types/revenue_management/common.jl`).
+
+## Shared network and demand data (`stochastic_overbooking`)
 
 Capacity resources are directed legs in a compact hub-and-spoke network. Odd and
 even resource indices form outbound and inbound legs for successive spokes. Every
@@ -40,62 +108,6 @@ Economy, premium, and business products have different fare and demand scales.
 Demand uses a capped log-normal distribution to retain skew without producing
 pathological values. A sparse subset of products receives a positive contractual
 floor representing protected allotments or group blocks.
-
-## Deterministic network model (`standard`)
-
-### Sizing
-
-There is one acceptance variable per product, so the delivered variable count is
-exactly
-
-```text
-max(2, target_variables).
-```
-
-The two-variable minimum keeps a meaningful capacity-allocation model even for tiny
-or non-positive requests. The number of resources is scale-dependent and is capped
-at 80 to keep very large formulations network-oriented rather than nearly diagonal.
-
-### Formulation
-
-For products `j in P` and resources `r in R`, let `x[j]` be accepted demand,
-`f[j]` its fare, `d[j]` its forecast demand, `l[j]` its contractual floor, and
-`P(r)` the products consuming resource `r`:
-
-```math
-\max \sum_{j \in P} f_j x_j
-```
-
-subject to
-
-```math
-l_j \le x_j \le d_j \qquad j \in P,
-```
-
-```math
-\sum_{j \in P(r)} x_j \le C_r \qquad r \in R.
-```
-
-Connecting itineraries consume one unit of capacity on both constituent legs.
-This is the classic deterministic network LP used for bid-price and displacement-
-cost analysis.
-
-### Feasibility artifacts
-
-A requested-feasible instance sets every acceptance to its contractual floor and
-constructs each capacity above that point's resource load. This vector is stored
-in `feasible_witness` and attached to the JuMP variables as start values. The
-solver-independent helper
-`SyntheticLPs._revenue_management_witness_is_valid(problem)` checks all bounds and
-resource rows.
-
-A requested-infeasible instance selects a leg, raises the floors of every product
-using it, and places that leg's capacity strictly below the resulting mandatory
-load. The stored `RevenueManagementCapacityCertificate` records the leg,
-committed load, capacity, and positive excess. Since all feasible points must
-satisfy `x[j] >= l[j]`, the contradiction survives any objective choice. The
-helper `SyntheticLPs._revenue_management_certificate_is_valid(problem)` recomputes
-the proof directly from the generated data.
 
 ## Stochastic network overbooking (`stochastic_overbooking`)
 
@@ -195,6 +207,9 @@ load, capacity, and positive excess. The helper
 `SyntheticLPs._stochastic_overbooking_certificate_is_valid(problem)` verifies the
 certificate without solving the LP.
 
-For either variant, an `unknown` request resolves reproducibly to a feasible or
-infeasible profile. The actual choice is recorded in `resolved_status`, and exactly
-one corresponding audit artifact is present.
+An `unknown` request is a natural instance (it used to be a 70/30 coin flip into
+one of the planted profiles): one leg receives heavy group commitments (15–45% of
+demand) and a capacity of `U(0.85, 1.25)` times the committed service load of its
+worst show-up scenario. Below that load the instance is infeasible; above it the
+denied-service caps and the other legs decide. `resolved_status` is `unknown` and
+neither a witness nor a certificate is stored.

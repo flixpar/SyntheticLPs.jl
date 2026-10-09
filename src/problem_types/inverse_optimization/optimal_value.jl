@@ -2,6 +2,7 @@ using JuMP
 using Random
 using Distributions
 using SparseArrays
+using LinearAlgebra
 
 """
 Planted ground truth for a `feasible` `inverse_optimization/restricted_optimal_value`
@@ -17,20 +18,31 @@ end
 
 """
 Structured infeasibility certificate for
-`inverse_optimization/restricted_optimal_value`: the requested target value lies strictly
-outside the interval `[value_floor, value_ceiling]` that *any* admissible cost
-vector can give the observed plan — `value_floor = ℓ'x⁰` (all costs at their
-lower bounds) and `value_ceiling = u'x⁰` (all at their upper bounds).
+`inverse_optimization/restricted_optimal_value`: a *cheaper alternative plan*.
+`alternative_plan` is a nonnegative forward plan with
+`forward_matrix * alternative_plan >= forward_rhs`, and even when every cost
+sits at its upper bound it costs `alternative_value = cost_upper' *
+alternative_plan`, strictly below the requested `target_value`.
 
-The built model carries the row `c'x⁰ == τ` together with the box
-`ℓ <= c <= u` and `x⁰ >= 0`, so a target above `value_ceiling` (or below
-`value_floor`) contradicts the rows directly: no admissible cost vector can
-price the observed plan at the target. The refutation uses model rows alone.
+Any point satisfying the built rows gives the chain (with `x̄` the alternative,
+`y >= 0`, `x̄ >= 0`)
+
+    τ = b'y <= (A x̄)'y = x̄'(A'y) <= x̄'c <= x̄'u = alternative_value < τ,
+
+using the strong-duality row, forward feasibility of `x̄`, the dual-feasibility
+rows `A'y <= c`, and the box `c <= u` — a contradiction from model rows alone.
+In words: weak duality caps every certifiable optimal value at the cost of any
+feasible plan, and the target asks for more than the cheaper plan costs even at
+the most expensive admissible prices. Unlike an out-of-range target on the
+single pricing row, refuting it needs the aggregation of every
+dual-feasibility row with the plan's weights, so presolve cannot detect it and
+simplex has to do the work. `margin = target_value - alternative_value > 0`.
 """
-struct UnattainableValueCertificate
+struct CheaperPlanCertificate
+    alternative_plan::Vector{Float64}
+    alternative_value::Float64
     target_value::Float64
-    value_floor::Float64
-    value_ceiling::Float64
+    margin::Float64
 end
 
 """
@@ -88,9 +100,14 @@ planted deviation.
 # Feasibility profiles
 
   - `feasible`: stores an `InverseValueWitness` (the rescaled cost and duals).
-  - `infeasible`: the target is set strictly above `u'x⁰` or below `ℓ'x⁰` —
-    outside the price range any admissible cost vector can give the plan —
-    refuted by an `UnattainableValueCertificate` from model rows alone.
+  - `infeasible`: the forward rows are relaxed just enough that a perturbed
+    *alternative plan* `x̄` becomes feasible, priced at `u'x̄ ≈ (0.74–0.86) u'x⁰`
+    even at the upper cost bounds, and the target is set 4–10% above `u'x̄`.
+    The target stays well inside the pricing range `[ℓ'x⁰, u'x⁰]` of the
+    observed plan, so neither value row is out of range on its own; the
+    contradiction is the weak-duality bound `b'y <= u'x̄`, refuted by a
+    `CheaperPlanCertificate` that aggregates every dual-feasibility row
+    (invisible to presolve, found by simplex).
   - `unknown`: the rescaling factor and the box radius are sampled independently
     (the planted cost may leave the box), so the target may or may not be
     attainable, with no guarantee either way.
@@ -107,7 +124,7 @@ planted deviation.
   - `target_value::Float64`: Requested optimal value `τ`
   - `deviation_weights::Vector{Float64}`: Weighted-deviation weights `w`
   - `feasible_witness::Union{Nothing,InverseValueWitness}`: set for `feasible`
-  - `infeasibility_certificate::Union{Nothing,UnattainableValueCertificate}`: set for `infeasible`
+  - `infeasibility_certificate::Union{Nothing,CheaperPlanCertificate}`: set for `infeasible`
   - `feasibility_status::FeasibilityStatus`: Requested profile
 """
 struct InverseOptimalValueProblem <: ProblemGenerator
@@ -122,7 +139,7 @@ struct InverseOptimalValueProblem <: ProblemGenerator
     target_value::Float64
     deviation_weights::Vector{Float64}
     feasible_witness::Union{Nothing, InverseValueWitness}
-    infeasibility_certificate::Union{Nothing, UnattainableValueCertificate}
+    infeasibility_certificate::Union{Nothing, CheaperPlanCertificate}
     feasibility_status::FeasibilityStatus
 end
 
@@ -146,7 +163,10 @@ function InverseOptimalValueProblem(
     )
     num_rows = max(2, target_variables - 3 * num_cols)
 
-    data = _sample_cost_inference_data(rng, num_cols, num_rows, feasibility_status)
+    # The infeasible profile starts from a planted (feasible-profile) instance
+    # and removes attainability through the target alone; see below.
+    sample_status = feasibility_status == infeasible ? feasible : feasibility_status
+    data = _sample_cost_inference_data(rng, num_cols, num_rows, sample_status)
 
     n = num_cols
     prior = data.prior_cost
@@ -161,14 +181,29 @@ function InverseOptimalValueProblem(
     feasible_witness = nothing
     certificate = nothing
     target = 0.0
+    forward_rhs = data.forward_rhs
     if feasibility_status == infeasible
-        # A target outside the price range any admissible cost vector can give
-        # the plan: above the all-upper-bound pricing or below the all-lower.
-        value_floor = sum(lower[j] * plan[j] for j in 1:n)
-        value_ceiling = sum(upper[j] * plan[j] for j in 1:n)
-        gap = rand(rng, Uniform(0.05, 0.30))
-        target = rand(rng) < 0.5 ? value_ceiling * (1.0 + gap) : value_floor * (1.0 - gap)
-        certificate = UnattainableValueCertificate(target, value_floor, value_ceiling)
+        # Cheaper alternative plan: perturb the observed plan multiplicatively
+        # (substituting between activities) and rescale it so that, even at
+        # the upper cost bounds, it costs 74–86% of the observed plan's
+        # ceiling price. Lowering the right-hand sides to what both plans
+        # consume keeps the observed plan feasible and makes the alternative
+        # feasible too; the target is then set 4–10% above the alternative's
+        # ceiling cost, which weak duality forbids.
+        A = data.forward_matrix
+        alternative = plan .* exp.(rand(rng, Normal(0.0, 0.35), n))
+        ceiling_ratio = rand(rng, Uniform(0.74, 0.86))
+        alternative .*= ceiling_ratio * dot(upper, plan) / dot(upper, alternative)
+        alternative_use = A * alternative
+        forward_rhs = [
+            min(forward_rhs[i], floor(alternative_use[i] * 100.0) / 100.0) for
+            i in eachindex(forward_rhs)
+        ]
+        alternative_value = dot(upper, alternative)
+        target = alternative_value * (1.0 + rand(rng, Uniform(0.04, 0.10)))
+        certificate = CheaperPlanCertificate(
+            alternative, alternative_value, target, target - alternative_value
+        )
     elseif data.true_cost !== nothing
         rescale = 1.0 + (rand(rng) < 0.5 ? -1.0 : 1.0) * (
             if feasibility_status == feasible
@@ -198,7 +233,7 @@ function InverseOptimalValueProblem(
         num_rows,
         num_cols,
         data.forward_matrix,
-        data.forward_rhs,
+        forward_rhs,
         plan,
         prior,
         lower,
@@ -221,7 +256,10 @@ function build_model(prob::InverseOptimalValueProblem)
     m, n = prob.num_rows, prob.num_cols
     A = prob.forward_matrix
 
-    @variable(model, 0 <= y[i = 1:m] <= _implied_dual_upper(A, prob.cost_upper)[i])
+    # Computed once: evaluating it inside the macro would redo the O(nnz)
+    # transpose for every dual and make the build quadratic.
+    dual_upper = _implied_dual_upper(A, prob.cost_upper)
+    @variable(model, 0 <= y[i = 1:m] <= dual_upper[i])
     @variable(model, prob.cost_lower[j] <= c[j = 1:n] <= prob.cost_upper[j])
     @variable(model, dev_plus[1:n] >= 0)
     @variable(model, dev_minus[1:n] >= 0)
@@ -249,5 +287,8 @@ register_variant(
     :inverse_optimization,
     :restricted_optimal_value,
     InverseOptimalValueProblem,
-    "Inverse optimal value problem (Ahmed-Guan / Jia-Guan-Qian-Pardalos restricted LP form): adjust box-bounded costs minimally so an observed plan stays optimal while its optimal value hits a target",
+    "Inverse optimal value problem (Ahmed-Guan / Jia-Guan-Qian-Pardalos restricted LP form): adjust box-bounded costs minimally so an observed plan stays optimal while its optimal value hits a target";
+    tags=[:production],
+    min_target_variables=2,
+    max_target_variables=250_000,
 )

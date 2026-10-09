@@ -122,7 +122,12 @@ function NoisyInverseLPProblem(
         dot(@view(capacities[k, :]), data.true_dual) - dot(@view(observed[k, :]), data.true_cost)
         for k in 1:K
     ]
-    gap_scale = max(1.0, mean(dot(@view(observed[k, :]), data.true_cost) for k in 1:K))
+    # Gap normalizer: the mean observed plan value *per activity*. Both
+    # objective terms then grow linearly with the activity count (the
+    # regularizer sums n weighted deviations), so their balance is
+    # size-invariant and the gap coefficients stay O(1e-2) rather than
+    # shrinking like 1/n.
+    gap_scale = max(1.0, mean(dot(@view(observed[k, :]), data.true_cost) for k in 1:K) / n)
     regularization = rand(rng, Uniform(0.03, 0.18))
     dual_matrix = repeat(transpose(data.true_dual), K, 1)
     witness = if feasibility_status == feasible
@@ -178,6 +183,21 @@ function build_model(prob::NoisyInverseLPProblem)
 
     @variable(model, data.cost_lower[j] <= inferred_cost[j in 1:n] <= data.cost_upper[j])
     @variable(model, shadow_price[1:K, 1:m] >= 0)
+    if prob.gap_tolerance !== nothing
+        # Implied upper bounds (valid, cutting nothing): every gap is
+        # nonnegative, so the tolerance row caps each one at K * tolerance,
+        # and g_k = b_k'y_k - x_k'c with c <= u gives
+        # y_ki <= (K * tolerance + x_k'u) / b_ki. Without finite bounds on the
+        # dual block, HiGHS dual simplex often fails to certify the
+        # infeasible profile (status UNKNOWN after the dual ray grows to 1e8).
+        for k in 1:K
+            budget =
+                K * prob.gap_tolerance + dot(@view(prob.observed_decisions[k, :]), data.cost_upper)
+            for i in 1:m
+                set_upper_bound(shadow_price[k, i], budget / prob.capacities[k, i] * (1.0 + 1.0e-9))
+            end
+        end
+    end
     @variable(model, suboptimality_gap[1:K] >= 0)
     @variable(model, deviation_positive[1:n] >= 0)
     @variable(model, deviation_negative[1:n] >= 0)
@@ -189,7 +209,7 @@ function build_model(prob::NoisyInverseLPProblem)
             data.deviation_weight[j] * (deviation_positive[j] + deviation_negative[j]) for j in 1:n
         ),
     )
-    @constraint(model, cost_normalization, sum(inferred_cost) == 1.0)
+    @constraint(model, cost_normalization, sum(inferred_cost) == data.cost_total)
     @constraint(
         model,
         dual_feasibility[k in 1:K, j in 1:n],
@@ -233,15 +253,18 @@ function _noisy_inverse_witness_is_valid(prob::NoisyInverseLPProblem)
     return observed_feasible &&
            all(witness.cost .>= data.cost_lower .- 1.0e-10) &&
            all(witness.cost .<= data.cost_upper .+ 1.0e-10) &&
-           isapprox(sum(witness.cost), 1.0; atol=1.0e-10) &&
+           isapprox(sum(witness.cost), data.cost_total; rtol=1.0e-10) &&
            all(dual_feasibility .>= reshape(witness.cost, :, 1) .- 1.0e-10) &&
            all(gaps .>= -1.0e-9) &&
-           isapprox(gaps, witness.gaps; atol=1.0e-9)
+           isapprox(gaps, witness.gaps; rtol=1.0e-10)
 end
 
 register_variant(
     :inverse_optimization,
     :noisy_observations,
     NoisyInverseLPProblem,
-    "Multi-observation inverse LP minimizing normalized absolute suboptimality with realistic behavioral noise",
+    "Multi-observation inverse LP minimizing normalized absolute suboptimality with realistic behavioral noise";
+    tags=[:production, :dual_block_angular],
+    min_target_variables=2,
+    max_target_variables=250_000,
 )

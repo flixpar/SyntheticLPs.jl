@@ -1,21 +1,25 @@
 # energy category
 #
-# Entry point for the `energy` problem category. A category groups one or
-# more variant formulations; the category is registered lazily from its
-# first variant's `register_variant` call (or call `register_category`
-# explicitly to give the category its own description). Add a variant by
-# creating a file in this folder and including it below.
+# Power-systems operations LPs in two families that share `common.jl`:
+#
+#   * multi-area, multi-period economic dispatch (`standard`, `reserves`,
+#     `storage`, `hydrothermal`): one dispatch core — zones joined by lossy
+#     tie-lines, a technology-grounded fleet with must-run floors and ramp limits,
+#     curtailable renewables — with each variant adding one real coupling
+#     (emissions budget, reserve co-optimization, storage state of charge, hydro
+#     cascades);
+#   * bus-level DC power flow on a meshed transmission grid (`dc_opf`,
+#     `security_constrained_dc_opf`).
 
-# Category-level description (it now groups several formulations).
 register_category(
     :energy,
-    "Power-systems optimization: economic dispatch, ramping, reserves, storage, transmission, and DC optimal power flow",
+    "Power-systems operations: multi-area economic dispatch with ramping, emissions, reserves, storage and hydro cascades, and DC optimal power flow with N-1 security",
 )
 
+include("common.jl")
 include("standard.jl")
-include("ramping.jl")
 include("reserves.jl")
 include("storage.jl")
-include("transmission.jl")
+include("hydrothermal.jl")
 include("dc_opf.jl")
-include("optimal_transmission_switching.jl")
+include("security_constrained_dc_opf.jl")

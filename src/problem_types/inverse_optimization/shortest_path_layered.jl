@@ -289,5 +289,8 @@ register_variant(
     :inverse_optimization,
     :shortest_path_layered,
     LayeredInverseShortestPathProblem,
-    "Controlled single-observation inverse shortest path on a layered DAG with informative priors and shortcut certificates",
+    "Controlled single-observation inverse shortest path on a layered DAG with informative priors and shortcut certificates";
+    tags=[:routing, :network],
+    min_target_variables=2,
+    max_target_variables=250_000,
 )

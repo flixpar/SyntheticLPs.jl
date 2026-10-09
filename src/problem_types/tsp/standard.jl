@@ -120,7 +120,7 @@ function TSPStandardProblem(target_variables::Int, feasibility_status::Feasibili
 
     # --- Resolve feasibility intent ---
     # feasible / unknown: complete support — see constructor docstring.
-    arc_ok, S, T = _tsp_arc_support(rng, n, k, feasibility_status)
+    arc_ok, S, T = _tsp_arc_support(rng, n, k, feasibility_status, locations)
 
     return TSPStandardProblem(n, locations, dist, arc_ok, S, T)
 end
@@ -186,4 +186,5 @@ register_variant(
     TSPStandardProblem,
     "Symmetric travelling-salesman problem over clustered delivery stops with lifted Miller-Tucker-Zemlin subtour elimination";
     default=true,
+    tags=[:routing, :big_m],
 )

@@ -8,5 +8,6 @@ register_category(
     "Network revenue-management LPs for deterministic capacity allocation and stochastic overbooking with denied-service recourse",
 )
 
+include("common.jl")
 include("standard.jl")
 include("stochastic_overbooking.jl")

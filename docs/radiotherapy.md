@@ -43,8 +43,9 @@ Depth attenuation combines energy-dependent exponential attenuation and source
 divergence; each case records a sampled 6 or 10 MV nominal beam energy.
 Lateral/longitudinal Gaussian kernels make nearby beamlets affect nearby
 voxels similarly; negligible far-field coefficients are omitted. One small
-leakage/scatter coefficient per out-of-field voxel and field prevents empty
-normal-tissue rows. Thus `D` is nonnegative, sparse, spatially correlated, and
+leakage/scatter coefficient per out-of-field voxel and field (0.2–0.6% of the
+open-field dose, i.e. collimator transmission) prevents empty normal-tissue
+rows. Thus `D` is nonnegative, sparse, spatially correlated, and
 has no empty row or column. It is not an i.i.d. random matrix.
 
 A deterministic projected nonnegative least-squares fit balances a positive
@@ -59,23 +60,59 @@ D2 constraints.
 The field counts, angles, and problem scale are grounded in TG-119 and the
 public CORT benchmark. CORT uses 0.5–1 cm beamlets; this generator approaches
 that resolution as the requested size grows and treats each beamlet as a
-coarser aggregate at small solver-test sizes. CORT reports selected
+coarser aggregate at small solver-test sizes. The per-field grid is capped at
+360 beamlets (`_RT_MAX_BEAMLETS_PER_BEAM`, roughly a 0.5 cm pitch over a
+typical field), so beyond about 15k variables extra budget goes to sampled
+voxels — exactly how clinical dose grids scale — instead of to ever-finer
+beamlets. CORT reports selected
 clinical problems with about 1,166–11,489 beamlets, 6,770–22,682 target voxels,
 and sparse dose matrices; this generator creates reduced problems and grows
 toward that sparse regime as the requested size grows. Small exact-size
 benchmarks necessarily use coarser grids and fewer sampled voxels per beamlet.
 
+## Scale and footprint
+
+Each dose-influence row appears in the model exactly once per setup scenario.
+In the deviation variants the hard safety limits are bounds on the deviation
+variables (see below); `mean_tail_dose` uses explicit voxel-dose variables
+whose bounds carry the limits. With the beamlet cap, a voxel row has roughly
+40–70 nonzeros at clinical resolution, so nonzeros grow linearly:
+
+| Target | Columns | Rows | Nonzeros | Build |
+| ---: | ---: | ---: | ---: | ---: |
+| 10,000 | 10,000 | 10k–16k | 0.16–0.38M | < 1 s |
+| 100,000 | 100,000 | 81k–174k | 2.3–5.8M | 4–15 s |
+
+(seeds 0–1, all five variants; the previous generator reached 25–32M
+nonzeros and 20–30 s at 100k because the beamlet pitch shrank below the
+pencil-beam width and every dose row was repeated up to four times.) HiGHS
+presolve keeps 91–99% of the columns and 89–99% of the rows at 1k–100k.
+
+Every variant bounds beamlet fluence by `case_data.fluence_max`, three times
+the planted peak (a deliverability / monitor-unit cap). Besides being
+clinically natural, bounded fluence keeps HiGHS's dual simplex from stalling
+on "possibly dual unbounded" with huge primal values on infeasible instances,
+which previously ended in an `UNKNOWN` status for 5–15% of seeds.
+
 ## `weighted_deviation`
 
 The default variant uses voxelwise piecewise-linear dose penalties. Let `x_j`
 be nonnegative beamlet fluence and `d_i = sum_j D[i,j] x_j`. Target underdose
-`u_i` and overdose `o_i` satisfy:
+`u_i` and overdose `o_i` satisfy one row per voxel, with the hard safety
+limits as bounds on the deviation variables:
 
 ```text
-d_i + u_i >= desired_i             target voxels
-d_i - o_i <= desired_i             all voxels
-u_i, o_i >= 0
+d_i + u_i - o_i  = 1                    target voxels (desired dose 1.0)
+0 <= u_i <= 1 - target_floor            ⇔  d_i >= target_floor
+0 <= o_i <= target_ceiling - 1          ⇔  d_i <= target_ceiling
+d_i - o_i <= desired_i                  organ / normal-tissue voxels
+0 <= o_i <= structure_max - desired_i   ⇔  d_i <= structure_max
 ```
+
+Because both deviation costs are positive, at most one of `u_i`, `o_i` is
+positive at an optimum, so this is exactly the classical hinge formulation
+plus hard rows, with a single copy of each dose row. Organ objective doses are
+72% of the clinical cap, kept below 90% of the hard maximum.
 
 For every adjacent beamlet pair `(j,k)`, `v_jk` linearizes absolute fluence
 variation:
@@ -94,9 +131,9 @@ min  sum_i w_under[i] * u_i + sum_i w_over[i] * o_i
      + lambda_MU * sum_j x_j + lambda_TV * sum_(j,k) v_jk
 ```
 
-Target lower/upper bounds and per-structure voxel maximums are hard rows. Soft
-penalties therefore model preference tradeoffs without turning every requested
-infeasible instance into a feasible one.
+Target lower/upper bounds and per-structure voxel maximums are hard (as
+deviation bounds). Soft penalties therefore model preference tradeoffs without
+turning every requested infeasible instance into a feasible one.
 
 Variable count is exact or within one variable for normal targets:
 
@@ -134,10 +171,17 @@ a convex surrogate for exact dose-volume constraints, whose feasible regions
 are nonconvex. The objective minimizes structure-weighted mean non-target dose,
 total fluence, and the same beamlet total variation.
 
+Voxel doses are explicit variables, `d_i = sum_j D[i,j] x_j` (one
+`dose_definition` row each), and the hard safety limits are their bounds
+(`target_floor <= d_i <= target_ceiling` on the PTV, `0 <= d_i <=
+structure_max` elsewhere); the tail rows then touch only `d_i`, `z_i`, and
+`eta_s`. The beamlet share of the budget is 10% (16% elsewhere) so voxels stay
+far more numerous than beamlets.
+
 Variable count is exact or within one variable for normal targets:
 
 ```text
-beamlets + all voxels + structures + beamlet adjacency edges
+beamlets + 2 * all voxels + structures + beamlet adjacency edges
 ```
 
 ## `minmax_deviation`
@@ -161,9 +205,10 @@ the nominal setup and two coherent rigid patient shifts of approximately
 0.25–0.45 cm laterally and up to 0.2 cm longitudinally. A scenario is produced
 by moving every anatomical sample together relative to the fixed beamlet grid,
 then recomputing the sparse pencil-beam matrix. It is therefore spatially
-coherent—not independent noise on matrix entries. Hard safety rows and
-underdose/overdose hinges hold in every scenario, while the objective averages
-deviation costs across scenarios.
+coherent—not independent noise on matrix entries. The hard safety limits and
+underdose/overdose deviations hold in every scenario (one deviation row per
+voxel and scenario, limits as bounds on the scenario's deviation variables),
+while the objective averages deviation costs across scenarios.
 
 ```text
 d_i^s = sum_j D^s[i,j] x_j
@@ -199,12 +244,21 @@ natural binary formulation.
   `_rt_mean_tail_witness_is_valid` additionally checks every tail goal.
   Robust witnesses are checked across all scenarios; beam-selection witnesses
   additionally record and validate the open fields and linking bounds.
-- `infeasible`: one sampled target voxel and one OAR voxel are coincident,
-  representing an overlapping contour sample. Their influence rows obey
-  `D[oar,:] = lambda * D[target,:]`, while the OAR upper bound is strictly
-  below `lambda * target_floor`. The stored
-  `RadiotherapyDoseConflictCertificate` is an exact algebraic contradiction,
-  and `_rt_certificate_is_valid` verifies it without solving.
+- `infeasible`: a PTV/organ overlap. One organ voxel is placed inside the
+  target, at the weighted centroid of a cluster of 3–5 neighbouring target
+  voxels, and its dose-influence row is the tissue-scaled interpolation of
+  theirs (the way a dose engine samples dose between grid nodes):
+  `D[oar,:] = m * sum_k w_k * D[t_k,:]` with convex weights `w`, in every
+  setup scenario. Covering the target (`D[t_k,:] x >= target_floor`)
+  therefore forces at least `m * target_floor` onto the organ voxel, while the
+  organ's clinical maximum is set 14–28% below that. The contradiction needs
+  the 3–5 target rows plus the organ row together — no row is infeasible on
+  its own and no two rows are parallel — so HiGHS presolve does not refute it
+  and the dual simplex needs hundreds to thousands of iterations (the previous
+  coincident-voxel pair was a parallel-row conflict presolve removed with zero
+  iterations). The stored `RadiotherapyDoseConflictCertificate` records the
+  cluster, weights, multiplier, and the two bounds, and
+  `_rt_certificate_is_valid` verifies the Farkas combination without solving.
 - `unknown`: clinical target and OAR tightness is sampled independently of the
   reference fluence. No witness or certificate is exposed and
   `resolved_status` remains `unknown`. Representative deterministic samples

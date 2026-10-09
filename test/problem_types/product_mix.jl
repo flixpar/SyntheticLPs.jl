@@ -1,8 +1,11 @@
 # Focused quality contracts for the product_mix category: registry shape,
-# sizing, planted-plan witness and over-commitment certificate arithmetic
-# checked directly against the struct fields, the analytic feasibility
-# characterisation that keeps the `unknown` profile genuinely mixed at every
-# scale, reproducibility, and HiGHS feasibility contracts.
+# exact routing-column sizing and the row formula (machines, labor pools,
+# materials, ranged market rows), shop/routing data invariants, the planted
+# plan witness checked against the built model, the area/plant
+# material-shortage certificate recomputed from the struct fields,
+# reproducibility under a dirty global RNG, and HiGHS contracts including a
+# presolve-survival regression (the previous formulation presolved to an empty
+# model).
 @testset "Product Mix" begin
     @test :product_mix in list_categories()
     @test list_variants(:product_mix) == [:standard]
@@ -10,174 +13,194 @@
     @test info[:default_variant] == :standard
     @test occursin("product", lowercase(info[:description]))
 
-    # Sizing: variables are exactly the products, i.e. the clamped target.
-    for target in (50, 200, 1000, 5000), status in (feasible, infeasible, unknown), seed in 0:2
+    pm_routings(p) = [findall(==(q), p.routing_product) for q in 1:p.n_products]
+    function pm_rows(p)
+        machines = Set(m for ms in p.routing_machines for m in ms)
+        depts = Set(p.machine_department[m] for m in machines)
+        materials = Set(k for q in 1:p.n_products for k in p.product_materials[q])
+        multi = count(rs -> length(rs) > 1, pm_routings(p))
+        return length(machines) + length(depts) + length(materials) + multi
+    end
+
+    # Sizing: one column per routing, exactly the target; rows as documented.
+    for target in (2, 50, 300, 2000, 8000), status in (feasible, infeasible, unknown), seed in 0:1
         m, p = generate_problem(:product_mix, target, status, seed)
-        @test num_variables(m) == p.num_products
-        @test p.num_products == max(2, min(10000, target))
-        @test abs(num_variables(m) - target) <= 0.25 * target || num_variables(m) <= 50
-        @test num_constraints(m; count_variable_in_set_constraints=false) ==
-            p.num_resources + count(>(0.0), p.lower_bounds) + count(isfinite, p.upper_bounds)
+        @test num_variables(m) == p.n_routings == max(target, 2)
+        @test num_constraints(m; count_variable_in_set_constraints=false) == pm_rows(p)
+    end
+    m, p = generate_problem(:product_mix, 100_000, unknown, 0)
+    @test num_variables(m) == 100_000
+    @test num_constraints(m; count_variable_in_set_constraints=false) >= 30_000
+    # Ranged market rows exist (the corpus otherwise has almost none).
+    @test num_constraints(m, AffExpr, MOI.Interval{Float64}) > 0
+
+    # Shop and routing invariants.
+    for target in (80, 900, 4000), status in (feasible, infeasible, unknown)
+        _, p = generate_problem(:product_mix, target, status, 3)
+        @test p.industry in SyntheticLPs._PRODUCT_MIX_INDUSTRIES
+        rs = pm_routings(p)
+        @test all(1 <= length(r) <= 3 for r in rs)
+        for r in 1:p.n_routings
+            ms = p.routing_machines[r]
+            @test allunique(ms)
+            @test length(p.routing_times[r]) == length(p.routing_labor[r]) == length(ms)
+            @test all(>(0.0), p.routing_times[r])
+            @test all(>(0.0), p.routing_labor[r])
+            # Every routing starts in its product's primary department.
+            @test p.machine_department[ms[1]] == p.primary_department[p.routing_product[r]]
+            @test 1.0 <= p.routing_yield[r] <= 1.18
+        end
+        @test all(p.floor .>= 0)
+        @test all(p.floor .< p.ceiling)        # never a bound clash
+        @test all(>(0.0), p.machine_capacity)
+        @test all(>(0.0), p.labor_capacity)
+        @test all(>(0.0), p.material_capacity)
+        # Every routing is profitable (no dual-fixable dead columns).
+        for r in 1:p.n_routings
+            q = p.routing_product[r]
+            mat = sum(
+                a * p.material_cost[k] for (k, a) in zip(p.product_materials[q], p.material_qty[q])
+            )
+            @test p.price[q] - mat * p.routing_yield[r] - p.routing_cost[r] > 0
+        end
     end
 
-    # Structural data contracts shared by all three profiles.
-    for target in (60, 400, 1500), status in (feasible, infeasible, unknown)
-        _, p = generate_problem(:product_mix, target, status, 7)
-        @test size(p.usage_matrix) == (p.num_resources, p.num_products)
-        @test all(>=(0.0), p.usage_matrix)
-        @test all(any(p.usage_matrix[:, j] .> 0) for j in 1:p.num_products)
-        @test all(any(p.usage_matrix[i, :] .> 0) for i in 1:p.num_resources)
-        @test all(>(0.0), p.profits)
-        @test all(>(0.0), p.nominal_plan)
-        @test all(>(0.0), p.availabilities)
-        @test all(p.lower_bounds .>= 0.0)
-        # Never a trivial bound clash: every ceiling stays above its floor.
-        @test all(p.lower_bounds[j] <= p.upper_bounds[j] for j in 1:p.num_products)
-        @test p.industry in
-            (:manufacturing, :food_processing, :electronics, :furniture, :chemical, :automotive)
-        @test p.feasibility_status == status
-        # The stored utilization scalar recomputes exactly from the data.
-        required = [
-            sum(p.usage_matrix[i, j] * p.lower_bounds[j] for j in 1:p.num_products) for
-            i in 1:p.num_resources
-        ]
-        @test p.floor_utilization ≈
-            maximum(required[i] / p.availabilities[i] for i in 1:p.num_resources)
-    end
-
-    # Planted-plan witness: the nominal plan is an actual feasible point of the
-    # built model. Checked by arithmetic on the struct fields *and* against the
-    # model itself via JuMP's primal feasibility report.
-    for target in (50, 300, 2000), seed in 0:2
+    # Planted plan witness.
+    for target in (50, 600, 4000), seed in 0:2
         m, p = generate_problem(:product_mix, target, feasible, seed)
         w = p.feasible_witness
         @test w !== nothing
         @test p.infeasibility_certificate === nothing
-        @test w.plan == p.nominal_plan
-        @test w.consumption ≈ p.usage_matrix * w.plan
-        @test w.slack ≈ p.availabilities .- w.consumption
-        # Capacities strictly cover the plan's consumption ...
-        @test all(w.slack .> 0.0)
-        @test all(p.availabilities[i] > w.consumption[i] for i in 1:p.num_resources)
-        # ... floors sit at or below the plan's output ...
-        @test all(p.lower_bounds .<= w.plan)
-        # ... and market ceilings at or above it.
-        @test all(p.upper_bounds .>= w.plan)
-        # Hence the floors can never over-commit a resource.
-        @test p.floor_utilization < 1.0
-
-        atol = 1e-6 * maximum(p.availabilities)
+        machine, labor, material = SyntheticLPs._product_mix_usage(
+            p.n_machines,
+            p.n_departments,
+            p.n_materials,
+            p.routing_product,
+            p.routing_machines,
+            p.routing_times,
+            p.routing_labor,
+            p.routing_yield,
+            p.machine_department,
+            p.product_materials,
+            p.material_qty,
+            w.production,
+        )
+        @test machine ≈ w.machine_hours
+        @test labor ≈ w.labor_hours
+        @test material ≈ w.material_use
+        @test all(w.machine_hours .< p.machine_capacity)
+        @test all(w.labor_hours .< p.labor_capacity)
+        @test all(w.material_use .< p.material_capacity)
+        sales = [sum(w.production[r] for r in rr) for rr in pm_routings(p)]
+        @test all(p.floor .<= sales .< p.ceiling)
         report = primal_feasibility_report(
-            m, Dict(m[:x][j] => w.plan[j] for j in 1:p.num_products); atol=atol
+            m, Dict(m[:x][r] => w.production[r] for r in 1:p.n_routings); atol=1e-6
         )
         @test isempty(report)
     end
 
-    # Over-commitment certificate: a set of products whose floors provably
-    # exhaust one resource's capacity. Recomputed from the raw fields.
-    for target in (50, 300, 2000), seed in 0:3
+    # Material-shortage certificate (area/plant level), recomputed from the
+    # data, including the protection that keeps single rows and single
+    # products satisfiable (so presolve bound propagation cannot refute it).
+    for target in (50, 600, 4000, 20_000), seed in 0:3
         _, p = generate_problem(:product_mix, target, infeasible, seed)
         cert = p.infeasibility_certificate
         @test cert !== nothing
         @test p.feasible_witness === nothing
-        @test 1 <= cert.resource <= p.num_resources
-        @test !isempty(cert.products)
-        @test allunique(cert.products)
-        @test all(p.lower_bounds[j] > 0.0 for j in cert.products)
-        @test all(p.usage_matrix[cert.resource, j] > 0.0 for j in cert.products)
-        # Every product left out contributes nothing to that resource row.
-        listed = Set(cert.products)
-        @test all(
-            p.usage_matrix[cert.resource, j] * p.lower_bounds[j] == 0.0 for
-            j in 1:p.num_products if !(j in listed)
-        )
-        recomputed = sum(
-            p.usage_matrix[cert.resource, j] * p.lower_bounds[j] for j in cert.products
-        )
-        @test cert.required_usage ≈ recomputed
-        @test cert.availability == p.availabilities[cert.resource]
-        @test cert.required_usage > cert.availability
-        # The refutation is a genuine resource over-commitment, not a bound
-        # clash: every floor still leaves room under its own ceiling.
-        @test all(
-            p.lower_bounds[j] < p.upper_bounds[j] for
-            j in 1:p.num_products if p.lower_bounds[j] > 0.0
-        )
-        @test p.floor_utilization > 1.0
-        @test 1.15 <= p.floor_utilization <= 1.60 + 1e-9
-    end
-
-    # The `unknown` profile must stay genuinely mixed at every scale. Because
-    # all usage coefficients are nonnegative, `x = lower_bounds` is the
-    # pointwise-smallest candidate, so the instance is feasible exactly when
-    # `floor_utilization <= 1` -- which makes the mix measurable without a
-    # solver (the solver-backed cross-check lives below).
-    for target in (50, 100, 500, 1000, 5000)
-        feas = count(0:39) do seed
-            _, p = generate_problem(:product_mix, target, unknown, seed)
-            p.floor_utilization <= 1.0
+        k = cert.material
+        owner = p.material_owner[k]
+        @test cert.scope == (owner == 0 ? :plant : (owner < 0 ? :area : :department))
+        rs = pm_routings(p)
+        users = [q for q in 1:p.n_products if k in p.product_materials[q]]
+        @test cert.products == [q for q in users if p.floor[q] > 0]
+        use(q) = p.material_qty[q][findfirst(==(k), p.product_materials[q])]
+        for (j, q) in enumerate(cert.products)
+            @test cert.min_use[j] ≈ use(q) * minimum(p.routing_yield[r] for r in rs[q])
         end
-        @test 10 <= feas <= 30      # neither outcome dominates
+        @test cert.required ≈ sum(p.floor[q] * u for (q, u) in zip(cert.products, cert.min_use))
+        @test cert.available == p.material_capacity[k]
+        @test cert.required >= 1.1 * cert.available * (1 - 1e-9)
+        if target >= 600
+            @test cert.scope in (:area, :plant)
+            # Single-routing floors (column bounds) leave room in the row, and
+            # no single multi-routing commitment exceeds the row on its own.
+            forced = sum(
+                (
+                    use(q) * minimum(p.routing_yield[r] for r in rs[q]) * p.floor[q] for
+                    q in users if length(rs[q]) == 1 && p.floor[q] > 0
+                );
+                init=0.0,
+            )
+            big = maximum(
+                (
+                    use(q) * maximum(p.routing_yield[r] for r in rs[q]) * p.floor[q] for
+                    q in users if length(rs[q]) > 1
+                );
+                init=0.0,
+            )
+            @test cert.available >= 1.3 * forced + 1.3 * big - 1e-6
+        end
     end
 
-    # Reproducibility, including isolation from a seeded/dirty global RNG.
+    for seed in 0:4
+        _, p = generate_problem(:product_mix, 500, unknown, seed)
+        @test p.feasible_witness === nothing
+        @test p.infeasibility_certificate === nothing
+    end
+
+    # Reproducibility, isolated from a dirty global RNG.
     for status in (feasible, infeasible, unknown)
         Random.seed!(987)
-        _, p1 = generate_problem(:product_mix, 220, status, 42)
+        _, p1 = generate_problem(:product_mix, 700, status, 42)
         Random.seed!(12345)
-        _, p2 = generate_problem(:product_mix, 220, status, 42)
-        for f in (
-            :num_products,
-            :num_resources,
-            :profits,
-            :usage_matrix,
-            :availabilities,
-            :lower_bounds,
-            :upper_bounds,
-            :nominal_plan,
-            :floor_utilization,
-            :industry,
-        )
+        _, p2 = generate_problem(:product_mix, 700, status, 42)
+        for f in fieldnames(typeof(p1))
+            f in (:feasible_witness, :infeasibility_certificate) && continue
             @test isequal(getfield(p1, f), getfield(p2, f))
         end
         if p1.feasible_witness !== nothing
-            @test p1.feasible_witness.plan == p2.feasible_witness.plan
-            @test p1.feasible_witness.slack == p2.feasible_witness.slack
+            @test p1.feasible_witness.production == p2.feasible_witness.production
         end
         if p1.infeasibility_certificate !== nothing
-            c1, c2 = p1.infeasibility_certificate, p2.infeasibility_certificate
-            @test c1.resource == c2.resource
-            @test c1.products == c2.products
-            @test c1.required_usage == c2.required_usage
+            @test p1.infeasibility_certificate.products == p2.infeasibility_certificate.products
         end
     end
 
-    if HAS_HIGHS
-        # End-to-end feasibility contract across scales and seeds.
-        for target in (50, 200, 1000, 5000), status in (feasible, infeasible), seed in 0:3
-            m, _ = generate_problem(:product_mix, target, status, seed)
-            set_optimizer(m, HiGHS.Optimizer)
-            set_silent(m)
-            optimize!(m)
-            expected = status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE
-            @test termination_status(m) == expected
-        end
-
-        # The analytic characterisation used above agrees with the solver on
-        # the `unknown` profile, and both outcomes really occur at scale.
-        for target in (500, 5000)
-            outcomes = MOI.TerminationStatusCode[]
-            for seed in 0:9
-                m, p = generate_problem(:product_mix, target, unknown, seed)
+    @testset "HiGHS contracts" begin
+        if HAS_HIGHS
+            for target in (50, 400, 3000), status in (feasible, infeasible), seed in 0:2
+                m, _ = generate_problem(:product_mix, target, status, seed)
                 set_optimizer(m, HiGHS.Optimizer)
                 set_silent(m)
                 optimize!(m)
-                ts = termination_status(m)
-                push!(outcomes, ts)
-                @test ts == (p.floor_utilization <= 1.0 ? MOI.OPTIMAL : MOI.INFEASIBLE)
+                @test termination_status(m) == (status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE)
             end
-            @test MOI.OPTIMAL in outcomes
-            @test MOI.INFEASIBLE in outcomes
+            outcomes = Set{MOI.TerminationStatusCode}()
+            for seed in 0:9
+                m, _ = generate_problem(:product_mix, 600, unknown, seed)
+                set_optimizer(m, HiGHS.Optimizer)
+                set_silent(m)
+                optimize!(m)
+                push!(outcomes, termination_status(m))
+            end
+            @test outcomes == Set([MOI.OPTIMAL, MOI.INFEASIBLE])
+            # Infeasible requests are not refuted by presolve alone: with the
+            # simplex iteration limit at 0, HiGHS must stop undecided.
+            for target in (1000, 10_000), seed in 0:1
+                m, _ = generate_problem(:product_mix, target, infeasible, seed)
+                set_optimizer(m, HiGHS.Optimizer)
+                set_silent(m)
+                set_attribute(m, "simplex_iteration_limit", 0)
+                optimize!(m)
+                @test termination_status(m) == MOI.ITERATION_LIMIT
+            end
+            # Presolve survival: simplex has real work left on a feasible 5k
+            # instance (the old formulation presolved to empty).
+            m, _ = generate_problem(:product_mix, 5000, feasible, 1)
+            set_optimizer(m, HiGHS.Optimizer)
+            set_silent(m)
+            optimize!(m)
+            @test MOI.get(m, MOI.SimplexIterations()) > 1000
         end
     end
 end

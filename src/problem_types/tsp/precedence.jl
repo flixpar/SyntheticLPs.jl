@@ -72,5 +72,6 @@ register_variant(
     :tsp,
     :precedence,
     TSPPrecedenceProblem,
-    "Precedence-constrained TSP for ordered field-service tasks using lifted MTZ sequencing",
+    "Precedence-constrained TSP for ordered field-service tasks using lifted MTZ sequencing";
+    tags=[:routing, :big_m],
 )

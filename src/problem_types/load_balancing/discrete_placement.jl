@@ -2,6 +2,34 @@ using JuMP
 using Random
 
 """
+Planted deployment: every service on its `machine[s]` alone, every traffic
+class of the service routed there; `machine_load` and `makespan` are the
+resulting loads. Feasible for the MIP itself (one placement per service is
+within `max_replicas`, loads within capacity).
+"""
+struct DiscretePlacementWitness
+    machine::Vector{Int}
+    machine_load::Vector{Float64}
+    makespan::Float64
+end
+
+"""
+Aggregate-workload certificate: every unit of demand of service `s` costs at
+least `minimum(processing_time[s, :])` machine time wherever it is routed, so
+the machine-load definitions and the capacity bounds give
+
+    workload_lower_bound = sum_{k,s} demand[k,s] * min_m processing_time[s,m]
+                         <= sum_m machine_capacity[m] = total_capacity
+
+independent of the placement binaries (valid in the relaxation); the
+certificate stores both sides with `total_capacity < workload_lower_bound`.
+"""
+struct DiscretePlacementCertificate
+    workload_lower_bound::Float64
+    total_capacity::Float64
+end
+
+"""
     DiscretePlacementLoadBalancingProblem <: ProblemGenerator
 
 A service-placement and workload-routing MILP. Binary `placement[s,m]`
@@ -33,6 +61,9 @@ struct DiscretePlacementLoadBalancingProblem <: ProblemGenerator
     machine_capacity::Vector{Float64}
     max_replicas::Vector{Int}
     planted_machine::Vector{Int}
+    feasible_witness::Union{Nothing, DiscretePlacementWitness}
+    infeasibility_certificate::Union{Nothing, DiscretePlacementCertificate}
+    feasibility_status::FeasibilityStatus
 end
 
 """
@@ -59,8 +90,9 @@ sum(demand[k,s] * minimum(processing_time[s,:]), k, s),
 ```
 
 a necessary workload lower bound that remains valid when placement binaries
-are relaxed. `unknown` distributes capacity near that lower bound without
-asserting feasibility.
+are relaxed. `unknown` sizes each machine at a common factor in [0.65, 1.1]
+times 0.85-1.15 of its planted load, so machines are short and replicas on
+other machines may or may not absorb the gap.
 """
 function DiscretePlacementLoadBalancingProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
@@ -114,15 +146,31 @@ function DiscretePlacementLoadBalancingProblem(
 
     machine_capacity = if feasibility_status == feasible
         [max(1.0, planted_load[machine] * (1.10 + 0.25 * rand(rng))) for machine in 1:n_machines]
-    else
+    elseif feasibility_status == infeasible
         capacity_weights = [0.5 + rand(rng) for _ in 1:n_machines]
         capacity_weights ./= sum(capacity_weights)
-        total_capacity = if feasibility_status == infeasible
-            aggregate_lower_bound * (0.65 + 0.20 * rand(rng))
-        else
-            aggregate_lower_bound * (0.90 + 0.35 * rand(rng))
-        end
-        total_capacity .* capacity_weights
+        aggregate_lower_bound * (0.65 + 0.20 * rand(rng)) .* capacity_weights
+    else
+        # Machines sized below the planted deployment's loads by a common
+        # factor (with machine noise): replicas on faster machines may or may
+        # not absorb the gap.
+        phi = 0.65 + 0.45 * rand(rng)
+        [
+            max(1.0, planted_load[machine] * phi * (0.85 + 0.3 * rand(rng))) for
+            machine in 1:n_machines
+        ]
+    end
+
+    feasible_witness = nothing
+    infeasibility_certificate = nothing
+    if feasibility_status == feasible
+        feasible_witness = DiscretePlacementWitness(
+            copy(planted_machine), copy(planted_load), maximum(planted_load)
+        )
+    elseif feasibility_status == infeasible
+        infeasibility_certificate = DiscretePlacementCertificate(
+            aggregate_lower_bound, sum(machine_capacity)
+        )
     end
 
     return DiscretePlacementLoadBalancingProblem(
@@ -134,6 +182,9 @@ function DiscretePlacementLoadBalancingProblem(
         machine_capacity,
         max_replicas,
         planted_machine,
+        feasible_witness,
+        infeasibility_certificate,
+        feasibility_status,
     )
 end
 
@@ -205,5 +256,6 @@ register_variant(
     :load_balancing,
     :discrete_placement,
     DiscretePlacementLoadBalancingProblem,
-    "Discrete service placement with binary deployments, continuous workload routing, machine capacities, and makespan minimization",
+    "Discrete service placement with binary deployments, continuous workload routing, machine capacities, and makespan minimization";
+    tags=[:scheduling, :big_m],
 )

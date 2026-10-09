@@ -39,7 +39,7 @@ feed's best mode, so they refute every mode assignment at once.
 Run indicators and starts/changeovers are binary, so this is a genuine MILP; with the
 package default `relax_integer=true` it is returned as its LP relaxation, in
 which a unit may run several modes at once in fractional proportions. The planted
-witness is integral and both certificates hold for the relaxation.
+witness is integral and every certificate holds for the relaxation.
 """
 struct RefineryModeSwitchingProblem <: ProblemGenerator
     flowsheet::RefineryFlowsheet
@@ -121,8 +121,9 @@ horizon.
   contract and blend window is placed around the result — including the
   mode-dependent capacity de-rates — so the witness is a feasible point of the
   integer model.
-- `infeasible`: as in [`RefineryPlanningProblem`](@ref), and both certificates
-  take each feed's best mode, so no mode assignment escapes them.
+- `infeasible`: as in [`RefineryPlanningProblem`](@ref) (crude-supply
+  curtailment by default), and every certificate takes each feed's best mode, so
+  no mode assignment escapes it.
 - `unknown`: assets, contracts and quality windows are drawn from design rules
   and a market view rather than reconciled with the plan, leaving feasibility
   genuinely open.
@@ -397,5 +398,6 @@ register_variant(
     RefineryModeSwitchingProblem,
     "Multi-period refinery campaign planning: one operating mode per conversion " *
     "unit and period, mode-dependent yields, gated turndown, exact starts, " *
-    "minimum runs, and changeover costs",
+    "minimum runs, and changeover costs";
+    tags=[:production, :staircase, :blending, :big_m],
 )

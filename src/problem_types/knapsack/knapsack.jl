@@ -1,12 +1,16 @@
 # knapsack category
 #
-# Entry point for the `knapsack` problem category. A category groups one or
-# more variant formulations; the category is registered lazily from its
-# first variant's `register_variant` call (or call `register_category`
-# explicitly to give the category its own description). Add a variant by
-# creating a file in this folder and including it below.
+# Entry point for the `knapsack` problem category. Every variant has many rows
+# that grow with the instance: the single-row `standard` knapsack (solved by
+# Dantzig's greedy, and by presolve alone) was removed, and `bounded` was
+# rebuilt as a bounded multiple knapsack.
 
-include("standard.jl")
+register_category(
+    :knapsack,
+    "Knapsack-family resource-allocation LPs: multiple-choice, sparse multi-dimensional, bounded multiple, and HEM-MIK-style knapsack sets",
+)
+
+include("multiple_choice.jl")
 include("multidimensional.jl")
 include("bounded.jl")
 include("mixed_integer_set.jl")

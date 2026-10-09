@@ -13,7 +13,7 @@
 #   julia --project=@. scripts/generate_problem.jl knapsack 50 --bounds-to-constraints
 #   julia --project=@. scripts/generate_problem.jl transportation 100 --dualize
 #   julia --project=@. scripts/generate_problem.jl random 100 --dualize-probability=0.5
-#   julia --project=@. scripts/generate_problem.jl list
+#   julia --project=@. scripts/generate_problem.jl list   # variants with tags, size cap, model class
 
 using Pkg
 Pkg.activate(@__DIR__)
@@ -68,7 +68,13 @@ if problem_arg == "list"
         println("  $i. $category - $(info[:description])")
         for v in info[:variants]
             marker = v == info[:default_variant] ? " (default)" : ""
-            println("       • $category/$v$marker")
+            vinfo = problem_info(category, v)
+            extras = String[]
+            isempty(vinfo[:tags]) || push!(extras, "tags: " * join(vinfo[:tags], ", "))
+            vinfo[:max_target_variables] === nothing ||
+                push!(extras, "max target: $(vinfo[:max_target_variables])")
+            push!(extras, "class: $(vinfo[:model_class])")
+            println("       • $category/$v$marker  [$(join(extras, "; "))]")
         end
     end
     exit(0)

@@ -2,32 +2,6 @@ using JuMP
 using Random
 using Distributions
 using StatsBase
-using Statistics
-
-"""
-    LandUseInfeasibilityCertificate
-
-Solver-independent proof that a land-use instance is infeasible. For the
-identified resource, `per_parcel_minimum[i]` is the least consumption possible
-for parcel `i` over every environmentally allowed zoning type. Every assignment
-therefore consumes at least `lower_bound`, while the model only permits
-`capacity < lower_bound`.
-"""
-struct LandUseInfeasibilityCertificate
-    resource_index::Int
-    per_parcel_minimum::Vector{Float64}
-    lower_bound::Float64
-    capacity::Float64
-end
-
-Base.:(==)(a::LandUseInfeasibilityCertificate, b::LandUseInfeasibilityCertificate) =
-    a.resource_index == b.resource_index &&
-    a.per_parcel_minimum == b.per_parcel_minimum &&
-    a.lower_bound == b.lower_bound &&
-    a.capacity == b.capacity
-Base.isequal(a::LandUseInfeasibilityCertificate, b::LandUseInfeasibilityCertificate) = a == b
-Base.hash(a::LandUseInfeasibilityCertificate, h::UInt) =
-    hash((a.resource_index, a.per_parcel_minimum, a.lower_bound, a.capacity), h)
 
 # The large size regime can request as many as twelve zoning types. Keeping all
 # zoning metadata in one catalog prevents names, economic parameters, and
@@ -111,402 +85,564 @@ const _LAND_USE_RESOURCE_NAMES = (
     "Water", "Sewage", "Transportation", "Power", "Internet", "Gas", "Environmental", "Emergency"
 )
 
+# Zone roles (catalog indices): 1 Residential, 2 Commercial, 3 Industrial,
+# 5 Conservation, 6 Mixed Use, 7 Recreational, 8 Institutional, 12 Open Space.
+const _LAND_USE_HOUSING_DENSITY = Dict(1 => 20.0, 6 => 15.0)              # dwellings / ha
+const _LAND_USE_JOB_DENSITY = Dict(2 => 40.0, 3 => 25.0, 6 => 20.0, 8 => 15.0)  # jobs / ha
+const _LAND_USE_GREEN_ZONES = (5, 7, 12)
+const _LAND_USE_RESIDENTIAL = 1
+const _LAND_USE_INDUSTRIAL = 3
+
+"""
+    LandUseInfeasibilityCertificate
+
+Solver-independent proof that a land-use instance is infeasible. Every parcel
+of service district `district` must take one allowed zone, and each allowed zone
+consumes at least `per_parcel_minimum[i]` of resource `resource_index` on parcel
+`i` (`parcels[i]`), so the district consumes at least `lower_bound`, while its
+capacity row only permits `capacity < lower_bound`. The bound uses the
+assignment equalities and the capacity row only, so it holds for the LP
+relaxation too.
+"""
+struct LandUseInfeasibilityCertificate
+    district::Int
+    resource_index::Int
+    parcels::Vector{Int}
+    per_parcel_minimum::Vector{Float64}
+    lower_bound::Float64
+    capacity::Float64
+end
+
 """
     LandUseProblem <: ProblemGenerator
 
-Binary parcel-zoning assignment with infrastructure capacities, environmental
-exclusions, minimum zoning counts, and residential-industrial incompatibility
-on a spatial parcel graph.
+Spatial zoning plan for a growing city: every parcel on a planar parcel graph
+takes exactly one land-use zone, at maximum net development value, subject to
+district infrastructure capacities, district housing and employment targets,
+green-space accessibility around homes, and residential–industrial buffer rules.
 
-`feasible_witness` is populated only for requested-feasible instances.
-`infeasibility_certificate` is populated only for requested-infeasible
-instances. Unknown instances intentionally expose neither claim.
+# Formulation
+
+Variables `x[k] ∈ {0, 1}` for every allowed parcel–zone pair `k = (i, z)`
+(`pairs`); environmentally excluded pairs simply do not exist. Maximize
+`Σ_k size_i (revenue[i,z] − cost[i,z]) x[k]`. Rows:
+
+  - assignment `Σ_z x[i,z] = 1` per parcel;
+  - infrastructure, per service district `d` and resource `r`:
+    `Σ_{i∈d} size_i consumption[z,r] x[i,z] ≤ capacity[d,r]`;
+  - housing `Σ_{i∈d} size_i density_z x[i,z] ≥ housing_target[d]` (residential
+    and mixed use) and jobs `≥ jobs_target[d]` (commercial, industrial, mixed
+    use, institutional) per district;
+  - green-space accessibility, for parcels that may become residential:
+    `Σ_{j∈N[i]} size_j x[j,green] ≥ green_ratio[i] · size_i · x[i,residential]`
+    (`N[i]` is the parcel and its neighbours; green = conservation,
+    recreational, open space);
+  - buffer rules `x[i,residential] + x[j,industrial] ≤ 1` for each neighbouring
+    pair (both orientations) where both variables exist.
+
+Under the default `relax_integer=true` this is a fractional land-allocation LP
+(each parcel split across uses), whose district, accessibility and buffer rows
+all stay meaningful.
+
+# Sizing
+
+Parcels `≈ target / E[allowed zones per parcel]`, so the number of pairs is
+within a few percent of the target; districts hold `≈ 80` parcels.
+
+# Feasibility
+
+  - `feasible`: a greedy reference plan (best net value, never residential next
+    to industrial, homes given a green neighbour where possible) is drawn before
+    the environmental exclusions, which never remove its zones; capacities are
+    1.03–1.20× its use, targets 85–97% of what it provides, and accessibility
+    ratios at most what it achieves. Stored as `feasible_witness` (zone per
+    parcel).
+  - `infeasible`: one district's capacity for one resource is cut below the
+    least that any allowed zoning of its parcels consumes
+    (`LandUseInfeasibilityCertificate`).
+  - `unknown`: nominal capacities and targets with no planted plan.
 """
 struct LandUseProblem <: ProblemGenerator
     n_parcels::Int
     n_zoning_types::Int
     n_resources::Int
+    n_districts::Int
     parcel_sizes::Vector{Float64}
+    parcel_district::Vector{Int}
+    parcel_coordinates::Matrix{Float64}
+    adjacency_edges::Vector{Tuple{Int, Int}}
+    pairs::Vector{Tuple{Int, Int}}
     development_costs::Matrix{Float64}
     revenues::Matrix{Float64}
     resource_consumption::Matrix{Float64}
-    resource_capacities::Vector{Float64}
-    environmental_restrictions::Matrix{Bool}
-    adjacency_matrix::Matrix{Bool}
+    resource_capacities::Matrix{Float64}
+    housing_target::Vector{Float64}
+    jobs_target::Vector{Float64}
+    green_ratio::Vector{Float64}
     zoning_names::Vector{String}
     resource_names::Vector{String}
-    min_counts_by_type::Vector{Int}
-    zoning_adjacency_constraints::Bool
-    minimum_zoning_requirements::Bool
-    parcel_coordinates::Matrix{Float64}
-    adjacency_edges::Vector{Tuple{Int, Int}}
     feasible_witness::Union{Nothing, Vector{Int}}
     infeasibility_certificate::Union{Nothing, LandUseInfeasibilityCertificate}
+    feasibility_status::FeasibilityStatus
 end
 
-# Generate a connected, planar-like four-neighbor graph on a jittered grid.
-# Parcel identifiers are shuffled over grid cells, so graph structure is not an
-# artifact of consecutive variable indices. Only right/down cell pairs are
-# emitted, making every edge undirected and unique by construction.
+# A connected planar-like four-neighbour graph on a jittered grid, parcel ids
+# shuffled over the cells; also returns each parcel's grid cell.
 function _land_use_spatial_graph(rng::AbstractRNG, n_parcels::Int)
     n_columns = ceil(Int, sqrt(n_parcels))
     n_rows = ceil(Int, n_parcels / n_columns)
-
     cells = Tuple{Int, Int}[]
     for row in 1:n_rows, column in 1:n_columns
         length(cells) == n_parcels && break
         push!(cells, (row, column))
     end
     shuffle!(rng, cells)
-
     cell_to_parcel = zeros(Int, n_rows, n_columns)
     coordinates = zeros(Float64, n_parcels, 2)
-    parity = falses(n_parcels)
     for parcel in 1:n_parcels
         row, column = cells[parcel]
         cell_to_parcel[row, column] = parcel
-        x_jitter = 0.18 * (2.0 * rand(rng) - 1.0)
-        y_jitter = 0.18 * (2.0 * rand(rng) - 1.0)
-        coordinates[parcel, 1] = (column - 0.5 + x_jitter) / n_columns
-        coordinates[parcel, 2] = (row - 0.5 + y_jitter) / n_rows
-        parity[parcel] = isodd(row + column)
+        coordinates[parcel, 1] = (column - 0.5 + 0.18 * (2.0 * rand(rng) - 1.0)) / n_columns
+        coordinates[parcel, 2] = (row - 0.5 + 0.18 * (2.0 * rand(rng) - 1.0)) / n_rows
     end
-
-    adjacency = falses(n_parcels, n_parcels)
     edges = Tuple{Int, Int}[]
     for row in 1:n_rows, column in 1:n_columns
         parcel = cell_to_parcel[row, column]
         parcel == 0 && continue
         for (next_row, next_column) in ((row, column + 1), (row + 1, column))
-            next_row > n_rows && continue
-            next_column > n_columns && continue
+            (next_row <= n_rows && next_column <= n_columns) || continue
             neighbor = cell_to_parcel[next_row, next_column]
             neighbor == 0 && continue
-            first, second = parcel < neighbor ? (parcel, neighbor) : (neighbor, parcel)
-            push!(edges, (first, second))
-            adjacency[first, second] = true
-            adjacency[second, first] = true
+            push!(edges, minmax(parcel, neighbor))
         end
     end
     sort!(edges)
-    return coordinates, adjacency, edges, parity
+    return coordinates, edges, cells, n_columns
 end
 
-function _land_use_minimum_counts(n_parcels::Int, n_zoning_types::Int, enabled::Bool)
-    enabled || return Int[]
-    n_required = min(3, n_zoning_types, n_parcels)
-    base_minimum = max(1, round(Int, 0.10 * n_parcels))
-    while base_minimum * n_required > n_parcels
-        base_minimum -= 1
+function _land_use_neighbors(n_parcels::Int, edges)
+    neighbors = [Int[] for _ in 1:n_parcels]
+    for (i, j) in edges
+        push!(neighbors[i], j)
+        push!(neighbors[j], i)
     end
-    return fill(base_minimum, n_required)
+    return neighbors
 end
 
-# Build a concrete assignment before adding environmental exclusions. The grid
-# graph is bipartite, so putting the required residential and industrial parcels
-# on the same parity class guarantees that those two required sets are mutually
-# nonadjacent without deleting geography to fit the requested label.
-function _land_use_reference_assignment(
-    net_benefit::Matrix{Float64},
-    coordinates::Matrix{Float64},
-    neighbors::Vector{Vector{Int}},
-    parity::BitVector,
-    minimum_counts::Vector{Int},
+"""Index of the variable for each allowed (parcel, zone), 0 when excluded."""
+function land_use_pair_index(prob::LandUseProblem)
+    index = zeros(Int, prob.n_parcels, prob.n_zoning_types)
+    for (k, (i, z)) in enumerate(prob.pairs)
+        index[i, z] = k
+    end
+    return index
+end
+
+_land_use_green(n_zones::Int) = [g for g in _LAND_USE_GREEN_ZONES if g <= n_zones]
+
+function _land_use_district_value(sizes, district, assignment, density::Dict, n_districts)
+    value = zeros(Float64, n_districts)
+    for i in eachindex(assignment)
+        value[district[i]] += sizes[i] * get(density, assignment[i], 0.0)
+    end
+    return value
+end
+
+"""
+    land_use_plan_satisfies(prob, plan=prob.feasible_witness; atol=1e-8)
+
+Check an integer zoning plan (zone per parcel) against every row of the model.
+"""
+function land_use_plan_satisfies(
+    prob::LandUseProblem,
+    plan::Union{Nothing, AbstractVector{<:Integer}}=prob.feasible_witness;
+    atol::Float64=1e-8,
 )
-    n_parcels, n_zoning_types = size(net_benefit)
-    assignment = zeros(Int, n_parcels)
-
-    residential_minimum = length(minimum_counts) >= 1 ? minimum_counts[1] : 0
-    commercial_minimum = length(minimum_counts) >= 2 ? minimum_counts[2] : 0
-    industrial_minimum = length(minimum_counts) >= 3 ? minimum_counts[3] : 0
-
-    if residential_minimum + industrial_minimum > 0
-        odd_parcels = findall(parity)
-        even_parcels = findall(.!parity)
-        compatible_pool = length(odd_parcels) >= length(even_parcels) ? odd_parcels : even_parcels
-        length(compatible_pool) >= residential_minimum + industrial_minimum ||
-            error("Spatial graph partition is too small for zoning minimums")
-
-        residential_order = sort(compatible_pool; by=i -> (coordinates[i, 1], -coordinates[i, 2]))
-        residential = residential_order[1:residential_minimum]
-        assignment[residential] .= 1
-
-        remaining_compatible = [i for i in compatible_pool if assignment[i] == 0]
-        industrial_order = sort(
-            remaining_compatible; by=i -> (-coordinates[i, 1], coordinates[i, 2])
+    plan === nothing && return false
+    length(plan) == prob.n_parcels || return false
+    index = land_use_pair_index(prob)
+    all(i -> 1 <= plan[i] <= prob.n_zoning_types && index[i, plan[i]] > 0, 1:prob.n_parcels) ||
+        return false
+    usage = zeros(Float64, prob.n_districts, prob.n_resources)
+    for i in 1:prob.n_parcels, r in 1:prob.n_resources
+        usage[prob.parcel_district[i], r] +=
+            prob.parcel_sizes[i] * prob.resource_consumption[plan[i], r]
+    end
+    all(usage .<= prob.resource_capacities .+ atol .* max.(1.0, prob.resource_capacities)) ||
+        return false
+    housing = _land_use_district_value(
+        prob.parcel_sizes, prob.parcel_district, plan, _LAND_USE_HOUSING_DENSITY, prob.n_districts
+    )
+    jobs = _land_use_district_value(
+        prob.parcel_sizes, prob.parcel_district, plan, _LAND_USE_JOB_DENSITY, prob.n_districts
+    )
+    all(housing .+ atol .>= prob.housing_target) && all(jobs .+ atol .>= prob.jobs_target) ||
+        return false
+    green = _land_use_green(prob.n_zoning_types)
+    neighbors = _land_use_neighbors(prob.n_parcels, prob.adjacency_edges)
+    for i in 1:prob.n_parcels
+        prob.green_ratio[i] > 0 && plan[i] == _LAND_USE_RESIDENTIAL || continue
+        area = sum(
+            prob.parcel_sizes[j] for j in vcat(i, neighbors[i]) if plan[j] in green; init=0.0
         )
-        industrial = industrial_order[1:industrial_minimum]
-        assignment[industrial] .= 3
+        area + atol >= prob.green_ratio[i] * prob.parcel_sizes[i] || return false
     end
+    for (i, j) in prob.adjacency_edges
+        (plan[i], plan[j]) in (
+            (_LAND_USE_RESIDENTIAL, _LAND_USE_INDUSTRIAL),
+            (_LAND_USE_INDUSTRIAL, _LAND_USE_RESIDENTIAL),
+        ) && return false
+    end
+    return true
+end
 
-    if commercial_minimum > 0
-        available = [i for i in 1:n_parcels if assignment[i] == 0]
-        # Commercial parcels favor central, accessible locations.
-        sort!(available; by=i -> (coordinates[i, 1] - 0.5)^2 + (coordinates[i, 2] - 0.5)^2)
-        assignment[available[1:commercial_minimum]] .= 2
+function _land_use_district_lower_bound(prob, district::Int, resource::Int)
+    parcels = findall(==(district), prob.parcel_district)
+    allowed = [Int[] for _ in 1:prob.n_parcels]
+    for (i, z) in prob.pairs
+        push!(allowed[i], z)
     end
+    minimum_use = [
+        prob.parcel_sizes[i] * minimum(prob.resource_consumption[z, resource] for z in allowed[i])
+        for i in parcels
+    ]
+    return parcels, minimum_use
+end
 
-    for parcel in 1:n_parcels
-        assignment[parcel] != 0 && continue
-        zoning_order = sortperm(view(net_benefit, parcel, :); rev=true)
-        selected = 0
-        for zoning in zoning_order
-            if zoning == 1 && any(assignment[neighbor] == 3 for neighbor in neighbors[parcel])
-                continue
-            elseif zoning == 3 && any(assignment[neighbor] == 1 for neighbor in neighbors[parcel])
-                continue
-            end
-            selected = zoning
-            break
-        end
-        # Commercial is neutral under the only modeled incompatibility and is
-        # always present because all size regimes use at least three zones.
-        assignment[parcel] = selected == 0 ? 2 : selected
-    end
-    return assignment
+"""
+    land_use_certificate_holds(prob::LandUseProblem)
+
+Recompute the district resource lower bound and check it exceeds the capacity.
+"""
+function land_use_certificate_holds(prob::LandUseProblem)
+    cert = prob.infeasibility_certificate
+    cert === nothing && return false
+    1 <= cert.district <= prob.n_districts && 1 <= cert.resource_index <= prob.n_resources ||
+        return false
+    parcels, minimum_use = _land_use_district_lower_bound(prob, cert.district, cert.resource_index)
+    parcels == cert.parcels && minimum_use ≈ cert.per_parcel_minimum || return false
+    cert.lower_bound ≈ sum(minimum_use) || return false
+    cert.capacity == prob.resource_capacities[cert.district, cert.resource_index] || return false
+    return cert.capacity < cert.lower_bound * (1 - 1e-9)
 end
 
 """
     LandUseProblem(target_variables, feasibility_status, seed)
 
-Construct a reproducible land-use instance. All randomness is drawn from a
-constructor-local `MersenneTwister`; generation does not reset or consume the
-process-wide random stream.
+Construct a reproducible zoning-plan instance (see `LandUseProblem`).
 """
 function LandUseProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
     rng = MersenneTwister(seed)
-
-    if target_variables <= 250
+    target = max(target_variables, 1)
+    if target <= 250
         n_zoning_types = rand(rng, 3:5)
         n_resources = rand(rng, 3:5)
         development_cost_scale = rand(rng, 50_000:150_000)
         revenue_scale = rand(rng, 20_000:80_000)
-        infrastructure_factor = rand(rng, Uniform(0.60, 0.80))
         environmental_probability = rand(rng, Uniform(0.20, 0.40))
-    elseif target_variables <= 1000
+    elseif target <= 1000
         n_zoning_types = rand(rng, 4:8)
         n_resources = rand(rng, 4:6)
         development_cost_scale = rand(rng, 75_000:250_000)
         revenue_scale = rand(rng, 40_000:120_000)
-        infrastructure_factor = rand(rng, Uniform(0.65, 0.85))
         environmental_probability = rand(rng, Uniform(0.25, 0.45))
     else
         n_zoning_types = rand(rng, 5:length(_LAND_USE_ZONING_CATALOG))
         n_resources = rand(rng, 5:length(_LAND_USE_RESOURCE_NAMES))
         development_cost_scale = rand(rng, 100_000:500_000)
         revenue_scale = rand(rng, 60_000:200_000)
-        infrastructure_factor = rand(rng, Uniform(0.70, 0.90))
         environmental_probability = rand(rng, Uniform(0.30, 0.50))
     end
-
-    n_parcels = max(2, round(Int, target_variables / n_zoning_types))
+    # Expected number of excluded zones on a restricted parcel: uniform 1..m.
+    m = min(3, n_zoning_types - 1)
+    expected_allowed = n_zoning_types - environmental_probability * (m + 1) / 2
+    n_parcels = max(2, round(Int, target / expected_allowed))
     zoning_names = [String(_LAND_USE_ZONING_CATALOG[j].name) for j in 1:n_zoning_types]
     resource_names = [String(_LAND_USE_RESOURCE_NAMES[k]) for k in 1:n_resources]
 
-    parcel_coordinates, adjacency_matrix, adjacency_edges, parity = _land_use_spatial_graph(
-        rng, n_parcels
-    )
-    neighbors = [Int[] for _ in 1:n_parcels]
-    for (first_parcel, second_parcel) in adjacency_edges
-        push!(neighbors[first_parcel], second_parcel)
-        push!(neighbors[second_parcel], first_parcel)
+    coordinates, edges, cells, n_columns = _land_use_spatial_graph(rng, n_parcels)
+    neighbors = _land_use_neighbors(n_parcels, edges)
+    # Service districts: square blocks of the grid holding about 80 parcels.
+    side = max(1, round(Int, sqrt(80.0)))
+    block_of = Dict{Tuple{Int, Int}, Int}()
+    parcel_district = zeros(Int, n_parcels)
+    for i in 1:n_parcels
+        row, column = cells[i]
+        key = ((row - 1) ÷ side, (column - 1) ÷ side)
+        parcel_district[i] = get!(block_of, key, length(block_of) + 1)
     end
+    n_districts = length(block_of)
 
-    zoning_adjacency_constraints = rand(rng) < 0.80
-    minimum_zoning_requirements = rand(rng) < 0.90
-    min_counts_by_type = _land_use_minimum_counts(
-        n_parcels, n_zoning_types, minimum_zoning_requirements
-    )
-
-    # Nearby parcels have related land values through their common distance to
-    # the urban center, while idiosyncratic log-normal noise preserves variety.
-    parcel_sizes = rand(rng, LogNormal(log(5.0), 0.75), n_parcels)
-    parcel_sizes = max.(parcel_sizes, 0.1)
+    parcel_sizes = max.(rand(rng, LogNormal(log(5.0), 0.75), n_parcels), 0.1)
     development_costs = zeros(Float64, n_parcels, n_zoning_types)
     revenues = zeros(Float64, n_parcels, n_zoning_types)
-    for parcel in 1:n_parcels
-        x_coord = parcel_coordinates[parcel, 1]
-        y_coord = parcel_coordinates[parcel, 2]
-        center_distance = hypot(x_coord - 0.5, y_coord - 0.5)
-        accessibility = exp(-2.5 * center_distance)
-        rurality = 1.0 - accessibility
-        for zoning in 1:n_zoning_types
-            profile = _LAND_USE_ZONING_CATALOG[zoning]
-            urban_weight = zoning in (1, 2, 3, 6, 8, 9, 10, 11) ? accessibility : rurality
-            development_costs[parcel, zoning] =
+    for i in 1:n_parcels
+        accessibility = exp(-2.5 * hypot(coordinates[i, 1] - 0.5, coordinates[i, 2] - 0.5))
+        for z in 1:n_zoning_types
+            profile = _LAND_USE_ZONING_CATALOG[z]
+            urban = z in (1, 2, 3, 6, 8, 9, 10, 11) ? accessibility : 1.0 - accessibility
+            development_costs[i, z] =
                 development_cost_scale *
                 profile.cost *
-                (0.70 + 0.65 * urban_weight) *
+                (0.70 + 0.65 * urban) *
                 rand(rng, LogNormal(0.0, 0.18))
-            revenues[parcel, zoning] =
+            revenues[i, z] =
                 revenue_scale *
                 profile.revenue *
-                (0.55 + 1.05 * urban_weight) *
+                (0.55 + 1.05 * urban) *
                 rand(rng, LogNormal(0.0, 0.22))
         end
     end
-
-    resource_consumption = zeros(Float64, n_zoning_types, n_resources)
-    for zoning in 1:n_zoning_types, resource in 1:n_resources
-        base = _LAND_USE_ZONING_CATALOG[zoning].resources[resource]
-        resource_consumption[zoning, resource] = base * rand(rng, LogNormal(0.0, 0.16))
-    end
-
-    net_benefit = revenues .- development_costs
-    reference_assignment = _land_use_reference_assignment(
-        net_benefit, parcel_coordinates, neighbors, parity, min_counts_by_type
-    )
-
-    # Restrictions are status-independent and never erase the planted reference
-    # assignment. Thus requested status is controlled by capacity construction,
-    # not by silently deleting geography or environmental rules.
-    environmental_restrictions = falses(n_parcels, n_zoning_types)
-    for parcel in 1:n_parcels
-        rand(rng) < environmental_probability || continue
-        candidates = [
-            zoning for zoning in 1:n_zoning_types if zoning != reference_assignment[parcel]
-        ]
-        isempty(candidates) && continue
-        n_restricted = rand(rng, 1:min(3, length(candidates)))
-        restricted = sample(rng, candidates, n_restricted; replace=false)
-        environmental_restrictions[parcel, restricted] .= true
-    end
-
-    reference_usage = [
-        sum(
-            parcel_sizes[parcel] * resource_consumption[reference_assignment[parcel], resource] for
-            parcel in 1:n_parcels
-        ) for resource in 1:n_resources
+    resource_consumption = [
+        _LAND_USE_ZONING_CATALOG[z].resources[r] * rand(rng, LogNormal(0.0, 0.16)) for
+        z in 1:n_zoning_types, r in 1:n_resources
     ]
-    total_area = sum(parcel_sizes)
-    average_consumption = vec(mean(resource_consumption; dims=1))
-    nominal_capacity =
-        total_area .* average_consumption .* infrastructure_factor .*
-        rand(rng, Uniform(0.85, 1.15), n_resources)
+    green = _land_use_green(n_zoning_types)
 
-    feasible_witness = nothing
-    infeasibility_certificate = nothing
-    if feasibility_status == feasible
-        slack = rand(rng, Uniform(1.05, 1.20), n_resources)
-        resource_capacities = max.(nominal_capacity, reference_usage .* slack)
-        feasible_witness = copy(reference_assignment)
-    elseif feasibility_status == infeasible
-        # All noncritical resources admit the reference assignment. One random
-        # critical resource is then placed strictly below a relaxation-valid
-        # lower bound, making both the MILP and its LP relaxation infeasible.
-        resource_capacities = reference_usage .* rand(rng, Uniform(1.05, 1.20), n_resources)
-        critical_resource = rand(rng, 1:n_resources)
-        per_parcel_minimum = zeros(Float64, n_parcels)
-        for parcel in 1:n_parcels
-            allowed = [
-                zoning for zoning in 1:n_zoning_types if !environmental_restrictions[parcel, zoning]
-            ]
-            minimum_rate = minimum(
-                resource_consumption[zoning, critical_resource] for zoning in allowed
-            )
-            per_parcel_minimum[parcel] = parcel_sizes[parcel] * minimum_rate
+    # Reference plan: parcels in random order take their best-value zone that
+    # does not put homes next to industry; homes without a green neighbour
+    # then get one where a neighbour can be converted.
+    net = revenues .- development_costs
+    plan = zeros(Int, n_parcels)
+    for i in shuffle(rng, collect(1:n_parcels))
+        for z in sortperm(view(net, i, :); rev=true)
+            z == _LAND_USE_RESIDENTIAL &&
+                any(plan[j] == _LAND_USE_INDUSTRIAL for j in neighbors[i]) &&
+                continue
+            z == _LAND_USE_INDUSTRIAL &&
+                any(plan[j] == _LAND_USE_RESIDENTIAL for j in neighbors[i]) &&
+                continue
+            plan[i] = z
+            break
         end
-        lower_bound = sum(per_parcel_minimum)
-        capacity = lower_bound * rand(rng, Uniform(0.72, 0.92))
-        resource_capacities[critical_resource] = capacity
-        infeasibility_certificate = LandUseInfeasibilityCertificate(
-            critical_resource, per_parcel_minimum, lower_bound, capacity
+        plan[i] == 0 && (plan[i] = 2)  # commercial is neutral under the buffer rule
+    end
+    # Make sure the plan houses people and employs them somewhere.
+    if !any(==(_LAND_USE_RESIDENTIAL), plan)
+        i = rand(
+            rng,
+            [i for i in 1:n_parcels if all(plan[j] != _LAND_USE_INDUSTRIAL for j in neighbors[i])],
         )
-    else
-        # Unknown is a nominal scenario distribution, not a hidden label. The
-        # planted reference is deliberately not exposed as a feasibility claim.
-        resource_capacities = nominal_capacity .* rand(rng, Uniform(0.80, 1.20), n_resources)
+        plan[i] = _LAND_USE_RESIDENTIAL
+    end
+    if !isempty(green)
+        for i in shuffle(rng, findall(==(_LAND_USE_RESIDENTIAL), plan))
+            any(plan[j] in green for j in neighbors[i]) && continue
+            candidates = [j for j in neighbors[i] if plan[j] != _LAND_USE_RESIDENTIAL]
+            (!isempty(candidates) && rand(rng) < 0.7) || continue
+            plan[rand(rng, candidates)] = rand(rng, green)
+        end
     end
 
-    return LandUseProblem(
+    # Environmental exclusions never remove the reference zone.
+    pairs = Tuple{Int, Int}[]
+    for i in 1:n_parcels
+        excluded = Int[]
+        if rand(rng) < environmental_probability
+            candidates = [z for z in 1:n_zoning_types if z != plan[i]]
+            excluded = sample(
+                rng, candidates, rand(rng, 1:min(3, length(candidates))); replace=false
+            )
+        end
+        for z in 1:n_zoning_types
+            z in excluded || push!(pairs, (i, z))
+        end
+    end
+
+    usage = zeros(Float64, n_districts, n_resources)
+    for i in 1:n_parcels, r in 1:n_resources
+        usage[parcel_district[i], r] += parcel_sizes[i] * resource_consumption[plan[i], r]
+    end
+    housing = _land_use_district_value(
+        parcel_sizes, parcel_district, plan, _LAND_USE_HOUSING_DENSITY, n_districts
+    )
+    jobs = _land_use_district_value(
+        parcel_sizes, parcel_district, plan, _LAND_USE_JOB_DENSITY, n_districts
+    )
+    district_area = zeros(Float64, n_districts)
+    for i in 1:n_parcels
+        district_area[parcel_district[i]] += parcel_sizes[i]
+    end
+    rho = rand(rng, Uniform(0.15, 0.40))
+    allowed_residential = falses(n_parcels)
+    for (i, z) in pairs
+        z == _LAND_USE_RESIDENTIAL && (allowed_residential[i] = true)
+    end
+
+    green_ratio = zeros(Float64, n_parcels)
+    witness = nothing
+    if feasibility_status == unknown
+        tightness = rand(rng, Uniform(0.75, 1.25))
+        average = vec(sum(resource_consumption; dims=1)) ./ n_zoning_types
+        capacities = [
+            district_area[d] * average[r] * tightness * rand(rng, Uniform(0.85, 1.15)) for
+            d in 1:n_districts, r in 1:n_resources
+        ]
+        housing_target = [
+            district_area[d] * rand(rng, Uniform(0.15, 0.35)) * 20.0 for d in 1:n_districts
+        ]
+        jobs_target = [
+            district_area[d] * rand(rng, Uniform(0.10, 0.25)) * 30.0 for d in 1:n_districts
+        ]
+        isempty(green) || (green_ratio[allowed_residential] .= rho)
+    else
+        capacities = usage .* rand(rng, Uniform(1.03, 1.20), n_districts, n_resources)
+        housing_target = housing .* rand(rng, Uniform(0.85, 0.97), n_districts)
+        jobs_target = jobs .* rand(rng, Uniform(0.85, 0.97), n_districts)
+        if !isempty(green)
+            for i in 1:n_parcels
+                allowed_residential[i] || continue
+                if plan[i] == _LAND_USE_RESIDENTIAL
+                    area = sum(
+                        parcel_sizes[j] for j in vcat(i, neighbors[i]) if plan[j] in green; init=0.0
+                    )
+                    green_ratio[i] = min(rho, 0.95 * area / parcel_sizes[i])
+                else
+                    green_ratio[i] = rho
+                end
+            end
+        end
+        witness = plan
+    end
+
+    prob = LandUseProblem(
         n_parcels,
         n_zoning_types,
         n_resources,
+        n_districts,
         parcel_sizes,
+        parcel_district,
+        coordinates,
+        edges,
+        pairs,
         development_costs,
         revenues,
         resource_consumption,
-        resource_capacities,
-        environmental_restrictions,
-        adjacency_matrix,
+        capacities,
+        housing_target,
+        jobs_target,
+        green_ratio,
         zoning_names,
         resource_names,
-        min_counts_by_type,
-        zoning_adjacency_constraints,
-        minimum_zoning_requirements,
-        parcel_coordinates,
-        adjacency_edges,
-        feasible_witness,
-        infeasibility_certificate,
+        witness,
+        nothing,
+        feasibility_status,
     )
+    if feasibility_status == infeasible
+        d = rand(rng, 1:n_districts)
+        r = rand(rng, 1:n_resources)
+        parcels, minimum_use = _land_use_district_lower_bound(prob, d, r)
+        lower_bound = sum(minimum_use)
+        capacities[d, r] = lower_bound * rand(rng, Uniform(0.75, 0.93))
+        certificate = LandUseInfeasibilityCertificate(
+            d, r, parcels, minimum_use, lower_bound, capacities[d, r]
+        )
+        prob = LandUseProblem(
+            n_parcels,
+            n_zoning_types,
+            n_resources,
+            n_districts,
+            parcel_sizes,
+            parcel_district,
+            coordinates,
+            edges,
+            pairs,
+            development_costs,
+            revenues,
+            resource_consumption,
+            capacities,
+            housing_target,
+            jobs_target,
+            green_ratio,
+            zoning_names,
+            resource_names,
+            nothing,
+            certificate,
+            feasibility_status,
+        )
+        @assert land_use_certificate_holds(prob)
+    elseif feasibility_status == feasible
+        @assert land_use_plan_satisfies(prob)
+    end
+    return prob
 end
 
 """
     build_model(prob::LandUseProblem)
 
-Build the binary parcel-zoning assignment model. Each undirected spatial edge
-is visited exactly once; its two distinct residential-industrial orientations
-produce exactly two incompatibility inequalities.
+Build the binary zoning-plan model (deterministic; see `LandUseProblem`).
 """
 function build_model(prob::LandUseProblem)
     model = Model()
-
-    @variable(model, x[1:prob.n_parcels, 1:prob.n_zoning_types], Bin)
-
+    K = length(prob.pairs)
+    @variable(model, x[1:K], Bin)
     @objective(
         model,
         Max,
         sum(
-            prob.parcel_sizes[parcel] *
-            (prob.revenues[parcel, zoning] - prob.development_costs[parcel, zoning]) *
-            x[parcel, zoning] for parcel in 1:prob.n_parcels, zoning in 1:prob.n_zoning_types
+            prob.parcel_sizes[i] * (prob.revenues[i, z] - prob.development_costs[i, z]) * x[k] for
+            (k, (i, z)) in enumerate(prob.pairs)
         )
     )
-
+    index = land_use_pair_index(prob)
+    of_parcel = [Int[] for _ in 1:prob.n_parcels]
+    of_district = [Int[] for _ in 1:prob.n_districts]
+    for (k, (i, _)) in enumerate(prob.pairs)
+        push!(of_parcel[i], k)
+        push!(of_district[prob.parcel_district[i]], k)
+    end
     @constraint(
-        model,
-        parcel_assignment[parcel in 1:prob.n_parcels],
-        sum(x[parcel, zoning] for zoning in 1:prob.n_zoning_types) == 1
+        model, parcel_assignment[i in 1:prob.n_parcels], sum(x[k] for k in of_parcel[i]) == 1
     )
-
-    @constraint(
-        model,
-        resource_capacity[resource in 1:prob.n_resources],
-        sum(
-            prob.parcel_sizes[parcel] *
-            prob.resource_consumption[zoning, resource] *
-            x[parcel, zoning] for parcel in 1:prob.n_parcels, zoning in 1:prob.n_zoning_types
-        ) <= prob.resource_capacities[resource]
-    )
-
-    for parcel in 1:prob.n_parcels, zoning in 1:prob.n_zoning_types
-        if prob.environmental_restrictions[parcel, zoning]
-            @constraint(model, x[parcel, zoning] == 0)
+    size(i) = prob.parcel_sizes[i]
+    for d in 1:prob.n_districts
+        ks = of_district[d]
+        for r in 1:prob.n_resources
+            @constraint(
+                model,
+                sum(
+                    size(prob.pairs[k][1]) * prob.resource_consumption[prob.pairs[k][2], r] * x[k]
+                    for k in ks
+                ) <= prob.resource_capacities[d, r]
+            )
+        end
+        housing = [k for k in ks if haskey(_LAND_USE_HOUSING_DENSITY, prob.pairs[k][2])]
+        if prob.housing_target[d] > 0 && !isempty(housing)
+            @constraint(
+                model,
+                sum(
+                    size(prob.pairs[k][1]) * _LAND_USE_HOUSING_DENSITY[prob.pairs[k][2]] * x[k] for
+                    k in housing
+                ) >= prob.housing_target[d]
+            )
+        end
+        jobs = [k for k in ks if haskey(_LAND_USE_JOB_DENSITY, prob.pairs[k][2])]
+        if prob.jobs_target[d] > 0 && !isempty(jobs)
+            @constraint(
+                model,
+                sum(
+                    size(prob.pairs[k][1]) * _LAND_USE_JOB_DENSITY[prob.pairs[k][2]] * x[k] for
+                    k in jobs
+                ) >= prob.jobs_target[d]
+            )
         end
     end
-
-    if prob.minimum_zoning_requirements
+    green = _land_use_green(prob.n_zoning_types)
+    neighbors = _land_use_neighbors(prob.n_parcels, prob.adjacency_edges)
+    for i in 1:prob.n_parcels
+        prob.green_ratio[i] > 0 && index[i, _LAND_USE_RESIDENTIAL] > 0 || continue
+        greens = [index[j, g] for j in vcat(i, neighbors[i]) for g in green if index[j, g] > 0]
         @constraint(
             model,
-            minimum_zoning[zoning in eachindex(prob.min_counts_by_type)],
-            sum(x[parcel, zoning] for parcel in 1:prob.n_parcels) >=
-                prob.min_counts_by_type[zoning]
+            sum(size(prob.pairs[k][1]) * x[k] for k in greens; init=0.0) -
+            prob.green_ratio[i] * size(i) * x[index[i, _LAND_USE_RESIDENTIAL]] >= 0
         )
     end
-
-    if prob.zoning_adjacency_constraints && prob.n_zoning_types >= 3
-        @constraint(
-            model,
-            residential_industrial_forward[edge in eachindex(prob.adjacency_edges)],
-            x[prob.adjacency_edges[edge][1], 1] + x[prob.adjacency_edges[edge][2], 3] <= 1
-        )
-        @constraint(
-            model,
-            residential_industrial_reverse[edge in eachindex(prob.adjacency_edges)],
-            x[prob.adjacency_edges[edge][1], 3] + x[prob.adjacency_edges[edge][2], 1] <= 1
-        )
+    for (i, j) in prob.adjacency_edges, (a, b) in ((i, j), (j, i))
+        ka, kb = index[a, _LAND_USE_RESIDENTIAL], index[b, _LAND_USE_INDUSTRIAL]
+        (ka > 0 && kb > 0) || continue
+        @constraint(model, x[ka] + x[kb] <= 1)
     end
-
     return model
 end
 
@@ -514,5 +650,7 @@ register_variant(
     :land_use,
     :standard,
     LandUseProblem,
-    "Spatial parcel-zoning assignment with infrastructure, environmental, minimum-mix, and residential-industrial adjacency constraints",
+    "Spatial zoning plan: parcel-zone assignment with district infrastructure capacities, housing and " *
+    "jobs targets, green-space accessibility, and residential-industrial buffer rules";
+    tags=[:agriculture, :partitioning, :packing],
 )

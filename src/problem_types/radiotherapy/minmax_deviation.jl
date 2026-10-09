@@ -33,7 +33,7 @@ function MinMaxDeviationIMRTProblem(
     )
 
     n_voxels = size(case.voxel_locations_cm, 1)
-    desired_dose = zeros(n_voxels)
+    desired_dose = _rt_desired_dose(spec, case, structure_max)
     underdose_importance = zeros(n_voxels)
     overdose_importance = zeros(n_voxels)
     kind_by_structure = Dict(zip(spec.structures, spec.kinds))
@@ -41,11 +41,9 @@ function MinMaxDeviationIMRTProblem(
         indices = case.structure_voxels[structure]
         kind = kind_by_structure[structure]
         if kind == :target
-            desired_dose[indices] .= 1.0
             underdose_importance[indices] .= 1.0
             overdose_importance[indices] .= 0.65
         else
-            desired_dose[indices] .= 0.72 * spec.clinical_caps[structure]
             importance = if kind == :serial_oar
                 0.90
             elseif kind == :parallel_oar
@@ -83,19 +81,13 @@ function build_model(problem::MinMaxDeviationIMRTProblem)
     target = case.structure_voxels[:ptv]
     n_edges = length(case.beamlet_edges)
 
-    @variable(model, fluence[1:n_beamlets] >= 0)
+    @variable(model, 0 <= fluence[1:n_beamlets] <= case.fluence_max)
     @variable(model, underdose[target] >= 0)
     @variable(model, overdose[1:n_voxels] >= 0)
     @variable(model, variation[1:n_edges] >= 0)
     @variable(model, worst_deviation >= 0)
     dose = _rt_dose_expressions(model, fluence, case.dose_matrix)
 
-    @constraint(
-        model, underdose_hinge[i in target], dose[i] + underdose[i] >= problem.desired_dose[i]
-    )
-    @constraint(
-        model, overdose_hinge[i in 1:n_voxels], dose[i] - overdose[i] <= problem.desired_dose[i]
-    )
     @constraint(
         model,
         worst_underdose[i in target],
@@ -116,7 +108,11 @@ function build_model(problem::MinMaxDeviationIMRTProblem)
         variation_negative[e in 1:n_edges],
         variation[e] >= fluence[case.beamlet_edges[e][2]] - fluence[case.beamlet_edges[e][1]]
     )
-    _rt_add_hard_constraints!(model, problem, dose)
+    target_rows, organ_rows = _rt_add_dose_rows!(
+        model, problem, dose, i -> underdose[i], i -> overdose[i]
+    )
+    model[:target_dose_deviation] = target_rows
+    model[:organ_overdose] = organ_rows
 
     @objective(
         model,
@@ -133,5 +129,6 @@ register_variant(
     :radiotherapy,
     :minmax_deviation,
     MinMaxDeviationIMRTProblem,
-    "IMRT fluence-map LP minimizing the worst weighted voxel dose deviation",
+    "IMRT fluence-map LP minimizing the worst weighted voxel dose deviation";
+    tags=[:healthcare, :dense],
 )

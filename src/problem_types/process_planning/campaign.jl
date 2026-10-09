@@ -5,14 +5,21 @@ using Distributions
 """
 Maximum accepted variable target for `process_planning/campaign`.
 
-Campaign-planning models in the process industries are medium-sized even at
-the complex level (a seven-chain mega-site over weekly periods stays near
-twenty thousand variables), and the campaign schedule, material flows, and
-witness are mirrored across several parallel arrays. Targets above 20,000
-would require dimension combinations the chain library cannot honestly
-produce, so they are rejected rather than silently under-sized.
+A single chemical complex over weekly periods tops out near twenty thousand
+variables, so larger requests are served by a multi-site company: several
+complexes, each running its own chain portfolio, coupled through shared regional
+feedstock supply and shared product markets. The company grows linearly with the
+target; above one million variables the per-site data, witness and incidence
+lists would need a multi-gigabyte working set, so larger targets raise
+`ArgumentError` (the package's sizing-cap convention).
 """
-const MAX_CAMPAIGN_PLANNING_VARIABLES = 20_000
+const MAX_CAMPAIGN_PLANNING_VARIABLES = 1_000_000
+
+"""
+Targets up to this many variables are served by a single complex; larger ones by
+a multi-site company (see [`MAX_CAMPAIGN_PLANNING_VARIABLES`](@ref)).
+"""
+const _CP_SINGLE_SITE_LIMIT = 16_000
 
 """
 A complete primal point of the (unrelaxed, binary) campaign model: task
@@ -20,16 +27,17 @@ throughput rates, campaign selectors and starts, tiered raw-material
 purchases, material inventories, and final sales for every period. The task
 rates follow the planted campaign blocks exactly, so feasibility can be
 re-checked by pure arithmetic against every row - material balances, unit
-capacity with campaign exclusivity, minimum campaign rate and length - by
+capacity with campaign exclusivity, minimum campaign rate and length, the
+shared feedstock pools and product markets - by
 [`campaign_plan_satisfies`](@ref), with no solver involved.
 """
 struct CampaignScheduleWitness
     rate::Matrix{Float64}        # [task, period]
     active::Matrix{Float64}      # [campaign task, period], y in {0,1}
     starts::Matrix{Float64}      # [campaign task, period]
-    purchase::Array{Float64, 3}   # [raw material, tier, period]
+    purchase::Array{Float64, 3}   # [material, tier, period] (zero for non-raws)
     inventory::Matrix{Float64}   # [material, period]
-    sales::Matrix{Float64}       # [final material, period]
+    sales::Matrix{Float64}       # [material, period] (zero for non-finals)
 end
 
 """
@@ -41,7 +49,10 @@ period (`rate <= capacity * active <= capacity`, valid for `active` relaxed
 to `[0, 1]`), and the raw-material side cannot supply more than
 `raw_bound` tonnes of feed. Both bounds are aggregations of linear rows and
 variable bounds only, so the certificate refutes the LP relaxation of the
-campaign model as well as the integer model.
+campaign model as well as the integer model. Single-product bottlenecks are
+easy for presolve to spot by bound propagation along the product's inventory
+chain, so this is only the fallback mode, used when no feedstock pool carries
+enough contracted demand for a credible curtailment.
 """
 struct CampaignCapacityCertificate
     material::Int
@@ -55,15 +66,62 @@ struct CampaignCapacityCertificate
 end
 
 """
-The correlated market condition applied to an unknown-status instance:
-contract and spot purchase ceilings and every unit capacity scale by
-`supply_factor`, term sales floors by `demand_factor`, with the factors
-positioned along the band by the golden-ratio sequence of the seed so blocks
-of seeds produce a genuine feasibility mix.
+Feedstock-pool refutation (the default infeasibility mode): the contracted
+term sales of the whole company need more of one shared raw material than the
+regional pool can supply over the horizon.
+
+`potential[m]` is the least amount of the pooled raw material (`group`) that one
+tonne of material `m` must contain: one on the pooled raw at every site, zero
+on every other raw, and for each task its feed potential spread over its output
+mass, so no task creates pooled-raw content (`sum_out c y <= sum_in c y`).
+Multiplying every material balance by `potential` and summing over materials
+and periods cancels the task rates and leaves
+
+    sum_f potential[f] * sales[f, 1:T]
+        <= sum_m potential[m] * initial_inventory[m] + sum_t pool supply[t]
+
+because closing inventories are nonnegative and the pooled purchases in period
+`t` cannot exceed `min(supply_cap[group, t], sum of the pool members' tier
+caps)`. The sales floors make the left side at least `demand`, which exceeds
+`upper_bound` by `margin`. The curtailed pool is the one serving the broadest
+contracted product slate, and its supply is allocated in proportion to each
+period's contracted need, so no product chain and no short window of periods is
+short on its own: the argument combines every product, every site and every
+period that draws on the pool, which bound propagation cannot reproduce; only
+the LP aggregation does.
+"""
+struct CampaignFeedstockCertificate
+    group::Int
+    potential::Vector{Float64}
+    demand::Float64
+    inventory_bound::Float64
+    supply_bound::Float64
+    upper_bound::Float64
+    margin::Float64
+end
+
+"""
+The correlated market condition applied to an unknown-status instance. Every
+local row is placed around a planted schedule exactly as for a requested-feasible
+instance; then every regional feedstock pool is placed relative to its critical
+level - the contracted need of each period (the potential-weighted sales floors)
+scaled by `(demand - inventory) / demand`, at which the pool's potential bound
+exactly meets the term contracts. A negative `supply_factor` puts a pool
+`|supply_factor|` below that critical profile, so the instance is infeasible by
+the feedstock-pool argument; a positive one raises each period that fraction
+above the critical level and that fraction of the way up to the planted
+schedule's own purchases, so near one the planted schedule nearly fits and in between whether capacity,
+campaign, co-product and inventory rows still let the contracts be served is
+genuinely open. Each pool gets a small jitter. Only the pools serving the
+broadest contracted slates (breadth within `_CP_BREADTH_SHORTLIST` of the
+broadest, see [`_cp_pool_breadth`](@ref)) take part; the others keep the
+plan-sized supply of a feasible request, since a narrow pool's shortfall runs
+down few product chains and is visible to presolve's bound propagation.
+`supply_factor` lies in `[-0.35, 0.95]` and follows the golden-ratio position of
+the seed, so blocks of seeds produce a genuine feasibility mix.
 """
 struct CampaignMarketScenario
     supply_factor::Float64
-    demand_factor::Float64
     position::Float64
 end
 
@@ -72,12 +130,13 @@ end
 
 Multi-period production planning for continuous chemical process plants in
 the state-task-network style used for medium-term process-industry
-planning: a complex of petrochemical chains (vinyls, aromatics, polyolefins,
-polyester, C1 chemistry, and nitrogen fertilisers) buys raw materials on
-tiered contract/spot terms, runs conversion tasks on processing units,
-hosts several product grades as campaigns on shared trains, stores
-intermediates and products, and sells against seasonal term and spot
-demand. The objective maximises operating margin net of changeovers.
+planning: one or several complexes of petrochemical chains (LDPE, vinyls,
+aromatics, polyolefins, polyester, C1 chemistry, and nitrogen fertilisers) buy
+raw materials on tiered contract/spot terms from shared regional feedstock
+pools, run conversion tasks on processing units, host several product grades
+as campaigns on shared trains, store intermediates and products, and sell
+against seasonal term and spot demand into shared regional markets. The
+objective maximises operating margin net of changeovers.
 
 Structural pieces, drawn from published process-industry planning models:
 
@@ -88,15 +147,22 @@ Structural pieces, drawn from published process-industry planning models:
 - campaign operation: product grades sharing a train are run as campaigns -
   binary selectors with unit exclusivity, a minimum turndown rate, a minimum
   campaign length, and changeover penalties - while single-task units run
-  as plain continuous capacity (some instances therefore contain no
-  integers at all);
+  as plain continuous capacity (a variable bound on the task rate);
 - tiered raw-material purchasing: contract quota at a discount, then spot
   and premium tiers at increasing marginal prices, a convex piecewise-linear
   purchase cost the LP can exploit directly;
+- multi-site coupling: every raw material is drawn from a regional pool (one
+  row per raw and period summing the purchases of every site that uses it), and
+  a finished grade made at several sites is sold into one regional market (one
+  ceiling row per grade and period across those sites);
 - planned turnarounds that remove part of a unit's capacity for a window,
   seasonal demand with product-class phases (construction polymers peak in
   the paving season, fertilisers in spring), and storage tanks with holding
   costs that absorb the swings.
+
+Targets up to `_CP_SINGLE_SITE_LIMIT` are served by one complex; larger ones by
+a company of several complexes over a longer horizon (up to three years of
+weeks), so the model grows linearly to `MAX_CAMPAIGN_PLANNING_VARIABLES`.
 
 `feasible_witness` is populated only for a requested-feasible instance,
 `infeasibility_certificate` only for a requested-infeasible one, and
@@ -106,46 +172,76 @@ selectors relax to `[0, 1]` and the model is a pure LP.
 
 The exact variable count is
 `n_periods * (n_tasks + 2*n_campaign_tasks + n_raws*n_tiers +
-n_materials + n_finals)` and the row count is
-`n_periods * (n_materials + n_units + n_campaign_units +
-6*n_campaign_tasks)`. Late starts are explicitly forbidden, so the minimum
-campaign duration cannot be escaped at the horizon boundary.
-Targets through `MAX_CAMPAIGN_PLANNING_VARIABLES` are supported; larger
-targets raise `ArgumentError`.
+n_materials + n_finals)`; see [`campaign_row_count`](@ref) for the rows.
+Late starts are fixed to zero, so the minimum campaign duration cannot be
+escaped at the horizon boundary.
 """
 struct CampaignPlanningProblem <: ProblemGenerator
     n_periods::Int
     period_days::Float64
+    n_sites::Int
     material_names::Vector{Symbol}
     material_kind::Vector{Symbol}   # :raw, :inter, or :final
+    material_site::Vector{Int}
     task_names::Vector{Symbol}
     task_unit::Vector{Int}
     task_inputs::Vector{Vector{Tuple{Int, Float64}}}
     task_outputs::Vector{Vector{Tuple{Int, Float64}}}
     task_cost::Vector{Float64}
     unit_names::Vector{Symbol}
+    unit_site::Vector{Int}
     unit_capacity::Matrix{Float64}  # [unit, period], turnaround-adjusted
     campaign_unit::Vector{Bool}
     campaign_length::Int
     min_rate_fraction::Vector{Float64}  # [campaign task]
     n_tiers::Int
-    tier_price::Matrix{Float64}     # [raw material, tier]
-    tier_cap::Matrix{Float64}       # [raw material, tier]
-    material_price::Matrix{Float64} # [final material, period]
-    sales_floor::Matrix{Float64}    # [final material, period]
-    sales_ceiling::Matrix{Float64}  # [final material, period]
+    tier_price::Matrix{Float64}     # [material, tier] (raws only)
+    tier_cap::Matrix{Float64}       # [material, tier] (raws only)
+    supply_groups::Vector{Vector{Int}}  # raw materials sharing a regional pool
+    supply_cap::Matrix{Float64}     # [supply group, period]
+    market_groups::Vector{Vector{Int}}  # finals sold into one regional market (>= 2 sites)
+    market_cap::Matrix{Float64}     # [market group, period]
+    material_price::Matrix{Float64} # [material, period]
+    sales_floor::Matrix{Float64}    # [material, period]
+    sales_ceiling::Matrix{Float64}  # [material, period]
     tank::Vector{Float64}           # [material]
     initial_inventory::Vector{Float64}
     holding_cost::Vector{Float64}
     changeover_cost::Float64
     feasible_witness::Union{Nothing, CampaignScheduleWitness}
-    infeasibility_certificate::Union{Nothing, CampaignCapacityCertificate}
+    infeasibility_certificate::Union{
+        Nothing, CampaignCapacityCertificate, CampaignFeedstockCertificate
+    }
     market_scenario::Union{Nothing, CampaignMarketScenario}
     feasibility_status::FeasibilityStatus
 end
 
 _cp_variable_count(n_tasks, n_campaign_tasks, n_raws, n_tiers, n_materials, n_finals, n_periods) =
     n_periods * (n_tasks + 2 * n_campaign_tasks + n_raws * n_tiers + n_materials + n_finals)
+
+"""
+    campaign_row_count(prob) -> Int
+
+Exact number of affine rows of the campaign model: a balance per material and
+period; an exclusivity row per campaign train and period; per campaign task the
+capacity gate and turndown rows in every period, the start definition (one row
+in the first period, three after it) and a minimum-run row per admissible start
+period; plus one pool row per regional feedstock pool with more than one
+purchase variable (a single-variable pool is a bound) and one ceiling row per
+multi-site market, per period.
+"""
+function campaign_row_count(prob::CampaignPlanningProblem)
+    T = prob.n_periods
+    L = prob.campaign_length
+    cT = count(t -> prob.campaign_unit[prob.task_unit[t]], eachindex(prob.task_names))
+    per_task = 2T + (1 + 3 * (T - 1)) + max(T - L + 1, 0)
+    return T * (
+        length(prob.material_names) +
+        count(prob.campaign_unit) +
+        count(g -> _cp_pool_has_row(prob, g), eachindex(prob.supply_groups)) +
+        length(prob.market_groups)
+    ) + cT * per_task
+end
 
 # Chain library. Each chain: materials with kinds, tasks as
 # (name, unit, inputs, outputs, variable cost per tonne of throughput),
@@ -408,96 +504,6 @@ function _cp_assemble_complex(chain_names::Vector{Symbol})
 end
 
 _cp_chain_order = [:ldpe, :vinyls, :aromatics, :polyolefins, :polyester, :c1, :nitrogen]
-
-"""
-Choose chains, tier count, and horizon from a variable target. Chain
-combinations are sampled from the rng and scored by the exact per-period
-variable count with the horizon solved in closed form and scanned; the
-minimal LDPE plant is always offered so small targets stay reachable.
-"""
-function _cp_choose_dimensions(rng::AbstractRNG, target_variables::Int)
-    target_variables <= MAX_CAMPAIGN_PLANNING_VARIABLES || throw(
-        ArgumentError(
-            "process_planning/campaign supports target_variables <= " *
-            "$(MAX_CAMPAIGN_PLANNING_VARIABLES); requested $target_variables. " *
-            "The seven-chain complex over weekly periods tops out near this, " *
-            "so a larger target cannot be produced honestly.",
-        ),
-    )
-    target = max(target_variables, 1)
-
-    best = nothing
-    best_score = (Inf, Inf, Inf)
-    for candidate in 1:8
-        minimal = candidate == 8
-        maximal = candidate == 7
-        if minimal
-            chains = [:ldpe]
-            n_tiers = 1
-        elseif maximal
-            # Always offer the complete complex. Without this deterministic
-            # candidate, several random chain samples can all miss the only
-            # structure capable of honestly reaching the documented upper end.
-            chains = copy(_cp_chain_order)
-            n_tiers = 3
-        else
-            max_chains = if target < 150
-                2
-            elseif target < 600
-                3
-            elseif target < 2500
-                4
-            elseif target < 8000
-                5
-            else
-                7
-            end
-            n_chains = clamp(
-                round(Int, 1 + (max_chains - 1) * rand(rng, Uniform(0.35, 1.0))), 1, max_chains
-            )
-            pool = collect(_cp_chain_order)
-            shuffle!(rng, pool)
-            chains = pool[1:n_chains]
-            n_tiers = if target < 90
-                1
-            elseif rand(rng) < 0.4
-                2
-            else
-                3
-            end
-        end
-        material_names, material_kind, task_names, task_unit, task_inputs, task_outputs, task_cost, unit_names, campaign_unit = _cp_assemble_complex(
-            chains
-        )
-        n_raws = count(==(:raw), material_kind)
-        n_finals = count(==(:final), material_kind)
-        n_campaign = count(task_unit[t] in findall(campaign_unit) for t in eachindex(task_unit))
-        per_period = _cp_variable_count(
-            length(task_names), n_campaign, n_raws, n_tiers, length(material_names), n_finals, 1
-        )
-        t_star = clamp(round(Int, target / per_period), 3, 126)
-        for n_periods in max(3, t_star - 2):min(126, t_star + 2)
-            size = _cp_variable_count(
-                length(task_names),
-                n_campaign,
-                n_raws,
-                n_tiers,
-                length(material_names),
-                n_finals,
-                n_periods,
-            )
-            error = abs(size - target) / target
-            shape = abs(log(n_periods / clamp(4 * sqrt(target / 200), 3, 52)))
-            score = (error, shape, rand(rng))
-            if score < best_score
-                best_score = score
-                best = (chains, n_tiers, n_periods)
-            end
-        end
-    end
-    return best
-end
-
 """
 Seasonal demand deviation per final material, normalised to mean one over
 the horizon with a positive floor, following the material's demand class
@@ -527,14 +533,18 @@ function _cp_demand_deviation(
     end
     return delta
 end
+"""
+    _cp_generate_site(rng, chains, n_tiers, T, campaign_length)
 
-function CampaignPlanningProblem(
-    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+Generate one complex: assemble the chain portfolio, plant a campaign schedule and
+propagate it through the state-task network into task rates, purchases, sales
+and inventories, then place every local capacity, tank, tier and demand window
+around that plan. Returns a named tuple of site-local data (indices are local to
+the site) together with the planted schedule.
+"""
+function _cp_generate_site(
+    rng::AbstractRNG, chains::Vector{Symbol}, n_tiers::Int, T::Int, campaign_length::Int
 )
-    rng = MersenneTwister(seed)
-    target = max(target_variables, 1)
-    chains, n_tiers, n_periods = _cp_choose_dimensions(rng, target)
-    T = n_periods
     material_names, material_kind, task_names, task_unit, task_inputs, task_outputs, task_cost, unit_names, campaign_unit = _cp_assemble_complex(
         chains
     )
@@ -544,9 +554,7 @@ function CampaignPlanningProblem(
     campaign_tasks = [t for t in 1:NT if campaign_unit[task_unit[t]]]
     cT = length(campaign_tasks)
     campaign_index = Dict(t => i for (i, t) in enumerate(campaign_tasks))
-    raws = [m for m in 1:M if material_kind[m] == :raw]
     finals = [m for m in 1:M if material_kind[m] == :final]
-    campaign_length = rand(rng) < 0.5 ? 2 : 3
 
     # Campaign blocks per train: shuffled grade order, blocks of
     # campaign_length to campaign_length + 2 periods, the last block
@@ -794,105 +802,8 @@ function CampaignPlanningProblem(
         sales_ceiling[m, :] .= sales_plan[m, :] .* (1 .+ rand(rng, Uniform(0.10, 0.40), T))
     end
     holding_cost = rand(rng, Uniform(2.0, 8.0), M)
-    changeover_cost = rand(rng, Uniform(30.0, 150.0))
 
-    feasible_witness = nothing
-    infeasibility_certificate = nothing
-    market_scenario = nothing
-
-    if feasibility_status == feasible
-        feasible_witness = CampaignScheduleWitness(
-            rate, active, starts, purchase_plan, inventory_plan, sales_plan
-        )
-    elseif feasibility_status == infeasible
-        horizon = clamp(round(Int, T * rand(rng, Uniform(0.55, 1.0))), 2, T)
-        candidates = Tuple{Int, Float64}[]
-        for m in finals
-            producer = findfirst(t -> any(o == m for (o, _) in task_outputs[t]), 1:NT)
-            producer === nothing && continue
-            out_coeff = sum(c for (o, c) in task_outputs[producer] if o == m)
-            task_cap = out_coeff * sum(unit_capacity[task_unit[producer], 1:horizon])
-            raw_inputs = [(mm, c) for (mm, c) in task_inputs[producer] if material_kind[mm] == :raw]
-            raw_cap = if isempty(raw_inputs)
-                Inf
-            else
-                out_coeff * minimum(
-                    (horizon * sum(tier_cap[mm, :]) + initial_inventory[mm]) / c for
-                    (mm, c) in raw_inputs
-                )
-            end
-            bound = min(task_cap, raw_cap)
-            demand = sum(sales_floor[m, 1:horizon])
-            bound > eps() && demand > eps() && push!(candidates, (m, demand / bound))
-        end
-        isempty(candidates) && (candidates = [(finals[1], 1.0)])
-        sort!(candidates; by=x -> -x[2])
-        cut_material = candidates[rand(rng, 1:min(3, length(candidates)))][1]
-        producer = findfirst(t -> any(o == cut_material for (o, _) in task_outputs[t]), 1:NT)
-        out_coeff = sum(c for (o, c) in task_outputs[producer] if o == cut_material)
-        raw_inputs = [(mm, c) for (mm, c) in task_inputs[producer] if material_kind[mm] == :raw]
-        initial_inventory[cut_material] *= rand(rng, Uniform(0.05, 0.20))
-        for (mm, _) in raw_inputs
-            initial_inventory[mm] *= rand(rng, Uniform(0.02, 0.15))
-        end
-        demand_raise = rand(rng, Uniform(1.05, 1.25))
-        sales_floor[cut_material, 1:horizon] .*= demand_raise
-        sales_floor[cut_material, 1:horizon] .= min.(
-            sales_floor[cut_material, 1:horizon], 0.98 .* sales_ceiling[cut_material, 1:horizon]
-        )
-        demand_cum = sum(sales_floor[cut_material, 1:horizon])
-        desired_upper = demand_cum * rand(rng, Uniform(0.60, 0.85))
-        # A bursty campaign product can carry planted initial stock above the
-        # shrunken demand target; cap it so the supply cut stays below demand.
-        # Otherwise the scale numerator goes negative, `scale` clamps at its
-        # floor, and the margin below turns negative.
-        initial_inventory[cut_material] = min(initial_inventory[cut_material], 0.4 * desired_upper)
-        task_bound_raw = out_coeff * sum(unit_capacity[task_unit[producer], :])
-        scale = clamp(
-            (desired_upper - initial_inventory[cut_material]) / max(task_bound_raw, eps()),
-            0.01,
-            0.90,
-        )
-        unit_capacity[task_unit[producer], :] .*= scale
-        for (mm, _) in raw_inputs
-            tier_cap[mm, :] .*= scale
-        end
-        task_bound = out_coeff * sum(unit_capacity[task_unit[producer], 1:horizon])
-        raw_bound = if isempty(raw_inputs)
-            Inf
-        else
-            out_coeff * minimum(
-                (horizon * sum(tier_cap[mm, :]) + initial_inventory[mm]) / c for
-                (mm, c) in raw_inputs
-            )
-        end
-        upper_bound = initial_inventory[cut_material] + min(task_bound, raw_bound)
-        certificate_margin = demand_cum - upper_bound
-        @assert certificate_margin > 1e-6
-        infeasibility_certificate = CampaignCapacityCertificate(
-            cut_material,
-            horizon,
-            demand_cum,
-            initial_inventory[cut_material],
-            task_bound,
-            raw_bound,
-            upper_bound,
-            certificate_margin,
-        )
-    else
-        position = _pp_seed_position(seed)
-        supply_factor = 0.55 + 0.34 * position
-        demand_factor = 1 + 0.25 * (0.5 - position)
-        tier_cap .*= supply_factor
-        unit_capacity .*= supply_factor
-        sales_floor .*= demand_factor
-        sales_ceiling .= max.(sales_ceiling, sales_floor)
-        market_scenario = CampaignMarketScenario(supply_factor, demand_factor, position)
-    end
-
-    problem = CampaignPlanningProblem(
-        T,
-        7.0,
+    return (;
         material_names,
         material_kind,
         task_names,
@@ -901,11 +812,9 @@ function CampaignPlanningProblem(
         task_outputs,
         task_cost,
         unit_names,
-        unit_capacity,
         campaign_unit,
-        campaign_length,
+        unit_capacity,
         min_rate_fraction,
-        n_tiers,
         tier_price,
         tier_cap,
         material_price,
@@ -914,15 +823,552 @@ function CampaignPlanningProblem(
         tank,
         initial_inventory,
         holding_cost,
+        rate,
+        active,
+        starts,
+        purchase_plan,
+        inventory_plan,
+        sales_plan,
+    )
+end
+
+"""Per-period variable count of one complex running `chains` with `n_tiers` purchase tiers."""
+function _cp_site_per_period(chains::Vector{Symbol}, n_tiers::Int)
+    material_names, material_kind, task_names, task_unit, _, _, _, unit_names, campaign_unit = _cp_assemble_complex(
+        chains
+    )
+    n_raws = count(==(:raw), material_kind)
+    n_finals = count(==(:final), material_kind)
+    n_campaign = count(t -> campaign_unit[task_unit[t]], eachindex(task_names))
+    return _cp_variable_count(
+        length(task_names), n_campaign, n_raws, n_tiers, length(material_names), n_finals, 1
+    )
+end
+
+_cp_canonical(chains) = sort(chains; by=c -> findfirst(==(c), _cp_chain_order))
+
+"""
+Choose the site portfolio, tier count, and horizon from a variable target.
+
+Up to `_CP_SINGLE_SITE_LIMIT` a single complex is used: chain combinations are
+sampled from the rng and scored by the exact per-period variable count with the
+horizon solved in closed form and scanned; the minimal LDPE plant and the
+complete seven-chain complex are always offered so both ends stay reachable.
+Candidates are scored by their relative size error plus
+`0.02 max(|log(T / T_pref)| - log 2, 0)` with `T_pref = 4 sqrt(target / 200)`,
+so a horizon more than twice off the preferred one costs a few percent of size
+error.
+Larger targets add complexes, each with its own sampled portfolio of two to
+seven chains, until the company fills the target over a one-to-three-year weekly
+horizon; the horizon is then solved for the exact count.
+Returns `(site_chains, n_tiers, n_periods)`.
+"""
+function _cp_choose_dimensions(rng::AbstractRNG, target_variables::Int)
+    target_variables <= MAX_CAMPAIGN_PLANNING_VARIABLES || throw(
+        ArgumentError(
+            "process_planning/campaign supports target_variables <= " *
+            "$(MAX_CAMPAIGN_PLANNING_VARIABLES); requested $target_variables. " *
+            "Larger multi-site companies need a multi-gigabyte working set.",
+        ),
+    )
+    target = max(target_variables, 1)
+
+    best = nothing
+    best_score = (Inf, Inf, Inf)
+    single_score = (Inf, Inf)
+    if target > _CP_SINGLE_SITE_LIMIT
+        horizon_pref = clamp(round(Int, 4 * sqrt(target / 200)), 52, 156)
+        for _ in 1:6
+            n_tiers = rand(rng) < 0.4 ? 2 : 3
+            sites = Vector{Vector{Symbol}}()
+            per_period = 0
+            while per_period * horizon_pref < target
+                n_chains = rand(rng, 2:7)
+                chains = _cp_canonical(shuffle(rng, collect(_cp_chain_order))[1:n_chains])
+                push!(sites, chains)
+                per_period += _cp_site_per_period(chains, n_tiers)
+            end
+            t_star = round(Int, target / per_period)
+            for n_periods in max(3, t_star - 1):(t_star + 1)
+                error = abs(n_periods * per_period - target) / target
+                shape = abs(log(n_periods / horizon_pref))
+                score = (error, shape, rand(rng))
+                if score < best_score
+                    best_score = score
+                    best = (sites, n_tiers, n_periods)
+                end
+            end
+        end
+        return best
+    end
+
+    for candidate in 1:8
+        minimal = candidate == 8
+        maximal = candidate == 7
+        if minimal
+            chains = [:ldpe]
+            n_tiers = 1
+        elseif maximal
+            # Always offer the complete complex so the upper end of the
+            # single-site range stays reachable.
+            chains = copy(_cp_chain_order)
+            n_tiers = 3
+        else
+            max_chains = if target < 150
+                2
+            elseif target < 600
+                3
+            elseif target < 2500
+                4
+            elseif target < 8000
+                5
+            else
+                7
+            end
+            n_chains = clamp(
+                round(Int, 1 + (max_chains - 1) * rand(rng, Uniform(0.35, 1.0))), 1, max_chains
+            )
+            pool = collect(_cp_chain_order)
+            shuffle!(rng, pool)
+            chains = _cp_canonical(pool[1:n_chains])
+            n_tiers = if target < 90
+                1
+            elseif rand(rng) < 0.4
+                2
+            else
+                3
+            end
+        end
+        per_period = _cp_site_per_period(chains, n_tiers)
+        t_star = clamp(round(Int, target / per_period), 3, 126)
+        for n_periods in max(3, t_star - 2):min(126, t_star + 2)
+            size = per_period * n_periods
+            error = abs(size - target) / target
+            shape = abs(log(n_periods / clamp(4 * sqrt(target / 200), 3, 52)))
+            # The size error dominates, but a horizon more than twice off the
+            # preferred one costs a few percent: a small target is a small complex over a
+            # quarter to a year rather than a one-chain plant stretched over a
+            # hundred weeks.
+            score = (error + 0.02 * max(shape - log(2.0), 0.0), rand(rng))
+            if score < single_score
+                single_score = score
+                best = ([chains], n_tiers, n_periods)
+            end
+        end
+    end
+    return best
+end
+
+"""
+    _cp_pool_potential(material_kind, task_inputs, task_outputs, members) -> Vector{Float64}
+
+Least pooled-raw content per tonne of every material, for the feedstock pool
+whose raw materials are `members`: one on the pooled raws, zero on every other
+raw, and for each task (visited in topological order — every complex lists its
+tasks upstream first and shares only raw materials across chains) its feed
+potential spread over its output mass. Every non-raw material has exactly one
+producing task, so each potential is assigned once, and each task satisfies
+`sum_out c * y <= sum_in c * y` with equality.
+"""
+function _cp_pool_potential(
+    material_kind::Vector{Symbol},
+    task_inputs::Vector{Vector{Tuple{Int, Float64}}},
+    task_outputs::Vector{Vector{Tuple{Int, Float64}}},
+    members::Vector{Int},
+)
+    y = zeros(Float64, length(material_kind))
+    y[members] .= 1.0
+    for t in eachindex(task_inputs)
+        feed = sum(c * y[m] for (m, c) in task_inputs[t]; init=0.0)
+        mass = sum(c for (_, c) in task_outputs[t]; init=0.0)
+        mass > 0 || continue
+        for (m, _) in task_outputs[t]
+            y[m] = feed / mass
+        end
+    end
+    return y
+end
+
+"""Per-period supply the pool `g` can deliver: its pool row or its members' tier caps."""
+_cp_pool_period_supply(prob, g::Int, τ::Int) = min(
+    prob.supply_cap[g, τ],
+    sum(prob.tier_cap[m, j] for m in prob.supply_groups[g] for j in 1:prob.n_tiers),
+)
+
+"""Whether pool `g` is written as an affine row (more than one purchase variable)."""
+_cp_pool_has_row(prob, g::Int) = length(prob.supply_groups[g]) * prob.n_tiers >= 2
+
+"""Pool feedstock-shortfall quantities: (potential, demand, inventory part, supply part)."""
+function _cp_pool_bound_parts(prob, g::Int)
+    y = _cp_pool_potential(
+        prob.material_kind, prob.task_inputs, prob.task_outputs, prob.supply_groups[g]
+    )
+    T = prob.n_periods
+    demand = sum(
+        y[m] * prob.sales_floor[m, τ] for m in eachindex(y) if prob.material_kind[m] == :final for
+        τ in 1:T;
+        init=0.0,
+    )
+    inventory = sum(y[m] * prob.initial_inventory[m] for m in eachindex(y); init=0.0)
+    supply = sum(_cp_pool_period_supply(prob, g, τ) for τ in 1:T)
+    return y, demand, inventory, supply
+end
+
+"""Contracted need of a pool in period `τ`: the potential-weighted sales floors."""
+_cp_pool_need(prob, y::Vector{Float64}, τ::Int) = sum(
+    y[m] * prob.sales_floor[m, τ] for m in eachindex(y) if prob.material_kind[m] == :final;
+    init=0.0,
+)
+
+"""
+Effective number of contracted products drawing on a pool, `1 / sum(share^2)`
+over the products' shares of its potential-weighted contracted demand (zero when
+nothing contracted draws on it). A pool feeding one product chain scores about 1.
+"""
+function _cp_pool_breadth(prob, y::Vector{Float64})
+    weights = [
+        y[m] * sum(view(prob.sales_floor, m, :)) for
+        m in eachindex(y) if prob.material_kind[m] == :final && y[m] > 0
+    ]
+    total = sum(weights; init=0.0)
+    total > 0 || return 0.0
+    return 1 / sum((w / total)^2 for w in weights)
+end
+
+"""
+Pools whose breadth is at least this fraction of the broadest pool's are the
+ones a shortage scenario may push below their critical level.
+"""
+const _CP_BREADTH_SHORTLIST = 0.85
+
+function CampaignPlanningProblem(
+    target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
+)
+    rng = MersenneTwister(seed)
+    target = max(target_variables, 1)
+    site_chains, n_tiers, T = _cp_choose_dimensions(rng, target)
+    campaign_length = rand(rng) < 0.5 ? 2 : 3
+    sites = [_cp_generate_site(rng, chains, n_tiers, T, campaign_length) for chains in site_chains]
+    n_sites = length(sites)
+
+    # Flatten the sites into one company-wide network with global indices.
+    material_names = Symbol[]
+    material_kind = Symbol[]
+    material_site = Int[]
+    task_names = Symbol[]
+    task_unit = Int[]
+    task_inputs = Vector{Tuple{Int, Float64}}[]
+    task_outputs = Vector{Tuple{Int, Float64}}[]
+    task_cost = Float64[]
+    unit_names = Symbol[]
+    unit_site = Int[]
+    campaign_unit = Bool[]
+    for (s, site) in enumerate(sites)
+        moff = length(material_names)
+        uoff = length(unit_names)
+        append!(material_names, site.material_names)
+        append!(material_kind, site.material_kind)
+        append!(material_site, fill(s, length(site.material_names)))
+        append!(task_names, site.task_names)
+        append!(task_unit, site.task_unit .+ uoff)
+        append!(task_inputs, [[(m + moff, c) for (m, c) in io] for io in site.task_inputs])
+        append!(task_outputs, [[(m + moff, c) for (m, c) in io] for io in site.task_outputs])
+        append!(task_cost, site.task_cost)
+        append!(unit_names, site.unit_names)
+        append!(unit_site, fill(s, length(site.unit_names)))
+        append!(campaign_unit, site.campaign_unit)
+    end
+    M = length(material_names)
+    gather(f) = reduce(vcat, [getproperty(site, f) for site in sites])
+    unit_capacity = gather(:unit_capacity)
+    min_rate_fraction = gather(:min_rate_fraction)
+    tier_price = gather(:tier_price)
+    tier_cap = gather(:tier_cap)
+    material_price = gather(:material_price)
+    sales_floor = gather(:sales_floor)
+    sales_ceiling = gather(:sales_ceiling)
+    tank = gather(:tank)
+    initial_inventory = gather(:initial_inventory)
+    holding_cost = gather(:holding_cost)
+    rate = gather(:rate)
+    active = gather(:active)
+    starts = gather(:starts)
+    purchase_plan = cat([site.purchase_plan for site in sites]...; dims=1)
+    inventory_plan = gather(:inventory_plan)
+    sales_plan = gather(:sales_plan)
+    changeover_cost = rand(rng, Uniform(30.0, 150.0))
+
+    # Regional coupling: every raw material is drawn from one pool shared by
+    # the sites that use it; a grade made at several sites is sold into one
+    # regional market.
+    group_of(kind) = begin
+        index = Dict{Symbol, Vector{Int}}()
+        order = Symbol[]
+        for m in 1:M
+            material_kind[m] == kind || continue
+            name = material_names[m]
+            haskey(index, name) || push!(order, name)
+            push!(get!(index, name, Int[]), m)
+        end
+        [index[name] for name in order]
+    end
+    supply_groups = group_of(:raw)
+    market_groups = filter(g -> length(g) >= 2, group_of(:final))
+    G = length(supply_groups)
+    pool_plan = [
+        sum(purchase_plan[m, j, τ] for m in supply_groups[g] for j in 1:n_tiers) for
+        g in 1:G, τ in 1:T
+    ]
+    supply_cap = [
+        max(pool_plan[g, τ] * rand(rng, Uniform(1.05, 1.30)), 1e-3) for g in 1:G, τ in 1:T
+    ]
+    market_cap = [
+        sum(sales_plan[m, τ] for m in market_groups[g]) * rand(rng, Uniform(1.04, 1.25)) for
+        g in eachindex(market_groups), τ in 1:T
+    ]
+
+    build(witness, certificate, scenario) = CampaignPlanningProblem(
+        T,
+        7.0,
+        n_sites,
+        material_names,
+        material_kind,
+        material_site,
+        task_names,
+        task_unit,
+        task_inputs,
+        task_outputs,
+        task_cost,
+        unit_names,
+        unit_site,
+        unit_capacity,
+        campaign_unit,
+        campaign_length,
+        min_rate_fraction,
+        n_tiers,
+        tier_price,
+        tier_cap,
+        supply_groups,
+        supply_cap,
+        market_groups,
+        market_cap,
+        material_price,
+        sales_floor,
+        sales_ceiling,
+        tank,
+        initial_inventory,
+        holding_cost,
         changeover_cost,
-        feasible_witness,
-        infeasibility_certificate,
-        market_scenario,
+        witness,
+        certificate,
+        scenario,
         feasibility_status,
     )
-    feasibility_status == feasible && @assert campaign_plan_satisfies(problem)
-    feasibility_status == infeasible && @assert campaign_certificate_holds(problem)
+
+    if feasibility_status == feasible
+        witness = CampaignScheduleWitness(
+            rate, active, starts, purchase_plan, inventory_plan, sales_plan
+        )
+        problem = build(witness, nothing, nothing)
+        @assert campaign_plan_satisfies(problem)
+        return problem
+    end
+
+    # Contracted pool need per period: the potential-weighted sales floors. A
+    # pool's critical supply is that need less what the opening tanks already
+    # hold (the certificate's `demand - inventory`); below it the term
+    # contracts cannot all be served.
+    reference = build(nothing, nothing, nothing)
+    parts = [_cp_pool_bound_parts(reference, g) for g in 1:G]
+    need = [_cp_pool_need(reference, parts[g][1], τ) for g in 1:G, τ in 1:T]
+    breadth = [_cp_pool_breadth(reference, parts[g][1]) for g in 1:G]
+    critical = [
+        parts[g][2] > 0 ? max(parts[g][2] - parts[g][3], 0.0) / parts[g][2] : 0.0 for g in 1:G
+    ]
+
+    # Pools broad enough to be curtailed: the broadest contracted slates.
+    widest = maximum(breadth; init=0.0)
+    broad = [breadth[g] >= _CP_BREADTH_SHORTLIST * widest && parts[g][2] > 0 for g in 1:G]
+
+    if feasibility_status == unknown
+        position = _pp_seed_position(seed)
+        supply_factor = -0.35 + 1.30 * position
+        for g in 1:G
+            share = supply_factor + rand(rng, Uniform(-0.03, 0.03))
+            # Only the broadest pools take part in the shortage: a narrow pool's
+            # shortfall runs down few product chains, which bound propagation
+            # can follow, so an infeasible draw there would be decided by
+            # presolve rather than by the multi-product aggregation. Narrow pools
+            # keep the plan-sized supply of a feasible request.
+            broad[g] || continue
+            for τ in 1:T
+                floor_level = critical[g] * need[g, τ]
+                # Below zero the profile sits `|share|` under the critical one;
+                # above zero every period gains `share` of headroom on the
+                # critical level plus `share` of the way up to the planted
+                # purchases (the critical profile ignores co-products and
+                # campaign timing, so it is a floor, not the true threshold).
+                supply_cap[g, τ] =
+                    floor_level * (1 + share) +
+                    max(share, 0.0) * max(pool_plan[g, τ] - floor_level, 0.0)
+                supply_cap[g, τ] = max(supply_cap[g, τ], 0.05 * pool_plan[g, τ], 1e-3)
+            end
+        end
+        return build(nothing, nothing, CampaignMarketScenario(supply_factor, position))
+    end
+
+    # Requested infeasible (default): curtail one regional feedstock pool below
+    # what the company's term contracts need. The pool serving the broadest
+    # contracted product slate is chosen and its supply is allocated in
+    # proportion to the contracted need of each period, so no single product
+    # chain and no short window of periods is short on its own - only the
+    # aggregation of every product, site and period that draws on the pool
+    # exposes the shortfall. Fallback (no pool with enough contracted
+    # demand): a single-product capacity bottleneck.
+    margin_factor = 1 + rand(rng, Uniform(0.06, 0.15))
+    eligible = [
+        g for g in 1:G if
+        parts[g][2] > 0 && parts[g][2] / margin_factor - parts[g][3] >= 0.25 * parts[g][2]
+    ]
+    if !isempty(eligible)
+        widest_eligible = maximum(breadth[g] for g in eligible)
+        shortlist = [g for g in eligible if breadth[g] >= _CP_BREADTH_SHORTLIST * widest_eligible]
+        g = shortlist[rand(rng, 1:length(shortlist))]
+        _, demand, inventory, _ = parts[g]
+        allocation = (demand / margin_factor - inventory) / demand
+        supply_cap[g, :] .= max.(allocation .* view(need, g, :), 1e-3)
+        problem = build(nothing, nothing, nothing)
+        y, demand, inventory, supply = _cp_pool_bound_parts(problem, g)
+        upper = inventory + supply
+        certificate = CampaignFeedstockCertificate(
+            g, y, demand, inventory, supply, upper, demand - upper
+        )
+        problem = build(nothing, certificate, nothing)
+        @assert campaign_certificate_holds(problem)
+        return problem
+    end
+
+    certificate = _cp_capacity_bottleneck!(
+        rng,
+        T,
+        material_kind,
+        task_unit,
+        task_inputs,
+        task_outputs,
+        unit_capacity,
+        tier_cap,
+        sales_floor,
+        sales_ceiling,
+        initial_inventory,
+    )
+    problem = build(nothing, certificate, nothing)
+    @assert campaign_certificate_holds(problem)
     return problem
+end
+
+"""
+Over-commit one final grade beyond its producing task's capacity and direct
+raw-feed bound over a horizon prefix, and return the matching certificate.
+"""
+function _cp_capacity_bottleneck!(
+    rng::AbstractRNG,
+    T::Int,
+    material_kind,
+    task_unit,
+    task_inputs,
+    task_outputs,
+    unit_capacity,
+    tier_cap,
+    sales_floor,
+    sales_ceiling,
+    initial_inventory,
+)
+    NT = length(task_inputs)
+    producer_of = Dict{Int, Int}()
+    for t in 1:NT, (m, _) in task_outputs[t]
+        producer_of[m] = t
+    end
+    finals = [m for m in eachindex(material_kind) if material_kind[m] == :final]
+    horizon = clamp(round(Int, T * rand(rng, Uniform(0.55, 1.0))), 2, T)
+    raw_bound_of(producer, out_coeff) = begin
+        raw_inputs = [(mm, c) for (mm, c) in task_inputs[producer] if material_kind[mm] == :raw]
+        if isempty(raw_inputs)
+            Inf
+        else
+            out_coeff * minimum(
+                (horizon * sum(view(tier_cap, mm, :)) + initial_inventory[mm]) / c for
+                (mm, c) in raw_inputs
+            )
+        end
+    end
+    candidates = Tuple{Int, Float64}[]
+    for m in finals
+        producer = get(producer_of, m, 0)
+        producer == 0 && continue
+        out_coeff = sum(c for (o, c) in task_outputs[producer] if o == m)
+        task_cap = out_coeff * sum(view(unit_capacity, task_unit[producer], 1:horizon))
+        bound = min(task_cap, raw_bound_of(producer, out_coeff))
+        demand = sum(view(sales_floor, m, 1:horizon))
+        bound > eps() && demand > eps() && push!(candidates, (m, demand / bound))
+    end
+    isempty(candidates) &&
+        push!(candidates, (first(m for m in finals if haskey(producer_of, m)), 1.0))
+    sort!(candidates; by=x -> -x[2])
+    cut_material = candidates[rand(rng, 1:min(3, length(candidates)))][1]
+    producer = producer_of[cut_material]
+    out_coeff = sum(c for (o, c) in task_outputs[producer] if o == cut_material)
+    raw_inputs = [(mm, c) for (mm, c) in task_inputs[producer] if material_kind[mm] == :raw]
+    initial_inventory[cut_material] *= rand(rng, Uniform(0.05, 0.20))
+    for (mm, _) in raw_inputs
+        initial_inventory[mm] *= rand(rng, Uniform(0.02, 0.15))
+    end
+    demand_raise = rand(rng, Uniform(1.05, 1.25))
+    sales_floor[cut_material, 1:horizon] .*= demand_raise
+    sales_floor[cut_material, 1:horizon] .= min.(
+        sales_floor[cut_material, 1:horizon], 0.98 .* sales_ceiling[cut_material, 1:horizon]
+    )
+    demand_cum = sum(sales_floor[cut_material, 1:horizon])
+    desired_upper = demand_cum * rand(rng, Uniform(0.60, 0.85))
+    # A bursty campaign product can carry planted initial stock above the
+    # shrunken demand target; cap it so the supply cut stays below demand.
+    initial_inventory[cut_material] = min(initial_inventory[cut_material], 0.4 * desired_upper)
+    task_bound_raw = out_coeff * sum(view(unit_capacity, task_unit[producer], :))
+    scale = clamp(
+        (desired_upper - initial_inventory[cut_material]) / max(task_bound_raw, eps()), 0.01, 0.90
+    )
+    unit_capacity[task_unit[producer], :] .*= scale
+    for (mm, _) in raw_inputs
+        tier_cap[mm, :] .*= scale
+    end
+    task_bound = out_coeff * sum(view(unit_capacity, task_unit[producer], 1:horizon))
+    raw_bound = raw_bound_of(producer, out_coeff)
+    upper_bound = initial_inventory[cut_material] + min(task_bound, raw_bound)
+    return CampaignCapacityCertificate(
+        cut_material,
+        horizon,
+        demand_cum,
+        initial_inventory[cut_material],
+        task_bound,
+        raw_bound,
+        upper_bound,
+        demand_cum - upper_bound,
+    )
+end
+
+"""Per-material producing and consuming `(task, coefficient)` incidence lists."""
+function _cp_incidence(prob::CampaignPlanningProblem)
+    M = length(prob.material_names)
+    produced = [Tuple{Int, Float64}[] for _ in 1:M]
+    consumed = [Tuple{Int, Float64}[] for _ in 1:M]
+    for t in eachindex(prob.task_names)
+        for (m, c) in prob.task_outputs[t]
+            push!(produced[m], (t, c))
+        end
+        for (m, c) in prob.task_inputs[t]
+            push!(consumed[m], (t, c))
+        end
+    end
+    return produced, consumed
 end
 
 """Re-check a planted campaign schedule against every model row by arithmetic."""
@@ -935,7 +1381,6 @@ function campaign_plan_satisfies(prob::CampaignPlanningProblem; atol::Float64=1e
     U = length(prob.unit_names)
     campaign_tasks = [t for t in 1:NT if prob.campaign_unit[prob.task_unit[t]]]
     cT = length(campaign_tasks)
-    campaign_index = Dict(t => i for (i, t) in enumerate(campaign_tasks))
     size(plan.rate) == (NT, T) || return false
     size(plan.active) == (cT, T) || return false
     size(plan.starts) == (cT, T) || return false
@@ -949,14 +1394,17 @@ function campaign_plan_satisfies(prob::CampaignPlanningProblem; atol::Float64=1e
     all(x -> x in (0.0, 1.0), plan.active) || return false
     all(x -> x in (0.0, 1.0), plan.starts) || return false
 
+    unit_tasks = [Int[] for _ in 1:U]
+    for t in 1:NT
+        push!(unit_tasks[prob.task_unit[t]], t)
+    end
+    campaign_index = Dict(t => i for (i, t) in enumerate(campaign_tasks))
     for u in 1:U, τ in 1:T
-        load = sum(plan.rate[t, τ] for t in 1:NT if prob.task_unit[t] == u; init=0.0)
+        load = sum(plan.rate[t, τ] for t in unit_tasks[u]; init=0.0)
         load <= prob.unit_capacity[u, τ] + atol * max(1.0, load) || return false
         if prob.campaign_unit[u]
-            sum(
-                plan.active[campaign_index[t], τ] for t in campaign_tasks if prob.task_unit[t] == u;
-                init=0.0,
-            ) <= 1.0 + atol || return false
+            sum(plan.active[campaign_index[t], τ] for t in unit_tasks[u]; init=0.0) <= 1.0 + atol ||
+                return false
         end
     end
 
@@ -976,21 +1424,16 @@ function campaign_plan_satisfies(prob::CampaignPlanningProblem; atol::Float64=1e
         end
     end
 
+    produced, consumed = _cp_incidence(prob)
     for m in 1:M, τ in 1:T
-        produced = sum(
-            c * plan.rate[t, τ] for t in 1:NT for (mm, c) in prob.task_outputs[t] if mm == m;
-            init=0.0,
-        )
-        consumed = sum(
-            c * plan.rate[t, τ] for t in 1:NT for (mm, c) in prob.task_inputs[t] if mm == m;
-            init=0.0,
-        )
+        made = sum(c * plan.rate[t, τ] for (t, c) in produced[m]; init=0.0)
+        used = sum(c * plan.rate[t, τ] for (t, c) in consumed[m]; init=0.0)
         bought = prob.material_kind[m] == :raw ? sum(plan.purchase[m, :, τ]) : 0.0
         sold = prob.material_kind[m] == :final ? plan.sales[m, τ] : 0.0
         previous = τ == 1 ? prob.initial_inventory[m] : plan.inventory[m, τ - 1]
-        scale = max(1.0, abs(previous), produced, consumed, bought, sold)
-        abs(plan.inventory[m, τ] - (previous + produced + bought - consumed - sold)) <=
-        atol * scale || return false
+        scale = max(1.0, abs(previous), made, used, bought, sold)
+        abs(plan.inventory[m, τ] - (previous + made + bought - used - sold)) <= atol * scale ||
+            return false
         plan.inventory[m, τ] <= prob.tank[m] + atol * scale || return false
         if prob.material_kind[m] == :raw
             for j in 1:prob.n_tiers
@@ -1006,13 +1449,23 @@ function campaign_plan_satisfies(prob::CampaignPlanningProblem; atol::Float64=1e
             plan.sales[m, τ] <= atol || return false
         end
     end
+    for (g, members) in enumerate(prob.supply_groups), τ in 1:T
+        pooled = sum(plan.purchase[m, j, τ] for m in members for j in 1:prob.n_tiers)
+        pooled <= prob.supply_cap[g, τ] + atol * max(1.0, pooled) || return false
+    end
+    for (g, members) in enumerate(prob.market_groups), τ in 1:T
+        sold = sum(plan.sales[m, τ] for m in members)
+        sold <= prob.market_cap[g, τ] + atol * max(1.0, sold) || return false
+    end
     return true
 end
 
-"""Recompute the bottleneck proof stored on a requested-infeasible campaign."""
+"""Recompute the refutation stored on a requested-infeasible campaign instance."""
 function campaign_certificate_holds(prob::CampaignPlanningProblem; atol::Float64=1e-6)
     cert = prob.infeasibility_certificate
     cert === nothing && return false
+    cert isa CampaignFeedstockCertificate &&
+        return _cp_feedstock_certificate_holds(prob, cert, atol)
     M = length(prob.material_names)
     NT = length(prob.task_names)
     1 <= cert.material <= M || return false
@@ -1052,6 +1505,35 @@ function campaign_certificate_holds(prob::CampaignPlanningProblem; atol::Float64
     return upper + atol * scale < demand
 end
 
+function _cp_feedstock_certificate_holds(
+    prob::CampaignPlanningProblem, cert::CampaignFeedstockCertificate, atol::Float64
+)
+    1 <= cert.group <= length(prob.supply_groups) || return false
+    y, demand, inventory, supply = _cp_pool_bound_parts(prob, cert.group)
+    length(cert.potential) == length(y) || return false
+    all(>=(0.0), cert.potential) || return false
+    isapprox(cert.potential, y; rtol=1e-9) || return false
+    # Every non-pooled raw carries zero potential and no task creates content.
+    for m in eachindex(y)
+        if prob.material_kind[m] == :raw && !(m in prob.supply_groups[cert.group])
+            cert.potential[m] == 0.0 || return false
+        end
+    end
+    for t in eachindex(prob.task_names)
+        made = sum(c * cert.potential[m] for (m, c) in prob.task_outputs[t]; init=0.0)
+        fed = sum(c * cert.potential[m] for (m, c) in prob.task_inputs[t]; init=0.0)
+        made <= fed * (1 + 1e-12) + atol || return false
+    end
+    upper = inventory + supply
+    scale = max(1.0, abs(demand), abs(upper))
+    isapprox(cert.demand, demand; atol=atol * scale, rtol=1e-9) || return false
+    isapprox(cert.inventory_bound, inventory; atol=atol * scale, rtol=1e-9) || return false
+    isapprox(cert.supply_bound, supply; atol=atol * scale, rtol=1e-9) || return false
+    isapprox(cert.upper_bound, upper; atol=atol * scale, rtol=1e-9) || return false
+    isapprox(cert.margin, demand - upper; atol=atol * scale, rtol=1e-9) || return false
+    return upper + atol * scale < demand
+end
+
 function build_model(prob::CampaignPlanningProblem)
     model = Model()
     T, M, NT = prob.n_periods, length(prob.material_names), length(prob.task_names)
@@ -1061,87 +1543,124 @@ function build_model(prob::CampaignPlanningProblem)
     campaign_tasks = [t for t in 1:NT if prob.campaign_unit[prob.task_unit[t]]]
     cT = length(campaign_tasks)
     campaign_index = Dict(t => i for (i, t) in enumerate(campaign_tasks))
+    J = prob.n_tiers
 
+    # A single-task unit's capacity is a bound on its task's rate; a campaign
+    # train's capacity is enforced by the activity gate below.
     @variable(model, rate[t = 1:NT, τ = 1:T] >= 0)
+    for t in 1:NT
+        prob.campaign_unit[prob.task_unit[t]] && continue
+        for τ in 1:T
+            set_upper_bound(rate[t, τ], prob.unit_capacity[prob.task_unit[t], τ])
+        end
+    end
     @variable(model, active[i = 1:cT, τ = 1:T], Bin)
     @variable(model, starts[i = 1:cT, τ = 1:T], Bin)
-    @variable(model, 0 <= purchase[m = raws, j = 1:prob.n_tiers, τ = 1:T] <= prob.tier_cap[m, j])
+    @variable(model, 0 <= purchase[m = raws, j = 1:J, τ = 1:T] <= prob.tier_cap[m, j])
     @variable(model, 0 <= inventory[m = 1:M, τ = 1:T] <= prob.tank[m])
     @variable(
         model, prob.sales_floor[m, τ] <= sales[m = finals, τ = 1:T] <= prob.sales_ceiling[m, τ]
     )
 
-    @objective(
-        model,
-        Max,
-        sum(prob.material_price[m, τ] * sales[m, τ] for m in finals, τ in 1:T) - sum(
-            prob.tier_price[m, j] * purchase[m, j, τ] for m in raws, j in 1:prob.n_tiers, τ in 1:T
-        ) - sum(prob.task_cost[t] * rate[t, τ] for t in 1:NT, τ in 1:T) -
-        sum(prob.holding_cost[m] * inventory[m, τ] for m in 1:M, τ in 1:T) -
-            prob.changeover_cost * sum(starts)
-    )
-
+    objective = AffExpr(0.0)
+    for m in finals, τ in 1:T
+        add_to_expression!(objective, prob.material_price[m, τ], sales[m, τ])
+    end
+    for m in raws, j in 1:J, τ in 1:T
+        add_to_expression!(objective, -prob.tier_price[m, j], purchase[m, j, τ])
+    end
+    for t in 1:NT, τ in 1:T
+        add_to_expression!(objective, -prob.task_cost[t], rate[t, τ])
+    end
     for m in 1:M, τ in 1:T
-        inflow = AffExpr(0.0)
+        add_to_expression!(objective, -prob.holding_cost[m], inventory[m, τ])
+    end
+    for i in 1:cT, τ in 1:T
+        add_to_expression!(objective, -prob.changeover_cost, starts[i, τ])
+    end
+    @objective(model, Max, objective)
+
+    produced, consumed = _cp_incidence(prob)
+    for m in 1:M, τ in 1:T
+        flow = AffExpr(0.0)
         if prob.material_kind[m] == :raw
-            for j in 1:prob.n_tiers
-                add_to_expression!(inflow, 1.0, purchase[m, j, τ])
+            for j in 1:J
+                add_to_expression!(flow, 1.0, purchase[m, j, τ])
             end
         end
-        for t in 1:NT, (mm, c) in prob.task_inputs[t]
-            mm == m && add_to_expression!(inflow, -c, rate[t, τ])
+        for (t, c) in consumed[m]
+            add_to_expression!(flow, -c, rate[t, τ])
         end
-        for t in 1:NT, (mm, c) in prob.task_outputs[t]
-            mm == m && add_to_expression!(inflow, c, rate[t, τ])
+        for (t, c) in produced[m]
+            add_to_expression!(flow, c, rate[t, τ])
         end
-        if prob.material_kind[m] == :final
-            add_to_expression!(inflow, -1.0, sales[m, τ])
+        prob.material_kind[m] == :final && add_to_expression!(flow, -1.0, sales[m, τ])
+        add_to_expression!(flow, -1.0, inventory[m, τ])
+        if τ == 1
+            @constraint(model, flow == -prob.initial_inventory[m])
+        else
+            add_to_expression!(flow, 1.0, inventory[m, τ - 1])
+            @constraint(model, flow == 0)
         end
-        @constraint(
-            model,
-            inventory[m, τ] == (τ == 1 ? prob.initial_inventory[m] : inventory[m, τ - 1]) + inflow
-        )
     end
 
-    for u in 1:U, τ in 1:T
-        @constraint(
-            model,
-            sum(rate[t, τ] for t in 1:NT if prob.task_unit[t] == u) <= prob.unit_capacity[u, τ]
-        )
+    train_tasks = [Int[] for _ in 1:U]
+    for t in campaign_tasks
+        push!(train_tasks[prob.task_unit[t]], t)
     end
-
     for u in 1:U
         prob.campaign_unit[u] || continue
         for τ in 1:T
-            @constraint(
-                model,
-                sum(active[campaign_index[t], τ] for t in 1:NT if prob.task_unit[t] == u) <= 1
-            )
+            @constraint(model, sum(active[campaign_index[t], τ] for t in train_tasks[u]) <= 1)
         end
     end
 
-    for (i, t) in enumerate(campaign_tasks), τ in 1:T
-        cap = prob.unit_capacity[prob.task_unit[t], τ]
-        @constraint(model, rate[t, τ] <= cap * active[i, τ])
-        @constraint(model, rate[t, τ] >= prob.min_rate_fraction[i] * cap * active[i, τ])
-        previous = τ == 1 ? 0 : active[i, τ - 1]
-        @constraint(model, starts[i, τ] >= active[i, τ] - previous)
-        @constraint(model, starts[i, τ] <= active[i, τ])
-        @constraint(model, starts[i, τ] <= 1 - previous)
+    L = prob.campaign_length
+    for (i, t) in enumerate(campaign_tasks)
+        for τ in 1:T
+            cap = prob.unit_capacity[prob.task_unit[t], τ]
+            @constraint(model, rate[t, τ] - cap * active[i, τ] <= 0)
+            @constraint(model, rate[t, τ] - prob.min_rate_fraction[i] * cap * active[i, τ] >= 0)
+            if τ == 1
+                @constraint(model, starts[i, 1] - active[i, 1] == 0)
+            else
+                @constraint(model, starts[i, τ] - active[i, τ] + active[i, τ - 1] >= 0)
+                @constraint(model, starts[i, τ] - active[i, τ] <= 0)
+                @constraint(model, starts[i, τ] + active[i, τ - 1] <= 1)
+            end
+        end
+        for τ in 1:(T - L + 1)
+            run = sum(active[i, k] for k in τ:(τ + L - 1))
+            if τ == 1
+                @constraint(model, run - L * active[i, 1] >= 0)
+            else
+                @constraint(model, run - L * active[i, τ] + L * active[i, τ - 1] >= 0)
+            end
+        end
+        # A campaign cannot start so late that its minimum duration would
+        # extend past the modeled horizon.
+        for τ in max(T - L + 2, 2):T
+            fix(starts[i, τ], 0.0; force=true)
+        end
     end
 
-    L = prob.campaign_length
-    for (i, _) in enumerate(campaign_tasks), τ in 1:(T - L + 1)
-        @constraint(
-            model,
-            sum(active[i, k] for k in τ:(τ + L - 1)) >=
-                L * (active[i, τ] - (τ == 1 ? 0 : active[i, τ - 1]))
-        )
+    for (g, members) in enumerate(prob.supply_groups)
+        if _cp_pool_has_row(prob, g)
+            for τ in 1:T
+                @constraint(
+                    model,
+                    sum(purchase[m, j, τ] for m in members for j in 1:J) <= prob.supply_cap[g, τ]
+                )
+            end
+        else
+            m = only(members)
+            for τ in 1:T
+                set_upper_bound(purchase[m, 1, τ], min(prob.tier_cap[m, 1], prob.supply_cap[g, τ]))
+            end
+        end
     end
-    # A campaign cannot start so late that its minimum duration would extend
-    # past the modeled horizon. This closes the usual end-effect loophole.
-    for (i, _) in enumerate(campaign_tasks), τ in (T - L + 2):T
-        @constraint(model, starts[i, τ] == 0)
+    for (g, members) in enumerate(prob.market_groups), τ in 1:T
+        @constraint(model, sum(sales[m, τ] for m in members) <= prob.market_cap[g, τ])
     end
     return model
 end
@@ -1150,5 +1669,7 @@ register_variant(
     :process_planning,
     :campaign,
     CampaignPlanningProblem,
-    "Multi-period petrochemical campaign-planning MIP over state-task networks: tiered raw purchasing, shared trains running product grades as campaigns with minimum lengths and changeovers, storage, and seasonal term and spot demand",
+    "Multi-period petrochemical campaign-planning MIP over state-task networks: one or several complexes with tiered raw purchasing from shared regional feedstock pools, shared trains running product grades as campaigns with minimum lengths and changeovers, storage, and seasonal term and spot demand in shared regional markets";
+    tags=[:production, :staircase, :big_m],
+    max_target_variables=1_000_000,
 )

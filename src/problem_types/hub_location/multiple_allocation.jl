@@ -178,12 +178,16 @@ function _build_multiple_allocation(
         shape = rand(rng, (:clustered, :corridor, :archipelago))
         locations = _hub_city_locations(rng, n, shape)
         dist = _hub_distance_matrix(locations)
-        # Smallest reach at which every node still sees its nearest candidate
-        # (no empty windows), then sampled just above it.
-        cover_reach = maximum(minimum(dist[i, k] for k in hubs) for i in 1:n)
+        # Smallest reach at which every node sees at least two candidates,
+        # then sampled just above it. A single-candidate window fixes its
+        # collection arcs and forces that hub open, after which presolve turns
+        # every linking row of the hub into a bound and drops it; and an empty
+        # window (below the one-candidate reach) is an infeasibility presolve
+        # finds from one supply row. `unknown` therefore stays above it too.
+        cover_reach = maximum(sort([dist[i, k] for k in hubs])[min(2, length(hubs))] for i in 1:n)
         reach =
             cover_reach *
-            rand(rng, feasibility_status == feasible ? Uniform(1.05, 1.2) : Uniform(0.99, 1.1))
+            rand(rng, feasibility_status == feasible ? Uniform(1.05, 1.2) : Uniform(1.03, 1.25))
         admissible = _hub_reach_admissible(dist, reach; candidates=hubs)
         hub_set = copy(hubs)
         groups = Vector{Int}[]
@@ -217,6 +221,16 @@ function _build_multiple_allocation(
         total_cost = sum(fixed_cost)
         factor = feasibility_status == feasible ? Uniform(1.05, 1.35) : Uniform(0.8, 1.15)
         budget = min(total_cost, cover_cost * rand(rng, factor))
+        if feasibility_status == unknown
+            # A city with a single admissible candidate forces that hub open
+            # (its supply and linking rows give y_k >= 1). Keep the budget
+            # above the cost of these forced hubs, so a shortfall - if any -
+            # comes from the fractional covering trade-off, not from a few
+            # bound propagations presolve performs on its own.
+            forced = unique([only(A) for A in admissible if length(A) == 1])
+            forced_cost = sum(fixed_cost[position[k]] for k in forced; init=0.0)
+            budget = max(budget, min(total_cost, 1.05 * forced_cost))
+        end
         witness = feasibility_status == feasible ? HubCoverWitness(cover, reach) : nothing
     end
 
@@ -264,9 +278,12 @@ follows it) to land near the target.
   - `infeasible`: disjoint island groups with a budget below
     `groups * min_k f_k` (`BudgetCoverCertificate`) - the budget row conflicts
     with the covering forced by the supply and linking rows in the relaxation.
-  - `unknown`: the budget is sampled around the greedy cover cost, which may or
-    may not be enough once cheaper (including fractional) covers exist, leaving
-    feasibility undecided.
+  - `unknown`: the reach sits 3-25% above the smallest window that gives every
+    city at least two candidates (`feasible` uses 5-20%), and the budget is
+    sampled at 0.8-1.15x the greedy cover cost (never below 1.05x the cost of
+    any hubs forced open by single-candidate windows - a safeguard for tiny
+    candidate sets), which may or may not be enough once cheaper (including
+    fractional) covers exist, leaving feasibility undecided.
 """
 function MultipleAllocationHubProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
@@ -412,5 +429,6 @@ register_variant(
     :hub_location,
     :multiple_allocation,
     MultipleAllocationHubProblem,
-    "Fixed-charge multiple-allocation hub location with feeder reach windows and an opening budget (per-destination flow formulation, AP postal cost conventions)",
+    "Fixed-charge multiple-allocation hub location with feeder reach windows and an opening budget (per-destination flow formulation, AP postal cost conventions)";
+    tags=[:location, :network, :multicommodity, :big_m],
 )

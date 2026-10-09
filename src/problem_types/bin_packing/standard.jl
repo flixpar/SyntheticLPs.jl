@@ -489,4 +489,5 @@ register_variant(
     BinPackingProblem,
     "Identical-bin packing with handling conflicts, two-sided category links, constructive witnesses, and aggregate capacity certificates";
     default=true,
+    tags=[:logistics, :partitioning, :big_m],
 )

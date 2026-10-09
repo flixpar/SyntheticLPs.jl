@@ -12,11 +12,11 @@ solved in practice:
 | Variant | Allocation | Key structure | Domain grounding |
 |---|---|---|---|
 | `p_hub_median` | single | exact `p` hubs, reach windows, tight four-index path flows | airline (CAB) |
-| `compact_single_allocation` | single | exact `p` hubs, compact origin-indexed flows | passenger / freight / telecom |
+| `compact_single_allocation` | single | exact `p` hubs, reach windows, compact origin-indexed flows | passenger / freight / telecom |
 | `r_allocation` | r of p hubs | primary/backup allocations, four-index path flows | airline resilience |
 | `multiple_allocation` | multiple | fixed costs + opening budget, per-destination flows | parcel / LTL (AP) |
 | `capacitated` | single | collection-inflow capacities in loose/tight profiles | postal (AP) |
-| `hub_covering` | multiple | minimum-cost openings under OD service thresholds | express / airline service design |
+| `hub_covering` | multiple | opening budget + OD service thresholds, tight per-hub path linking | express / airline service design |
 | `hub_network` | single | incomplete backbone: build modular hub-hub links | telecom backbone |
 | `budgeted_backbone` | single | exact `p`, candidate links, shared capacity + investment budget | telecom backbone |
 
@@ -41,6 +41,9 @@ diagonal (`z_kk = 1`), while directed `q_ikm` variables carry origin `i`'s
 consolidated flow through the hub layer. Flow balance retains the complete OD
 matrix rather than replacing it with origin/destination margins. The result is
 exactly `n^3` variables and complements the tighter but larger SKO formulation.
+A feeder reach window fixes `z_ik = 0` for hubs farther than `reach` from node
+`i` (a node is always admissible to itself), which is what makes the hub count
+binding.
 
 `multiple_allocation`, `capacitated`, and `hub_network` use per-destination multicommodity flows through a
 hub layer (the efficient-flow-model family surveyed by Brimberg et al. 2021):
@@ -57,8 +60,13 @@ incomplete hub network in the sense of Yaman (2009).
 
 `hub_covering` is a service-design formulation. For every ordered OD pair it
 creates variables only for hub pairs whose collection, transfer, and
-distribution cost is at most a service threshold, then minimizes hub opening
-cost subject to selecting at least one such path. `budgeted_backbone` instead
+distribution cost is at most a service threshold, requires at least one such
+path, and minimizes hub opening cost plus the volume-weighted operating cost of
+the chosen paths under an opening budget. Paths are linked to hubs by the tight
+per-hub rows of Hamacher et al. (2004) — for each OD pair and hub `h`, the flow
+on admissible paths visiting `h` is at most `y_h` — which make every covering
+row a genuine fractional hub-covering requirement. (The operating term also
+keeps reverse-orientation paths from being cost-free duplicate columns.) `budgeted_backbone` instead
 models infrastructure investment: exactly `p` hubs open, physical undirected
 links consume a budget and share both-direction capacity, and origin-indexed
 flows may traverse multiple installed links. These variants are intentionally
@@ -109,20 +117,34 @@ node's admissible hubs.
 
 Every certificate refutes the LP relaxation, not only the MIP:
 
-- `p_hub_median` / `r_allocation` **infeasible**: `p + 1` island groups with
-  pairwise disjoint admissible sets. Each group needs its own open hub
-  (disaggregated linking rows force `sum_{k in A_i} y_k >= 1`), contradicting
-  the exact-`p` row.
+- `p_hub_median` **infeasible**: `p + 1` island groups with pairwise disjoint
+  admissible sets. Each group needs its own open hub (disaggregated linking
+  rows force `sum_{k in A_i} y_k >= 1`), contradicting the exact-`p` row.
+- `r_allocation` **infeasible**: `floor(p/r) + 1` island groups, each with at
+  least `r + 2` hub-capable cities (a random subset of the group). The
+  allocation row `sum_{k in A_i} z_ik = r` with `z_ik <= y_k` makes every
+  group open `r` hubs, so `r * groups > p` (`BackupRegionCertificate`). Every
+  window is padded to at least `r + 2` in-group candidates (the reach is drawn
+  inside the group diameter, so it is a lower bound on the window here), so
+  presolve cannot force hubs open by bounds. `p` is drawn anywhere from 3 up to
+  the usual level, so groups — and window sizes — vary between draws and the
+  sizing loop can land near the target.
 - `multiple_allocation` **infeasible**: disjoint groups plus an opening
   budget strictly below `groups * min_k f_k`, contradicting the budget row.
 - `capacitated` **infeasible**: total capacity strictly below total flow;
   summing the capacity rows against the single-allocation rows gives
-  `W <= sum_k Gamma_k < W`.
-- `compact_single_allocation` **infeasible**: the exact hub count is `n + 1`,
-  exceeding the `n` diagonal hub candidates.
-- `hub_covering` **infeasible**: the service threshold is below the cheapest
-  admissible two-hub route for a recorded OD pair, leaving a literal
-  `0 >= 1` coverage row.
+  `W <= sum_k Gamma_k < W`. Every hub's capacity is floored at 1.1x its own
+  city's volume (and the roomiest at 1.05x the largest origin) in all
+  statuses, so presolve cannot close hubs through their own capacity rows.
+- `compact_single_allocation` **infeasible**: `p + 1` island regions of at
+  least three cities whose reach windows stay inside the region; each region
+  needs an open diagonal hub (`DisjointRegionCertificate`).
+- `hub_covering` **infeasible**: two or three island regions; for one OD pair
+  inside each region every admissible path stays on the region's own hubs, so
+  the per-hub linking rows force `sum_{k in region} y_k >= 1`, and the budget is
+  below the sum of the regions' cheapest hubs (`HubCoveringBudgetCertificate`).
+  Every covering row is nonempty. (A fallback with a literal empty `0 >= 1`
+  coverage row exists for geometries that cannot be certified.)
 - `hub_network` **infeasible**: a regional gateway cut whose total crossing
   capacity (with every crossing link built) is below the inter-regional
   traffic that must cross it; reach windows keep each side's traffic on its
@@ -131,14 +153,41 @@ Every certificate refutes the LP relaxation, not only the MIP:
   `p/2` installed links; even pricing each at the cheapest candidate-link cost
   exceeds the available link budget.
 
+The certificates above are aggregates over many rows: none of the default
+infeasible modes is refuted by HiGHS presolve alone (the earlier single-row
+modes of `compact_single_allocation` and `hub_covering`, and the bound-forced
+closures in `capacitated` and `r_allocation`, were).
+
 Feasible requests plant a witness — a hub set with admissible self-anchored
 assignments (cover-radius based), a capacity-respecting best-fit assignment,
-an all-open covering solution, or a sized backbone whose exact routed loads fit
-under its capacities.
+a greedily pruned minimal hub cover within the opening budget, or a sized
+backbone whose exact routed loads fit under its capacities.
 Unknown requests use nominal valid data or sample near the corresponding
 feasibility boundary (reach/service windows, opening or link budgets,
 capacities, and crossing cuts). Across the family this yields a genuine mix of
 outcomes rather than a hidden always-infeasible mode.
+
+**Window floors (presolve survival).** A city whose window holds a single
+candidate fixes its supply/path columns and forces that hub open; presolve then
+turns every linking row of the hub into a bound and strips it, and with only
+two candidates every supply row becomes a doubleton equation that presolve
+substitutes away. Small instances (~1k variables, ~10–20 cities) were losing
+up to 60% of their rows this way. For `feasible` and `unknown` requests the
+reach is therefore floored so that every city sees:
+
+- `p_hub_median`: at least two hubs (itself and its nearest neighbour);
+- `r_allocation`: at least `r + 1` hubs (itself and its `r` nearest
+  neighbours) — this also stopped unknown instances from being settled by
+  presolve alone;
+- `multiple_allocation`: at least two candidates (its budget also stays above
+  the cost of any hubs forced open by single-candidate windows);
+- `hub_network`: up to three gateway candidates of its own region — each
+  region now gets about three candidates (`n_regions = round(h / 3)`, extras
+  taken round-robin from each region's largest cities), and in-region
+  distances are below cross-region ones, so windows never leave the region.
+
+Presolve now keeps ≥ 0.6 of rows and columns on these variants from 1k
+variables up (it previously dropped to 0.37–0.56 at 1k).
 
 ## Variable counts
 
@@ -159,6 +208,10 @@ With `A_i` the admissible hub list of node `i`, `h` the candidate count and
 
 Direct dimension searches and iterative re-sizing adjust node/candidate hints
 and sparse thresholds so counts satisfy the package's target-size tolerance.
+`p_hub_median`'s and `r_allocation`'s path counts grow like `n^2 |A|^2` and
+vary two- to threefold between draws at the same node count, so both spend up
+to 120 fresh draws (stopping within 2.5%; each draw costs milliseconds) and
+land within about ±5% of the target from 500 variables up.
 
 ## References
 
@@ -184,6 +237,9 @@ and sparse thresholds so counts satisfy the package's target-size tolerance.
   Networks and Spatial Economics 8.
 - Alumur, S.A., Kara, B.Y. (2009). Network hub location problems: the state
   of the art. Networks and Spatial Economics 9.
+- Hamacher, H.W., Labbé, M., Nickel, S., Sonneborn, T. (2004). Adapting
+  polyhedral properties from facility to hub location problems. Discrete
+  Applied Mathematics 145(1), 104-116.
 - Yaman, H. (2009). The design of single allocation incomplete hub networks.
   Transportation Research Part B 43(10).
 - Correia, I., Nickel, S., Saldanha-da-Gama, F. (2010). The capacitated

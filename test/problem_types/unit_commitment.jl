@@ -21,14 +21,18 @@ const UNIT_COMMITMENT_REF = "unit_commitment/standard"
         for target in (50, 100, 120, 192, 500, 960, 1_200, 3_000, 3_840, 5_000)
             model, problem = generate_problem(UNIT_COMMITMENT_REF, target, feasible, 7)
             actual = num_variables(model)
-            @test actual == 4 * problem.n_units * problem.n_periods
-            @test abs(actual - target) / target <= 0.11
+            @test actual == 5 * problem.n_units * problem.n_periods
+            @test abs(actual - target) / target <= 0.11 || target < 60
+            # Available capacity is a variable bound, so every row couples
+            # several columns: 9 rows per unit-period plus balance and reserve.
+            @test num_constraints(model; count_variable_in_set_constraints=false) ==
+                9 * problem.n_units * problem.n_periods + 2 * problem.n_periods
         end
 
         # Tiny public targets clamp to the smallest useful formulation.
         for target in (-5, 0, 2)
             tiny_model, tiny_problem = generate_problem(UNIT_COMMITMENT_REF, target, feasible, 7)
-            @test num_variables(tiny_model) == 48
+            @test num_variables(tiny_model) == 60
             @test tiny_problem.n_units == 2
             @test tiny_problem.n_periods == 6
         end
@@ -36,7 +40,7 @@ const UNIT_COMMITMENT_REF = "unit_commitment/standard"
         # Large requests grow the fleet instead of saturating at the former
         # 32,256-variable cap. Constructor-only keeps this sizing check cheap.
         large_problem = SyntheticLPs.UnitCommitmentProblem(100_000, feasible, 7)
-        large_actual = 4 * large_problem.n_units * large_problem.n_periods
+        large_actual = 5 * large_problem.n_units * large_problem.n_periods
         @test abs(large_actual - 100_000) / 100_000 <= 0.11
 
         _, problem1 = generate_problem(UNIT_COMMITMENT_REF, 500, feasible, 12345)
@@ -51,6 +55,7 @@ const UNIT_COMMITMENT_REF = "unit_commitment/standard"
         @test witness1.commitment == witness2.commitment
         @test witness1.startup == witness2.startup
         @test witness1.shutdown == witness2.shutdown
+        @test witness1.reserve == witness2.reserve
 
         # Construction must not reset or consume Julia's process-global RNG.
         Random.seed!(8128)
@@ -142,21 +147,61 @@ const UNIT_COMMITMENT_REF = "unit_commitment/standard"
             # The contradiction is reserve-driven rather than requiring demand
             # alone to exceed available generation.
             @test problem.demand[t] < available || iszero(available)
+            # The requirement row alone is satisfiable: it stays within what
+            # reserve offers could cover.
+            offer = SyntheticLPs._uc_reserve_offer(
+                problem.units,
+                problem.max_output,
+                problem.min_output,
+                problem.reserve_capability,
+                problem.availability_factors,
+                t,
+            )
+            @test problem.reserve_requirements[t] <= offer + 1e-9
+            # Every other period keeps demand + reserve within 97 % of capacity.
+            for t2 in problem.time_periods
+                t2 == t && continue
+                cap2 = sum(
+                    problem.max_output[u] * problem.availability_factors[u][t2] for
+                    u in problem.units
+                )
+                @test problem.demand[t2] + problem.reserve_requirements[t2] <= 0.97 * cap2 + 1e-6
+            end
         end
     end
 
-    @testset "Unknown resolves to a recorded mixed profile" begin
-        statuses = Set{FeasibilityStatus}()
-        for seed in 0:31
+    @testset "Unknown is a natural instance" begin
+        for seed in 0:7
             _, problem = generate_problem(UNIT_COMMITMENT_REF, 500, unknown, seed)
-            push!(statuses, problem.resolved_status)
-            if problem.resolved_status == feasible
-                @test SyntheticLPs._unit_commitment_witness_is_valid(problem)
-            else
-                @test SyntheticLPs._unit_commitment_certificate_is_valid(problem)
+            @test problem.resolved_status == unknown
+            @test problem.feasible_witness === nothing
+            @test problem.infeasibility_certificate === nothing
+            # Requirements never exceed what reserve offers could cover.
+            for t in problem.time_periods
+                offer = SyntheticLPs._uc_reserve_offer(
+                    problem.units,
+                    problem.max_output,
+                    problem.min_output,
+                    problem.reserve_capability,
+                    problem.availability_factors,
+                    t,
+                )
+                @test problem.reserve_requirements[t] <= 0.9 * offer + 1e-9
             end
         end
-        @test statuses == Set((feasible, infeasible))
+        if HAS_UNIT_COMMITMENT_HIGHS
+            # Natural and two-sided: both outcomes occur across seeds.
+            seen = Set{UNIT_COMMITMENT_MOI.TerminationStatusCode}()
+            for seed in 0:15
+                model, _ = generate_problem(UNIT_COMMITMENT_REF, 1_200, unknown, seed)
+                set_optimizer(model, HiGHS.Optimizer)
+                set_silent(model)
+                optimize!(model)
+                push!(seen, termination_status(model))
+            end
+            @test UNIT_COMMITMENT_MOI.OPTIMAL in seen
+            @test UNIT_COMMITMENT_MOI.INFEASIBLE in seen
+        end
     end
 
     if HAS_UNIT_COMMITMENT_HIGHS

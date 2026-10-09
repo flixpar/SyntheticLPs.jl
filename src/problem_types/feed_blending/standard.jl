@@ -1,776 +1,1175 @@
 using JuMP
 using Random
 using Distributions
+using StatsBase
+
+"""Nutrients of the feed generator (as-fed basis), in content-matrix row order."""
+const FEED_NUTRIENTS = (
+    :metabolizable_energy,  # Mcal/kg
+    :crude_protein,         # %
+    :crude_fat,             # %
+    :crude_fiber,           # %
+    :calcium,               # %
+    :available_phosphorus,  # %
+    :sodium,                # %
+    :digestible_lysine,     # %
+    :digestible_methionine, # %
+    :digestible_met_cys,    # %
+    :digestible_threonine,  # %
+    :ndf,                   # % neutral detergent fiber
+)
+const _FEED_CA = 5
+const _FEED_AVP = 6
+
+# Ingredient catalog: class, nutrients (FEED_NUTRIENTS order) and price USD/t.
+# Values are rounded NRC/feed-table means.
+const _FEED_INGREDIENTS = (
+    (
+        name=:corn,
+        class=:grain,
+        n=(3.35, 8.0, 3.7, 2.2, 0.02, 0.08, 0.02, 0.21, 0.16, 0.33, 0.25, 9.5),
+        price=220.0,
+    ),
+    (
+        name=:wheat,
+        class=:grain,
+        n=(3.10, 12.5, 1.8, 2.6, 0.05, 0.13, 0.02, 0.30, 0.19, 0.44, 0.33, 12.0),
+        price=240.0,
+    ),
+    (
+        name=:barley,
+        class=:grain,
+        n=(2.70, 11.0, 2.0, 5.0, 0.06, 0.12, 0.03, 0.33, 0.16, 0.36, 0.30, 19.0),
+        price=210.0,
+    ),
+    (
+        name=:sorghum,
+        class=:grain,
+        n=(3.25, 9.5, 3.0, 2.5, 0.03, 0.08, 0.01, 0.18, 0.14, 0.29, 0.26, 10.0),
+        price=200.0,
+    ),
+    (
+        name=:soybean_meal_48,
+        class=:protein,
+        n=(2.45, 47.5, 1.5, 3.5, 0.30, 0.20, 0.02, 2.65, 0.60, 1.25, 1.65, 9.0),
+        price=430.0,
+    ),
+    (
+        name=:soybean_meal_44,
+        class=:protein,
+        n=(2.25, 44.0, 1.5, 6.0, 0.30, 0.18, 0.02, 2.45, 0.56, 1.17, 1.55, 13.0),
+        price=400.0,
+    ),
+    (
+        name=:canola_meal,
+        class=:protein,
+        n=(2.00, 36.0, 3.5, 11.5, 0.65, 0.40, 0.05, 1.65, 0.62, 1.40, 1.25, 25.0),
+        price=320.0,
+    ),
+    (
+        name=:sunflower_meal,
+        class=:protein,
+        n=(1.90, 34.0, 1.5, 21.0, 0.40, 0.30, 0.10, 1.00, 0.70, 1.20, 1.05, 38.0),
+        price=280.0,
+    ),
+    (
+        name=:peas,
+        class=:protein,
+        n=(2.60, 22.0, 1.2, 6.0, 0.10, 0.20, 0.02, 1.40, 0.18, 0.45, 0.70, 12.0),
+        price=300.0,
+    ),
+    (
+        name=:cottonseed_meal,
+        class=:protein,
+        n=(2.00, 41.0, 1.5, 12.0, 0.20, 0.30, 0.05, 1.30, 0.50, 1.10, 1.05, 28.0),
+        price=300.0,
+    ),
+    (
+        name=:corn_gluten_meal,
+        class=:protein,
+        n=(3.70, 60.0, 2.5, 1.5, 0.05, 0.15, 0.05, 0.85, 1.35, 2.30, 1.80, 9.0),
+        price=650.0,
+    ),
+    (
+        name=:fish_meal,
+        class=:animal,
+        n=(2.95, 64.0, 9.0, 1.0, 4.00, 2.60, 0.80, 4.60, 1.70, 2.20, 2.40, 0.0),
+        price=1500.0,
+    ),
+    (
+        name=:meat_bone_meal,
+        class=:animal,
+        n=(2.30, 50.0, 10.0, 2.5, 10.0, 4.50, 0.75, 2.20, 0.60, 0.95, 1.40, 0.0),
+        price=450.0,
+    ),
+    (
+        name=:ddgs,
+        class=:byproduct,
+        n=(2.80, 27.0, 9.0, 7.5, 0.05, 0.40, 0.20, 0.55, 0.45, 0.85, 0.80, 33.0),
+        price=230.0,
+    ),
+    (
+        name=:wheat_middlings,
+        class=:byproduct,
+        n=(2.20, 16.0, 4.0, 8.0, 0.12, 0.35, 0.03, 0.55, 0.20, 0.45, 0.42, 36.0),
+        price=170.0,
+    ),
+    (
+        name=:wheat_bran,
+        class=:byproduct,
+        n=(1.60, 15.5, 4.0, 11.0, 0.13, 0.40, 0.04, 0.48, 0.18, 0.43, 0.40, 45.0),
+        price=160.0,
+    ),
+    (
+        name=:rice_bran,
+        class=:byproduct,
+        n=(2.60, 13.0, 14.0, 12.0, 0.08, 0.25, 0.03, 0.45, 0.20, 0.40, 0.35, 25.0),
+        price=190.0,
+    ),
+    (
+        name=:palm_kernel_meal,
+        class=:byproduct,
+        n=(1.80, 16.0, 8.0, 16.0, 0.25, 0.30, 0.03, 0.40, 0.25, 0.45, 0.45, 65.0),
+        price=140.0,
+    ),
+    (
+        name=:alfalfa_meal,
+        class=:forage,
+        n=(1.20, 17.0, 2.5, 25.0, 1.40, 0.25, 0.10, 0.60, 0.20, 0.40, 0.55, 45.0),
+        price=250.0,
+    ),
+    (
+        name=:molasses,
+        class=:energy,
+        n=(2.00, 4.0, 0.0, 0.0, 0.80, 0.02, 0.20, 0.0, 0.0, 0.0, 0.0, 0.0),
+        price=180.0,
+    ),
+    (
+        name=:soybean_oil,
+        class=:fat,
+        n=(8.50, 0.0, 99.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        price=1100.0,
+    ),
+    (
+        name=:tallow,
+        class=:fat,
+        n=(7.80, 0.0, 99.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        price=900.0,
+    ),
+    (
+        name=:limestone,
+        class=:mineral,
+        n=(0.0, 0.0, 0.0, 0.0, 38.0, 0.0, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0),
+        price=60.0,
+    ),
+    (
+        name=:dicalcium_phosphate,
+        class=:mineral,
+        n=(0.0, 0.0, 0.0, 0.0, 22.0, 18.0, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0),
+        price=700.0,
+    ),
+    (
+        name=:monocalcium_phosphate,
+        class=:mineral,
+        n=(0.0, 0.0, 0.0, 0.0, 16.0, 21.0, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0),
+        price=800.0,
+    ),
+    (
+        name=:salt,
+        class=:mineral,
+        n=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 39.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        price=120.0,
+    ),
+    (
+        name=:sodium_bicarbonate,
+        class=:mineral,
+        n=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 27.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        price=400.0,
+    ),
+    (
+        name=:lysine_hcl,
+        class=:amino,
+        n=(4.00, 95.0, 0.0, 0.0, 0.0, 0.0, 0.0, 78.0, 0.0, 0.0, 0.0, 0.0),
+        price=1700.0,
+    ),
+    (
+        name=:dl_methionine,
+        class=:amino,
+        n=(5.00, 58.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 99.0, 99.0, 0.0, 0.0),
+        price=3500.0,
+    ),
+    (
+        name=:l_threonine,
+        class=:amino,
+        n=(3.60, 72.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 98.0, 0.0),
+        price=2200.0,
+    ),
+    (
+        name=:urea,
+        class=:npn,
+        n=(0.0, 281.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        price=450.0,
+    ),
+    (
+        name=:premix,
+        class=:premix,
+        n=(0.0, 0.0, 0.0, 0.0, 12.0, 4.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        price=2500.0,
+    ),
+)
+
+# Species groups: maximum inclusion fraction per ingredient class (overridden
+# per ingredient below); 0 excludes the ingredient.
+const _FEED_GROUPS = (:poultry, :swine, :ruminant, :aqua)
+const _FEED_CLASS_LIMIT = Dict(
+    :poultry => Dict(
+        :grain => 0.70,
+        :protein => 0.40,
+        :animal => 0.05,
+        :byproduct => 0.10,
+        :forage => 0.03,
+        :energy => 0.02,
+        :fat => 0.06,
+        :mineral => 0.10,
+        :amino => 0.006,
+        :npn => 0.0,
+        :premix => 0.008,
+    ),
+    :swine => Dict(
+        :grain => 0.80,
+        :protein => 0.35,
+        :animal => 0.05,
+        :byproduct => 0.25,
+        :forage => 0.05,
+        :energy => 0.05,
+        :fat => 0.05,
+        :mineral => 0.03,
+        :amino => 0.006,
+        :npn => 0.0,
+        :premix => 0.008,
+    ),
+    :ruminant => Dict(
+        :grain => 0.60,
+        :protein => 0.30,
+        :animal => 0.0,
+        :byproduct => 0.35,
+        :forage => 0.40,
+        :energy => 0.08,
+        :fat => 0.04,
+        :mineral => 0.03,
+        :amino => 0.0,
+        :npn => 0.012,
+        :premix => 0.015,
+    ),
+    :aqua => Dict(
+        :grain => 0.40,
+        :protein => 0.45,
+        :animal => 0.25,
+        :byproduct => 0.20,
+        :forage => 0.02,
+        :energy => 0.03,
+        :fat => 0.10,
+        :mineral => 0.04,
+        :amino => 0.008,
+        :npn => 0.0,
+        :premix => 0.015,
+    ),
+)
+# Ingredient-specific inclusion caps (anti-nutritional factors, palatability).
+const _FEED_ITEM_LIMIT = Dict(
+    (:poultry, :barley) => 0.15,
+    (:poultry, :canola_meal) => 0.10,
+    (:poultry, :sunflower_meal) => 0.08,
+    (:poultry, :cottonseed_meal) => 0.05,
+    (:poultry, :peas) => 0.15,
+    (:poultry, :corn_gluten_meal) => 0.08,
+    (:poultry, :limestone) => 0.10,
+    (:poultry, :salt) => 0.006,
+    (:poultry, :sodium_bicarbonate) => 0.005,
+    (:poultry, :dicalcium_phosphate) => 0.03,
+    (:poultry, :monocalcium_phosphate) => 0.03,
+    (:swine, :cottonseed_meal) => 0.05,
+    (:swine, :canola_meal) => 0.12,
+    (:swine, :salt) => 0.008,
+    (:swine, :sodium_bicarbonate) => 0.005,
+    (:swine, :limestone) => 0.02,
+    (:ruminant, :cottonseed_meal) => 0.20,
+    (:ruminant, :salt) => 0.012,
+    (:ruminant, :sodium_bicarbonate) => 0.012,
+    (:ruminant, :limestone) => 0.025,
+    (:aqua, :salt) => 0.005,
+    (:aqua, :limestone) => 0.02,
+)
+
+# Formula types: species group and (min, max) spec per nutrient (Inf = none).
+const _FEED_FORMULAS = (
+    (
+        name=:broiler_starter,
+        group=:poultry,
+        spec=(
+            (2.95, 3.10),
+            (21.5, 24.0),
+            (0.0, 7.0),
+            (0.0, 4.0),
+            (0.90, 1.05),
+            (0.45, 0.55),
+            (0.16, 0.23),
+            (1.25, Inf),
+            (0.50, Inf),
+            (0.92, Inf),
+            (0.83, Inf),
+            (0.0, 15.0),
+        ),
+        ca_p=(1.8, 2.3),
+    ),
+    (
+        name=:broiler_grower,
+        group=:poultry,
+        spec=(
+            (3.05, 3.20),
+            (19.5, 22.0),
+            (0.0, 8.0),
+            (0.0, 4.5),
+            (0.80, 0.95),
+            (0.40, 0.50),
+            (0.16, 0.23),
+            (1.12, Inf),
+            (0.46, Inf),
+            (0.86, Inf),
+            (0.75, Inf),
+            (0.0, 16.0),
+        ),
+        ca_p=(1.8, 2.3),
+    ),
+    (
+        name=:broiler_finisher,
+        group=:poultry,
+        spec=(
+            (3.10, 3.25),
+            (18.0, 20.5),
+            (0.0, 9.0),
+            (0.0, 5.0),
+            (0.72, 0.88),
+            (0.36, 0.46),
+            (0.15, 0.23),
+            (1.00, Inf),
+            (0.42, Inf),
+            (0.78, Inf),
+            (0.68, Inf),
+            (0.0, 17.0),
+        ),
+        ca_p=(1.8, 2.4),
+    ),
+    (
+        name=:layer,
+        group=:poultry,
+        spec=(
+            (2.70, 2.90),
+            (16.0, 18.5),
+            (0.0, 7.0),
+            (0.0, 6.0),
+            (3.6, 4.3),
+            (0.38, 0.48),
+            (0.15, 0.22),
+            (0.78, Inf),
+            (0.38, Inf),
+            (0.68, Inf),
+            (0.55, Inf),
+            (0.0, 18.0),
+        ),
+        ca_p=(8.0, 11.0),
+    ),
+    (
+        name=:swine_starter,
+        group=:swine,
+        spec=(
+            (3.10, 3.35),
+            (20.0, 23.0),
+            (0.0, 8.0),
+            (0.0, 3.5),
+            (0.70, 0.90),
+            (0.40, 0.50),
+            (0.20, 0.35),
+            (1.35, Inf),
+            (0.39, Inf),
+            (0.74, Inf),
+            (0.79, Inf),
+            (0.0, 14.0),
+        ),
+        ca_p=(1.5, 2.0),
+    ),
+    (
+        name=:swine_grower,
+        group=:swine,
+        spec=(
+            (3.05, 3.30),
+            (16.0, 19.0),
+            (0.0, 8.0),
+            (0.0, 5.0),
+            (0.60, 0.75),
+            (0.26, 0.36),
+            (0.10, 0.25),
+            (0.98, Inf),
+            (0.28, Inf),
+            (0.56, Inf),
+            (0.60, Inf),
+            (0.0, 20.0),
+        ),
+        ca_p=(1.6, 2.3),
+    ),
+    (
+        name=:swine_finisher,
+        group=:swine,
+        spec=(
+            (3.00, 3.30),
+            (13.5, 16.5),
+            (0.0, 8.0),
+            (0.0, 6.0),
+            (0.50, 0.70),
+            (0.20, 0.30),
+            (0.10, 0.25),
+            (0.73, Inf),
+            (0.21, Inf),
+            (0.44, Inf),
+            (0.48, Inf),
+            (0.0, 22.0),
+        ),
+        ca_p=(1.7, 2.6),
+    ),
+    (
+        name=:dairy_concentrate,
+        group=:ruminant,
+        spec=(
+            (2.50, 2.90),
+            (18.0, 24.0),
+            (0.0, 6.0),
+            (6.0, 14.0),
+            (0.80, 1.40),
+            (0.40, 0.70),
+            (0.25, 0.60),
+            (0.0, Inf),
+            (0.0, Inf),
+            (0.0, Inf),
+            (0.0, Inf),
+            (20.0, 40.0),
+        ),
+        ca_p=(1.4, 2.6),
+    ),
+    (
+        name=:beef_finisher,
+        group=:ruminant,
+        spec=(
+            (2.70, 3.10),
+            (12.0, 15.0),
+            (0.0, 6.0),
+            (3.0, 10.0),
+            (0.50, 0.90),
+            (0.25, 0.50),
+            (0.10, 0.40),
+            (0.0, Inf),
+            (0.0, Inf),
+            (0.0, Inf),
+            (0.0, Inf),
+            (12.0, 30.0),
+        ),
+        ca_p=(1.5, 2.8),
+    ),
+    (
+        name=:aqua_grower,
+        group=:aqua,
+        spec=(
+            (2.80, 3.30),
+            (30.0, 36.0),
+            (4.0, 10.0),
+            (0.0, 6.0),
+            (0.60, 1.50),
+            (0.60, 1.00),
+            (0.10, 0.50),
+            (1.50, Inf),
+            (0.60, Inf),
+            (0.90, Inf),
+            (1.10, Inf),
+            (0.0, 20.0),
+        ),
+        ca_p=(0.8, 2.2),
+    ),
+)
+
+# Reference recipe per species group: (ingredient class => fraction), mapped
+# onto the stocked ingredients of each class.
+const _FEED_TEMPLATE = Dict(
+    :poultry => (
+        :grain => 0.58,
+        :protein => 0.31,
+        :byproduct => 0.03,
+        :fat => 0.035,
+        :mineral => 0.035,
+        :amino => 0.005,
+        :premix => 0.005,
+    ),
+    :swine => (
+        :grain => 0.68,
+        :protein => 0.20,
+        :byproduct => 0.08,
+        :fat => 0.01,
+        :mineral => 0.022,
+        :amino => 0.003,
+        :premix => 0.005,
+    ),
+    :ruminant => (
+        :grain => 0.42,
+        :byproduct => 0.25,
+        :protein => 0.15,
+        :forage => 0.10,
+        :energy => 0.04,
+        :mineral => 0.025,
+        :npn => 0.005,
+        :premix => 0.01,
+    ),
+    :aqua => (
+        :protein => 0.38,
+        :animal => 0.12,
+        :grain => 0.25,
+        :byproduct => 0.12,
+        :fat => 0.07,
+        :mineral => 0.03,
+        :amino => 0.004,
+        :premix => 0.01,
+    ),
+)
+
+"""Ingredients every mill stocks (they alone can fill any species' batch)."""
+const _FEED_STAPLES = (
+    :corn, :soybean_meal_48, :limestone, :dicalcium_phosphate, :salt, :premix, :soybean_oil
+)
 
 """
-Broad economic role of an ingredient in a generated feed recipe.
-"""
-@enum FeedIngredientKind begin
-    feed_energy_source
-    feed_protein_source
-    feed_mineral_supplement
-    feed_specialty_additive
-end
+Reason a requested-infeasible feed instance has no feasible formulation.
 
-"""
-Nutritional role and scale of a generated quality metric.
-"""
-@enum FeedNutrientKind begin
-    feed_major_nutrient
-    feed_mineral
-    feed_trace_nutrient
-    feed_restricted_compound
-end
-
-"""
-Direction of an average-content constraint.
-"""
-@enum FeedRatioSense begin
-    feed_ratio_minimum
-    feed_ratio_maximum
-end
-
-"""
-    FeedRatioConstraint
-
-A typed average-content bound. `target` has the same concentration unit as row
-`nutrient` of `nutrient_content`; `sense` determines whether it is a lower or
-upper bound. Keeping the direction separate from diagnostic labels prevents a
-maximum certificate such as "below achievable minimum" from being parsed as a
-minimum constraint.
-"""
-struct FeedRatioConstraint
-    nutrient::Int
-    target::Float64
-    sense::FeedRatioSense
-end
-
-"""
-Structural reason that a requested-infeasible blend has no feasible recipe.
+  - `feed_nutrient_unreachable`: one formula's minimum for one nutrient exceeds
+    the most any recipe filling its batch can contain within the inclusion
+    limits, mill stock and supplier contracts (an exact fractional knapsack over
+    the batch equality).
+  - `feed_mill_short`: one mill's batches need more tonnage than all the
+    ingredients it may use can supply.
 """
 @enum FeedInfeasibilityKind begin
-    feed_minimum_ratio_above_achievable_maximum
-    feed_maximum_ratio_below_achievable_minimum
-    feed_minimum_nutrient_above_achievable_maximum
-    feed_insufficient_ingredient_capacity
+    feed_nutrient_unreachable
+    feed_mill_short
 end
 
 """
     FeedInfeasibilityCertificate
 
-Solver-independent certificate stored on requested-infeasible instances.
-`achievable_bound` and `required_bound` are average concentrations for ratio
-certificates, total nutrient amounts for a nutrient-minimum certificate, and
-ingredient mass for an availability certificate. `nutrient == 0` and
-`ratio_constraint == 0` mean that the corresponding index is not applicable.
+LP-row proof for `FeedBlendingProblem`. `formula` and `nutrient` locate a
+`feed_nutrient_unreachable` proof, `mill` a `feed_mill_short` one (unused
+fields 0). `achievable < required` by at least 5%.
 """
 struct FeedInfeasibilityCertificate
     kind::FeedInfeasibilityKind
+    formula::Int
     nutrient::Int
-    ratio_constraint::Int
-    achievable_bound::Float64
-    required_bound::Float64
+    mill::Int
+    achievable::Float64
+    required::Float64
 end
-
-const _FEED_INGREDIENT_KINDS = (
-    feed_energy_source, feed_protein_source, feed_mineral_supplement, feed_specialty_additive
-)
-
-const _FEED_NUTRIENT_KINDS = (
-    feed_major_nutrient, feed_mineral, feed_trace_nutrient, feed_restricted_compound
-)
-
-# Rows are nutrient kinds and columns are ingredient kinds. The values describe
-# typical concentration medians and occurrence probabilities. This creates the
-# expected economic/nutritional correlations: protein ingredients are rich in
-# major nutrients, mineral supplements carry concentrated minerals, and specialty
-# additives are more likely to contain trace or restricted compounds.
-const _FEED_CONTENT_MEDIAN = [
-    14.0 32.0 5.0 2.0
-    0.6 1.1 7.0 1.8
-    0.03 0.08 0.8 0.35
-    1.5 2.5 0.8 4.5
-]
-
-const _FEED_CONTENT_PROBABILITY = [
-    1.00 1.00 1.00 1.00
-    0.75 0.85 0.98 0.90
-    0.25 0.45 0.98 0.85
-    0.55 0.65 0.40 0.90
-]
-
-const _FEED_CONTENT_MAXIMUM = (55.0, 15.0, 3.0, 20.0)
-const _FEED_COST_MEDIAN = (0.28, 0.48, 0.95, 2.40)
-const _FEED_COST_LOG_SIGMA = (0.28, 0.32, 0.38, 0.50)
 
 """
     FeedBlendingProblem <: ProblemGenerator
 
-Continuous least-cost feed formulation with a fixed batch mass, ingredient
-availability, nutrient floors/caps, and typed average-content bounds.
+Least-cost feed formulation for a network of feed mills: every mill produces a
+book of formulas (species and growth phase: broiler, layer, swine, dairy, beef,
+aquaculture) in fixed batch tonnages from the ingredients it stocks, and mills
+draw on shared supplier contracts.
 
-The generator distinguishes four realistic ingredient roles and four nutrient
-roles. Requested-feasible instances store a recipe that satisfies every row.
-Requested-infeasible instances start from the same feasible baseline and then
-store one checkable structural certificate. Unknown instances draw individually
-reasonable requirements without claiming a joint feasibility outcome.
+# Formulation
+
+Variables `x[k] ∈ [0, inclusion_cap[k]]` tonnes of ingredient lot `i` in formula
+`f` for every allowed pair `k = (i, f)` (species exclusions — no animal protein
+for ruminants, urea only for ruminants — and the mill's stock list decide which
+pairs exist; anti-nutritional and palatability limits are the inclusion caps,
+and premix has a minimum inclusion as a lower bound). Minimize ingredient cost.
+Rows per formula, with batch tonnage `D_f`:
+
+  - batch `Σ_i x[i,f] = D_f`;
+  - nutrient specifications in absolute form, `Σ_i a[j,i] x[i,f] ≥ lo[j,f] D_f`
+    and `≤ hi[j,f] D_f` (sparse: only ingredients carrying `j`; a maximum is
+    written only if some ingredient exceeds it);
+  - the calcium : available-phosphorus ratio band, homogeneous with mixed
+    signs: `Σ_i (Ca_i − r_hi P_i) x ≤ 0`, `Σ_i (Ca_i − r_lo P_i) x ≥ 0`.
+
+Coupling rows: mill stock `Σ_{f at m} x[i,f] ≤ stock[i]` for every lot at the
+mill, and supplier contracts `Σ_{lots of s} … ≤ contract[s]` shared by the
+mills buying from supplier `s`. Ingredient lots are catalog ingredients from a
+supplier, with lot-to-lot quality scatter.
+
+# Sizing
+
+Mills `≈ target / 2500` (1–40). Formulas are added round-robin over the mills
+until the number of allowed pairs reaches the target; the last formula drops
+optional (non-staple) lots so the count lands within a few pairs of it.
+
+# Feasibility
+
+  - `feasible`: each formula gets its species' reference recipe mapped onto
+    the stocked ingredients and clipped to the inclusion caps; specifications
+    are the reference ones, relaxed only where that recipe falls outside; stock
+    and contracts are 1.02–1.30× its use. Stored as `feasible_witness`.
+  - `infeasible`: one mutation with a `FeedInfeasibilityCertificate` — a
+    customer specification above a formula's reachable maximum (default) or a
+    mill's stock below its batch book. Neither is visible to a single row.
+  - `unknown`: reference specifications with noise, stock and contracts drawn
+    around the reference recipes' use.
 """
 struct FeedBlendingProblem <: ProblemGenerator
-    num_ingredients::Int
-    num_nutrients::Int
-    batch_size::Float64
-    ingredient_types::Vector{FeedIngredientKind}
-    costs::Vector{Float64}
-    nutrient_content::Matrix{Float64}
-    nutrient_types::Vector{FeedNutrientKind}
-    min_requirements::Vector{Float64}
-    max_limits::Vector{Float64}
-    availabilities::Vector{Float64}
-    ratio_constraints::Vector{FeedRatioConstraint}
+    n_mills::Int
+    lot_ingredient::Vector{Int}
+    lot_supplier::Vector{Int}
+    lot_mill::Vector{Int}
+    content::Matrix{Float64}
+    cost::Vector{Float64}
+    formula_type::Vector{Int}
+    formula_mill::Vector{Int}
+    batch::Vector{Float64}
+    pairs::Vector{Tuple{Int, Int}}
+    formula_pairs::Vector{UnitRange{Int}}
+    lower::Vector{Float64}
+    upper::Vector{Float64}
+    spec_lo::Matrix{Float64}
+    spec_hi::Matrix{Float64}
+    ratio_band::Matrix{Float64}
+    stock::Vector{Float64}
+    contract::Vector{Float64}
     feasible_witness::Union{Nothing, Vector{Float64}}
     infeasibility_certificate::Union{Nothing, FeedInfeasibilityCertificate}
-    requested_status::FeasibilityStatus
+    feasibility_status::FeasibilityStatus
 end
 
-function _feed_sample_kinds(rng::AbstractRNG, kinds::Tuple, count::Int)
-    result = Vector{typeof(first(kinds))}(undef, count)
-    guaranteed = min(count, length(kinds))
-    for i in 1:guaranteed
-        result[i] = kinds[i]
-    end
-    for i in (guaranteed + 1):count
-        result[i] = kinds[rand(rng, 1:length(kinds))]
-    end
-    shuffle!(rng, result)
-    return result
+function _feed_inclusion_cap(group::Symbol, ingredient::Int)
+    spec = _FEED_INGREDIENTS[ingredient]
+    cap = _FEED_CLASS_LIMIT[group][spec.class]
+    return min(cap, get(_FEED_ITEM_LIMIT, (group, spec.name), cap))
 end
 
-function _feed_sample_content(
-    rng::AbstractRNG, nutrient_kind::FeedNutrientKind, ingredient_kind::FeedIngredientKind
+"""
+    _feed_sample_lots(rng, n_mills, n_suppliers)
+
+Ingredient lots: each catalog ingredient is offered by 1–3 suppliers with
+their own quality scatter and price; each mill stocks most ingredients from one
+of those suppliers. Returns per-lot ingredient, supplier, mill, content, cost.
+"""
+function _feed_sample_lots(rng::AbstractRNG, n_mills::Int)
+    n_items = length(_FEED_INGREDIENTS)
+    offers = [rand(rng, 1:3) for _ in 1:n_items]
+    supplier_quality = [
+        [rand(rng, LogNormal(0.0, 0.04), length(FEED_NUTRIENTS)) for _ in 1:offers[c]] for
+        c in 1:n_items
+    ]
+    supplier_price = [[rand(rng, LogNormal(0.0, 0.06)) for _ in 1:offers[c]] for c in 1:n_items]
+    supplier_offset = cumsum(vcat(0, offers[1:(end - 1)]))
+    ingredient = Int[]
+    supplier = Int[]
+    mill = Int[]
+    content = Vector{Float64}[]
+    cost = Float64[]
+    for m in 1:n_mills, c in 1:n_items
+        # Core ingredients are always stocked; the rest with probability 0.75.
+        core = _FEED_INGREDIENTS[c].name in _FEED_STAPLES
+        core || rand(rng) < 0.75 || continue
+        s = rand(rng, 1:offers[c])
+        push!(ingredient, c)
+        push!(supplier, supplier_offset[c] + s)
+        push!(mill, m)
+        base = collect(_FEED_INGREDIENTS[c].n)
+        push!(
+            content,
+            round.(
+                base .* supplier_quality[c][s] .* rand(rng, LogNormal(0.0, 0.02), length(base));
+                sigdigits=3,
+            ),
+        )
+        push!(
+            cost,
+            _FEED_INGREDIENTS[c].price * supplier_price[c][s] * rand(rng, LogNormal(0.0, 0.03)),
+        )
+    end
+    return ingredient, supplier, mill, reduce(hcat, content), cost, sum(offers)
+end
+
+"""
+    _feed_reference_recipe(rng, group, lots, ingredient, caps)
+
+The species' reference recipe mapped onto the allowed lots of one formula:
+each template class share is split over 1–2 random lots of that class, clipped
+to the inclusion caps, and the clipped mass is redistributed over lots with
+remaining headroom (grains first). Returns fractions summing to 1.
+"""
+function _feed_reference_recipe(
+    rng::AbstractRNG, group::Symbol, lots::Vector{Int}, ingredient, caps::Vector{Float64}
 )
-    j = Int(nutrient_kind) + 1
-    i = Int(ingredient_kind) + 1
-    rand(rng) <= _FEED_CONTENT_PROBABILITY[j, i] || return 0.0
-    median = _FEED_CONTENT_MEDIAN[j, i]
-    concentration = rand(rng, LogNormal(log(median), 0.35))
-    return min(concentration, _FEED_CONTENT_MAXIMUM[j])
-end
-
-function _feed_effective_capacity_sum(availabilities::AbstractVector{<:Real}, batch_size::Real)
-    return sum(
-        if isfinite(capacity)
-            clamp(Float64(capacity), 0.0, Float64(batch_size))
+    frac = zeros(Float64, length(lots))
+    by_class = Dict{Symbol, Vector{Int}}()
+    for (j, l) in enumerate(lots)
+        push!(get!(by_class, _FEED_INGREDIENTS[ingredient[l]].class, Int[]), j)
+    end
+    for (class, share) in _FEED_TEMPLATE[group]
+        members = get(by_class, class, Int[])
+        isempty(members) && continue
+        if class == :mineral
+            # Limestone, phosphate and salt each get a part of the mineral share.
+            w = rand(rng, Dirichlet(fill(2.0, length(members))))
+            frac[members] .+= share .* w
+            continue
+        end
+        k = min(length(members), rand(rng, 1:2))
+        chosen = sample(rng, members, k; replace=false)
+        w = k == 1 ? [1.0] : rand(rng, Dirichlet([2.0, 2.0]))
+        frac[chosen] .+= share .* w .* rand(rng, Uniform(0.85, 1.15))
+    end
+    for _ in 1:50
+        frac .= min.(frac, 0.98 .* caps)
+        missing_mass = 1.0 - sum(frac)
+        abs(missing_mass) < 1e-12 && break
+        if missing_mass > 0
+            room = [max(0.0, 0.98 * caps[j] - frac[j]) for j in eachindex(frac)]
+            grains = [
+                j for j in eachindex(frac) if
+                _FEED_INGREDIENTS[ingredient[lots[j]]].class in (:grain, :byproduct, :protein)
+            ]
+            pool = sum(room[grains]; init=0.0) > 0 ? grains : collect(eachindex(frac))
+            total_room = sum(room[pool])
+            total_room <= 0 && break
+            frac[pool] .+= room[pool] .* min(1.0, missing_mass / total_room)
         else
-            Float64(batch_size)
-        end for capacity in availabilities
-    )
+            frac .*= 1.0 / sum(frac)
+        end
+    end
+    abs(sum(frac) - 1.0) <= 1e-9 ||
+        throw(ArgumentError("inclusion caps cannot fill a $(group) batch"))
+    return frac ./ sum(frac)
+end
+
+function _feed_profile(
+    content::Matrix{Float64}, lots::AbstractVector{Int}, frac::AbstractVector{<:Real}
+)
+    return [
+        sum(content[n, lots[j]] * frac[j] for j in eachindex(lots)) for
+        n in eachindex(FEED_NUTRIENTS)
+    ]
 end
 
 """
-Exact minimum or maximum attainable average of one nutrient under only the
-batch equality and ingredient availability bounds. Sorting coefficients and
-filling capacity greedily solves this one-row continuous knapsack exactly.
+    _feed_knapsack_max(values, caps, batch)
+
+Exact `max Σ v_i x_i s.t. Σ x_i = batch, 0 ≤ x_i ≤ caps_i` (fill the richest
+first); `-Inf` if the caps cannot fill the batch.
 """
-function _feed_achievable_average(
-    nutrient_content::AbstractMatrix{<:Real},
-    availabilities::AbstractVector{<:Real},
-    batch_size::Real,
-    nutrient::Int;
-    maximize::Bool,
-)
-    batch = Float64(batch_size)
-    order = sortperm(view(nutrient_content, nutrient, :); rev=maximize)
-    remaining = batch
+function _feed_knapsack_max(values::AbstractVector, caps::AbstractVector, batch::Real)
+    remaining = Float64(batch)
     total = 0.0
-    for ingredient in order
-        remaining <= 1e-10 * max(1.0, batch) && break
-        raw_capacity = availabilities[ingredient]
-        capacity = isfinite(raw_capacity) ? clamp(Float64(raw_capacity), 0.0, batch) : batch
-        amount = min(capacity, remaining)
-        total += nutrient_content[nutrient, ingredient] * amount
+    for j in sortperm(values; rev=true)
+        remaining <= 0 && break
+        amount = min(Float64(caps[j]), remaining)
+        total += values[j] * amount
         remaining -= amount
     end
-    remaining <= 1e-8 * max(1.0, batch) ||
-        throw(ArgumentError("ingredient availability cannot fill the requested batch"))
-    return total / batch
+    return remaining <= 1e-9 * max(1.0, batch) ? total : -Inf
 end
 
-function _feed_reference_recipe(
-    rng::AbstractRNG, costs::Vector{Float64}, availabilities::Vector{Float64}, batch_size::Float64
-)
-    n = length(costs)
-    recipe = batch_size .* rand(rng, Dirichlet(fill(1.0, n)))
-    for i in 1:n
-        isfinite(availabilities[i]) && (recipe[i] = min(recipe[i], max(availabilities[i], 0.0)))
-    end
-
-    remaining = batch_size - sum(recipe)
-    # Draw one jitter per ingredient up front. `sortperm(...; by=f)` evaluates
-    # `f` inside the comparator, so sampling there would redraw an ingredient's
-    # key on every comparison (an inconsistent ordering) and make the number of
-    # RNG draws depend on Base's sorting algorithm, breaking seed reproducibility
-    # across Julia versions.
-    jittered_costs = [costs[i] * rand(rng, Uniform(0.85, 1.15)) for i in 1:n]
-    priority = sortperm(jittered_costs)
-    for i in priority
-        remaining <= 1e-10 * max(1.0, batch_size) && break
-        capacity = isfinite(availabilities[i]) ? max(availabilities[i] - recipe[i], 0.0) : remaining
-        addition = min(capacity, remaining)
-        recipe[i] += addition
-        remaining -= addition
-    end
-    remaining <= 1e-8 * max(1.0, batch_size) ||
-        throw(ArgumentError("failed to construct a full feed recipe"))
-    return recipe
-end
-
-function _feed_ratio_average(
-    nutrient_content::AbstractMatrix{<:Real},
-    recipe::AbstractVector{<:Real},
-    batch_size::Real,
-    nutrient::Int,
-)
-    return sum(nutrient_content[nutrient, i] * recipe[i] for i in eachindex(recipe)) / batch_size
+# Effective per-pair upper bound for certificate arithmetic: inclusion cap,
+# the lot's mill stock and its supplier contract.
+function _feed_pair_caps(prob_upper, stock, contract, lot_supplier, pairs, ks)
+    return [min(prob_upper[k], stock[pairs[k][1]], contract[lot_supplier[pairs[k][1]]]) for k in ks]
 end
 
 """
-    feed_recipe_satisfies(prob, recipe=prob.feasible_witness; atol=1e-8)
+    feed_formulation_satisfies(prob, x=prob.feasible_witness; atol=1e-7)
 
-Check a recipe directly against all generated data and formulation rows. This is
-solver-independent and is primarily useful for validating `feasible_witness`.
+Check a formulation (tonnes per pair) against every bound and row.
 """
-function feed_recipe_satisfies(
+function feed_formulation_satisfies(
     prob::FeedBlendingProblem,
-    recipe::Union{Nothing, AbstractVector{<:Real}}=prob.feasible_witness;
-    atol::Float64=1e-8,
+    x::Union{Nothing, AbstractVector{<:Real}}=prob.feasible_witness;
+    atol::Float64=1e-7,
 )
-    recipe === nothing && return false
-    length(recipe) == prob.num_ingredients || return false
-    mass_tolerance = atol * max(1.0, prob.batch_size)
-    all(amount -> amount >= -mass_tolerance, recipe) || return false
-    abs(sum(recipe) - prob.batch_size) <= mass_tolerance || return false
-
-    for i in 1:prob.num_ingredients
-        if isfinite(prob.availabilities[i]) && recipe[i] > prob.availabilities[i] + mass_tolerance
+    x === nothing && return false
+    length(x) == length(prob.pairs) || return false
+    tol(v) = atol * max(1.0, abs(v))
+    for k in eachindex(x)
+        prob.lower[k] - tol(prob.lower[k]) <= x[k] <= prob.upper[k] + tol(prob.upper[k]) ||
             return false
-        end
     end
-
-    for j in 1:prob.num_nutrients
-        total = sum(prob.nutrient_content[j, i] * recipe[i] for i in 1:prob.num_ingredients)
-        row_tolerance = atol * max(1.0, abs(total), prob.batch_size)
-        total + row_tolerance >= prob.min_requirements[j] || return false
-        if isfinite(prob.max_limits[j])
-            total <= prob.max_limits[j] + row_tolerance || return false
+    for (f, ks) in enumerate(prob.formula_pairs)
+        D = prob.batch[f]
+        abs(sum(x[k] for k in ks) - D) <= tol(D) || return false
+        lots = [prob.pairs[k][1] for k in ks]
+        amounts = [x[k] for k in ks]
+        for n in eachindex(FEED_NUTRIENTS)
+            total = sum(prob.content[n, lots[j]] * amounts[j] for j in eachindex(lots))
+            total + tol(D) >= prob.spec_lo[n, f] * D || return false
+            isfinite(prob.spec_hi[n, f]) &&
+                (total <= prob.spec_hi[n, f] * D + tol(D) || return false)
         end
+        ca = sum(prob.content[_FEED_CA, lots[j]] * amounts[j] for j in eachindex(lots))
+        p = sum(prob.content[_FEED_AVP, lots[j]] * amounts[j] for j in eachindex(lots))
+        ca + tol(D) >= prob.ratio_band[1, f] * p || return false
+        ca <= prob.ratio_band[2, f] * p + tol(D) || return false
     end
-
-    for constraint in prob.ratio_constraints
-        average = _feed_ratio_average(
-            prob.nutrient_content, recipe, prob.batch_size, constraint.nutrient
-        )
-        ratio_tolerance = atol * max(1.0, abs(average), abs(constraint.target))
-        if constraint.sense == feed_ratio_minimum
-            average + ratio_tolerance >= constraint.target || return false
-        elseif constraint.sense == feed_ratio_maximum
-            average <= constraint.target + ratio_tolerance || return false
-        else
-            return false
-        end
+    used = zeros(Float64, length(prob.stock))
+    for (k, (l, _)) in enumerate(prob.pairs)
+        used[l] += x[k]
     end
+    all(l -> used[l] <= prob.stock[l] + tol(used[l]), eachindex(used)) || return false
+    by_supplier = zeros(Float64, length(prob.contract))
+    for l in eachindex(used)
+        by_supplier[prob.lot_supplier[l]] += used[l]
+    end
+    all(s -> by_supplier[s] <= prob.contract[s] + tol(by_supplier[s]), eachindex(by_supplier)) ||
+        return false
     return true
 end
 
-"""
-    feed_infeasibility_certificate_holds(prob; atol=1e-8)
+# Per-lot tonnage a mill's formulas can draw: the smaller of its stock, its
+# supplier contract and the summed inclusion caps of the formulas using it.
+function _feed_mill_lot_caps(stock, contract, lot_supplier, upper, pairs, formula_pairs, formulas)
+    caps = Dict{Int, Float64}()
+    for f in formulas, k in formula_pairs[f]
+        caps[pairs[k][1]] = get(caps, pairs[k][1], 0.0) + upper[k]
+    end
+    lots = sort!(collect(keys(caps)))
+    return lots, [min(stock[l], contract[lot_supplier[l]], caps[l]) for l in lots]
+end
 
-Recompute and validate the structural contradiction recorded on a requested-
-infeasible feed blend. No optimization solver is used.
-"""
-function feed_infeasibility_certificate_holds(prob::FeedBlendingProblem; atol::Float64=1e-8)
-    certificate = prob.infeasibility_certificate
-    certificate === nothing && return false
+function _feed_mill_capacity(stock, contract, lot_supplier, upper, pairs, formula_pairs, formulas)
+    _, effective = _feed_mill_lot_caps(
+        stock, contract, lot_supplier, upper, pairs, formula_pairs, formulas
+    )
+    return sum(effective)
+end
 
-    if certificate.kind == feed_insufficient_ingredient_capacity
-        certificate.nutrient == 0 || return false
-        certificate.ratio_constraint == 0 || return false
-        achievable = _feed_effective_capacity_sum(prob.availabilities, prob.batch_size)
-        required = prob.batch_size
-    elseif certificate.kind == feed_minimum_nutrient_above_achievable_maximum
-        1 <= certificate.nutrient <= prob.num_nutrients || return false
-        certificate.ratio_constraint == 0 || return false
-        achievable =
-            prob.batch_size * _feed_achievable_average(
-                prob.nutrient_content,
-                prob.availabilities,
-                prob.batch_size,
-                certificate.nutrient;
-                maximize=true,
-            )
-        required = prob.min_requirements[certificate.nutrient]
+"""
+    feed_certificate_holds(prob::FeedBlendingProblem)
+
+Recompute the stored certificate from the data and check `achievable < required`.
+"""
+function feed_certificate_holds(prob::FeedBlendingProblem)
+    cert = prob.infeasibility_certificate
+    cert === nothing && return false
+    if cert.kind == feed_nutrient_unreachable
+        1 <= cert.formula <= length(prob.batch) || return false
+        ks = prob.formula_pairs[cert.formula]
+        caps = _feed_pair_caps(
+            prob.upper, prob.stock, prob.contract, prob.lot_supplier, prob.pairs, ks
+        )
+        values = [prob.content[cert.nutrient, prob.pairs[k][1]] for k in ks]
+        achievable = _feed_knapsack_max(values, caps, prob.batch[cert.formula])
+        required = prob.spec_lo[cert.nutrient, cert.formula] * prob.batch[cert.formula]
     else
-        1 <= certificate.ratio_constraint <= length(prob.ratio_constraints) || return false
-        constraint = prob.ratio_constraints[certificate.ratio_constraint]
-        constraint.nutrient == certificate.nutrient || return false
-        if certificate.kind == feed_minimum_ratio_above_achievable_maximum
-            constraint.sense == feed_ratio_minimum || return false
-            achievable = _feed_achievable_average(
-                prob.nutrient_content,
-                prob.availabilities,
-                prob.batch_size,
-                certificate.nutrient;
-                maximize=true,
-            )
-        elseif certificate.kind == feed_maximum_ratio_below_achievable_minimum
-            constraint.sense == feed_ratio_maximum || return false
-            achievable = _feed_achievable_average(
-                prob.nutrient_content,
-                prob.availabilities,
-                prob.batch_size,
-                certificate.nutrient;
-                maximize=false,
-            )
-        else
-            return false
-        end
-        required = constraint.target
+        1 <= cert.mill <= prob.n_mills || return false
+        formulas = findall(==(cert.mill), prob.formula_mill)
+        achievable = _feed_mill_capacity(
+            prob.stock,
+            prob.contract,
+            prob.lot_supplier,
+            prob.upper,
+            prob.pairs,
+            prob.formula_pairs,
+            formulas,
+        )
+        required = sum(prob.batch[f] for f in formulas)
     end
-
-    comparison_scale = max(1.0, abs(achievable), abs(required))
-    metadata_matches =
-        isapprox(certificate.achievable_bound, achievable; atol=atol, rtol=1e-10) &&
-        isapprox(certificate.required_bound, required; atol=atol, rtol=1e-10)
-    metadata_matches || return false
-
-    if certificate.kind == feed_maximum_ratio_below_achievable_minimum
-        return required + atol * comparison_scale < achievable
-    end
-    return achievable + atol * comparison_scale < required
-end
-
-function _feed_set_witness_constraints!(
-    rng::AbstractRNG,
-    min_requirements::Vector{Float64},
-    max_limits::Vector{Float64},
-    nutrient_content::Matrix{Float64},
-    nutrient_types::Vector{FeedNutrientKind},
-    availabilities::Vector{Float64},
-    batch_size::Float64,
-    recipe::Vector{Float64},
-)
-    for j in eachindex(nutrient_types)
-        kind = nutrient_types[j]
-        witness_average = _feed_ratio_average(nutrient_content, recipe, batch_size, j)
-        minimum_average = _feed_achievable_average(
-            nutrient_content, availabilities, batch_size, j; maximize=false
-        )
-        maximum_average = _feed_achievable_average(
-            nutrient_content, availabilities, batch_size, j; maximize=true
-        )
-
-        minimum_probability = if kind == feed_major_nutrient
-            0.95
-        elseif kind == feed_mineral
-            0.78
-        elseif kind == feed_trace_nutrient
-            0.55
-        else
-            0.10
-        end
-        maximum_probability = if kind == feed_restricted_compound
-            0.92
-        elseif kind == feed_major_nutrient
-            0.22
-        else
-            0.18
-        end
-
-        if rand(rng) < minimum_probability && witness_average > 0.0
-            q = rand(rng, Uniform(0.50, 0.88))
-            target = minimum_average + q * (witness_average - minimum_average)
-            target = min(target, witness_average * rand(rng, Uniform(0.94, 0.99)))
-            min_requirements[j] = max(0.0, target) * batch_size
-        end
-        if rand(rng) < maximum_probability
-            q = rand(rng, Uniform(0.18, 0.55))
-            target = witness_average + q * (maximum_average - witness_average)
-            target = max(target, witness_average * rand(rng, Uniform(1.01, 1.08)))
-            max_limits[j] = target * batch_size
-        end
-    end
-    return nothing
-end
-
-function _feed_set_unknown_constraints!(
-    rng::AbstractRNG,
-    min_requirements::Vector{Float64},
-    max_limits::Vector{Float64},
-    nutrient_content::Matrix{Float64},
-    nutrient_types::Vector{FeedNutrientKind},
-    availabilities::Vector{Float64},
-    batch_size::Float64,
-)
-    for j in eachindex(nutrient_types)
-        kind = nutrient_types[j]
-        minimum_average = _feed_achievable_average(
-            nutrient_content, availabilities, batch_size, j; maximize=false
-        )
-        maximum_average = _feed_achievable_average(
-            nutrient_content, availabilities, batch_size, j; maximize=true
-        )
-        width = maximum_average - minimum_average
-        minimum_probability = if kind == feed_major_nutrient
-            0.90
-        elseif kind == feed_mineral
-            0.65
-        elseif kind == feed_trace_nutrient
-            0.42
-        else
-            0.08
-        end
-        maximum_probability = kind == feed_restricted_compound ? 0.85 : 0.18
-        if rand(rng) < minimum_probability
-            min_requirements[j] =
-                (minimum_average + rand(rng, Uniform(0.15, 0.58)) * width) * batch_size
-        end
-        if rand(rng) < maximum_probability
-            max_limits[j] = (minimum_average + rand(rng, Uniform(0.65, 0.95)) * width) * batch_size
-        end
-        if isfinite(max_limits[j]) && min_requirements[j] > max_limits[j]
-            min_requirements[j], max_limits[j] = 0.95 * max_limits[j], 1.05 * min_requirements[j]
-        end
-    end
-    return nothing
-end
-
-function _feed_add_ratio_constraints!(
-    rng::AbstractRNG,
-    constraints::Vector{FeedRatioConstraint},
-    nutrient_content::Matrix{Float64},
-    nutrient_types::Vector{FeedNutrientKind},
-    availabilities::Vector{Float64},
-    batch_size::Float64,
-    reference_recipe::Union{Nothing, Vector{Float64}},
-)
-    rand(rng) < 0.68 || return nothing
-    n_nutrients = length(nutrient_types)
-    count = rand(rng, 1:min(4, max(1, ceil(Int, 0.3 * n_nutrients))))
-    selected = randperm(rng, n_nutrients)[1:count]
-    for j in selected
-        kind = nutrient_types[j]
-        minimum_average = _feed_achievable_average(
-            nutrient_content, availabilities, batch_size, j; maximize=false
-        )
-        maximum_average = _feed_achievable_average(
-            nutrient_content, availabilities, batch_size, j; maximize=true
-        )
-        use_minimum = if kind == feed_restricted_compound
-            rand(rng) < 0.20
-        elseif kind == feed_major_nutrient
-            rand(rng) < 0.78
-        else
-            rand(rng) < 0.58
-        end
-
-        if reference_recipe === nothing
-            q = use_minimum ? rand(rng, Uniform(0.20, 0.62)) : rand(rng, Uniform(0.38, 0.82))
-            target = minimum_average + q * (maximum_average - minimum_average)
-        else
-            witness_average = _feed_ratio_average(nutrient_content, reference_recipe, batch_size, j)
-            if use_minimum
-                q = rand(rng, Uniform(0.18, 0.55))
-                target = witness_average - q * (witness_average - minimum_average)
-                target = min(target, witness_average * rand(rng, Uniform(0.94, 0.99)))
-                target = max(0.0, target)
-            else
-                q = rand(rng, Uniform(0.18, 0.55))
-                target = witness_average + q * (maximum_average - witness_average)
-                target = max(target, witness_average * rand(rng, Uniform(1.01, 1.08)))
-            end
-        end
-        push!(
-            constraints,
-            FeedRatioConstraint(j, target, use_minimum ? feed_ratio_minimum : feed_ratio_maximum),
-        )
-    end
-    return nothing
+    isapprox(achievable, cert.achievable; rtol=1e-8, atol=1e-9) || return false
+    isapprox(required, cert.required; rtol=1e-8, atol=1e-9) || return false
+    return achievable < required * (1 - 1e-9)
 end
 
 """
-    FeedBlendingProblem(target_variables, feasibility_status, seed)
+    FeedBlendingProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
-Construct a deterministic feed-blending instance. The model has exactly
-`max(3, target_variables)` ingredient variables. All randomness is drawn from a
-constructor-local RNG.
+Construct a feed-mill network formulation instance (see `FeedBlendingProblem`).
 """
 function FeedBlendingProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
-    rng = Random.MersenneTwister(seed)
-    num_ingredients = max(3, target_variables)
+    rng = MersenneTwister(seed)
+    target = max(target_variables, 1)
+    n_mills = clamp(round(Int, target / 2500 * rand(rng, Uniform(0.8, 1.25))), 1, 40)
+    lot_ingredient, lot_supplier, lot_mill, content, cost, n_suppliers = _feed_sample_lots(
+        rng, n_mills
+    )
+    n_lots = length(lot_ingredient)
+    lots_at = [findall(==(m), lot_mill) for m in 1:n_mills]
+    # Each mill's formula book favours a few species (integrators specialise).
+    mill_weights = [rand(rng, Dirichlet(fill(0.6, length(_FEED_FORMULAS)))) for _ in 1:n_mills]
 
-    if target_variables <= 250
-        num_nutrients = rand(rng, 4:8)
-        batch_size = rand(rng, truncated(Normal(500.0, 200.0), 100.0, 2_000.0))
-    elseif target_variables <= 1_000
-        num_nutrients = rand(rng, 6:12)
-        batch_size = rand(rng, truncated(Normal(2_000.0, 800.0), 500.0, 10_000.0))
-    else
-        num_nutrients = rand(rng, 8:20)
-        batch_size = rand(rng, truncated(Normal(10_000.0, 5_000.0), 2_000.0, 50_000.0))
+    formula_type = Int[]
+    formula_mill = Int[]
+    batch = Float64[]
+    pairs = Tuple{Int, Int}[]
+    formula_pairs = UnitRange{Int}[]
+    lower = Float64[]
+    upper = Float64[]
+    while length(pairs) < target || isempty(formula_type)
+        f = length(formula_type) + 1
+        m = (f - 1) % n_mills + 1
+        t = rand(rng, Categorical(mill_weights[m]))
+        group = _FEED_FORMULAS[t].group
+        D = clamp(rand(rng, LogNormal(log(25.0), 0.8)), 2.0, 400.0)
+        push!(formula_type, t)
+        push!(formula_mill, m)
+        push!(batch, D)
+        first_pair = length(pairs) + 1
+        usable = [l for l in lots_at[m] if _feed_inclusion_cap(group, lot_ingredient[l]) > 0]
+        # The last formula drops optional lots so the count lands on target;
+        # the staple lots (always stocked) keep its batch makeable.
+        if f > 1 && length(pairs) + length(usable) > target
+            staple = [
+                l for l in usable if _FEED_INGREDIENTS[lot_ingredient[l]].name in _FEED_STAPLES
+            ]
+            optional = [l for l in usable if !(l in staple)]
+            keep = clamp(target - length(pairs) - length(staple), 0, length(optional))
+            usable = sort(vcat(staple, optional[1:keep]))
+        end
+        for l in usable
+            cap = _feed_inclusion_cap(group, lot_ingredient[l])
+            push!(pairs, (l, f))
+            push!(upper, cap * D)
+            push!(lower, _FEED_INGREDIENTS[lot_ingredient[l]].class == :premix ? 0.002 * D : 0.0)
+        end
+        push!(formula_pairs, first_pair:length(pairs))
+    end
+    n_formulas = length(formula_type)
+
+    spec_lo = zeros(Float64, length(FEED_NUTRIENTS), n_formulas)
+    spec_hi = fill(Inf, length(FEED_NUTRIENTS), n_formulas)
+    ratio_band = zeros(Float64, 2, n_formulas)
+    for f in 1:n_formulas
+        ref = _FEED_FORMULAS[formula_type[f]]
+        for n in eachindex(FEED_NUTRIENTS)
+            spec_lo[n, f], spec_hi[n, f] = ref.spec[n]
+        end
+        ratio_band[:, f] .= ref.ca_p
     end
 
-    ingredient_types = _feed_sample_kinds(rng, _FEED_INGREDIENT_KINDS, num_ingredients)
-    nutrient_types = _feed_sample_kinds(rng, _FEED_NUTRIENT_KINDS, num_nutrients)
-
-    costs = Vector{Float64}(undef, num_ingredients)
-    for i in 1:num_ingredients
-        kind_index = Int(ingredient_types[i]) + 1
-        costs[i] = rand(
-            rng, LogNormal(log(_FEED_COST_MEDIAN[kind_index]), _FEED_COST_LOG_SIGMA[kind_index])
+    # Reference recipes: the planted witness (feasible/infeasible) or the
+    # nominal use around which unknown instances draw stock and contracts.
+    x = zeros(Float64, length(pairs))
+    for f in 1:n_formulas
+        ks = formula_pairs[f]
+        lots = [pairs[k][1] for k in ks]
+        caps = [upper[k] / batch[f] for k in ks]
+        frac = _feed_reference_recipe(
+            rng, _FEED_FORMULAS[formula_type[f]].group, lots, lot_ingredient, caps
         )
+        x[ks] .= batch[f] .* frac
+    end
+    used = zeros(Float64, n_lots)
+    for (k, (l, _)) in enumerate(pairs)
+        used[l] += x[k]
+    end
+    by_supplier = zeros(Float64, n_suppliers)
+    for l in 1:n_lots
+        by_supplier[lot_supplier[l]] += used[l]
     end
 
-    nutrient_content = zeros(Float64, num_nutrients, num_ingredients)
-    for j in 1:num_nutrients, i in 1:num_ingredients
-        nutrient_content[j, i] = _feed_sample_content(rng, nutrient_types[j], ingredient_types[i])
-    end
-
-    # Intentional sparsity is realistic for minor/trace metrics, but empty rows
-    # or columns are not useful benchmark data. Repair them using role-aware data.
-    for j in 1:num_nutrients
-        if all(iszero, view(nutrient_content, j, :))
-            i = rand(rng, 1:num_ingredients)
-            nutrient_content[j, i] = max(
-                _feed_sample_content(rng, nutrient_types[j], ingredient_types[i]),
-                0.1 *
-                _FEED_CONTENT_MEDIAN[Int(nutrient_types[j]) + 1, Int(ingredient_types[i]) + 1],
-            )
+    stock = zeros(Float64, n_lots)
+    contract = fill(Inf, n_suppliers)
+    witness = nothing
+    # Specifications: the reference ones, relaxed only where the formula's
+    # reference recipe falls outside them, so every formula on its own can be
+    # made (a nutritionist would not issue an unmakeable formula).
+    for f in 1:n_formulas
+        ks = formula_pairs[f]
+        lots = [pairs[k][1] for k in ks]
+        profile = _feed_profile(content, lots, x[ks] ./ batch[f])
+        for n in eachindex(FEED_NUTRIENTS)
+            spec_lo[n, f] = min(spec_lo[n, f], profile[n] * rand(rng, Uniform(0.95, 0.99)))
+            isfinite(spec_hi[n, f]) &&
+                (spec_hi[n, f] = max(spec_hi[n, f], profile[n] * rand(rng, Uniform(1.01, 1.05))))
         end
+        ratio = profile[_FEED_CA] / max(profile[_FEED_AVP], 1e-9)
+        ratio_band[1, f] = min(ratio_band[1, f], 0.97 * ratio)
+        ratio_band[2, f] = max(ratio_band[2, f], 1.03 * ratio)
     end
-    for i in 1:num_ingredients
-        if all(iszero, view(nutrient_content, :, i))
-            j = findfirst(==(feed_major_nutrient), nutrient_types)
-            j === nothing && (j = rand(rng, 1:num_nutrients))
-            nutrient_content[j, i] = max(
-                _feed_sample_content(rng, nutrient_types[j], ingredient_types[i]),
-                0.1 *
-                _FEED_CONTENT_MEDIAN[Int(nutrient_types[j]) + 1, Int(ingredient_types[i]) + 1],
-            )
-        end
-    end
-
-    availabilities = fill(Inf, num_ingredients)
-    for i in 1:num_ingredients
-        kind = ingredient_types[i]
-        finite_probability = kind in (feed_energy_source, feed_protein_source) ? 0.55 : 0.85
-        if rand(rng) < finite_probability
-            fraction = if kind == feed_energy_source
-                rand(rng, Uniform(0.15, 0.80))
-            elseif kind == feed_protein_source
-                rand(rng, Uniform(0.10, 0.60))
-            elseif kind == feed_mineral_supplement
-                rand(rng, Uniform(0.01, 0.15))
-            else
-                rand(rng, Uniform(0.005, 0.06))
-            end
-            availabilities[i] = fraction * batch_size
-        end
-    end
-
-    # A feasible baseline is valuable for requested-feasible instances and makes
-    # every requested-infeasible instance a controlled one-certificate mutation.
-    if _feed_effective_capacity_sum(availabilities, batch_size) < batch_size
-        cheapest = argmin(costs)
-        availabilities[cheapest] = batch_size
-    end
-    baseline_recipe = _feed_reference_recipe(rng, costs, availabilities, batch_size)
-
-    min_requirements = zeros(Float64, num_nutrients)
-    max_limits = fill(Inf, num_nutrients)
-    ratio_constraints = FeedRatioConstraint[]
-
     if feasibility_status == unknown
-        _feed_set_unknown_constraints!(
-            rng,
-            min_requirements,
-            max_limits,
-            nutrient_content,
-            nutrient_types,
-            availabilities,
-            batch_size,
-        )
-        _feed_add_ratio_constraints!(
-            rng,
-            ratio_constraints,
-            nutrient_content,
-            nutrient_types,
-            availabilities,
-            batch_size,
-            nothing,
-        )
+        # Supply is this season's draw around the reference recipes' use: one
+        # instance-wide tightness with per-lot and per-contract scatter, so the
+        # mills may or may not be able to make their whole book.
+        tightness = rand(rng, Uniform(0.85, 1.4))
+        for l in 1:n_lots
+            stock[l] = max(used[l], 0.5) * tightness * rand(rng, Uniform(0.85, 1.2))
+        end
+        for s in 1:n_suppliers
+            by_supplier[s] > 0 && (contract[s] = by_supplier[s] * rand(rng, Uniform(0.85, 1.5)))
+        end
     else
-        _feed_set_witness_constraints!(
-            rng,
-            min_requirements,
-            max_limits,
-            nutrient_content,
-            nutrient_types,
-            availabilities,
-            batch_size,
-            baseline_recipe,
-        )
-        _feed_add_ratio_constraints!(
-            rng,
-            ratio_constraints,
-            nutrient_content,
-            nutrient_types,
-            availabilities,
-            batch_size,
-            baseline_recipe,
-        )
+        for l in 1:n_lots
+            stock[l] = if used[l] > 0
+                used[l] * rand(rng, Uniform(1.02, 1.30))
+            else
+                rand(rng, Uniform(1.0, 20.0))
+            end
+        end
+        for s in 1:n_suppliers
+            by_supplier[s] > 0 && (contract[s] = by_supplier[s] * rand(rng, Uniform(1.02, 1.25)))
+        end
+        witness = x
+    end
+
+    # A contract covering a single lot is folded into that lot's stock, so
+    # every contract left is a genuine multi-mill coupling row.
+    for s in 1:n_suppliers
+        isfinite(contract[s]) || continue
+        lots = findall(==(s), lot_supplier)
+        if length(lots) == 1
+            stock[only(lots)] = min(stock[only(lots)], contract[s])
+            contract[s] = Inf
+        end
     end
 
     certificate = nothing
     if feasibility_status == infeasible
-        mode = rand(rng, 1:4)
-        if mode == 1
-            nutrient = rand(rng, 1:num_nutrients)
-            achievable = _feed_achievable_average(
-                nutrient_content, availabilities, batch_size, nutrient; maximize=true
-            )
-            required = achievable + rand(rng, Uniform(0.03, 0.12)) * max(achievable, 1.0)
-            push!(ratio_constraints, FeedRatioConstraint(nutrient, required, feed_ratio_minimum))
+        witness = nothing
+        # A customer specification above a formula's reachable maximum, on a
+        # nutrient where the batch equality (not the caps of the few carriers)
+        # is what limits it — otherwise the single nutrient row would already
+        # be contradicted by the column bounds and presolve would see it.
+        nutrient_mode = nothing
+        if rand(rng) < 0.6
+            for f in shuffle(rng, collect(1:n_formulas))
+                ks = formula_pairs[f]
+                caps = _feed_pair_caps(upper, stock, contract, lot_supplier, pairs, ks)
+                options = Tuple{Int, Float64}[]
+                for n in eachindex(FEED_NUTRIENTS)
+                    spec_lo[n, f] > 0 || continue
+                    values = [content[n, pairs[k][1]] for k in ks]
+                    achievable = _feed_knapsack_max(values, caps, batch[f])
+                    row_bound = sum(values[j] * caps[j] for j in eachindex(ks))
+                    row_bound >= 1.3 * achievable && push!(options, (n, achievable))
+                end
+                isempty(options) && continue
+                nutrient_mode = (f, rand(rng, options)...)
+                break
+            end
+        end
+        if nutrient_mode !== nothing
+            f, n, achievable = nutrient_mode
+            spec_lo[n, f] = achievable * rand(rng, Uniform(1.05, 1.12)) / batch[f]
+            spec_hi[n, f] = max(spec_hi[n, f], 1.1 * spec_lo[n, f])
             certificate = FeedInfeasibilityCertificate(
-                feed_minimum_ratio_above_achievable_maximum,
-                nutrient,
-                length(ratio_constraints),
-                achievable,
-                required,
-            )
-        elseif mode == 2
-            nutrient = rand(rng, 1:num_nutrients)
-            achievable =
-                batch_size * _feed_achievable_average(
-                    nutrient_content, availabilities, batch_size, nutrient; maximize=true
-                )
-            required = achievable + rand(rng, Uniform(0.03, 0.12)) * max(achievable, batch_size)
-            min_requirements[nutrient] = required
-            certificate = FeedInfeasibilityCertificate(
-                feed_minimum_nutrient_above_achievable_maximum, nutrient, 0, achievable, required
-            )
-        elseif mode == 3
-            candidates = [
-                j for j in 1:num_nutrients if _feed_achievable_average(
-                    nutrient_content, availabilities, batch_size, j; maximize=false
-                ) > 1e-9
-            ]
-            nutrient = rand(rng, candidates)
-            achievable = _feed_achievable_average(
-                nutrient_content, availabilities, batch_size, nutrient; maximize=false
-            )
-            required = achievable * rand(rng, Uniform(0.72, 0.94))
-            push!(ratio_constraints, FeedRatioConstraint(nutrient, required, feed_ratio_maximum))
-            certificate = FeedInfeasibilityCertificate(
-                feed_maximum_ratio_below_achievable_minimum,
-                nutrient,
-                length(ratio_constraints),
-                achievable,
-                required,
+                feed_nutrient_unreachable, f, n, 0, achievable, spec_lo[n, f] * batch[f]
             )
         else
-            total_capacity = batch_size * rand(rng, Uniform(0.65, 0.90))
-            capacity_weights = rand(rng, Dirichlet(fill(1.0, num_ingredients)))
-            availabilities .= total_capacity .* capacity_weights
-            achievable = _feed_effective_capacity_sum(availabilities, batch_size)
+            # One mill's stock falls short of its whole batch book.
+            m = rand(rng, 1:n_mills)
+            formulas = findall(==(m), formula_mill)
+            required = sum(batch[f] for f in formulas)
+            lots, effective = _feed_mill_lot_caps(
+                stock, contract, lot_supplier, upper, pairs, formula_pairs, formulas
+            )
+            theta = required / rand(rng, Uniform(1.08, 1.25)) / sum(effective)
+            for (j, l) in enumerate(lots)
+                stock[l] = theta * effective[j]
+            end
+            achievable = _feed_mill_capacity(
+                stock, contract, lot_supplier, upper, pairs, formula_pairs, formulas
+            )
             certificate = FeedInfeasibilityCertificate(
-                feed_insufficient_ingredient_capacity, 0, 0, achievable, batch_size
+                feed_mill_short, 0, 0, m, achievable, required
             )
         end
     end
 
-    problem = FeedBlendingProblem(
-        num_ingredients,
-        num_nutrients,
-        batch_size,
-        ingredient_types,
-        costs,
-        nutrient_content,
-        nutrient_types,
-        min_requirements,
-        max_limits,
-        availabilities,
-        ratio_constraints,
-        feasibility_status == feasible ? baseline_recipe : nothing,
+    prob = FeedBlendingProblem(
+        n_mills,
+        lot_ingredient,
+        lot_supplier,
+        lot_mill,
+        content,
+        cost,
+        formula_type,
+        formula_mill,
+        batch,
+        pairs,
+        formula_pairs,
+        lower,
+        upper,
+        spec_lo,
+        spec_hi,
+        ratio_band,
+        stock,
+        contract,
+        witness,
         certificate,
         feasibility_status,
     )
-
-    if feasibility_status == feasible
-        @assert feed_recipe_satisfies(problem)
-    elseif feasibility_status == infeasible
-        @assert feed_infeasibility_certificate_holds(problem)
-    end
-    return problem
+    feasibility_status == feasible && @assert feed_formulation_satisfies(prob)
+    feasibility_status == infeasible && @assert feed_certificate_holds(prob)
+    return prob
 end
 
 """
     build_model(prob::FeedBlendingProblem)
 
-Build the deterministic continuous feed-blending LP. Ratio-row direction is
-selected by the typed `FeedRatioSense`, never by parsing diagnostic text.
+Build the feed-mill network formulation LP (deterministic; see the type).
 """
 function build_model(prob::FeedBlendingProblem)
     model = Model()
-    @variable(model, x[1:prob.num_ingredients] >= 0)
-    @objective(model, Min, sum(prob.costs[i] * x[i] for i in 1:prob.num_ingredients),)
-    @constraint(model, batch_balance, sum(x[i] for i in 1:prob.num_ingredients) == prob.batch_size,)
-
-    minimum_nutrients = findall(>(0.0), prob.min_requirements)
-    maximum_nutrients = findall(isfinite, prob.max_limits)
-    finite_ingredients = findall(isfinite, prob.availabilities)
-    minimum_ratios = findall(
-        constraint -> constraint.sense == feed_ratio_minimum, prob.ratio_constraints
-    )
-    maximum_ratios = findall(
-        constraint -> constraint.sense == feed_ratio_maximum, prob.ratio_constraints
-    )
-
-    @constraint(
-        model,
-        nutrient_min[j in minimum_nutrients],
-        sum(prob.nutrient_content[j, i] * x[i] for i in 1:prob.num_ingredients) >=
-            prob.min_requirements[j],
-    )
-    @constraint(
-        model,
-        nutrient_max[j in maximum_nutrients],
-        sum(prob.nutrient_content[j, i] * x[i] for i in 1:prob.num_ingredients) <=
-            prob.max_limits[j],
-    )
-    @constraint(
-        model, ingredient_availability[i in finite_ingredients], x[i] <= prob.availabilities[i],
-    )
-    @constraint(
-        model,
-        ratio_min[r in minimum_ratios],
-        sum(
-            (
-                prob.nutrient_content[prob.ratio_constraints[r].nutrient, i] -
-                prob.ratio_constraints[r].target
-            ) * x[i] for i in 1:prob.num_ingredients
-        ) >= 0,
-    )
-    @constraint(
-        model,
-        ratio_max[r in maximum_ratios],
-        sum(
-            (
-                prob.nutrient_content[prob.ratio_constraints[r].nutrient, i] -
-                prob.ratio_constraints[r].target
-            ) * x[i] for i in 1:prob.num_ingredients
-        ) <= 0,
-    )
+    K = length(prob.pairs)
+    @variable(model, prob.lower[k] <= x[k = 1:K] <= prob.upper[k])
+    @objective(model, Min, sum(prob.cost[l] * x[k] for (k, (l, _)) in enumerate(prob.pairs)))
+    C = prob.content
+    for (f, ks) in enumerate(prob.formula_pairs)
+        D = prob.batch[f]
+        @constraint(model, sum(x[k] for k in ks) == D)
+        for n in eachindex(FEED_NUTRIENTS)
+            carriers = [k for k in ks if C[n, prob.pairs[k][1]] > 0]
+            if prob.spec_lo[n, f] > 0
+                @constraint(
+                    model,
+                    sum(C[n, prob.pairs[k][1]] * x[k] for k in carriers) >= prob.spec_lo[n, f] * D
+                )
+            end
+            if isfinite(prob.spec_hi[n, f]) &&
+                any(C[n, prob.pairs[k][1]] > prob.spec_hi[n, f] for k in ks)
+                @constraint(
+                    model,
+                    sum(C[n, prob.pairs[k][1]] * x[k] for k in carriers) <= prob.spec_hi[n, f] * D
+                )
+            end
+        end
+        lo, hi = prob.ratio_band[1, f], prob.ratio_band[2, f]
+        @constraint(
+            model,
+            sum(
+                (C[_FEED_CA, prob.pairs[k][1]] - lo * C[_FEED_AVP, prob.pairs[k][1]]) * x[k] for
+                k in ks
+            ) >= 0
+        )
+        @constraint(
+            model,
+            sum(
+                (C[_FEED_CA, prob.pairs[k][1]] - hi * C[_FEED_AVP, prob.pairs[k][1]]) * x[k] for
+                k in ks
+            ) <= 0
+        )
+    end
+    at_lot = [Int[] for _ in eachindex(prob.stock)]
+    for (k, (l, _)) in enumerate(prob.pairs)
+        push!(at_lot[l], k)
+    end
+    for l in eachindex(at_lot)
+        isempty(at_lot[l]) && continue
+        @constraint(model, sum(x[k] for k in at_lot[l]) <= prob.stock[l])
+    end
+    for s in eachindex(prob.contract)
+        isfinite(prob.contract[s]) || continue
+        lots = [
+            l for l in eachindex(prob.stock) if prob.lot_supplier[l] == s && !isempty(at_lot[l])
+        ]
+        isempty(lots) && continue
+        @constraint(model, sum(x[k] for l in lots for k in at_lot[l]) <= prob.contract[s])
+    end
     return model
 end
 
@@ -778,6 +1177,7 @@ register_variant(
     :feed_blending,
     :standard,
     FeedBlendingProblem,
-    "Feed formulation with role-correlated ingredient data, typed nutrient-ratio " *
-    "bounds, and checkable feasibility metadata",
+    "Least-cost feed formulation for a network of feed mills: species/phase formula books in fixed " *
+    "batches, NRC-style nutrient and Ca:P specs, inclusion limits, mill stock and shared supplier contracts";
+    tags=[:agriculture, :blending, :block_angular],
 )

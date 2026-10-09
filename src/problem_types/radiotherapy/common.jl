@@ -12,6 +12,9 @@ using Statistics
 
 const _RT_PROFILES = (:prostate, :head_neck, :c_shape, :liver, :lung, :breast)
 
+# Upper limit on the beamlet grid of one field (see `_rt_plan_dimensions`).
+const _RT_MAX_BEAMLETS_PER_BEAM = 360
+
 """
 A synthetic but spatially coherent patient, beam geometry, and dose matrix.
 """
@@ -38,6 +41,7 @@ struct RadiotherapyCaseData
     dose_normalization::Float64
     reference_fluence::Vector{Float64}
     reference_dose::Vector{Float64}
+    fluence_max::Float64
 end
 
 """
@@ -48,12 +52,25 @@ struct RadiotherapyFluenceWitness
 end
 
 """
-Proof of an inconsistent pair of hard dose rows. The organ row is exactly
-`multiplier` times the target row, but its upper bound is below
-`multiplier * target_lower_bound`.
+Farkas-style proof that a PTV/organ overlap makes the hard dose limits
+inconsistent.
+
+The organ voxel sits inside the target, among the target voxels
+`target_voxels`; its dose-influence row (in every setup scenario) is the
+interpolation
+
+    D[organ_voxel, :] == multiplier * Σ_k interpolation_weights[k] * D[target_voxels[k], :]
+
+with nonnegative weights summing to one. Any fluence `x >= 0` meeting the
+target floor on those voxels (`D[t, :] x >= target_lower_bound`) therefore
+delivers at least `multiplier * target_lower_bound` to the organ voxel, but the
+organ's hard maximum `organ_upper_bound` is strictly below that. The
+contradiction needs `length(target_voxels) + 1` rows at once (never a pair of
+parallel rows or a single row), so presolve cannot refute it on its own.
 """
 struct RadiotherapyDoseConflictCertificate
-    target_voxel::Int
+    target_voxels::Vector{Int}
+    interpolation_weights::Vector{Float64}
     organ_voxel::Int
     organ::Symbol
     multiplier::Float64
@@ -357,7 +374,7 @@ function _rt_variable_count(
     n_beams::Int,
     n_scenarios::Int,
 )
-    formulation == :mean_tail_dose && return n_beamlets + n_edges + n_voxels + n_structures
+    formulation == :mean_tail_dose && return n_beamlets + n_edges + 2 * n_voxels + n_structures
     formulation == :minmax_deviation && return n_beamlets + n_edges + n_voxels + counts[1] + 1
     formulation == :robust_fluence &&
         return n_beamlets + n_edges + n_scenarios * (n_voxels + counts[1])
@@ -379,8 +396,20 @@ function _rt_plan_dimensions(
     # their two-dimensional TV edges use another 20-30%, leaving the majority
     # for voxel dose auxiliaries. The slightly richer aperture grid materially
     # improves target coverage for concave and multi-lobed targets.
-    center = max(1, round(Int, 0.16 * target / n_beams))
-    candidates = unique(vcat(1, collect(max(1, center - 100):(center + 100))))
+    #
+    # Clinical beamlets are 0.5-1 cm wide, so a field has at most a few hundred
+    # of them. Capping the per-field grid keeps the beamlet pitch physical at
+    # large requests; the extra budget goes to voxels, which is how clinical
+    # dose grids scale. Without the cap the pitch shrinks below the pencil-beam
+    # width and every voxel row gains quadratically many nonzeros (~30M at
+    # 100k variables).
+    # The mean-tail formulation spends two columns per voxel (dose and tail
+    # excess), so it gets a smaller beamlet share to keep voxels >> beamlets.
+    beamlet_share = formulation == :mean_tail_dose ? 0.10 : 0.16
+    center = clamp(round(Int, beamlet_share * target / n_beams), 1, _RT_MAX_BEAMLETS_PER_BEAM)
+    candidates = unique(
+        vcat(1, collect(max(1, center - 100):min(center + 100, _RT_MAX_BEAMLETS_PER_BEAM)))
+    )
     best_score = (typemax(Int), Inf, Inf)
     best = nothing
 
@@ -392,7 +421,11 @@ function _rt_plan_dimensions(
 
         voxel_candidates = Int[]
         if formulation == :mean_tail_dose
-            push!(voxel_candidates, max(minimum_voxels, target - fixed - length(spec.structures)))
+            # One dose variable and one tail-excess variable per voxel.
+            remaining = target - fixed - length(spec.structures)
+            for n_voxels in (fld(remaining, 2), cld(remaining, 2))
+                push!(voxel_candidates, max(minimum_voxels, n_voxels))
+            end
         else
             # Every remaining formulation has an auxiliary count monotone in
             # V. A short binary search finds the nearest count without scanning
@@ -433,7 +466,9 @@ function _rt_plan_dimensions(
                 n_scenarios,
             )
             score = (
-                abs(actual - target), abs(n_beamlets / actual - 0.16), abs(n_voxels / actual - 0.45)
+                abs(actual - target),
+                abs(n_beamlets / actual - beamlet_share),
+                abs(n_voxels / actual - 0.45),
             )
             if score < best_score
                 best_score = score
@@ -669,7 +704,11 @@ function _rt_dose_matrix(
             if !emitted
                 # Out-of-field leakage/scatter: retain one small coefficient
                 # per field so normal-tissue rows are physical rather than zero.
-                coefficient = tissue * attenuation * max(1.0e-5, 0.006 * exp(-0.12 * nearest_q))
+                # Collimator transmission keeps it at 0.2-0.6% of the open-field
+                # dose; a vanishing far-field tail (down to 1e-5) only produced
+                # badly scaled rows that tripped the dual simplex's unscaled
+                # infeasibility check.
+                coefficient = tissue * attenuation * (0.002 + 0.004 * exp(-0.12 * nearest_q))
                 push!(rows, i)
                 push!(columns, nearest)
                 push!(values, coefficient)
@@ -677,6 +716,32 @@ function _rt_dose_matrix(
         end
     end
     return sparse(rows, columns, values, n_voxels, n_beamlets)
+end
+
+"""
+    _rt_interpolate_conflict_row(matrix, conflict) -> SparseMatrixCSC
+
+Replace the organ voxel's dose-influence row by the tissue-scaled
+interpolation of its neighbouring target rows, the way a dose engine samples
+dose at a point between dose-grid nodes. The result satisfies
+`D[o, :] = multiplier * Σ_k w_k D[t_k, :]` exactly (no pair of rows is
+parallel unless a single neighbour is used).
+"""
+function _rt_interpolate_conflict_row(matrix::SparseMatrixCSC{Float64, Int}, conflict)
+    organ_row = zeros(Float64, size(matrix, 2))
+    for (k, voxel) in enumerate(conflict.target_voxels)
+        organ_row .+= conflict.interpolation_weights[k] .* Vector(matrix[voxel, :])
+    end
+    organ_row .*= conflict.multiplier
+    rows, columns, values = findnz(matrix)
+    keep = rows .!= conflict.organ_voxel
+    support = findall(!iszero, organ_row)
+    return sparse(
+        vcat(rows[keep], fill(conflict.organ_voxel, length(support))),
+        vcat(columns[keep], support),
+        vcat(values[keep], organ_row[support]),
+        size(matrix)...,
+    )
 end
 
 function _rt_reference_fluence(
@@ -831,12 +896,33 @@ function _rt_build_case(
             (s, kind) in zip(spec.structures, spec.kinds) if kind in (:serial_oar, :parallel_oar)
         ]
         organ = rand(rng, organ_candidates)
-        target_voxel = rand(rng, structure_voxels[:ptv])
         organ_voxel = rand(rng, structure_voxels[organ])
-        # Coincident target/OAR samples represent an overlap in contoured
-        # structures, which public radiotherapy data formats explicitly allow.
-        locations[organ_voxel, :] .= locations[target_voxel, :]
-        conflict_indices = (target_voxel, organ_voxel, organ)
+        # A PTV/organ overlap: the organ sample lies inside the target, among
+        # a small cluster of neighbouring target samples. Contoured structures
+        # overlap routinely (e.g. rectum wall inside a prostate PTV margin),
+        # and public radiotherapy formats explicitly allow it.
+        target_indices = structure_voxels[:ptv]
+        seed_voxel = rand(rng, target_indices)
+        distance = [
+            sum(abs2, @view(locations[i, :]) .- @view(locations[seed_voxel, :])) for
+            i in target_indices
+        ]
+        n_neighbours = min(length(target_indices), rand(rng, 3:5))
+        cluster = target_indices[partialsortperm(distance, 1:n_neighbours)]
+        raw_weights = 0.5 .+ rand(rng, n_neighbours)
+        interpolation_weights = raw_weights ./ sum(raw_weights)
+        for axis in 1:3
+            locations[organ_voxel, axis] = sum(
+                interpolation_weights[k] * locations[cluster[k], axis] for k in 1:n_neighbours
+            )
+        end
+        conflict_indices = (
+            target_voxels=cluster,
+            interpolation_weights=interpolation_weights,
+            organ_voxel=organ_voxel,
+            organ=organ,
+            multiplier=_rt_tissue_factor(organ) / _rt_tissue_factor(:ptv),
+        )
     end
 
     target_locations = locations[structure_voxels[:ptv], :]
@@ -872,6 +958,10 @@ function _rt_build_case(
     dose_normalization = inv(median_target_dose)
     dose_matrix .*= dose_normalization
     reference_dose .*= dose_normalization
+    if conflict_indices !== nothing
+        dose_matrix = _rt_interpolate_conflict_row(dose_matrix, conflict_indices)
+        reference_dose = dose_matrix * reference_fluence
+    end
 
     prescription_gy = round(
         spec.prescription[1] + rand(rng) * (spec.prescription[2] - spec.prescription[1]); digits=1
@@ -900,6 +990,11 @@ function _rt_build_case(
         dose_normalization,
         reference_fluence,
         reference_dose,
+        # Per-beamlet intensity limit (a deliverability / monitor-unit cap),
+        # three times the planted peak. Bounded fluence also keeps the dual
+        # simplex away from huge primal values on infeasible instances, where
+        # unbounded beamlets made HiGHS stall on "possibly dual unbounded".
+        max(0.5, 3.0 * maximum(reference_fluence)),
     )
     return case, spec, conflict_indices, rng
 end
@@ -954,11 +1049,20 @@ function _rt_hard_limits(
     end
     certificate = nothing
     if feasibility_status == infeasible
-        target_voxel, organ_voxel, organ = conflict_indices
-        multiplier = _rt_tissue_factor(organ) / _rt_tissue_factor(:ptv)
-        structure_max[organ] = multiplier * target_floor * (0.72 + 0.14 * rand(rng))
+        conflict = conflict_indices
+        organ = conflict.organ
+        # The organ's clinical maximum is set below the dose the overlap
+        # inevitably receives once the surrounding target is covered: a
+        # 14-28% relative gap, far from any solver tolerance.
+        structure_max[organ] = conflict.multiplier * target_floor * (0.72 + 0.14 * rand(rng))
         certificate = RadiotherapyDoseConflictCertificate(
-            target_voxel, organ_voxel, organ, multiplier, target_floor, structure_max[organ]
+            copy(conflict.target_voxels),
+            copy(conflict.interpolation_weights),
+            conflict.organ_voxel,
+            organ,
+            conflict.multiplier,
+            target_floor,
+            structure_max[organ],
         )
     end
     return target_floor, target_ceiling, structure_max, witness, certificate
@@ -975,18 +1079,45 @@ function _rt_dose_expressions(model::Model, fluence, dose_matrix)
     return expressions
 end
 
-function _rt_certificate_is_valid(problem)
+"""
+    _rt_certificate_is_valid(problem; matrices=[problem.case_data.dose_matrix])
+
+Check the stored overlap certificate algebraically, without a solver: the
+organ row equals the scaled interpolation of the cited target rows in every
+given dose matrix, the weights are a convex combination, the cited voxels
+belong to the right structures, and the hard bounds stored on `problem`
+contradict each other with a relative margin of at least 10%.
+"""
+function _rt_certificate_is_valid(problem; matrices=_rt_scenario_matrices(problem))
     certificate = problem.infeasibility_certificate
     certificate === nothing && return false
-    matrix = problem.case_data.dose_matrix
-    target_row = Array(matrix[certificate.target_voxel, :])
-    organ_row = Array(matrix[certificate.organ_voxel, :])
-    return isapprox(organ_row, certificate.multiplier .* target_row; rtol=1.0e-12, atol=1.0e-12) &&
-           certificate.organ_upper_bound <
-           certificate.multiplier * certificate.target_lower_bound &&
+    case = problem.case_data
+    weights = certificate.interpolation_weights
+    length(weights) == length(certificate.target_voxels) >= 2 || return false
+    all(>(0.0), weights) && isapprox(sum(weights), 1.0; atol=1.0e-12) || return false
+    all(in(Set(case.structure_voxels[:ptv])), certificate.target_voxels) || return false
+    certificate.organ_voxel in case.structure_voxels[certificate.organ] || return false
+    for matrix in matrices
+        interpolated = zeros(size(matrix, 2))
+        for (k, voxel) in enumerate(certificate.target_voxels)
+            interpolated .+= weights[k] .* Vector(matrix[voxel, :])
+        end
+        organ_row = Vector(matrix[certificate.organ_voxel, :])
+        isapprox(organ_row, certificate.multiplier .* interpolated; rtol=1.0e-12, atol=1.0e-14) ||
+            return false
+    end
+    return certificate.organ_upper_bound <=
+           0.9 * certificate.multiplier * certificate.target_lower_bound &&
            problem.target_floor == certificate.target_lower_bound &&
            problem.structure_max[certificate.organ] == certificate.organ_upper_bound
 end
+
+_rt_scenario_matrices(problem) =
+    if hasproperty(problem, :scenario_dose_matrices)
+        problem.scenario_dose_matrices
+    else
+        [problem.case_data.dose_matrix]
+    end
 
 function _rt_witness_is_valid(problem; atol::Float64=1.0e-9)
     witness = problem.feasible_witness
@@ -1001,18 +1132,70 @@ function _rt_witness_is_valid(problem; atol::Float64=1.0e-9)
     return true
 end
 
-function _rt_add_hard_constraints!(model, problem, dose)
-    target = problem.case_data.structure_voxels[:ptv]
-    @constraint(model, target_floor[i in target], dose[i] >= problem.target_floor)
-    @constraint(model, target_ceiling[i in target], dose[i] <= problem.target_ceiling)
-    upper_rows = Dict{Symbol, Any}()
-    for structure in problem.case_data.structure_names[2:end]
-        indices = problem.case_data.structure_voxels[structure]
+"""
+    _rt_add_dose_rows!(model, problem, dose, underdose, overdose; prefix="")
+
+Emit exactly one row per voxel carrying its dose-influence coefficients, with
+the hard safety limits expressed as bounds on the deviation variables:
+
+  - target voxel `i`: `dose_i + underdose_i - overdose_i == desired_i` with
+    `underdose_i <= desired_i - target_floor` and
+    `overdose_i <= target_ceiling - desired_i`, which is exactly
+    `target_floor <= dose_i <= target_ceiling` plus the hinge penalties;
+  - organ voxel `i`: `dose_i - overdose_i <= desired_i` with
+    `overdose_i <= structure_max - desired_i`, which is exactly
+    `dose_i <= structure_max` plus the overdose hinge.
+
+The previous formulation repeated each dose row up to four times (hinge rows
+plus separate hard rows); the deviation-bound form carries the same feasible
+set and optimal plans with a single copy. `underdose` and `overdose` map a
+voxel index to its variable.
+"""
+function _rt_add_dose_rows!(model, problem, dose, underdose, overdose; prefix::String="")
+    case = problem.case_data
+    target = case.structure_voxels[:ptv]
+    desired = problem.desired_dose
+    for i in target
+        set_upper_bound(underdose(i), desired[i] - problem.target_floor)
+        set_upper_bound(overdose(i), problem.target_ceiling - desired[i])
+    end
+    target_rows = @constraint(
+        model,
+        [i in target],
+        dose[i] + underdose(i) - overdose(i) == desired[i],
+        base_name="$(prefix)target_dose_deviation",
+    )
+    organ_rows = Dict{Symbol, Any}()
+    for structure in case.structure_names[2:end]
+        indices = case.structure_voxels[structure]
         upper = problem.structure_max[structure]
-        upper_rows[structure] = @constraint(
-            model, [i in indices], dose[i] <= upper, base_name="$(structure)_maximum",
+        for i in indices
+            set_upper_bound(overdose(i), upper - desired[i])
+        end
+        organ_rows[structure] = @constraint(
+            model,
+            [i in indices],
+            dose[i] - overdose(i) <= desired[i],
+            base_name="$(prefix)$(structure)_overdose",
         )
     end
-    model[:structure_maximum] = upper_rows
-    return nothing
+    return target_rows, organ_rows
+end
+
+"""
+    _rt_desired_dose(spec, case, structure_max)
+
+Voxelwise objective dose: the prescription (1.0) on the target and 72% of the
+clinical cap on every other structure, kept at most 90% of that structure's
+hard maximum so the overdose bound `structure_max - desired` stays positive.
+"""
+function _rt_desired_dose(spec, case::RadiotherapyCaseData, structure_max)
+    desired = zeros(Float64, size(case.voxel_locations_cm, 1))
+    desired[case.structure_voxels[:ptv]] .= 1.0
+    for structure in spec.structures[2:end]
+        desired[case.structure_voxels[structure]] .= min(
+            0.72 * spec.clinical_caps[structure], 0.9 * structure_max[structure]
+        )
+    end
+    return desired
 end

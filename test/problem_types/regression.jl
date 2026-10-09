@@ -1,13 +1,253 @@
-# Focused quality contracts for the regression category: the basis_pursuit
-# variant's registry wiring, sizing, conditioning profiles, planted sparse
-# witness / infeasibility certificate, and its HiGHS feasibility contracts.
-@testset "Regression Basis Pursuit" begin
-    @test :basis_pursuit in list_variants(:regression)
-    info = problem_info(:regression, :basis_pursuit)
-    @test occursin("basis-pursuit", lowercase(info[:description]))
-    @test ProblemVariant("regression/basis_pursuit") == ProblemVariant(:regression, :basis_pursuit)
+# Focused quality contracts for the regression category: registry wiring, exact
+# sizing, data profiles, planted witnesses and infeasibility certificates
+# (checked arithmetically without a solver), reproducibility, bounded nonzeros at
+# scale, and HiGHS-backed feasibility contracts for all five variants.
+using SparseArrays
 
-    profiles = (:gaussian_well_conditioned, :correlated_columns, :sparse_measurements)
+const REGRESSION_VARIANTS = (:lad, :quantile, :chebyshev, :basis_pursuit, :l1_svm)
+
+"""Count affine-row nonzeros of a JuMP model (variable bounds excluded)."""
+function _regression_test_nnz(model)
+    total = 0
+    for (F, S) in list_of_constraint_types(model)
+        F <: AffExpr || continue
+        for c in all_constraints(model, F, S)
+            total += length(constraint_object(c).func.terms)
+        end
+    end
+    return total
+end
+
+"""Fields-equal comparison of two generator structs (recursing into plain structs)."""
+function _regression_same(a, b)
+    typeof(a) == typeof(b) || return false
+    isstructtype(typeof(a)) && !(a isa AbstractArray) && !(a isa Number) || return a == b
+    return all(_regression_same(getfield(a, f), getfield(b, f)) for f in fieldnames(typeof(a)))
+end
+_regression_same(a::AbstractArray, b::AbstractArray) = a == b
+
+@testset "Regression Registry and Sizing" begin
+    @test Set(list_variants(:regression)) == Set(REGRESSION_VARIANTS)
+    @test ProblemVariant(:regression) == ProblemVariant(:regression, :lad)
+    for v in REGRESSION_VARIANTS
+        @test !isempty(problem_info(:regression, v)[:description])
+    end
+
+    for target in (40, 200, 1000, 4000)
+        # LAD: 1 + continuous + fixed effects + samples, exact.
+        model, prob = generate_problem(:regression, target, feasible, 3; variant=:lad)
+        n_gamma = sum(l - 1 for l in prob.levels; init=0)
+        @test num_variables(model) == 1 + prob.n_continuous + n_gamma + prob.n_samples == target
+        @test num_constraints(model; count_variable_in_set_constraints=false) ==
+            2 * prob.n_samples + 1
+
+        # Quantile: 1 + demographic + 2 codes + 2 samples, exact.
+        model, prob = generate_problem(:regression, target, feasible, 3; variant=:quantile)
+        @test num_variables(model) ==
+            1 + prob.n_demographic + 2 * prob.n_codes + 2 * prob.n_samples ==
+            target
+        @test num_constraints(model; count_variable_in_set_constraints=false) ==
+            prob.n_samples + length(prob.band_lower)
+
+        # Chebyshev: spline coefficients + t, within 5%.
+        model, prob = generate_problem(:regression, target, feasible, 3; variant=:chebyshev)
+        p = (prob.nx + prob.degree) * (prob.ny + prob.degree)
+        @test num_variables(model) == p + 1
+        @test abs(num_variables(model) - target) <= max(3, 0.05 * target)
+        @test num_constraints(model; count_variable_in_set_constraints=false) == 2 * prob.n_samples
+
+        # Basis pursuit: 2·features, exact for even targets.
+        model, prob = generate_problem(:regression, target, feasible, 3; variant=:basis_pursuit)
+        @test num_variables(model) == 2 * prob.n_features == target
+
+        # 1-norm SVM: 2·terms + bias + documents, exact.
+        model, prob = generate_problem(:regression, target, feasible, 3; variant=:l1_svm)
+        @test num_variables(model) == 2 * prob.n_terms + 1 + prob.n_documents == target
+        @test num_constraints(model; count_variable_in_set_constraints=false) ==
+            prob.n_documents + 1
+    end
+
+    # Tiny targets still build every status.
+    for v in REGRESSION_VARIANTS, target in (1, 5, 12), status in (feasible, infeasible, unknown)
+        model, _ = generate_problem(:regression, target, status, 1; variant=v)
+        @test num_variables(model) > 0
+    end
+
+    # 100k-variable requests: exact sizing, bounded nonzeros, seconds to build.
+    for v in (:lad, :chebyshev, :l1_svm, :quantile)
+        elapsed = @elapsed model, _ = generate_problem(
+            :regression, 100_000, infeasible, 0; variant=v
+        )
+        @test abs(num_variables(model) - 100_000) <= 500
+        @test _regression_test_nnz(model) <= 8_000_000
+        @test elapsed < 60
+    end
+end
+
+@testset "Regression LAD Data and Contracts" begin
+    for seed in 1:4
+        _, prob = generate_problem(:regression, 600, feasible, seed; variant=:lad)
+        offsets = SyntheticLPs._lad_gamma_offsets(prob.levels)
+        w = prob.feasible_witness
+        @test w isa SyntheticLPs.LADWitness
+        @test prob.infeasibility_certificate === nothing
+        fitted = [
+            SyntheticLPs._lad_fitted(
+                prob.X, prob.level_codes, offsets, w.intercept, w.beta, w.gamma, i
+            ) for i in 1:prob.n_samples
+        ]
+        @test sum(abs.(prob.y .- fitted)) ≈ w.loss
+        @test w.loss * 1.04 < prob.loss_budget
+        @test all(>(0), prob.weights)
+        # Every non-reference level is observed; replicates repeat their design.
+        for f in eachindex(prob.levels)
+            @test Set(prob.level_codes[f, :]) == Set(1:prob.levels[f])
+        end
+        for (a, b) in prob.replicate_pairs
+            @test prob.X[:, a] == prob.X[:, b]
+            @test prob.level_codes[:, a] == prob.level_codes[:, b]
+        end
+        @test !isempty(prob.outliers)
+
+        _, bad = generate_problem(:regression, 600, infeasible, seed; variant=:lad)
+        cert = bad.infeasibility_certificate
+        @test cert isa SyntheticLPs.LADCertificate
+        @test bad.feasible_witness === nothing
+        used = Int[]
+        for (a, b) in cert.pairs
+            @test bad.X[:, a] == bad.X[:, b] && bad.level_codes[:, a] == bad.level_codes[:, b]
+            @test bad.y[a] >= bad.y[b]
+            append!(used, (a, b))
+        end
+        @test allunique(used)
+        @test sum(bad.y[a] - bad.y[b] for (a, b) in cert.pairs) ≈ cert.lower_bound
+        @test cert.budget == bad.loss_budget
+        @test cert.budget <= 0.9 * cert.lower_bound + 1e-12
+
+        _, unk = generate_problem(:regression, 600, unknown, seed; variant=:lad)
+        @test unk.feasible_witness === nothing && unk.infeasibility_certificate === nothing
+    end
+end
+
+@testset "Regression Quantile Data and Contracts" begin
+    predict(prob, w, r) = SyntheticLPs._quantile_predict(
+        w.intercept,
+        w.demographic,
+        w.code,
+        prob.reference_codes[r],
+        prob.reference_values[r],
+        view(prob.reference_Z, r, :),
+    )
+    for seed in 1:4
+        _, prob = generate_problem(:regression, 800, feasible, seed; variant=:quantile)
+        @test prob.tau in (0.1, 0.25, 0.5, 0.75, 0.9)
+        @test prob.penalty > 0
+        # Minimum code frequency: every code appears in at least five samples.
+        counts = zeros(Int, prob.n_codes)
+        for codes in prob.codes, j in codes
+            counts[j] += 1
+        end
+        @test minimum(counts) >= min(5, prob.n_samples)
+        # Cohort profiles are exact averages of their members.
+        for (c, members) in enumerate(prob.cohorts)
+            row = prob.cohort_rows[c]
+            dense = zeros(prob.n_codes)
+            for r in members, j in prob.reference_codes[r]
+                dense[j] += 1 / length(members)
+            end
+            @test dense[prob.reference_codes[row]] ≈ prob.reference_values[row]
+            @test count(!iszero, dense) == length(prob.reference_codes[row])
+            @test vec(sum(prob.reference_Z[members, :]; dims=1)) ./ length(members) ≈
+                prob.reference_Z[row, :]
+        end
+        w = prob.feasible_witness
+        @test w isa SyntheticLPs.QuantileWitness
+        for r in eachindex(prob.band_lower)
+            p = predict(prob, w, r)
+            half = (prob.band_upper[r] - prob.band_lower[r]) / 2
+            @test prob.band_lower[r] + 0.5 * half - 1e-9 <=
+                p <=
+                prob.band_upper[r] - 0.5 * half + 1e-9
+        end
+
+        _, bad = generate_problem(:regression, 800, infeasible, seed; variant=:quantile)
+        cert = bad.infeasibility_certificate
+        @test cert isa SyntheticLPs.QuantileCertificate
+        @test cert.cohort in bad.cohort_rows
+        @test cert.members == bad.cohorts[findfirst(==(cert.cohort), bad.cohort_rows)]
+        mean_upper = sum(bad.band_upper[cert.members]) / length(cert.members)
+        @test bad.band_lower[cert.cohort] - mean_upper ≈ cert.gap
+        @test cert.gap > 0
+    end
+end
+
+@testset "Regression Chebyshev Data and Contracts" begin
+    for seed in 1:4
+        _, prob = generate_problem(:regression, 500, feasible, seed; variant=:chebyshev)
+        @test prob.degree in (1, 2, 3)
+        @test size(prob.basis_cols) == ((prob.degree + 1)^2, prob.n_samples)
+        @test all(0 .<= prob.points .<= 1)
+        # Local partition of unity (up to the dropped tails).
+        sums = vec(sum(prob.basis_vals; dims=1))
+        @test all(1 - (prob.degree + 1)^2 * 1e-3 - 1e-12 .<= sums .<= 1 + 1e-12)
+        w = prob.feasible_witness
+        @test w isa SyntheticLPs.ChebyshevWitness
+        residual = maximum(
+            prob.weights[i] *
+            abs(prob.y[i] - dot(prob.basis_vals[:, i], w.coefficients[prob.basis_cols[:, i]])) for
+            i in 1:prob.n_samples
+        )
+        @test residual ≈ w.max_weighted_residual
+        @test 1.09 * residual <= prob.error_cap
+        @test maximum(abs, w.coefficients) <= prob.coefficient_bound
+
+        _, bad = generate_problem(:regression, 500, infeasible, seed; variant=:chebyshev)
+        cert = bad.infeasibility_certificate
+        @test cert isa SyntheticLPs.ChebyshevCertificate
+        @test length(cert.points) == (bad.degree + 1)^2 + 1
+        # Multipliers annihilate the local basis rows.
+        acc = Dict{Int, Float64}()
+        for (k, i) in enumerate(cert.points), q in axes(bad.basis_cols, 1)
+            acc[bad.basis_cols[q, i]] =
+                get(acc, bad.basis_cols[q, i], 0.0) + cert.multipliers[k] * bad.basis_vals[q, i]
+        end
+        @test maximum(abs, values(acc)) <= 1e-10
+        @test sum(cert.multipliers .* bad.y[cert.points]) ≈ cert.combined_residual
+        @test sum(abs.(cert.multipliers) ./ bad.weights[cert.points]) ≈ cert.weighted_l1
+        @test abs(cert.combined_residual) >= 1.24 * bad.error_cap * cert.weighted_l1
+    end
+end
+
+@testset "Regression L1 SVM Data and Contracts" begin
+    for seed in 1:4
+        _, prob = generate_problem(:regression, 800, feasible, seed; variant=:l1_svm)
+        @test Set(prob.labels) == Set((-1.0, 1.0))
+        @test all(c -> isapprox(norm(prob.Xt[:, c]), 1.0; atol=1e-10), 1:prob.n_documents)
+        @test minimum(vec(sum(prob.Xt .!= 0; dims=2))) >= 3
+        w = prob.feasible_witness
+        @test w isa SyntheticLPs.L1SVMWitness
+        scores = transpose(prob.Xt) * w.w .+ w.bias
+        @test sum(max.(0.0, 1 .- prob.labels .* scores)) ≈ w.hinge
+        @test w.hinge * 1.04 < prob.hinge_budget
+
+        _, bad = generate_problem(:regression, 800, infeasible, seed; variant=:l1_svm)
+        cert = bad.infeasibility_certificate
+        @test cert isa SyntheticLPs.L1SVMCertificate
+        used = Int[]
+        for (a, b) in cert.pairs
+            @test bad.Xt[:, a] == bad.Xt[:, b]
+            @test bad.labels[a] == 1.0 && bad.labels[b] == -1.0
+            append!(used, (a, b))
+        end
+        @test allunique(used)
+        @test cert.lower_bound == 2 * length(cert.pairs)
+        @test bad.hinge_budget == cert.budget <= 0.9 * cert.lower_bound
+    end
+end
+
+@testset "Regression Basis Pursuit" begin
+    profiles = SyntheticLPs.BASIS_PURSUIT_PROFILES
+    @test profiles == (:gaussian, :correlated_columns, :sparse_measurements)
     profile_seeds = Dict(profile => Int[] for profile in profiles)
     for seed in 1:100
         _, prob = generate_problem("regression/basis_pursuit", 150, feasible, seed)
@@ -17,281 +257,137 @@
 
     check_status_data = function (prob)
         @test (prob.certificate !== nothing) == (prob.resolved_status == infeasible)
-        @test all(any(!iszero, @view prob.A[i, :]) for i in 1:prob.n_measurements)
-        @test all(any(!iszero, @view prob.A[:, j]) for j in 1:prob.n_features)
+        A = prob.A
+        @test all(>(0), diff(A.colptr))                     # every feature measured
+        @test length(unique(rowvals(A))) == prob.n_measurements
         if prob.resolved_status == feasible
-            @test prob.certificate === nothing
-            @test prob.A * prob.source_signal ≈ prob.b
+            @test A * prob.source_signal ≈ prob.b
         else
-            certificate = prob.certificate
-            @test certificate isa SyntheticLPs.BasisPursuitCertificate
-            if certificate !== nothing
-                r1, r2 = certificate.rows
-                @test 1 <= r1 <= prob.n_measurements
-                @test 1 <= r2 <= prob.n_measurements
-                @test r1 != r2
-                @test prob.A[r2, :] == certificate.multiplier .* prob.A[r1, :]
-                @test prob.b[r2] ≈ certificate.multiplier * prob.b[r1] + certificate.rhs_gap
-                @test !iszero(certificate.rhs_gap)
-                @test !(prob.A * prob.source_signal ≈ prob.b)
-            end
+            cert = prob.certificate
+            @test cert isa SyntheticLPs.BasisPursuitCertificate
+            @test allunique(cert.rows)
+            @test length(cert.rows) >= min(3, prob.n_measurements)
+            combo = transpose(A[cert.rows, :]) * cert.multipliers
+            @test norm(combo, Inf) <= 1e-10
+            @test sum(cert.multipliers .* prob.b[cert.rows]) ≈ cert.rhs_gap
+            @test abs(cert.rhs_gap) >= 0.4
+            @test !(A * prob.source_signal ≈ prob.b)
         end
     end
 
-    # Positive/negative splitting makes the count intrinsically even: even
-    # targets are exact, odd targets round up one, and two is the minimum.
     for target in (1, 2, 3, 4, 5, 50, 501, 2000)
         model, prob = generate_problem("regression/basis_pursuit", target, feasible, 17)
-        expected = 2 * max(1, cld(max(target, 1), 2))
-        @test num_variables(model) == expected == 2 * prob.n_features
+        @test num_variables(model) == 2 * max(1, cld(max(target, 1), 2)) == 2 * prob.n_features
         @test size(prob.A) == (prob.n_measurements, prob.n_features)
-        @test length(prob.b) == prob.n_measurements
-        @test length(prob.weights) == prob.n_features
-        @test length(prob.source_signal) == prob.n_features
     end
 
-    # Deterministic data, repeated builds, and MPS export for every profile
-    # under both resolved statuses.
-    mktempdir() do tmp
-        for profile in profiles, status in (feasible, infeasible)
-            seed = first(profile_seeds[profile])
-            model1, prob1 = generate_problem("regression/basis_pursuit", 150, status, seed)
-            model2, prob2 = generate_problem("regression/basis_pursuit", 150, status, seed)
-            @test prob1.profile == prob2.profile == profile
-            for field in fieldnames(typeof(prob1))
-                @test getfield(prob1, field) == getfield(prob2, field)
-            end
-            rebuilt = SyntheticLPs.build_model(prob1)
-            @test num_variables(model1) == num_variables(model2) == num_variables(rebuilt)
-            @test num_constraints(model1; count_variable_in_set_constraints=true) ==
-                num_constraints(model2; count_variable_in_set_constraints=true) ==
-                num_constraints(rebuilt; count_variable_in_set_constraints=true)
+    # Column nonzeros respect the budget; large instances stay sparse.
+    _, big = generate_problem("regression/basis_pursuit", 20_000, feasible, 2)
+    @test nnz(big.A) <= SyntheticLPs.BASIS_PURSUIT_NNZ_BUDGET + big.n_measurements
+    @test maximum(diff(big.A.colptr)) <=
+        SyntheticLPs._basis_pursuit_column_nnz(big.n_measurements, big.n_features) + 2
 
-            prefix = "$(profile)_$(status)"
-            paths = [joinpath(tmp, "$(prefix)_$copy.mps") for copy in 1:3]
-            write_to_file(model1, paths[1])
-            write_to_file(model2, paths[2])
-            write_to_file(rebuilt, paths[3])
-            @test read(paths[1], String) == read(paths[2], String) == read(paths[3], String)
-        end
-    end
-
-    # The constructor owns a local RNG and does not perturb Random.default_rng().
-    Random.seed!(8801)
-    expected_draws = rand(4)
-    Random.seed!(8801)
-    SyntheticLPs.BasisPursuitProblem(100, feasible, 9)
-    @test rand(4) == expected_draws
-
-    # A deterministic seed sample covers both natural unknown outcomes, and
-    # each outcome carries exactly its matching witness/certificate data.
-    unknown_statuses = Set{FeasibilityStatus}()
-    varied = Any[]
-    for seed in 1:60
-        _, feasible_prob = generate_problem("regression/basis_pursuit", 120, feasible, seed)
-        _, unknown_prob = generate_problem("regression/basis_pursuit", 120, unknown, seed)
-        push!(unknown_statuses, unknown_prob.resolved_status)
-        check_status_data(unknown_prob)
-        seed <= 12 && push!(varied, feasible_prob)
-    end
-    @test unknown_statuses == Set((feasible, infeasible))
-    @test length(unique(p.profile for p in varied)) > 1
-    @test length(unique(Tuple(p.support) for p in varied)) > 1
-    @test any(p.A != varied[1].A for p in varied[2:end])
-
-    # Profile statistics are checked on multiple seeds, including a
-    # large-instance regression against coherence decay.
     for profile in profiles, seed in profile_seeds[profile]
         _, prob = generate_problem("regression/basis_pursuit", 150, feasible, seed)
-        @test prob.resolved_status == feasible
-        @test issorted(prob.support)
-        @test allunique(prob.support)
-        @test all(1 <= j <= prob.n_features for j in prob.support)
+        @test issorted(prob.support) && allunique(prob.support)
         @test findall(!iszero, prob.source_signal) == prob.support
         @test all(>(0.0), prob.weights)
-        @test norm(prob.A * prob.source_signal - prob.b, Inf) <= 1.0e-10
-        @test norm(prob.b, Inf) > 1.0e-8
-        @test prob.certificate === nothing
-
-        if profile == :gaussian_well_conditioned
-            identity_rows = Matrix{Float64}(I, prob.n_measurements, prob.n_measurements)
-            @test norm(prob.A * transpose(prob.A) - identity_rows, Inf) <= 1.0e-10
+        if profile == :gaussian
+            # Small instances are dense and row-whitened.
+            Ad = Matrix(prob.A)
+            @test norm(Ad * transpose(Ad) - I, Inf) <= 1.0e-10
         elseif profile == :correlated_columns
-            normalized = prob.A ./ sqrt.(sum(abs2, prob.A; dims=1))
+            Ad = Matrix(prob.A)
+            normalized = Ad ./ sqrt.(sum(abs2, Ad; dims=1))
             gram = transpose(normalized) * normalized
-            identity_columns = Matrix{Float64}(I, prob.n_features, prob.n_features)
-            @test maximum(abs.(gram - identity_columns)) >= 0.985
+            @test maximum(abs.(gram - I)) >= 0.985
         else
-            density = count(!iszero, prob.A) / length(prob.A)
-            @test density <= 0.2
-            @test all(any(!iszero, @view prob.A[i, :]) for i in 1:prob.n_measurements)
-            @test all(any(!iszero, @view prob.A[:, j]) for j in 1:prob.n_features)
+            @test nnz(prob.A) / length(prob.A) <= 0.2
         end
     end
 
-    for seed in profile_seeds[:correlated_columns]
-        _, prob = generate_problem("regression/basis_pursuit", 2000, feasible, seed)
-        normalized = prob.A ./ sqrt.(sum(abs2, prob.A; dims=1))
-        sample_width = min(200, prob.n_features)
-        sample = @view normalized[:, 1:sample_width]
-        gram = transpose(sample) * sample
-        identity_columns = Matrix{Float64}(I, sample_width, sample_width)
-        @test maximum(abs.(gram - identity_columns)) >= 0.985
+    for seed in 1:12, target in (20, 100)
+        _, f = generate_problem("regression/basis_pursuit", target, feasible, seed)
+        check_status_data(f)
+        _, g = generate_problem("regression/basis_pursuit", target, infeasible, seed)
+        check_status_data(g)
     end
-
-    # Feasible instances retain their source signal as an exact witness;
-    # infeasible instances carry only the inspectable algebraic certificate.
-    for seed in 1:12
-        _, feasible_prob = generate_problem("regression/basis_pursuit", 100, feasible, seed)
-        @test feasible_prob.resolved_status == feasible
-        check_status_data(feasible_prob)
-
-        _, infeasible_prob = generate_problem("regression/basis_pursuit", 100, infeasible, seed)
-        @test infeasible_prob.resolved_status == infeasible
-        check_status_data(infeasible_prob)
-    end
-
-    # Certificate injection must not erase sparse columns whose only
-    # nonzero sat in the replaced row. Target 20 has measurement width 1.
-    sparse_infeasible = 0
-    for seed in 0:199
-        _, prob = generate_problem("regression/basis_pursuit", 20, infeasible, seed)
-        prob.profile == :sparse_measurements || continue
-        sparse_infeasible += 1
+    unknown_statuses = Set{FeasibilityStatus}()
+    for seed in 1:40
+        _, prob = generate_problem("regression/basis_pursuit", 120, unknown, seed)
+        push!(unknown_statuses, prob.resolved_status)
         check_status_data(prob)
     end
-    @test sparse_infeasible >= 20
+    @test unknown_statuses == Set((feasible, infeasible))
 
-    # Every profile also constructs correctly at the one-feature minimum,
-    # under both statuses. Gaussian rows cannot both be orthonormal in this
-    # 2×1 geometry, so its feasible matrix is normalized as one column.
-    tiny_profile_seeds = Dict{Symbol, Int}()
-    for seed in 1:60
-        _, prob = generate_problem("regression/basis_pursuit", 1, feasible, seed)
-        get!(tiny_profile_seeds, prob.profile, seed)
-    end
-    @test Set(keys(tiny_profile_seeds)) == Set(profiles)
-    for profile in profiles, target in (1, 2, 3), status in (feasible, infeasible)
-        model, prob = generate_problem(
-            "regression/basis_pursuit", target, status, tiny_profile_seeds[profile]
-        )
-        @test prob.profile == profile
-        @test num_variables(model) == (target <= 2 ? 2 : 4)
-        @test prob.n_measurements == 2
-        check_status_data(prob)
-    end
-    _, tiny_gaussian = generate_problem(
-        "regression/basis_pursuit", 1, feasible, tiny_profile_seeds[:gaussian_well_conditioned]
-    )
-    @test size(tiny_gaussian.A) == (2, 1)
-    @test norm(tiny_gaussian.A) ≈ 1.0
-
-    # Coherent and sparse profiles vary numerically between same-profile
-    # seeds, not merely through their profile labels.
-    for profile in (:correlated_columns, :sparse_measurements)
-        matrices = [
-            last(generate_problem("regression/basis_pursuit", 150, feasible, seed)).A for
-            seed in profile_seeds[profile]
-        ]
-        @test all(matrices[i] != matrices[j] for (i, j) in ((1, 2), (1, 3), (2, 3)))
-    end
-
-    # Assert the complete JuMP formulation, not only variable domains/counts.
-    domain_model, domain_prob = generate_problem("regression/basis_pursuit", 80, feasible, 4)
-    @test objective_sense(domain_model) == MOI.MIN_SENSE
-    @test num_constraints(domain_model, AffExpr, MOI.EqualTo{Float64}) == domain_prob.n_measurements
-    for variable in all_variables(domain_model)
-        @test !is_binary(variable)
-        @test !is_integer(variable)
-        @test has_lower_bound(variable)
-        @test lower_bound(variable) == 0.0
-        @test !has_upper_bound(variable)
-    end
-    objective = objective_function(domain_model)
-    for j in 1:domain_prob.n_features
-        @test coefficient(objective, domain_model[:x_pos][j]) == domain_prob.weights[j]
-        @test coefficient(objective, domain_model[:x_neg][j]) == domain_prob.weights[j]
-    end
-    for i in 1:domain_prob.n_measurements
-        row = domain_model[:measurements][i]
-        @test normalized_rhs(row) == domain_prob.b[i]
-        for j in 1:domain_prob.n_features
-            @test normalized_coefficient(row, domain_model[:x_pos][j]) == domain_prob.A[i, j]
-            @test normalized_coefficient(row, domain_model[:x_neg][j]) == -domain_prob.A[i, j]
+    # Complete JuMP formulation for one instance.
+    model, prob = generate_problem("regression/basis_pursuit", 80, feasible, 4)
+    @test objective_sense(model) == MOI.MIN_SENSE
+    @test num_constraints(model, AffExpr, MOI.EqualTo{Float64}) == prob.n_measurements
+    for i in 1:prob.n_measurements
+        row = model[:measurements][i]
+        @test normalized_rhs(row) == prob.b[i]
+        for j in 1:prob.n_features
+            @test normalized_coefficient(row, model[:x_pos][j]) == prob.A[i, j]
+            @test normalized_coefficient(row, model[:x_neg][j]) == -prob.A[i, j]
         end
     end
 end
 
-@testset "Basis Pursuit Feasibility Contracts" begin
+@testset "Regression Reproducibility" begin
+    for v in REGRESSION_VARIANTS, status in (feasible, infeasible, unknown)
+        m1, p1 = generate_problem(:regression, 300, status, 11; variant=v)
+        m2, p2 = generate_problem(:regression, 300, status, 11; variant=v)
+        @test _regression_same(p1, p2)
+        mktempdir() do dir
+            a = joinpath(dir, "a.mps")
+            b = joinpath(dir, "b.mps")
+            write_to_file(m1, a)
+            write_to_file(SyntheticLPs.build_model(p2), b)
+            @test read(a, String) == read(b, String)
+        end
+    end
+    Random.seed!(77)
+    expected = rand(3)
+    Random.seed!(77)
+    for v in REGRESSION_VARIANTS
+        generate_problem(:regression, 200, unknown, 5; variant=v)
+    end
+    @test rand(3) == expected
+end
+
+@testset "Regression Feasibility Contracts" begin
     if HAS_HIGHS
-        # Exercise three seeds per profile under both labels. Passing the
-        # optimizer invokes the package-level contract check before returning
-        # the pristine model.
-        profiles = (:gaussian_well_conditioned, :correlated_columns, :sparse_measurements)
-        profile_seeds = Dict(profile => Int[] for profile in profiles)
-        for seed in 1:100
-            _, prob = generate_problem("regression/basis_pursuit", 120, feasible, seed)
-            length(profile_seeds[prob.profile]) < 3 && push!(profile_seeds[prob.profile], seed)
-        end
-        @test all(length(profile_seeds[profile]) == 3 for profile in profiles)
-
-        for profile in profiles, seed in profile_seeds[profile]
-            feasible_model, feasible_prob = generate_problem(
-                "regression/basis_pursuit", 120, feasible, seed; optimizer=HiGHS.Optimizer
-            )
-            set_optimizer(feasible_model, HiGHS.Optimizer)
-            set_silent(feasible_model)
-            optimize!(feasible_model)
-            @test termination_status(feasible_model) == MOI.OPTIMAL
-            @test objective_value(feasible_model) > 1.0e-8
-            @test feasible_prob.profile == profile
-            @test feasible_prob.certificate === nothing
-            @test norm(feasible_prob.A * feasible_prob.source_signal - feasible_prob.b, Inf) <=
-                1.0e-10
-
-            infeasible_model, infeasible_prob = generate_problem(
-                "regression/basis_pursuit", 120, infeasible, seed; optimizer=HiGHS.Optimizer
-            )
-            set_optimizer(infeasible_model, HiGHS.Optimizer)
-            set_silent(infeasible_model)
-            optimize!(infeasible_model)
-            @test termination_status(infeasible_model) in
-                (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
-            @test infeasible_prob.profile == profile
-            @test infeasible_prob.resolved_status == infeasible
-            @test infeasible_prob.certificate !== nothing
-        end
-
-        # Unknown requests skip package-level verification, so solve both
-        # resolved labels directly and require metadata and solver status to
-        # agree. Two seeds per label avoid a single representative special case.
-        unknown_seeds = Dict(feasible => Int[], infeasible => Int[])
-        for seed in 1:100
-            _, prob = generate_problem("regression/basis_pursuit", 120, unknown, seed)
-            seeds = unknown_seeds[prob.resolved_status]
-            length(seeds) < 2 && push!(seeds, seed)
-        end
-        @test all(length(unknown_seeds[status]) == 2 for status in (feasible, infeasible))
-        for status in (feasible, infeasible), seed in unknown_seeds[status]
-            model, prob = generate_problem("regression/basis_pursuit", 120, unknown, seed)
-            @test prob.resolved_status == status
-            @test (prob.certificate !== nothing) == (status == infeasible)
-            if status == feasible
-                @test prob.A * prob.source_signal ≈ prob.b
-            else
-                certificate = prob.certificate
-                @test certificate !== nothing
-                if certificate !== nothing
-                    r1, r2 = certificate.rows
-                    @test prob.A[r2, :] == certificate.multiplier .* prob.A[r1, :]
-                    @test prob.b[r2] ≈ certificate.multiplier * prob.b[r1] + certificate.rhs_gap
-                end
-            end
+        solve_status = function (model)
             set_optimizer(model, HiGHS.Optimizer)
             set_silent(model)
+            set_time_limit_sec(model, 60.0)
             optimize!(model)
-            expected = status == feasible ? MOI.OPTIMAL : MOI.INFEASIBLE
-            @test termination_status(model) == expected
+            return termination_status(model)
+        end
+        targets = Dict(
+            :lad => 400, :quantile => 400, :chebyshev => 250, :basis_pursuit => 200, :l1_svm => 400
+        )
+        for v in REGRESSION_VARIANTS, seed in 1:3
+            # Passing the optimizer runs the package-level contract check.
+            model, _ = generate_problem(
+                :regression, targets[v], feasible, seed; variant=v, optimizer=HiGHS.Optimizer
+            )
+            @test solve_status(model) == MOI.OPTIMAL
+            model, _ = generate_problem(
+                :regression, targets[v], infeasible, seed; variant=v, optimizer=HiGHS.Optimizer
+            )
+            @test solve_status(model) in (MOI.INFEASIBLE, MOI.INFEASIBLE_OR_UNBOUNDED)
+        end
+        # `unknown` is a natural two-sided draw for the data-driven variants.
+        for v in (:lad, :quantile, :chebyshev, :l1_svm)
+            outcomes = Set{MOI.TerminationStatusCode}()
+            for seed in 1:12
+                model, _ = generate_problem(:regression, targets[v], unknown, seed; variant=v)
+                push!(outcomes, solve_status(model))
+            end
+            @test MOI.OPTIMAL in outcomes
+            @test MOI.INFEASIBLE in outcomes
         end
     end
 end

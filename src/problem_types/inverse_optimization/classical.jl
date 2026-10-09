@@ -18,6 +18,10 @@ The feasible profile plants a strictly positive plan, exhausts every resource
 at that plan, and constructs the true profit vector from positive resource
 shadow prices. The infeasible profile gives every resource strict headroom, so
 no normalized positive profit vector can rationalize the interior plan.
+
+Profits are normalized to `sum(c) == n_activities` (unit mean profit; see
+[`InversePackingData`](@ref)) rather than to a unit sum, which keeps bounds and
+deviation weights `O(1)` at every size.
 """
 struct ClassicalInverseLPProblem <: ProblemGenerator
     n_activities::Int
@@ -114,7 +118,7 @@ function build_model(prob::ClassicalInverseLPProblem)
             data.deviation_weight[j] * (deviation_positive[j] + deviation_negative[j]) for j in 1:n
         ),
     )
-    @constraint(model, cost_normalization, sum(inferred_cost) == 1.0)
+    @constraint(model, cost_normalization, sum(inferred_cost) == data.cost_total)
     @constraint(
         model,
         stationarity[j in 1:n],
@@ -141,14 +145,14 @@ function _classical_inverse_witness_is_valid(prob::ClassicalInverseLPProblem)
     return all(witness.cost .>= data.cost_lower .- 1.0e-10) &&
            all(witness.cost .<= data.cost_upper .+ 1.0e-10) &&
            all(witness.dual_prices .>= 0.0) &&
-           isapprox(sum(witness.cost), 1.0; atol=1.0e-10) &&
+           isapprox(sum(witness.cost), data.cost_total; rtol=1.0e-10) &&
            isapprox(
                transpose(data.consumption) * witness.dual_prices, witness.cost; atol=1.0e-10
            ) &&
            isapprox(
                dot(prob.observed_decision, witness.cost),
                dot(prob.capacity, witness.dual_prices);
-               atol=1.0e-9,
+               rtol=1.0e-10,
            )
 end
 
@@ -156,5 +160,8 @@ register_variant(
     :inverse_optimization,
     :classical_normalized,
     ClassicalInverseLPProblem,
-    "Simplex-normalized classical weighted-L1 inverse packing LP with exact, strictly-interior, and unresolved observations",
+    "Simplex-normalized classical weighted-L1 inverse packing LP with exact, strictly-interior, and unresolved observations";
+    tags=[:production],
+    min_target_variables=2,
+    max_target_variables=250_000,
 )

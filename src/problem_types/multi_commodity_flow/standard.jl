@@ -1,761 +1,541 @@
 using JuMP
 using Random
 using Distributions
+using Statistics
+
+"""
+Largest `target_variables` accepted by the multi_commodity_flow variants; the
+constructors hold arc x commodity matrices and per-commodity shortest-path
+trees, so larger requests raise an `ArgumentError` instead of undersizing.
+"""
+const MCF_MAX_VARIABLES = 1_000_000
+
+"""
+Planted routing: `flows[a, k]` routes every commodity's demands along a
+shortest-path tree (commodity-specific noisy lengths) from its origin, so
+conservation holds exactly for every commodity, and the installed capacities
+cover the aggregate load on every arc.
+"""
+struct MultiCommodityFlowWitness
+    flows::Matrix{Float64}
+end
+
+"""
+Metric-inequality (Onaga-Kakusho / "Japanese theorem") certificate. For arc
+lengths `lengths >= 0`, any feasible routing satisfies
+
+    sum_a capacity[a] * lengths[a]  >=  sum_k sum_v demand[k][v] * dist_lengths(origin[k], v)
+
+(each commodity's flow decomposes into origin-destination paths no shorter
+than the shortest one, and the bundle rows cap the aggregate). The certificate
+stores the lengths and both sides with `capacity_length < required`.
+
+  - `mode = :length`: lengths are geographic arc lengths — a network-wide
+    capacity shortage that only shows when all commodities' path lengths are
+    weighed together.
+  - `mode = :regional_cut`: lengths are 1 on the arcs leaving `region` (a
+    geographic area around a major origin) and 0 elsewhere — the exit
+    capacity of the region is below the demand that must leave it.
+
+Neither involves a single row, so presolve cannot detect it.
+"""
+struct MultiCommodityFlowMetricCertificate
+    mode::Symbol
+    lengths::Vector{Float64}
+    region::Vector{Int}
+    capacity_length::Float64
+    required::Float64
+end
 
 """
     MultiCommodityFlow <: ProblemGenerator
 
-Generator for multi-commodity flow problems.
-
-Multi-commodity flow extends single-commodity network flow by allowing multiple
-different commodities (e.g., different products, message types, or freight classes)
-to share the same network infrastructure. Each commodity has its own source-sink
-pairs and demands, but all commodities compete for limited arc capacity.
+Generator for multicommodity minimum-cost flow problems (source-aggregated
+commodities sharing arc capacities) on sparse geographic networks.
 
 # Overview
 
-Models multicommodity routing on a shared directed network. The decisions are
-nonnegative flows for each commodity on each arc. The objective minimizes total
-arc routing cost. Each commodity has source, sink, and transshipment balance
-constraints, while shared arc-capacity constraints couple all commodities using
-the same network infrastructure.
+Commodity `k` ships from its origin `origins[k]` (a port, plant or hub) to a
+gravity-sampled set of destinations with demands `demands[k]`. All commodities
+share the arc capacities.
+
+    minimize    sum_{a,k} cost[a,k] * x[a,k]
+    subject to  sum_k x[a,k] <= capacity[a]                          every arc a
+                sum_out x[.,k] - sum_in x[.,k] = b[v,k]              every node v, commodity k
+                x >= 0
+
+with `b[origin_k, k] = total demand of k`, `b[v, k] = -demand` at its
+destinations and 0 elsewhere. The bundle rows couple every commodity: the LP
+is not a network LP and simplex must work across commodities.
+
+# Data grounding
+
+The network is `_geo_network` (strongly connected, 3.2-4.6 arcs per node, three
+geography shapes, region side `12 sqrt(n)`). Origins are drawn by activity
+weight; each commodity serves 10%-35% of the nodes with gravity demands
+`w_o^0.5 * w_v / (1 + dist / L)^1.5` (mean 50 units). Per-unit cost =
+arc length x commodity value factor (lognormal) x arc noise, 15% cheaper on
+trunk arcs.
+
+# Feasibility control
+
+A planted routing sends every commodity along a shortest-path tree on its own
+noisy lengths (`_geo_dijkstra` + `_geo_tree_flows`), giving per-arc loads.
+Capacities are `max(floor, rho * load)` with a tiered lognormal floor:
+
+  - `feasible`: `rho` in [1.05, 1.5]; the planted routing is the witness.
+  - `infeasible`: as `feasible`, then a metric certificate is enforced —
+    `:length` mode (60%): all capacities scaled down so
+    `sum capacity * length` is 80%-93% of the length-weighted demand
+    requirement; `:regional_cut` (40%): only the arcs leaving a region around a
+    major origin are squeezed to 80%-93% of the demand that must exit it. In
+    both modes no node is left starved behind its own arcs
+    (`_mcf_local_repair!`), so presolve cannot refute it from one row.
+  - `unknown`: capacities as `feasible`, then every demand grows by a common
+    factor in [1.0, 1.15] (traffic growth since the network was provisioned);
+    whether the commodities can reroute through the remaining spare capacity
+    is left open — natural, either side (`_mcf_unknown_growth!`, which keeps
+    every node open).
 
 # Fields
 
-  - `n_nodes::Int`: Number of nodes in the network
-  - `n_arcs::Int`: Number of arcs in the network
-  - `n_commodities::Int`: Number of commodities
-  - `arcs::Vector{Tuple{Int,Int}}`: List of directed arcs (i,j)
-  - `capacities::Dict{Tuple{Int,Int},Float64}`: Capacity for each arc
-  - `demands::Dict{Int,Float64}`: Demand for each commodity
-  - `costs::Dict{Tuple{Int,Int},Float64}`: Cost per unit flow on each arc
-  - `commodities::Vector{Tuple{Int,Int}}`: Source-sink pairs for each commodity
+  - `n_nodes`, `arcs` (sorted), `trunk`, `positions`, `geography`
+  - `capacities::Vector{Float64}`, `costs::Matrix{Float64}` (arc x commodity)
+  - `origins::Vector{Int}`, `destinations::Vector{Vector{Int}}`,
+    `demands::Vector{Vector{Float64}}` (aligned with `destinations`)
+  - `feasible_witness`, `infeasibility_certificate`, `feasibility_status`
 """
 struct MultiCommodityFlow <: ProblemGenerator
     n_nodes::Int
-    n_arcs::Int
-    n_commodities::Int
     arcs::Vector{Tuple{Int, Int}}
-    capacities::Dict{Tuple{Int, Int}, Float64}
-    demands::Dict{Int, Float64}
-    costs::Dict{Tuple{Int, Int}, Float64}
-    commodities::Vector{Tuple{Int, Int}}
+    trunk::Vector{Bool}
+    capacities::Vector{Float64}
+    costs::Matrix{Float64}
+    origins::Vector{Int}
+    destinations::Vector{Vector{Int}}
+    demands::Vector{Vector{Float64}}
+    positions::Vector{Tuple{Float64, Float64}}
+    geography::Symbol
+    feasible_witness::Union{Nothing, MultiCommodityFlowWitness}
+    infeasibility_certificate::Union{Nothing, MultiCommodityFlowMetricCertificate}
+    feasibility_status::FeasibilityStatus
+end
+
+"""
+    _mcf_region(positions, center, size) -> Vector{Int}
+
+The `size` nodes nearest to `center` (sorted indices): a geographic region.
+"""
+function _mcf_region(positions::Vector{Tuple{Float64, Float64}}, center::Int, size::Int)
+    order = sortperm([(_geo_dist(positions, center, v), v) for v in eachindex(positions)])
+    return sort(order[1:size])
+end
+
+"""
+    _mcf_local_repair!(capacities, frozen, n, arcs, origins, destinations, demands; slack=1.15)
+        -> Bool
+
+Keep every node locally routable with `slack` (default 15%): each node's
+in-arcs must carry `slack` times the total demand ending there and each
+origin's out-arcs `slack` times the demand leaving it (`slack = 0` disables
+the repair). Short nodes get their arcs enlarged (and marked `frozen`). A node
+starved behind its own arcs is exactly what presolve refutes from one
+conservation row (or, at a dead end, a doubleton substitution plus one bundle
+row); with every node open — and `_geo_network` closing dead ends —
+infeasibility is left to regional and network-wide shortages that need real
+simplex work. Returns whether anything was repaired.
+"""
+function _mcf_local_repair!(
+    capacities::Vector{Float64},
+    frozen::AbstractVector{Bool},
+    n::Int,
+    arcs::Vector{Tuple{Int, Int}},
+    origins::Vector{Int},
+    destinations::Vector{Vector{Int}},
+    demands::Vector{Vector{Float64}};
+    slack::Float64=1.15,
+)
+    slack > 0 || return false
+    repaired = false
+    A = length(arcs)
+    # Node level: every node's in-arcs carry 1.15x the total demand ending
+    # there and every origin's out-arcs 1.15x the demand leaving it (a
+    # dead-end node behind one arc would otherwise be refuted by presolve's
+    # doubleton substitution plus one bundle row).
+    out_adj, in_adj = _geo_adjacency(n, arcs)
+    need_in = zeros(n)
+    need_out = zeros(n)
+    for k in eachindex(origins)
+        need_out[origins[k]] += sum(demands[k])
+        for (i, v) in enumerate(destinations[k])
+            need_in[v] += demands[k][i]
+        end
+    end
+    for v in 1:n, (need, adj) in ((need_in[v], in_adj[v]), (need_out[v], out_adj[v]))
+        need > 0 || continue
+        have = sum(capacities[a] for a in adj)
+        have >= slack * need && continue
+        g = slack * need / have
+        for a in adj
+            capacities[a] = ceil(capacities[a] * g; digits=2)
+            frozen[a] = true
+        end
+        repaired = true
+    end
+    return repaired
+end
+
+"""
+    _mcf_squeeze!(capacities, scalable, lengths, target, n, arcs, origins,
+                  destinations, demands; slack=1.15) -> Float64
+
+Scale the `scalable` arcs' capacities down until `sum(capacities .* lengths)`
+reaches `target`, then re-open every starved node (`_mcf_local_repair!`,
+which freezes the arcs it enlarges) and squeeze the remaining free arcs again
+(at most 30 rounds). Returns the final
+capacity-length product.
+"""
+function _mcf_squeeze!(
+    capacities::Vector{Float64},
+    scalable::AbstractVector{Bool},
+    lengths::Vector{Float64},
+    target::Float64,
+    n::Int,
+    arcs::Vector{Tuple{Int, Int}},
+    origins::Vector{Int},
+    destinations::Vector{Vector{Int}},
+    demands::Vector{Vector{Float64}};
+    slack::Float64=1.15,
+)
+    frozen = .!collect(scalable)
+    for _ in 1:30
+        fixed_part = sum(capacities[a] * lengths[a] for a in eachindex(arcs) if frozen[a]; init=0.0)
+        free_part = sum(capacities[a] * lengths[a] for a in eachindex(arcs) if !frozen[a]; init=0.0)
+        if fixed_part + free_part > target && free_part > 0
+            f = max((target - fixed_part) / free_part, 0.0)
+            for a in eachindex(arcs)
+                frozen[a] && continue
+                capacities[a] = max(floor(capacities[a] * f; digits=2), 0.01)
+            end
+        end
+        _mcf_local_repair!(
+            capacities, frozen, n, arcs, origins, destinations, demands; slack=slack
+        ) || break
+    end
+    return sum(capacities .* lengths)
+end
+
+"""
+    _mcf_enforce_metric!(rng, capacities, n, arcs, out_adj, positions, origins,
+                         destinations, demands) -> certificate
+
+Squeeze capacities until a metric certificate separates (capacity-length
+product 80%-93% of the requirement) while no node is starved outright
+(`_mcf_squeeze!`). `:regional_cut` mode (40%) squeezes only the
+arcs leaving a region of 5%-25% of the nodes around the origin with the
+largest demand; `:length` mode (otherwise, or as fallback when the region
+cannot separate) squeezes every arc against geographic lengths. Returns the
+certificate.
+"""
+function _mcf_enforce_metric!(
+    rng::AbstractRNG,
+    capacities::Vector{Float64},
+    n::Int,
+    arcs::Vector{Tuple{Int, Int}},
+    out_adj::Vector{Vector{Int}},
+    positions::Vector{Tuple{Float64, Float64}},
+    origins::Vector{Int},
+    destinations::Vector{Vector{Int}},
+    demands::Vector{Vector{Float64}},
+)
+    ratio = 0.8 + 0.13 * rand(rng)
+    use_cut = rand(rng) < 0.4 && n >= 10
+    if use_cut
+        k_big = argmax([sum(d) for d in demands])
+        size = clamp(round(Int, n * (0.05 + 0.2 * rand(rng))), 5, n - 1)
+        region = _mcf_region(positions, origins[k_big], size)
+        inside = falses(n)
+        inside[region] .= true
+        lengths = [(inside[u] && !inside[v]) ? 1.0 : 0.0 for (u, v) in arcs]
+        required = _mcf_metric_requirement(
+            n, arcs, out_adj, lengths, origins, destinations, demands
+        )
+        if required > 0
+            trial = copy(capacities)
+            cap_len = _mcf_squeeze!(
+                trial,
+                lengths .> 0,
+                lengths,
+                ratio * required,
+                n,
+                arcs,
+                origins,
+                destinations,
+                demands,
+            )
+            if cap_len < required
+                capacities .= trial
+                return MultiCommodityFlowMetricCertificate(
+                    :regional_cut, lengths, region, cap_len, required
+                )
+            end
+        end
+    end
+    lengths = [_geo_dist(positions, u, v) for (u, v) in arcs]
+    required = _mcf_metric_requirement(n, arcs, out_adj, lengths, origins, destinations, demands)
+    # Local repairs can eat into the squeeze; aim lower, and on tiny networks
+    # (destinations a hop or two from their origins) relax the repair slack,
+    # until it separates.
+    original = copy(capacities)
+    for slack in (1.15, 1.02, 0.0), attempt in 1:4
+        capacities .= original
+        cap_len = _mcf_squeeze!(
+            capacities,
+            trues(length(arcs)),
+            lengths,
+            ratio * 0.85^(attempt - 1) * required,
+            n,
+            arcs,
+            origins,
+            destinations,
+            demands;
+            slack=slack,
+        )
+        cap_len < required &&
+            return MultiCommodityFlowMetricCertificate(:length, lengths, Int[], cap_len, required)
+    end
+    error("multi_commodity_flow: metric certificate failed to separate")
+end
+
+"""
+    _mcf_unknown_growth!(rng, capacities, n, arcs, origins, destinations, demands;
+                         max_growth) -> Float64
+
+`unknown` profile: the capacities were provisioned (1.05-1.5x) for the
+planted routing of the current demand; demand has since grown by a common
+factor drawn from [1.0, max_growth] (rounded to cents, in place). Up to 1.05x the
+planted routing still fits; beyond that the commodities must reroute through
+whatever spare capacity the network has — a natural instance on either side.
+The same local repair as the infeasible profile keeps every node open.
+Returns the growth factor.
+"""
+function _mcf_unknown_growth!(
+    rng::AbstractRNG,
+    capacities::Vector{Float64},
+    n::Int,
+    arcs::Vector{Tuple{Int, Int}},
+    origins::Vector{Int},
+    destinations::Vector{Vector{Int}},
+    demands::Vector{Vector{Float64}};
+    max_growth::Float64,
+)
+    growth = 1.0 + (max_growth - 1.0) * rand(rng)
+    for d in demands
+        d .= round.(d .* growth; digits=2)
+    end
+    _mcf_local_repair!(capacities, falses(length(arcs)), n, arcs, origins, destinations, demands)
+    return growth
+end
+
+"""
+    _mcf_instance(rng, target_arcs, n_commodities; dest_share) -> NamedTuple
+
+Shared geographic network and gravity commodities: network sized from the arc
+budget, origins drawn by activity weight, destinations and demands from
+`_mcf_gravity_destinations`.
+"""
+function _mcf_instance(
+    rng::AbstractRNG, target_arcs::Int, n_commodities::Int; dest_share=(0.1, 0.35)
+)
+    n, n_arcs = _network_flow_dimensions(rng, target_arcs)
+    while n < n_commodities + 1
+        n += 1
+        n_arcs = max(n_arcs, 2 * (n - 1))
+    end
+    geography = let r = rand(rng)
+        r < 0.4 ? :clustered : (r < 0.75 ? :uniform : :corridor)
+    end
+    positions, weights = _geo_positions(rng, n, geography; span=12.0 * sqrt(n))
+    arcs, trunk = _geo_network(rng, positions, n_arcs)
+    dist = [_geo_dist(positions, u, v) for (u, v) in arcs]
+    length_scale = 5.0 * median(dist)
+    origins = sort(sample(rng, 1:n, Weights(weights), n_commodities; replace=false))
+    destinations = Vector{Vector{Int}}(undef, n_commodities)
+    raw = Vector{Vector{Float64}}(undef, n_commodities)
+    for k in 1:n_commodities
+        n_dest = clamp(
+            round(Int, (n - 1) * (dest_share[1] + (dest_share[2] - dest_share[1]) * rand(rng))),
+            1,
+            n - 1,
+        )
+        destinations[k], raw[k] = _mcf_gravity_destinations(
+            rng, n, origins[k], positions, weights, n_dest, length_scale
+        )
+    end
+    mean_raw = sum(sum, raw) / sum(length, raw)
+    demands = [max.(round.(50.0 .* r ./ mean_raw; digits=2), 0.01) for r in raw]
+    return (; n, arcs, trunk, positions, weights, geography, dist, origins, destinations, demands)
+end
+
+"""
+    _mcf_planted_loads(rng, n, arcs, out_adj, dist, origins, destinations, demands)
+        -> (flows::Matrix, load::Vector)
+
+Route each commodity along a shortest-path tree on its own noisy lengths.
+"""
+function _mcf_planted_loads(
+    rng::AbstractRNG,
+    n::Int,
+    arcs::Vector{Tuple{Int, Int}},
+    out_adj::Vector{Vector{Int}},
+    dist::Vector{Float64},
+    origins::Vector{Int},
+    destinations::Vector{Vector{Int}},
+    demands::Vector{Vector{Float64}},
+)
+    K = length(origins)
+    flows = zeros(length(arcs), K)
+    node_demand = zeros(n)
+    for k in 1:K
+        noisy = [dist[a] * rand(rng, LogNormal(0.0, 0.35)) + 1e-6 for a in eachindex(arcs)]
+        d, pred = _geo_dijkstra(n, arcs, out_adj, noisy, [origins[k]])
+        fill!(node_demand, 0.0)
+        node_demand[destinations[k]] .= demands[k]
+        flows[:, k] .= _geo_tree_flows(n, arcs, d, pred, node_demand)
+    end
+    return flows, vec(sum(flows; dims=2))
 end
 
 """
     MultiCommodityFlow(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
-Construct a multi-commodity flow problem instance.
-
-# Arguments
-
-  - `target_variables`: Target number of variables in the LP formulation
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
-
-# Details
-
-For multi-commodity flow: target_variables = n_commodities × n_arcs
-We optimize for realistic combinations of commodities and arcs that yield the target.
+Variables `n_arcs * n_commodities` with `n_commodities =
+clamp(round(0.4 * target^0.35), 2, 60)` (about 4 at 1k, 10 at 10k, 22 at 100k)
+and `n_arcs ~ target / n_commodities` (within half a commodity of the target).
+Rows `n_nodes * n_commodities + n_arcs`. Values above `MCF_MAX_VARIABLES`
+raise an `ArgumentError`.
 """
 function MultiCommodityFlow(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
+    target_variables >= 1 ||
+        throw(ArgumentError("target_variables must be >= 1 (got $target_variables)."))
+    target_variables <= MCF_MAX_VARIABLES || throw(
+        ArgumentError(
+            "multi_commodity_flow/standard supports at most $MCF_MAX_VARIABLES variables; " *
+            "requested $target_variables.",
+        ),
+    )
     rng = MersenneTwister(seed)
+    K = clamp(round(Int, 0.4 * target_variables^0.35), 2, 60)
+    inst = _mcf_instance(rng, max(round(Int, target_variables / K), 2), K)
+    n, arcs, trunk, positions, dist = inst.n, inst.arcs, inst.trunk, inst.positions, inst.dist
+    origins, destinations, demands = inst.origins, inst.destinations, inst.demands
+    A = length(arcs)
+    out_adj, _ = _geo_adjacency(n, arcs)
 
-    # Sample parameters based on target_variables
-    params = sample_parameters_mcf(rng, target_variables)
+    value_factor = [rand(rng, LogNormal(0.0, 0.35)) for _ in 1:K]
+    arc_noise = [rand(rng, LogNormal(0.0, 0.2)) * (trunk[a] ? 0.85 : 1.0) for a in 1:A]
+    costs = [
+        round((dist[a] * arc_noise[a] + 0.1) * value_factor[k]; digits=3) for a in 1:A, k in 1:K
+    ]
 
-    n_nodes = params[:n_nodes]
-    n_arcs = params[:n_arcs]
-    n_commodities = params[:n_commodities]
-    capacity_range = params[:capacity_range]
-    demand_range = params[:demand_range]
-    cost_range = params[:cost_range]
-    capacity_utilization = params[:capacity_utilization]
+    flows, load = _mcf_planted_loads(rng, n, arcs, out_adj, dist, origins, destinations, demands)
+    used = filter(>(0.0), load)
+    floor_scale = (0.1 + 0.3 * rand(rng)) * (isempty(used) ? 50.0 : median(used))
+    rho_range = (1.05, 1.5)
+    capacities = [
+        ceil(
+            max(
+                floor_scale * rand(rng, LogNormal(0.0, 0.6)) * (trunk[a] ? 1.6 : 1.0),
+                (rho_range[1] + (rho_range[2] - rho_range[1]) * rand(rng)) * load[a],
+                0.01,
+            );
+            digits=2,
+        ) for a in 1:A
+    ]
 
-    # Validate parameters
-    if n_arcs > n_nodes * (n_nodes - 1)
-        n_arcs = n_nodes * (n_nodes - 1)  # Maximum possible arcs without self-loops
+    if feasibility_status == unknown
+        _mcf_unknown_growth!(
+            rng, capacities, n, arcs, origins, destinations, demands; max_growth=1.15
+        )
     end
 
-    # Generate network topology ensuring connectivity
-    arcs = generate_connected_mcf_network(rng, n_nodes, n_arcs)
-
-    # Generate arc capacities using log-normal distribution for realism
-    min_capacity, max_capacity = capacity_range
-    capacities = Dict{Tuple{Int, Int}, Float64}()
-
-    # Use log-normal distribution for more realistic capacity variation
-    # (some high-capacity backbone links, many medium-capacity links)
-    log_mean = log(sqrt(min_capacity * max_capacity))
-    log_std = log(max_capacity / min_capacity) / 4
-
-    for arc in arcs
-        # Generate capacity with log-normal distribution
-        capacity = exp(rand(rng, Normal(log_mean, log_std)))
-        capacity = clamp(capacity, min_capacity, max_capacity)
-        capacities[arc] = round(capacity; digits=2)
-    end
-
-    # Generate commodity source-sink pairs ensuring diversity
-    commodities = generate_commodity_pairs(rng, n_nodes, n_commodities, arcs)
-
-    # Generate commodity demands using log-normal distribution
-    # (realistic: some high-demand commodities, many lower-demand ones)
-    min_demand, max_demand = demand_range
-    demands = Dict{Int, Float64}()
-
-    log_demand_mean = log(sqrt(min_demand * max_demand))
-    log_demand_std = log(max_demand / min_demand) / 3
-
-    for k in 1:n_commodities
-        demand = exp(rand(rng, Normal(log_demand_mean, log_demand_std)))
-        demand = clamp(demand, min_demand, max_demand)
-        demands[k] = round(demand; digits=2)
-    end
-
-    # Generate arc costs (distance-based with variation)
-    min_cost, max_cost = cost_range
-    costs = Dict{Tuple{Int, Int}, Float64}()
-
-    for arc in arcs
-        base_cost = rand(rng) * (max_cost - min_cost) + min_cost
-        # Add congestion factor based on capacity (lower capacity = higher cost)
-        congestion_factor =
-            1.0 + 0.3 * (1.0 - (capacities[arc] - min_capacity) / (max_capacity - min_capacity))
-        costs[arc] = round(base_cost * congestion_factor; digits=2)
-    end
-
-    # Adjust capacities and demands to ensure desired feasibility
-    total_demand = sum(values(demands))
-    total_capacity = sum(values(capacities))
-
-    solution_status = if feasibility_status == feasible
-        :feasible
+    feasible_witness = nothing
+    infeasibility_certificate = nothing
+    if feasibility_status == feasible
+        feasible_witness = MultiCommodityFlowWitness(flows)
     elseif feasibility_status == infeasible
-        :infeasible
-    else
-        :all
+        infeasibility_certificate = _mcf_enforce_metric!(
+            rng, capacities, n, arcs, out_adj, positions, origins, destinations, demands
+        )
     end
-
-    if solution_status == :feasible
-        # Ensure network can handle demand with target utilization
-        # We need total capacity >= total demand / capacity_utilization
-        required_total_capacity = total_demand / capacity_utilization
-
-        if total_capacity < required_total_capacity
-            # Scale up capacities proportionally
-            scale_factor = required_total_capacity / total_capacity
-            for arc in arcs
-                capacities[arc] = round(capacities[arc] * scale_factor; digits=2)
-            end
-        end
-
-        # Ensure connectivity: verify each commodity can reach its destination
-        # Add strategic arcs if needed to ensure basic connectivity
-        for k in 1:n_commodities
-            source, sink = commodities[k]
-            if !has_path(arcs, source, sink, n_nodes)
-                # Add a direct or indirect path
-                new_arcs = create_path(rng, source, sink, arcs, n_nodes)
-                for new_arc in new_arcs
-                    if new_arc ∉ arcs
-                        push!(arcs, new_arc)
-                        # Add capacity and cost for new arc
-                        capacities[new_arc] = round(
-                            rand(rng) * (max_capacity - min_capacity) + min_capacity; digits=2
-                        )
-                        costs[new_arc] = round(
-                            rand(rng) * (max_cost - min_cost) + min_cost; digits=2
-                        )
-                    end
-                end
-            end
-        end
-
-    elseif solution_status == :infeasible
-        # Create infeasibility by reducing capacity or increasing demand
-        if rand(rng) < 0.5
-            # Option 1: Reduce arc capacities to create bottleneck
-            scale_factor = rand(rng, Uniform(0.3, 0.7))  # Reduce to 30-70% of current
-            for arc in arcs
-                capacities[arc] = round(capacities[arc] * scale_factor; digits=2)
-            end
-        else
-            # Option 2: Increase demands beyond network capacity
-            scale_factor = rand(rng, Uniform(1.5, 2.5))  # Increase to 150-250%
-            for k in 1:n_commodities
-                demands[k] = round(demands[k] * scale_factor; digits=2)
-            end
-        end
-
-        # Add targeted disruptions so at least one commodity cannot be satisfied
-        enforce_infeasibility_mcf!(rng, commodities, arcs, capacities, demands)
-    end
-    # else :all - keep natural randomness
 
     return MultiCommodityFlow(
-        n_nodes, n_arcs, n_commodities, arcs, capacities, demands, costs, commodities
+        n,
+        arcs,
+        trunk,
+        capacities,
+        costs,
+        origins,
+        destinations,
+        demands,
+        positions,
+        inst.geography,
+        feasible_witness,
+        infeasibility_certificate,
+        feasibility_status,
     )
+end
+
+"""
+    _mcf_supply_matrix(n, origins, destinations, demands) -> Matrix{Float64}
+
+Node x commodity net supplies `b[v, k]` (out minus in).
+"""
+function _mcf_supply_matrix(n::Int, origins, destinations, demands)
+    b = zeros(n, length(origins))
+    for k in eachindex(origins)
+        b[origins[k], k] += sum(demands[k])
+        for (i, v) in enumerate(destinations[k])
+            b[v, k] -= demands[k][i]
+        end
+    end
+    return b
 end
 
 """
     build_model(prob::MultiCommodityFlow)
 
-Build a JuMP model for the multi-commodity flow problem.
-
-# Arguments
-
-  - `prob`: MultiCommodityFlow instance
-
-# Returns
-
-  - `model`: The JuMP model
+Build the multicommodity min-cost flow LP. Deterministic — uses only the
+struct fields.
 """
 function build_model(prob::MultiCommodityFlow)
     model = Model()
-
-    # Decision variables: flow of each commodity on each arc
-    @variable(model, flow[1:prob.n_commodities, arc in prob.arcs] >= 0)
-
-    # Objective: Minimize total cost
-    @objective(
-        model,
-        Min,
-        sum(prob.costs[arc] * sum(flow[k, arc] for k in 1:prob.n_commodities) for arc in prob.arcs)
-    )
-
-    # Capacity constraints: total flow on each arc cannot exceed capacity
-    for arc in prob.arcs
-        @constraint(model, sum(flow[k, arc] for k in 1:prob.n_commodities) <= prob.capacities[arc])
+    A = length(prob.arcs)
+    K = length(prob.origins)
+    n = prob.n_nodes
+    @variable(model, x[1:A, 1:K] >= 0)
+    @objective(model, Min, sum(prob.costs[a, k] * x[a, k] for a in 1:A, k in 1:K))
+    for a in 1:A
+        @constraint(model, sum(x[a, k] for k in 1:K) <= prob.capacities[a])
     end
-
-    # Flow conservation constraints for each commodity
-    for k in 1:prob.n_commodities
-        source, sink = prob.commodities[k]
-
-        for node in 1:prob.n_nodes
-            # Arcs entering this node
-            inflow_arcs = [arc for arc in prob.arcs if arc[2] == node]
-            # Arcs leaving this node
-            outflow_arcs = [arc for arc in prob.arcs if arc[1] == node]
-
-            inflow = isempty(inflow_arcs) ? 0 : sum(flow[k, arc] for arc in inflow_arcs)
-            outflow = isempty(outflow_arcs) ? 0 : sum(flow[k, arc] for arc in outflow_arcs)
-
-            if node == source
-                # At source: outflow - inflow = demand
-                @constraint(model, outflow - inflow == prob.demands[k])
-            elseif node == sink
-                # At sink: inflow - outflow = demand
-                @constraint(model, inflow - outflow == prob.demands[k])
-            else
-                # At intermediate nodes: flow conservation
-                @constraint(model, inflow == outflow)
-            end
-        end
+    out_adj, in_adj = _geo_adjacency(n, prob.arcs)
+    b = _mcf_supply_matrix(n, prob.origins, prob.destinations, prob.demands)
+    for k in 1:K, v in 1:n
+        @constraint(
+            model,
+            sum(x[a, k] for a in out_adj[v]; init=AffExpr(0.0)) -
+            sum(x[a, k] for a in in_adj[v]; init=AffExpr(0.0)) == b[v, k]
+        )
     end
-
     return model
 end
 
-# Helper functions
-
-"""
-    sample_parameters_mcf(rng::AbstractRNG, target_variables::Int)
-
-Sample realistic parameters for a multi-commodity flow problem targeting approximately
-the specified number of variables.
-
-For multi-commodity flow: target_variables = n_commodities × n_arcs
-We optimize for realistic combinations of commodities and arcs that yield the target.
-"""
-function sample_parameters_mcf(rng::AbstractRNG, target_variables::Int)
-    params = Dict{Symbol, Any}()
-
-    # Set realistic ranges based on target size
-    if target_variables <= 100
-        # Small networks
-        min_commodities = 2
-        max_commodities = 5
-        min_nodes = 5
-        max_nodes = 15
-        min_density = 0.2
-        max_density = 0.6
-    elseif target_variables <= 500
-        # Medium networks
-        min_commodities = 3
-        max_commodities = 15
-        min_nodes = 10
-        max_nodes = 30
-        min_density = 0.15
-        max_density = 0.5
-    else
-        # Large networks
-        min_commodities = 8
-        max_commodities = 50
-        min_nodes = 15
-        max_nodes = 100
-        min_density = 0.1
-        max_density = 0.4
-    end
-
-    best_n_commodities = min_commodities
-    best_n_arcs = 10
-    best_n_nodes = min_nodes
-    best_error = Inf
-
-    # Search for optimal combination
-    for n_commodities in min_commodities:max_commodities
-        # For each commodity count, find best arc count
-        target_arcs = round(Int, target_variables / n_commodities)
-
-        # Find reasonable node count for this arc count
-        for n_nodes in min_nodes:max_nodes
-            max_possible_arcs = n_nodes * (n_nodes - 1)
-
-            # Skip if even minimum density would exceed our target
-            if max_possible_arcs * min_density > target_arcs * 1.1
-                continue
-            end
-
-            # Calculate required density
-            required_density = target_arcs / max_possible_arcs
-
-            # Check if this density is realistic
-            if required_density >= min_density && required_density <= max_density
-                actual_arcs = round(Int, max_possible_arcs * required_density)
-                actual_vars = n_commodities * actual_arcs
-                error = abs(actual_vars - target_variables) / target_variables
-
-                if error < best_error
-                    best_error = error
-                    best_n_commodities = n_commodities
-                    best_n_arcs = actual_arcs
-                    best_n_nodes = n_nodes
-                end
-            end
-        end
-    end
-
-    # If we couldn't find a good solution, use heuristic approach
-    if best_error > 0.1
-        # Use square root heuristic
-        if target_variables <= 100
-            n_commodities = rand(rng, 2:5)
-        elseif target_variables <= 500
-            n_commodities = rand(rng, 5:15)
-        else
-            n_commodities = rand(rng, 10:50)
-        end
-
-        target_arcs = round(Int, target_variables / n_commodities)
-
-        # Estimate nodes from arcs assuming moderate density
-        target_density = if target_variables <= 100
-            0.4
-        elseif target_variables <= 500
-            0.3
-        else
-            0.2
-        end
-
-        n_nodes = max(min_nodes, min(max_nodes, round(Int, sqrt(target_arcs / target_density))))
-        n_arcs = min(target_arcs, n_nodes * (n_nodes - 1))
-
-        best_n_commodities = n_commodities
-        best_n_arcs = n_arcs
-        best_n_nodes = n_nodes
-    end
-
-    params[:n_commodities] = best_n_commodities
-    params[:n_arcs] = best_n_arcs
-    params[:n_nodes] = best_n_nodes
-
-    # Set capacity and demand ranges based on problem size
-    if target_variables <= 100
-        # Small problem
-        params[:capacity_range] = (20.0, 200.0)
-        params[:demand_range] = (5.0, 50.0)
-        params[:cost_range] = (1.0, 15.0)
-    elseif target_variables <= 500
-        # Medium problem
-        params[:capacity_range] = (50.0, 500.0)
-        params[:demand_range] = (10.0, 100.0)
-        params[:cost_range] = (1.0, 25.0)
-    else
-        # Large problem
-        params[:capacity_range] = (100.0, 2000.0)
-        params[:demand_range] = (20.0, 500.0)
-        params[:cost_range] = (1.0, 50.0)
-    end
-
-    # Capacity utilization: higher for smaller problems (more efficient), lower for larger (more complex)
-    params[:capacity_utilization] = if target_variables <= 100
-        rand(rng, Uniform(0.6, 0.8))
-    elseif target_variables <= 500
-        rand(rng, Uniform(0.5, 0.7))
-    else
-        rand(rng, Uniform(0.4, 0.6))
-    end
-
-    return params
-end
-
-"""
-    generate_connected_mcf_network(rng::AbstractRNG, n_nodes::Int, n_arcs::Int)
-
-Generate a connected directed network with the specified number of nodes and arcs.
-Ensures strong connectivity for multi-commodity flow.
-"""
-function generate_connected_mcf_network(rng::AbstractRNG, n_nodes::Int, n_arcs::Int)
-    arcs = Set{Tuple{Int, Int}}()
-
-    # Create a cycle to ensure strong connectivity (every node can reach every other node)
-    for i in 1:n_nodes
-        next_node = (i % n_nodes) + 1
-        push!(arcs, (i, next_node))
-    end
-
-    # Add some reverse arcs for bidirectional flow
-    n_reverse = min(n_nodes ÷ 2, max(0, n_arcs - n_nodes))
-    reverse_candidates = [((i % n_nodes) + 1, i) for i in 1:n_nodes]
-    shuffle!(rng, reverse_candidates)
-
-    for i in 1:min(n_reverse, length(reverse_candidates))
-        arc = (reverse_candidates[i][1], reverse_candidates[i][2])
-        if arc ∉ arcs
-            push!(arcs, arc)
-        end
-    end
-
-    # Add shortcut connections for realism (express routes)
-    n_shortcuts = min(n_nodes ÷ 3, n_arcs - length(arcs))
-    for _ in 1:n_shortcuts
-        if length(arcs) >= n_arcs
-            break
-        end
-        # Create shortcuts between distant nodes
-        i = rand(rng, 1:n_nodes)
-        j = (i + rand(rng, 2:max(2, n_nodes - 1))) % n_nodes + 1
-        arc = (i, j)
-        if arc ∉ arcs && i != j
-            push!(arcs, arc)
-        end
-    end
-
-    # Add remaining random arcs to reach target count
-    all_possible_arcs = [(i, j) for i in 1:n_nodes for j in 1:n_nodes if i != j]
-    remaining_arcs = [arc for arc in all_possible_arcs if arc ∉ arcs]
-
-    shuffle!(rng, remaining_arcs)
-    for arc in remaining_arcs
-        if length(arcs) >= n_arcs
-            break
-        end
-        push!(arcs, arc)
-    end
-
-    return collect(arcs)
-end
-
-"""
-    generate_commodity_pairs(rng::AbstractRNG, n_nodes::Int, n_commodities::Int, arcs::Vector{Tuple{Int,Int}})
-
-Generate diverse source-sink pairs for commodities.
-Ensures variety in distances and different traffic patterns.
-"""
-function generate_commodity_pairs(
-    rng::AbstractRNG, n_nodes::Int, n_commodities::Int, arcs::Vector{Tuple{Int, Int}}
-)
-    commodities = Vector{Tuple{Int, Int}}()
-    used_pairs = Set{Tuple{Int, Int}}()
-
-    for k in 1:n_commodities
-        # Try to find a unique source-sink pair
-        max_attempts = 100
-        for attempt in 1:max_attempts
-            source = rand(rng, 1:n_nodes)
-
-            # Choose sink with varying distances for realism
-            # Mix of short-haul (nearby) and long-haul (distant) commodities
-            if rand(rng) < 0.4  # 40% short-haul
-                # Nearby destination (within 30% of network)
-                offset = rand(rng, 1:max(1, n_nodes ÷ 3))
-                sink = ((source + offset - 1) % n_nodes) + 1
-            else  # 60% long-haul
-                # More distant destination
-                offset = rand(rng, (n_nodes ÷ 3):n_nodes)
-                sink = ((source + offset - 1) % n_nodes) + 1
-            end
-
-            if source != sink && (source, sink) ∉ used_pairs
-                push!(commodities, (source, sink))
-                push!(used_pairs, (source, sink))
-                break
-            end
-        end
-    end
-
-    # If we couldn't generate enough unique pairs, just create simple pairs
-    while length(commodities) < n_commodities
-        source = rand(rng, 1:n_nodes)
-        sink = rand(rng, 1:n_nodes)
-        if source != sink
-            push!(commodities, (source, sink))
-        end
-    end
-
-    return commodities
-end
-
-"""
-    has_path(arcs::Vector{Tuple{Int,Int}}, source::Int, sink::Int, n_nodes::Int)
-
-Check if there's a path from source to sink using BFS.
-"""
-function has_path(arcs::Vector{Tuple{Int, Int}}, source::Int, sink::Int, n_nodes::Int)
-    if source == sink
-        return true
-    end
-
-    # Build adjacency list
-    adj = [Int[] for _ in 1:n_nodes]
-    for (i, j) in arcs
-        push!(adj[i], j)
-    end
-
-    # BFS
-    visited = Set{Int}([source])
-    queue = [source]
-
-    while !isempty(queue)
-        current = popfirst!(queue)
-
-        for neighbor in adj[current]
-            if neighbor == sink
-                return true
-            end
-
-            if neighbor ∉ visited
-                push!(visited, neighbor)
-                push!(queue, neighbor)
-            end
-        end
-    end
-
-    return false
-end
-
-"""
-    create_path(rng::AbstractRNG, source::Int, sink::Int, existing_arcs::Vector{Tuple{Int,Int}}, n_nodes::Int)
-
-Create a simple path from source to sink.
-"""
-function create_path(
-    rng::AbstractRNG, source::Int, sink::Int, existing_arcs::Vector{Tuple{Int, Int}}, n_nodes::Int
-)
-    # Create a simple 1 or 2-hop path
-    if rand(rng) < 0.5
-        # Direct path
-        return [(source, sink)]
-    else
-        # 2-hop path through intermediate node
-        intermediate = rand(rng, 1:n_nodes)
-        if intermediate != source && intermediate != sink
-            return [(source, intermediate), (intermediate, sink)]
-        else
-            return [(source, sink)]
-        end
-    end
-end
-
-"""
-    enforce_infeasibility_mcf!(rng, commodities, arcs, capacities, demands)
-
-Introduce bottlenecks so that at least one commodity cannot satisfy its demand.
-Keeps randomness by selecting different commodities and disruption styles while
-guaranteeing an infeasible configuration.
-"""
-function enforce_infeasibility_mcf!(
-    rng::AbstractRNG,
-    commodities::Vector{Tuple{Int, Int}},
-    arcs::Vector{Tuple{Int, Int}},
-    capacities::Dict{Tuple{Int, Int}, Float64},
-    demands::Dict{Int, Float64},
-)
-    if isempty(commodities)
-        return nothing
-    end
-
-    commodity_indices = shuffle(rng, collect(eachindex(commodities)))
-    max_targets = max(1, min(length(commodity_indices), 3))
-    n_targets = rand(rng, 1:max_targets)
-    selected = commodity_indices[1:n_targets]
-
-    success = false
-
-    for idx in selected
-        choice = rand(rng)
-        if choice < 0.45
-            success |= enforce_source_bottleneck!(rng, idx, commodities, arcs, capacities, demands)
-        elseif choice < 0.9
-            success |= enforce_sink_bottleneck!(rng, idx, commodities, arcs, capacities, demands)
-        else
-            source_hit = enforce_source_bottleneck!(
-                rng, idx, commodities, arcs, capacities, demands
-            )
-            sink_hit = enforce_sink_bottleneck!(rng, idx, commodities, arcs, capacities, demands)
-            success |= (source_hit || sink_hit)
-        end
-
-        if success && rand(rng) < 0.6
-            break
-        end
-    end
-
-    if !success
-        # Deterministic fallback: cripple the first commodity
-        idx = commodity_indices[1]
-        source_hit = enforce_source_bottleneck!(rng, idx, commodities, arcs, capacities, demands)
-        sink_hit = enforce_sink_bottleneck!(rng, idx, commodities, arcs, capacities, demands)
-        success = source_hit || sink_hit
-
-        if !success
-            # As a last resort, inflate demand beyond total network capacity
-            total_capacity = sum(values(capacities))
-            boost = total_capacity <= 0 ? 50.0 : total_capacity * rand(rng, Uniform(1.2, 1.6))
-            demands[idx] = round(max(demands[idx], boost); digits=2)
-        end
-    end
-end
-
-function enforce_source_bottleneck!(
-    rng::AbstractRNG,
-    commodity_index::Int,
-    commodities::Vector{Tuple{Int, Int}},
-    arcs::Vector{Tuple{Int, Int}},
-    capacities::Dict{Tuple{Int, Int}, Float64},
-    demands::Dict{Int, Float64},
-)
-    source = commodities[commodity_index][1]
-    outgoing = [arc for arc in arcs if arc[1] == source]
-
-    if isempty(outgoing)
-        return false
-    end
-
-    current_total = sum(capacities[arc] for arc in outgoing)
-    if current_total <= 1e-6
-        return true
-    end
-
-    target_total = min(
-        demands[commodity_index] * rand(rng, Uniform(0.1, 0.6)),
-        current_total * rand(rng, Uniform(0.15, 0.5)),
-    )
-
-    redistribute_capacity!(rng, outgoing, capacities, target_total)
-
-    new_total = sum(capacities[arc] for arc in outgoing)
-    if new_total <= 1e-6
-        return true
-    end
-
-    if new_total >= demands[commodity_index]
-        scale = min(0.95, (demands[commodity_index] * rand(rng, Uniform(0.2, 0.6))) / new_total)
-        for arc in outgoing
-            capacities[arc] = round(capacities[arc] * scale; digits=2)
-        end
-        new_total = sum(capacities[arc] for arc in outgoing)
-    end
-
-    return new_total + 1e-6 < demands[commodity_index]
-end
-
-function enforce_sink_bottleneck!(
-    rng::AbstractRNG,
-    commodity_index::Int,
-    commodities::Vector{Tuple{Int, Int}},
-    arcs::Vector{Tuple{Int, Int}},
-    capacities::Dict{Tuple{Int, Int}, Float64},
-    demands::Dict{Int, Float64},
-)
-    sink = commodities[commodity_index][2]
-    incoming = [arc for arc in arcs if arc[2] == sink]
-
-    if isempty(incoming)
-        return false
-    end
-
-    current_total = sum(capacities[arc] for arc in incoming)
-    if current_total <= 1e-6
-        return true
-    end
-
-    target_total = min(
-        demands[commodity_index] * rand(rng, Uniform(0.1, 0.6)),
-        current_total * rand(rng, Uniform(0.15, 0.5)),
-    )
-
-    redistribute_capacity!(rng, incoming, capacities, target_total)
-
-    new_total = sum(capacities[arc] for arc in incoming)
-    if new_total <= 1e-6
-        return true
-    end
-
-    if new_total >= demands[commodity_index]
-        scale = min(0.95, (demands[commodity_index] * rand(rng, Uniform(0.2, 0.6))) / new_total)
-        for arc in incoming
-            capacities[arc] = round(capacities[arc] * scale; digits=2)
-        end
-        new_total = sum(capacities[arc] for arc in incoming)
-    end
-
-    return new_total + 1e-6 < demands[commodity_index]
-end
-
-function redistribute_capacity!(
-    rng::AbstractRNG,
-    arc_subset::Vector{Tuple{Int, Int}},
-    capacities::Dict{Tuple{Int, Int}, Float64},
-    target_total::Float64,
-)
-    if isempty(arc_subset)
-        return nothing
-    end
-
-    if target_total <= 1e-6
-        for arc in arc_subset
-            capacities[arc] = 0.0
-        end
-        return nothing
-    end
-
-    if length(arc_subset) == 1
-        arc = arc_subset[1]
-        capacities[arc] = round(min(capacities[arc], target_total); digits=2)
-        return nothing
-    end
-
-    weights = rand(rng, Dirichlet(fill(1.5, length(arc_subset))))
-    for (arc, weight) in zip(arc_subset, weights)
-        capacities[arc] = round(min(capacities[arc], target_total * weight); digits=2)
-    end
-
-    total = sum(capacities[arc] for arc in arc_subset)
-    if total > target_total
-        scale = target_total / total
-        for arc in arc_subset
-            capacities[arc] = round(capacities[arc] * scale; digits=2)
-        end
-    end
-end
-
-# Register the variant
 register_variant(
     :multi_commodity_flow,
     :standard,
     MultiCommodityFlow,
-    "Multi-commodity flow problem that routes multiple commodities through a shared network with capacity constraints",
+    "Multicommodity min-cost flow on a sparse geographic network: origin-aggregated gravity commodities sharing arc capacities through bundle rows, planted shortest-path routing as witness, and metric-inequality (length or regional-cut) infeasibility certificates";
+    default=true,
+    tags=[:logistics, :multicommodity, :network, :block_angular],
+    max_target_variables=1_000_000,
 )

@@ -1,270 +1,421 @@
 using JuMP
 using Random
+using Distributions
+using StatsBase
+
+"""
+Planted two-echelon plan: per-lane flows of an exact max flow (value = total
+demand) on the plant -> DC -> customer network with DC throughputs as node
+capacities: plant supplies, DC conservation and throughput, lane caps and
+customer demands all hold.
+"""
+struct TransshipmentWitness
+    inbound::Vector{Float64}
+    outbound::Vector{Float64}
+    direct::Vector{Float64}
+end
+
+"""
+Min-cut region certificate on the DC-split network. The region holds the
+`plants`, the DCs whose receiving side (`dcs_in`) and shipping side
+(`dcs_out`) lie in it, and the `customers`. Every way into the region is
+listed and capacitated: inbound linehaul lanes from plants outside into
+receiving sides inside (`inbound_lanes`), direct lanes from plants outside into
+customers inside (`direct_lanes`), and DCs whose receiving side is outside but
+shipping side inside (`throughput_dcs`, bounded by their throughput rows).
+Summing the customers' demand rows, the region's DC conservation and
+throughput rows and its plants' supply rows gives
+
+    region_demand <= region_supply + entry_capacity
+
+which the certificate violates. Relaxation-proof (a pure LP).
+"""
+struct TransshipmentCutCertificate
+    plants::Vector{Int}
+    dcs_in::Vector{Int}
+    dcs_out::Vector{Int}
+    customers::Vector{Int}
+    inbound_lanes::Vector{Int}
+    direct_lanes::Vector{Int}
+    throughput_dcs::Vector{Int}
+    entry_capacity::Float64
+    region_demand::Float64
+    region_supply::Float64
+end
 
 """
     TransshipmentProblem <: ProblemGenerator
 
-Generator for transshipment transportation problems with intermediate hub nodes.
+Two-echelon distribution LP: plants -> distribution centres (DCs) ->
+customers, plus direct plant -> customer lanes for large customers, on sparse
+geographic lane sets.
 
 # Overview
 
-Extends the classic transportation problem with a set of intermediate
-transshipment (hub) nodes. Goods can flow from sources directly to destinations,
-or be routed through hubs (source -> hub, then hub -> destination). The objective
-minimizes total shipping cost across all three arc sets. Each source is limited by
-its supply (counting both direct and to-hub flow), each destination must have its
-demand met (from direct and from-hub flow), and each hub conserves flow (inbound
-from sources equals outbound to destinations). Per-arc capacities limit the flow
-that can pass through hub legs.
+    minimize    sum cost * flow over inbound, outbound and direct lanes
+    subject to  sum_{inbound+direct from p} flow <= supply[p]          plants
+                sum_{inbound to h} flow = sum_{outbound from h} flow    DCs
+                sum_{inbound to h} flow <= throughput[h]                DCs
+                sum_{outbound+direct to c} flow >= demand[c]            customers
+                0 <= flow <= lane cap (linehaul allotments, direct FTL caps)
+
+Each DC is fed by 2-5 of its nearest plants; each customer is served by 2-4 of
+its nearest DCs; the largest customers also get direct full-truckload lanes
+from their nearest plants. DC throughput rows (dock/labour capacity) and DC
+conservation rows give the LP genuinely coupled node-capacity structure
+beyond a bipartite transportation problem.
+
+# Data grounding
+
+One geographic population (clustered/uniform/corridor); DCs are placed at
+high-activity (urban) nodes, plants at random ones. DC throughput is sized
+from each DC's historical market times a lognormal build factor with regional
+under-build shocks (`_tp_market_supply`); plants hold 1.3-1.6x total nominal
+demand. Costs: production + linehaul at half the per-km rate, final mile at
+1.4x the rate plus a DC handling fee, direct lanes at the base rate plus a
+surcharge. 40% of linehaul lanes carry allotments of 30%-80% of the DC's
+throughput; direct lanes are capped at 20%-60% of the customer's demand.
+
+# Feasibility control
+
+The EXACT largest deliverable demand scale `lambda*` is computed on the
+DC-split network (Dinkelbach iterations over exact max flows) and demands set
+to `load_factor * lambda*` times the nominal profile:
+
+  - `feasible`: `load_factor` in [0.6, 0.92]; witness = exact max-flow plan.
+  - `infeasible`: `load_factor` in [1.06, 1.25]; certificate = min-cut region
+    (typically a region whose DCs are under-built and whose plants and
+    linehaul cannot make up for it).
+  - `unknown`: `load_factor` in [0.85, 1.15]; `max_flow_value` decides.
 
 # Fields
 
-  - `n_sources::Int`: Number of supply sources
-  - `n_destinations::Int`: Number of demand destinations
-  - `n_hubs::Int`: Number of intermediate transshipment (hub) nodes
-  - `supplies::Vector{Int}`: Supply available at each source
-  - `demands::Vector{Int}`: Demand required at each destination
-  - `cost_direct::Matrix{Float64}`: Cost per unit on each source -> destination arc (n_sources × n_destinations)
-  - `cost_to_hub::Matrix{Float64}`: Cost per unit on each source -> hub arc (n_sources × n_hubs)
-  - `cost_from_hub::Matrix{Float64}`: Cost per unit on each hub -> destination arc (n_hubs × n_destinations)
-  - `cap_to_hub::Matrix{Float64}`: Capacity on each source -> hub arc (n_sources × n_hubs)
-  - `cap_from_hub::Matrix{Float64}`: Capacity on each hub -> destination arc (n_hubs × n_destinations)
+  - `n_plants`, `n_dcs`, `n_customers`; lane lists `inbound` (plant, DC),
+    `outbound` (DC, customer), `direct` (plant, customer), each with aligned
+    costs and capacities (`Inf` = uncapped)
+  - `supplies`, `throughput`, `demands`, positions, `geography`
+  - `load_factor`, `max_flow_value`, `total_demand`
+  - `feasible_witness`, `infeasibility_certificate`, `feasibility_status`
 """
 struct TransshipmentProblem <: ProblemGenerator
-    n_sources::Int
-    n_destinations::Int
-    n_hubs::Int
-    supplies::Vector{Int}
-    demands::Vector{Int}
-    cost_direct::Matrix{Float64}
-    cost_to_hub::Matrix{Float64}
-    cost_from_hub::Matrix{Float64}
-    cap_to_hub::Matrix{Float64}
-    cap_from_hub::Matrix{Float64}
+    n_plants::Int
+    n_dcs::Int
+    n_customers::Int
+    inbound::Vector{Tuple{Int, Int}}
+    outbound::Vector{Tuple{Int, Int}}
+    direct::Vector{Tuple{Int, Int}}
+    inbound_cost::Vector{Float64}
+    outbound_cost::Vector{Float64}
+    direct_cost::Vector{Float64}
+    inbound_capacity::Vector{Float64}
+    direct_capacity::Vector{Float64}
+    supplies::Vector{Float64}
+    throughput::Vector{Float64}
+    demands::Vector{Float64}
+    plant_positions::Vector{Tuple{Float64, Float64}}
+    dc_positions::Vector{Tuple{Float64, Float64}}
+    customer_positions::Vector{Tuple{Float64, Float64}}
+    geography::Symbol
+    load_factor::Float64
+    max_flow_value::Float64
+    total_demand::Float64
+    feasible_witness::Union{Nothing, TransshipmentWitness}
+    infeasibility_certificate::Union{Nothing, TransshipmentCutCertificate}
+    feasibility_status::FeasibilityStatus
+end
+
+"""
+    _ts_maxflow_network(prob_dims, inbound, outbound, direct, in_cap, throughput, dir_cap, big)
+
+DC-split max-flow network: plants `1:P`, DC receiving sides `P+1:P+H`, DC
+shipping sides `P+H+1:P+2H`, customers after. Arc order: inbound lanes, DC
+throughput arcs, outbound lanes, direct lanes.
+"""
+function _ts_maxflow_network(
+    P::Int,
+    H::Int,
+    inbound::Vector{Tuple{Int, Int}},
+    outbound::Vector{Tuple{Int, Int}},
+    direct::Vector{Tuple{Int, Int}},
+    in_cap::Vector{Float64},
+    throughput::Vector{Float64},
+    dir_cap::Vector{Float64},
+    big::Float64,
+)
+    arcs = vcat(
+        [(p, P + h) for (p, h) in inbound],
+        [(P + h, P + H + h) for h in 1:H],
+        [(P + H + h, P + 2H + c) for (h, c) in outbound],
+        [(p, P + 2H + c) for (p, c) in direct],
+    )
+    caps = vcat(
+        [isfinite(u) ? u : big for u in in_cap],
+        throughput,
+        fill(big, length(outbound)),
+        [isfinite(u) ? u : big for u in dir_cap],
+    )
+    return arcs, caps
 end
 
 """
     TransshipmentProblem(target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int)
 
-Construct a transshipment problem instance.
-
-Variable-count formula (decision variables created by `build_model`):
-
-    total = n_sources*n_destinations   (x_direct)
-          + n_sources*n_hubs           (x_to_hub)
-          + n_hubs*n_destinations      (x_from_hub)
-
-The constructor sizes `n_sources`, `n_destinations`, and `n_hubs` together so this
-full total lands near `target_variables` (not just the direct block).
-
-# Arguments
-
-  - `target_variables`: Target number of decision variables across all three flow arc sets
-  - `feasibility_status`: Desired feasibility status (feasible, infeasible, or unknown)
-  - `seed`: Random seed for reproducibility
+Variables are the lanes, exactly `max(target_variables, 6)`: about 7%
+inbound, 8% direct and the rest outbound. Rows:
+`n_plants + 2 * n_dcs + n_customers`. Values above
+`TRANSPORTATION_MAX_VARIABLES` raise an `ArgumentError`.
 """
 function TransshipmentProblem(
     target_variables::Int, feasibility_status::FeasibilityStatus, seed::Int
 )
+    _tp_check_target(target_variables, "transshipment")
     rng = MersenneTwister(seed)
+    target = max(target_variables, 6)
 
-    # --- Dimension sizing ---
-    # total = n_src*n_dst + n_src*n_hub + n_hub*n_dst
-    # Choose n_hub ≈ h_frac * n_dst, and n_src ≈ n_dst (a roughly square grid).
-    # With n_src = n_dst = m and n_hub = round(h_frac*m):
-    #   total ≈ m^2 + 2*h_frac*m^2 = m^2 * (1 + 2*h_frac)
-    # => m ≈ sqrt(target / (1 + 2*h_frac))
-    h_frac = 0.3 + 0.2 * rand(rng)  # hubs are 30%-50% of destinations
-    m = max(2, round(Int, sqrt(target_variables / (1 + 2 * h_frac))))
-
-    # Add mild asymmetry between sources and destinations while keeping the total near target.
-    ratio = 0.8 + 0.4 * rand(rng)  # 0.8 .. 1.2
-    n_sources = max(2, round(Int, m * ratio))
-    n_destinations = max(2, round(Int, m / ratio))
-    n_hubs = max(1, round(Int, h_frac * n_destinations))
-
-    # Fine-tune destinations so the FULL total (all three arc sets) tracks target.
-    # total = n_src*n_dst + n_src*n_hub + n_hub*n_dst
-    #       = n_dst*(n_src + n_hub) + n_src*n_hub
-    # Solve for n_dst given current n_src, n_hub.
-    denom = n_sources + n_hubs
-    n_destinations = max(2, round(Int, (target_variables - n_sources * n_hubs) / denom))
-    # n_hubs depends on n_destinations; recompute and re-balance once.
-    n_hubs = max(1, round(Int, h_frac * n_destinations))
-    denom = n_sources + n_hubs
-    n_destinations = max(2, round(Int, (target_variables - n_sources * n_hubs) / denom))
-
-    total_vars = n_sources * n_destinations + n_sources * n_hubs + n_hubs * n_destinations
-
-    # --- Scale-dependent parameter ranges ---
-    if total_vars <= 250
-        supply_lo, supply_hi = rand(rng, 60:100), rand(rng, 200:400)
-        demand_lo, demand_hi = rand(rng, 30:60), rand(rng, 120:220)
-        cost_lo, cost_hi = 5.0, 40.0
-    elseif total_vars <= 1000
-        supply_lo, supply_hi = rand(rng, 150:400), rand(rng, 1200:3500)
-        demand_lo, demand_hi = rand(rng, 80:200), rand(rng, 700:2000)
-        cost_lo, cost_hi = 10.0, 90.0
-    else
-        supply_lo, supply_hi = rand(rng, 600:1500), rand(rng, 6000:30000)
-        demand_lo, demand_hi = rand(rng, 300:1000), rand(rng, 3500:18000)
-        cost_lo, cost_hi = 20.0, 250.0
+    # Dimensions.
+    mean_out = 2.0 + 2.0 * rand(rng)
+    C = max(2, round(Int, 0.85 * target / mean_out))
+    H = max(2, round(Int, C / (20.0 + 30.0 * rand(rng))))
+    P = max(2, round(Int, H / (1.5 + 2.5 * rand(rng))))
+    n_in = clamp(round(Int, H * (2.0 + 3.0 * rand(rng))), H, P * H)
+    n_dir = clamp(round(Int, 0.08 * target), 0, P * C)
+    n_out = target - n_in - n_dir
+    while n_out > H * C
+        H += 1
+        n_in = clamp(n_in, H, P * H)
+        n_out = target - n_in - n_dir
+    end
+    if n_out < C
+        C = n_out
     end
 
-    # --- Demands and supplies ---
-    demands = rand(rng, demand_lo:demand_hi, n_destinations)
-    supplies = rand(rng, supply_lo:supply_hi, n_sources)
+    # Geography: DCs at high-activity nodes, plants at random ones.
+    n = P + H + C
+    shape = let r = rand(rng)
+        r < 0.45 ? :clustered : (r < 0.8 ? :uniform : :corridor)
+    end
+    positions, weights = _geo_positions(rng, n, shape; span=12.0 * sqrt(n))
+    order = randperm(rng, n)
+    dc_idx = sample(rng, order, Weights(weights[order]), H; replace=false)
+    rest = setdiff(order, dc_idx)
+    plant_idx = rest[1:P]
+    cust_idx = rest[(P + 1):end]
+    plant_pos, dc_pos, cust_pos = positions[plant_idx], positions[dc_idx], positions[cust_idx]
+    cust_w = weights[cust_idx]
 
-    # --- Arc costs (hub legs slightly cheaper per leg to make routing attractive) ---
-    cost_direct = cost_lo .+ (cost_hi - cost_lo) .* rand(rng, n_sources, n_destinations)
-    cost_to_hub = (cost_lo .+ (cost_hi - cost_lo) .* rand(rng, n_sources, n_hubs)) .* 0.6
-    cost_from_hub = (cost_lo .+ (cost_hi - cost_lo) .* rand(rng, n_hubs, n_destinations)) .* 0.6
-
-    # Helper to distribute an integer addition across a vector (keeps reproducibility).
-    function distribute_additions!(vec::Vector{Int}, amount::Int)
-        amount <= 0 && return nothing
-        w = rand(rng, length(vec))
-        base = floor.(Int, (w ./ sum(w)) .* amount)
-        remainder = amount - sum(base)
-        if remainder > 0
-            for idx in randperm(rng, length(vec))[1:min(remainder, length(vec))]
-                base[idx] += 1
-            end
+    inbound, _ = _tp_lanes(rng, plant_pos, dc_pos, n_in; mean_lanes=n_in / H, long_haul=0.15)
+    outbound, primary_dc = _tp_lanes(
+        rng, dc_pos, cust_pos, n_out; mean_lanes=n_out / C, weights=cust_w
+    )
+    # Direct lanes: largest customers to their nearest plants.
+    direct = Tuple{Int, Int}[]
+    if n_dir > 0
+        per = cld(n_dir, C)
+        near = _geo_knn_query(plant_pos, cust_pos, min(P, per))
+        for c in sortperm(cust_w; rev=true), p in near[c]
+            length(direct) >= n_dir && break
+            push!(direct, (p, c))
         end
-        vec .+= base
+        sort!(direct)
     end
 
-    total_supply = sum(supplies)
-    total_demand = sum(demands)
+    d0 = 100.0 .* cust_w ./ (sum(cust_w) / C)
+    D0 = sum(d0)
+    throughput = _tp_market_supply(rng, dc_pos, outbound, primary_dc, d0)
+    plant_w = [weights[i] * rand(rng, LogNormal(0.0, 0.3)) for i in plant_idx]
+    supplies = round.((1.3 + 0.3 * rand(rng)) * D0 .* plant_w ./ sum(plant_w); digits=2)
 
-    # --- Resolve feasibility intent (unknown -> natural instance, no forcing) ---
-    if feasibility_status == feasible
-        # Ensure aggregate supply covers demand with a clear margin.
-        if total_supply < total_demand * 1.05
-            shortage = ceil(Int, total_demand * 1.1) - total_supply
-            distribute_additions!(supplies, shortage)
-            total_supply = sum(supplies)
-        end
+    rate = 0.8 + 0.8 * rand(rng)
+    production = [20.0 * rand(rng, LogNormal(0.0, 0.25)) for _ in 1:P]
+    handling = [3.0 * rand(rng, LogNormal(0.0, 0.3)) for _ in 1:H]
+    pd(a, b) = hypot(a[1] - b[1], a[2] - b[2])
+    inbound_cost = [
+        round(
+            production[p] +
+            0.5 * rate * pd(plant_pos[p], dc_pos[h]) * rand(rng, LogNormal(0.0, 0.15)) +
+            1.0;
+            digits=3,
+        ) for (p, h) in inbound
+    ]
+    inbound_capacity = [
+        rand(rng) < 0.4 ? round(throughput[h] * (0.3 + 0.5 * rand(rng)); digits=2) : Inf for
+        (_, h) in inbound
+    ]
+    outbound_cost = [
+        round(
+            1.4 * rate * pd(dc_pos[h], cust_pos[c]) * rand(rng, LogNormal(0.0, 0.15)) +
+            handling[h] +
+            1.0;
+            digits=3,
+        ) for (h, c) in outbound
+    ]
+    direct_cost = [
+        round(
+            production[p] +
+            rate * pd(plant_pos[p], cust_pos[c]) * rand(rng, LogNormal(0.0, 0.15)) +
+            4.0;
+            digits=3,
+        ) for (p, c) in direct
+    ]
+    direct_capacity = [
+        round(max(d0[c] * (0.2 + 0.4 * rand(rng)), 0.01); digits=2) for (_, c) in direct
+    ]
+
+    big = 4.0 * (sum(supplies) + 2.0 * D0)
+    arcs, caps = _ts_maxflow_network(
+        P, H, inbound, outbound, direct, inbound_capacity, throughput, direct_capacity, big
+    )
+    N = P + 2H + C
+    plant_nodes = collect(1:P)
+    cust_nodes = collect((P + 2H + 1):N)
+    lambda_star = _network_flow_max_scale(N, arcs, caps, plant_nodes, supplies, cust_nodes, d0)
+    load_factor = if feasibility_status == feasible
+        0.6 + 0.32 * rand(rng)
     elseif feasibility_status == infeasible
-        # Force a deterministic contradiction: aggregate demand strictly exceeds supply.
-        # This makes the destination constraints unsatisfiable regardless of routing/hub caps.
-        target_margin = max(1, round(Int, (0.05 + 0.05 * rand(rng)) * max(total_supply, 1)))
-        missing = (total_supply + target_margin) - total_demand
-        if missing > 0
-            distribute_additions!(demands, missing)
-        end
-        total_demand = sum(demands)
+        1.06 + 0.19 * rand(rng)
+    else
+        0.85 + 0.3 * rand(rng)
     end
-    # unknown: leave supplies/demands as sampled (a natural, possibly-either instance).
+    demands = max.(round.(load_factor * lambda_star .* d0; digits=2), 0.01)
+    total_demand = sum(demands)
+    value, ext_flows, source_side, _, _ = _network_flow_extended(
+        N, arcs, caps, plant_nodes, supplies, cust_nodes, demands
+    )
 
-    # --- Hub-leg capacities ---
-    # Sized so the hub legs are a genuinely BINDING constraint, not decorative: a
-    # single hub arc carries only a fraction of total demand, so routing a large
-    # share through hubs requires spreading across several of them (and the per-arc
-    # caps frequently bind). Feasibility is never blocked because the direct
-    # source->destination arcs are uncapped and provide a complete fallback.
-    # Per-arc capacity ~ (total_demand / n_hubs) so all hubs together can carry
-    # roughly all demand, but no one arc can.
-    hub_share = total_demand / max(n_hubs, 1)
-    per_arc_cap_to = hub_share * (0.6 + 0.5 * rand(rng))
-    per_arc_cap_from = hub_share * (0.6 + 0.5 * rand(rng))
-    cap_to_hub = fill(0.0, n_sources, n_hubs)
-    cap_from_hub = fill(0.0, n_hubs, n_destinations)
-    for i in 1:n_sources, t in 1:n_hubs
-        cap_to_hub[i, t] = per_arc_cap_to * (0.8 + 0.4 * rand(rng))
-    end
-    for t in 1:n_hubs, j in 1:n_destinations
-        cap_from_hub[t, j] = per_arc_cap_from * (0.8 + 0.4 * rand(rng))
+    feasible_witness = nothing
+    infeasibility_certificate = nothing
+    n_i, n_o = length(inbound), length(outbound)
+    if feasibility_status == feasible
+        value >= total_demand * (1 - 1e-9) ||
+            error("transportation/transshipment: planted load not deliverable (seed $seed)")
+        feasible_witness = TransshipmentWitness(
+            ext_flows[1:n_i],
+            ext_flows[(n_i + H + 1):(n_i + H + n_o)],
+            ext_flows[(n_i + H + n_o + 1):(n_i + H + n_o + length(direct))],
+        )
+    elseif feasibility_status == infeasible
+        value < total_demand * (1 - 1e-6) ||
+            error("transportation/transshipment: infeasible load deliverable (seed $seed)")
+        out = falses(N + 2)
+        out[source_side] .= true
+        plants_T = [p for p in 1:P if !out[p]]
+        dcs_in = [h for h in 1:H if !out[P + h]]
+        dcs_out = [h for h in 1:H if !out[P + H + h]]
+        customers_T = [c for c in 1:C if !out[P + 2H + c]]
+        in_lanes = [l for (l, (p, h)) in enumerate(inbound) if out[p] && !out[P + h]]
+        dir_lanes = [l for (l, (p, c)) in enumerate(direct) if out[p] && !out[P + 2H + c]]
+        thr = [h for h in 1:H if out[P + h] && !out[P + H + h]]
+        any(out[P + H + h] && !out[P + 2H + c] for (h, c) in outbound) &&
+            error("transportation/transshipment: uncapacitated lane in min cut (seed $seed)")
+        all(isfinite(inbound_capacity[l]) for l in in_lanes) ||
+            error("transportation/transshipment: uncapacitated lane in min cut (seed $seed)")
+        entry =
+            sum(inbound_capacity[l] for l in in_lanes; init=0.0) +
+            sum(direct_capacity[l] for l in dir_lanes; init=0.0) +
+            sum(throughput[h] for h in thr; init=0.0)
+        infeasibility_certificate = TransshipmentCutCertificate(
+            plants_T,
+            dcs_in,
+            dcs_out,
+            customers_T,
+            in_lanes,
+            dir_lanes,
+            thr,
+            entry,
+            sum(demands[c] for c in customers_T; init=0.0),
+            sum(supplies[p] for p in plants_T; init=0.0),
+        )
     end
 
     return TransshipmentProblem(
-        n_sources,
-        n_destinations,
-        n_hubs,
+        P,
+        H,
+        C,
+        inbound,
+        outbound,
+        direct,
+        inbound_cost,
+        outbound_cost,
+        direct_cost,
+        inbound_capacity,
+        direct_capacity,
         supplies,
+        throughput,
         demands,
-        cost_direct,
-        cost_to_hub,
-        cost_from_hub,
-        cap_to_hub,
-        cap_from_hub,
+        plant_pos,
+        dc_pos,
+        cust_pos,
+        shape,
+        load_factor,
+        value,
+        total_demand,
+        feasible_witness,
+        infeasibility_certificate,
+        feasibility_status,
     )
 end
 
 """
     build_model(prob::TransshipmentProblem)
 
-Build a JuMP model for the transshipment problem. Deterministic — uses only data
-from the struct fields.
-
-Decision variables:
-
-  - `x_direct[i, j]`: flow shipped directly from source `i` to destination `j`
-  - `x_to_hub[i, t]`: flow shipped from source `i` to hub `t`
-  - `x_from_hub[t, j]`: flow shipped from hub `t` to destination `j`
-
-# Returns
-
-  - `model`: The JuMP model
+Build the two-echelon transshipment LP. Deterministic — uses only the struct
+fields. Variables: `x_in` (inbound lanes), `x_out` (outbound lanes), `x_dir`
+(direct lanes); lane caps are variable bounds.
 """
 function build_model(prob::TransshipmentProblem)
     model = Model()
-
-    S = prob.n_sources
-    D = prob.n_destinations
-    H = prob.n_hubs
-
-    # Variables (total = S*D + S*H + H*D)
-    @variable(model, x_direct[1:S, 1:D] >= 0)
-    @variable(model, x_to_hub[1:S, 1:H] >= 0)
-    @variable(model, x_from_hub[1:H, 1:D] >= 0)
-
-    # Objective: minimize total shipping cost over all arc sets
+    P, H, C = prob.n_plants, prob.n_dcs, prob.n_customers
+    ni, no, nd = length(prob.inbound), length(prob.outbound), length(prob.direct)
+    @variable(model, x_in[1:ni] >= 0)
+    @variable(model, x_out[1:no] >= 0)
+    @variable(model, x_dir[1:nd] >= 0)
+    for l in 1:ni
+        isfinite(prob.inbound_capacity[l]) && set_upper_bound(x_in[l], prob.inbound_capacity[l])
+    end
+    for l in 1:nd
+        set_upper_bound(x_dir[l], prob.direct_capacity[l])
+    end
     @objective(
         model,
         Min,
-        sum(prob.cost_direct[i, j] * x_direct[i, j] for i in 1:S, j in 1:D) +
-            sum(prob.cost_to_hub[i, t] * x_to_hub[i, t] for i in 1:S, t in 1:H) +
-            sum(prob.cost_from_hub[t, j] * x_from_hub[t, j] for t in 1:H, j in 1:D)
+        sum(prob.inbound_cost[l] * x_in[l] for l in 1:ni) +
+            sum(prob.outbound_cost[l] * x_out[l] for l in 1:no) +
+            sum(prob.direct_cost[l] * x_dir[l] for l in 1:nd; init=0.0)
     )
-
-    # Supply constraints: direct + to-hub flow out of each source <= supply
-    for i in 1:S
-        @constraint(
-            model,
-            sum(x_direct[i, j] for j in 1:D) + sum(x_to_hub[i, t] for t in 1:H) <= prob.supplies[i]
-        )
+    plant_out = [AffExpr(0.0) for _ in 1:P]
+    dc_in = [AffExpr(0.0) for _ in 1:H]
+    dc_out = [AffExpr(0.0) for _ in 1:H]
+    cust_in = [AffExpr(0.0) for _ in 1:C]
+    for (l, (p, h)) in enumerate(prob.inbound)
+        add_to_expression!(plant_out[p], x_in[l])
+        add_to_expression!(dc_in[h], x_in[l])
     end
-
-    # Demand constraints: direct + from-hub flow into each destination >= demand
-    for j in 1:D
-        @constraint(
-            model,
-            sum(x_direct[i, j] for i in 1:S) + sum(x_from_hub[t, j] for t in 1:H) >=
-                prob.demands[j]
-        )
+    for (l, (h, c)) in enumerate(prob.outbound)
+        add_to_expression!(dc_out[h], x_out[l])
+        add_to_expression!(cust_in[c], x_out[l])
     end
-
-    # Hub flow conservation: inbound from sources == outbound to destinations
-    for t in 1:H
-        @constraint(model, sum(x_to_hub[i, t] for i in 1:S) == sum(x_from_hub[t, j] for j in 1:D))
+    for (l, (p, c)) in enumerate(prob.direct)
+        add_to_expression!(plant_out[p], x_dir[l])
+        add_to_expression!(cust_in[c], x_dir[l])
     end
-
-    # Hub-leg capacity constraints
-    for i in 1:S, t in 1:H
-        @constraint(model, x_to_hub[i, t] <= prob.cap_to_hub[i, t])
+    for p in 1:P
+        @constraint(model, plant_out[p] <= prob.supplies[p])
     end
-    for t in 1:H, j in 1:D
-        @constraint(model, x_from_hub[t, j] <= prob.cap_from_hub[t, j])
+    for h in 1:H
+        @constraint(model, dc_in[h] == dc_out[h])
+        @constraint(model, dc_in[h] <= prob.throughput[h])
     end
-
+    for c in 1:C
+        @constraint(model, cust_in[c] >= prob.demands[c])
+    end
     return model
 end
 
-# Register the variant
 register_variant(
     :transportation,
     :transshipment,
     TransshipmentProblem,
-    "Transshipment problem routing goods from sources to destinations directly or through capacitated intermediate hub nodes at minimum cost",
+    "Two-echelon plant -> DC -> customer distribution LP with direct lanes, DC conservation and throughput rows, and capped linehaul/direct lanes on sparse geographic lane sets; exact max-flow placement with a DC-split min-cut region certificate";
+    tags=[:logistics, :network, :unimodular],
+    max_target_variables=1_000_000,
 )
