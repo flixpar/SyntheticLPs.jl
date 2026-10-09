@@ -1,6 +1,6 @@
 name = "SyntheticLPs"
 uuid = "6c18d9e4-3017-4cc6-8f05-9e4aefa327ea"
-version = "0.1.0"
+version = "0.5.0"
 authors = ["Felix Parker <flixpar@gmail.com>"]
 
 [deps]
